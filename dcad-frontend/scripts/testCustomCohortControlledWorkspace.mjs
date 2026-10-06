@@ -141,7 +141,10 @@ function harness(name = 'CustomCohortWorkspace', { onSerialize } = {}) {
     nodes: () => walk(tree), text: () => text(tree),
     child(key) { return walk(tree).find(node => node.type === stubs[key])?.props; },
     click(label) { const node = walk(tree).find(node => node.type === 'button' && text(node) === label); assert.ok(node, label); node.props.onClick(); flush(); },
-    check(label) { const node = walk(tree).find(node => node.type === 'input' && node.props['aria-label'] === label); assert.ok(node, label); node.props.onChange(); flush(); },
+    toggleOnMap(label) { const pocket = props.workspace.catalog.pockets.find(p => `Include ${p.label}` === label);
+      assert.ok(pocket, label); const map = this.child('CustomCohortParcelMap'); assert.ok(map);
+      if (props.workspace.selection.included_recorded_group_ids.includes(pocket.id)) map.onExcludePocket(pocket.id);
+      else map.onActivatePocket(pocket.id); flush(); },
     async drain() { for (let i = 0; i < 16; i++) await Promise.resolve(); flush(); },
     // WebCrypto uses asynchronous runtime work, not a fixed number of event-loop
     // turns. Positive assertions wait for the actual injected transport call.
@@ -235,23 +238,19 @@ test('stale, saving and read-only exact displays retain the coherent pair but cl
   }
 });
 
-test('exact unassigned inspection keeps its independent original-subset input and host ports, not the current selection reference', async t => {
+test('exact map inspection clicks preserve removed panels and leave the complete selected display unchanged without per-area reads', async t => {
   const f = await groupMemberViewFixture(), h = harness(); t.after(() => h.unmount()); const p = h.exactProps(f); h.render(p);
-  const account = f.display.catalog.unassigned.account_ids[0]; h.child('CustomCohortParcelMap').onInspectAccount(account); await h.drain();
-  const inspector = h.child('CustomCohortPocketInspector'); assert.ok(inspector);
-  assert.equal(inspector.catalog, f.display.catalog); assert.equal(inspector.pocketId, catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP);
-  assert.equal(inspector.previewTransport, p.exact.inspectionPreview); assert.equal(inspector.memberTransport, p.exact.inspectionMembers);
-  assert.deepEqual(inspector.input, { accountId: p.accountId, assignmentFileId: p.assignmentFileId,
-    contextRef: p.contextRef, selection: { revision: 1, pockets: [] } });
-  assert.equal(Object.hasOwn(inspector.input, 'selectionRef'), false);
-  const inspect = harness('CustomCohortPocketInspector'); t.after(() => inspect.unmount());
-  inspect.render({ ...inspector, previewTransport: inspect.previewTransport }); await inspect.tick(); await inspect.waitForRequest(0);
-  assert.equal(inspect.calls[0].request.include_map, false);
-  assert.deepEqual(inspect.calls[0].request.selection.pockets.flatMap(pocket => pocket.account_ids), [account]);
-  assert.deepEqual(inspect.calls[0].request.selection, catalogHelpers.selectionFromRecordedGroups(f.display.catalog,
-    [catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP], 1));
-  assert.notDeepEqual(inspect.calls[0].request.selection.pockets.flatMap(pocket => pocket.account_ids), f.selected);
+  const before = JSON.stringify(f.display), account = f.display.catalog.unassigned.account_ids[0];
+  assert.equal(typeof account, 'string');
+  h.child('CustomCohortParcelMap').onInspectAccount(account); await h.drain();
+  h.child('CustomCohortParcelMap').onInspectPocket(f.display.catalog.pockets[0].id); await h.drain();
+  for (const name of ['CustomCohortPocketInspector', 'CustomCohortMapSnapshot', 'CustomCohortSubdivisionDialog'])
+    assert.equal(h.child(name), undefined, 'the protected cleanup applies to exact mode too');
+  assert.doesNotMatch(h.text(), /Recorded CAD source details|Find a recorded group/);
+  assert.equal(h.child('CustomCohortParcelMap').display, f.display);
   assert.equal(h.child('CustomCohortCompactStatistics').group, f.display.observations); assert.equal(h.intents.length, 0);
+  assert.equal(JSON.stringify(f.display), before); assert.equal(h.calls.length, 0); assert.equal(h.catalogCalls.length, 0);
+  assert.equal(h.controllerCount, 0); assert.equal(h.fingerprintCount, 0); assert.equal(f.calls.length, 2);
 });
 
 test('exact display never fabricates a legacy market-analysis request, including stale, saving, empty and disposal', async t => {
@@ -308,7 +307,7 @@ test('controlled restored empty selection stays empty and makes no catalog read'
 
 test('unassigned CAD evidence is distinguished from a grouping capacity failure', () => {
   const review = harness(); review.render(review.props());
-  assert.match(review.text(), /CAD subdivision not confirmed/);
+  assert.doesNotMatch(review.text(), /Recorded CAD source details/);
   assert.doesNotMatch(review.text(), /Subdivision grouping reached a capacity limit/);
   review.unmount();
 
@@ -321,55 +320,41 @@ test('unassigned CAD evidence is distinguished from a grouping capacity failure'
   const incomplete = catalogHelpers.checkCustomCohortPocketCatalog(response, input);
   const capacity = harness(), props = capacity.props([]); props.workspace.catalog = incomplete;
   capacity.render(props);
-  assert.match(capacity.text(), /Grouping unavailable — capture limit/);
+  assert.equal(capacity.child('CustomCohortCompactStatistics').group, null);
   assert.match(capacity.text(), /Subdivision grouping reached a capacity limit: Too many distinct recorded names/);
   assert.doesNotMatch(capacity.text(), /CAD subdivision not confirmed/);
   capacity.unmount();
 });
 
-test('dense list pages50 groups while map selection and Include all retain887; map inspection can open an off-page group', async () => {
-  const h = harness(), dense = denseCatalog(), all = catalogHelpers.customCohortCatalogGroupIds(dense);
+test('dense map selection and Include all retain887 without mounting a source list or per-area inspector', async t => {
+  const h = harness(); t.after(() => h.unmount()); const dense = denseCatalog(), all = catalogHelpers.customCohortCatalogGroupIds(dense);
   const props = h.props(all); props.workspace.catalog = dense;
-  h.render(props); await h.tick(); await h.waitForRequest(0);
-  assert.doesNotMatch(h.text(), /Explore broad observations|All 887 recorded groups|Recorded CAD groups in the retained discovery area/);
+  h.render(props); await h.tick(); await h.waitForRequest(0); await h.complete();
   assert.equal(h.calls[0].request.selection.pockets[0].account_ids.length, 887);
-  const checkboxes = () => h.nodes().filter(n => n.type === 'input' && n.props.type === 'checkbox');
-  assert.equal(checkboxes().length, 50); assert.match(h.text(), /Page 1 of 18/);
-  h.click('Next groups'); assert.equal(checkboxes().length, 50); assert.match(h.text(), /Page 2 of 18/);
+  assert.doesNotMatch(h.text(), /Recorded CAD source details|Find a recorded group|Recorded subdivisions and groups/);
   h.click('Include all observations'); assert.deepEqual(h.intents.at(-1), all);
-  await h.complete();
-  h.child('CustomCohortParcelMap').onInspectPocket(groupId(887)); h.render(props);
+  h.child('CustomCohortParcelMap').onActivatePocket(groupId(887)); await h.drain();
   assert.equal(h.child('CustomCohortParcelMap').inspectedPocketId, groupId(887));
-  assert.equal(h.child('CustomCohortPocketInspector'), undefined, 'no duplicate area breakdown below source details');
-  const search = h.nodes().find(n => n.type === 'input' && n.props.maxLength === 200);
-  search.props.onChange({ target: { value: 'Dense group 886' } }); h.render(props);
-  assert.equal(checkboxes().length, 1); assert.equal(checkboxes()[0].props['aria-label'], 'Include Dense group 886');
-  assert.equal(h.calls.length, 1, 'paging/search/inspection does not refetch main statistics');
-  h.check('Include Dense group 886'); assert.equal(h.intents.at(-1).length, 886);
-  assert.ok(!h.intents.at(-1).includes(groupId(887))); h.unmount();
+  assert.equal(h.child('CustomCohortMapSnapshot'), undefined); assert.equal(h.child('CustomCohortSubdivisionDialog'), undefined);
+  h.child('CustomCohortParcelMap').onExcludePocket(groupId(887));
+  const removedFamily = new Set(h.child('CustomCohortParcelMap').inspectedPocketIds);
+  assert.deepEqual(h.intents.at(-1), all.filter(id => !removedFamily.has(id)));
+  assert.ok(!h.intents.at(-1).includes(groupId(887)));
+  assert.equal(h.calls.length, 1, 'map focus never requests an extra area breakdown');
 });
 
-test('county-name review finds off-page variants; explicit union and exclusion retain every unrelated saved choice', async () => {
-  const h = harness(), dense = denseCatalog();
-  const aliased = { ...dense, pockets: dense.pockets.map((p, i) => i === 886
-    ? { ...p, label: dense.pockets[0].label, county: 'DALLAS COUNTY' } : p) };
-  const props = h.props([groupId(1), groupId(2)]); props.workspace.catalog = aliased;
+test('county-name map union and exclusion retain every unrelated saved choice without a source panel', async t => {
+  const h = harness(); t.after(() => h.unmount()); const dense = denseCatalog();
+  const props = h.props([groupId(1), groupId(2)]); props.workspace.catalog = { ...dense,
+    pockets: dense.pockets.map((p, i) => i === 886 ? { ...p, label: dense.pockets[0].label, county: 'DALLAS COUNTY' } : p) };
   h.render(props); await h.tick(); await h.waitForRequest(0); await h.complete();
-  assert.equal(h.intents.length, 0, 'opening never merges saved groups');
-  assert.deepEqual(h.calls[0].request.selection.pockets[0].account_ids, ['A', 'Account1']);
-  h.child('CustomCohortParcelMap').onInspectPocket(groupId(1)); h.render(props);
-  assert.match(h.text(), /Dallas \/ DALLAS COUNTY/);
-  assert.match(h.text(), /2 groups · 2 accounts/);
-  assert.equal(h.intents.length, 0, 'inspection never changes inclusion');
-  h.click('Include matching groups');
+  h.child('CustomCohortParcelMap').onActivatePocket(groupId(1));
   assert.deepEqual(h.intents.at(-1), [groupId(1), groupId(2), groupId(887)]);
-  assert.equal(h.calls.length, 1, 'wait for the owner save before requesting a new union');
-  h.render({ ...props, workspace: { ...props.workspace, selection: { revision: 8,
-    included_recorded_group_ids: h.intents.at(-1) } } });
-  h.click('Exclude matching groups'); assert.deepEqual(h.intents.at(-1), [groupId(2)]);
-  h.click('Preview subject’s matching county-name groups');
-  assert.deepEqual(h.intents.at(-1), [groupId(1), groupId(887)]);
-  assert.equal(h.catalogCalls.length, 0); h.unmount();
+  assert.equal(h.calls.length, 1);
+  h.render({ ...props, workspace: { ...props.workspace, selection: { revision: 8, included_recorded_group_ids: h.intents.at(-1) } } });
+  h.child('CustomCohortParcelMap').onExcludePocket(groupId(1)); assert.deepEqual(h.intents.at(-1), [groupId(2)]);
+  h.click('Preview subject’s matching county-name groups'); assert.deepEqual(h.intents.at(-1), [groupId(1), groupId(887)]);
+  assert.equal(h.catalogCalls.length, 0);
 });
 
 for (const blockedReason of ['read_only', 'pending_capture', 'reload_required']) {
@@ -441,8 +426,8 @@ test('standalone catalog capacity is explicit and cannot invent all/empty groups
 });
 test('selection controls emit only intent; changed owner IDs and revision drive the next preview', async () => {
   const h = harness(); h.render(h.props()); await h.tick(); await h.complete();
-  h.check('Include Beta'); assert.deepEqual(h.intents, [[groupId(1), groupId(2)]]);
-  assert.equal(h.calls.length, 1); assert.equal(h.nodes().find(n => n.props['aria-label'] === 'Include Beta').props.checked, false);
+  h.toggleOnMap('Include Beta'); assert.deepEqual(h.intents, [[groupId(1), groupId(2)]]);
+  assert.equal(h.calls.length, 1); assert.deepEqual(h.propsNow.workspace.selection.included_recorded_group_ids, [groupId(1)]);
   h.render(h.props([groupId(2)], 8)); assert.equal(h.child('CustomCohortStatistics').freshness, 'stale'); await h.tick();
   assert.deepEqual(h.calls[1].request.selection.pockets[0].account_ids, ['B']); await h.complete();
   assert.equal(h.child('CustomCohortStatistics').freshness, 'current'); h.unmount();
@@ -455,7 +440,7 @@ test('saving retains the exact old map/statistics group as stale and disables al
   assert.equal(h.child('CustomCohortStatistics').freshness, 'stale'); assert.equal(h.child('CustomCohortParcelMap').freshness, 'stale');
   assert.match(h.text(), /Saving the group selection/); assert.doesNotMatch(h.text(), /match the current preview selection/);
   assert.ok(h.nodes().filter(n => n.props?.type === 'checkbox').every(n => n.props.disabled));
-  h.click('Include all observations'); h.click('Deselect all'); h.check('Include Alpha'); assert.equal(h.intents.length, 0);
+  h.click('Include all observations'); h.click('Deselect all'); h.toggleOnMap('Include Alpha'); assert.equal(h.intents.length, 0);
   h.render({ ...next, workspace: { ...next.workspace, saving: false } }); await h.tick(); assert.equal(h.calls.length, 2);
   await h.complete(); assert.equal(h.child('CustomCohortStatistics').freshness, 'current'); h.unmount();
 });
@@ -479,7 +464,7 @@ for (const [reason, message] of Object.entries(blockedMessages)) {
     assert.ok(h.text().includes(message));
     assert.doesNotMatch(h.text(), /Saving the group selection|Updating the map and statistics|match the current preview selection/);
     assert.ok(h.nodes().filter(n => n.props?.type === 'checkbox').every(n => n.props.disabled));
-    h.click('Include all observations'); h.click('Deselect all'); h.check('Include Alpha');
+    h.click('Include all observations'); h.click('Deselect all'); h.toggleOnMap('Include Alpha');
     assert.equal(h.intents.length, 0); assert.equal(h.calls.length, 1);
     // Only the owner removes the block. The exact newly acknowledged [] must survive.
     h.render(h.props([], 8)); await h.tick(); assert.equal(h.calls.length, 2);
@@ -532,7 +517,7 @@ test('preview retry is read-only and preserves the exact saved selection revisio
 test('source-row inspection changes focus without adding a duplicate area breakdown or selecting its group', async () => {
   const h = harness(), props = h.props([groupId(1)]), memberTransport = () => assert.fail('Member reads must be explicit');
   props.workspace.memberTransport = memberTransport;
-  h.render(props); await h.tick(); await h.complete(); h.click('Beta1 accounts · Dallas');
+  h.render(props); await h.tick(); await h.complete(); h.child('CustomCohortParcelMap').onInspectPocket(groupId(2)); await h.drain();
   assert.equal(h.child('CustomCohortPocketInspector'), undefined);
   assert.equal(h.child('CustomCohortParcelMap').inspectedPocketId, groupId(2));
   assert.equal(h.intents.length, 0); assert.equal(h.calls.length, 1);
@@ -694,8 +679,7 @@ test('an already active suggestion does not increment selection revision or writ
 
 test('recommended group inspection remains independent and fresh equivalent recommendation objects do not cause request loops', async t => {
   const h = harness(); t.after(() => h.unmount()); h.render(withRecommendation(h.props([]))); await h.tick(); await h.complete();
-  const beta = h.nodes().find(n => n.type === 'button' && text(n).startsWith('Beta1 accounts'));
-  assert.ok(beta); beta.props.onClick(); await h.drain();
+  h.child('CustomCohortParcelMap').onInspectPocket(groupId(2)); await h.drain();
   assert.equal(h.child('CustomCohortParcelMap').inspectedPocketId, groupId(2)); assert.equal(h.intents.length, 0);
   h.render(withRecommendation(h.props([]))); await h.tick();
   assert.equal(h.calls.length, 1); assert.equal(h.catalogCalls.length, 0); assert.equal(h.child('CustomCohortStatistics').freshness, 'current');
@@ -786,8 +770,6 @@ test('admission consumes the original65s deadline; late success cannot publish a
 test('read-only quiescence disables direct group/map inspection callbacks and preserves map focus', async t => {
   const h = harness(); t.after(() => h.unmount()); h.render(h.props()); await h.tick(); await h.complete();
   const paused = h.props(); paused.workspace.blockedReason = 'read_only'; h.render(paused);
-  const groupButton = h.nodes().find(n => n.type === 'button' && text(n).startsWith('Beta1 accounts'));
-  assert.equal(groupButton.props.disabled, true); groupButton.props.onClick();
   h.child('CustomCohortParcelMap').onInspectPocket(groupId(2));
   h.child('CustomCohortParcelMap').onInspectAccount('C'); await h.drain();
   assert.equal(h.child('CustomCohortPocketInspector'), undefined); assert.equal(h.calls.length, 1);
@@ -850,64 +832,20 @@ function mixedWillowProps(h, ids = [groupId(1), groupId(3), catalogHelpers.CUSTO
   return props;
 }
 
-test('mixed bare/PH Willow list review opens the complete 307-account family without saving; explicit union retains unrelated leaves', async t => {
-  const h = harness(); t.after(() => h.unmount()); const props = mixedWillowProps(h), before = JSON.stringify(props.workspace.catalog);
-  h.render(props); await h.tick(); await h.waitForRequest(0); await h.complete();
-  const originalGroup = h.child('CustomCohortStatistics').group;
-  const card = h.nodes().find(node => node.type === 'button' && text(node).startsWith('WILLOW RUN 5145 accounts'));
-  assert.ok(card, 'the literal WILLOW RUN 5 row remains inspectable'); card.props.onClick(); await h.drain();
-  assert.equal(h.child('CustomCohortParcelMap').inspectedPocketId, groupId(3));
-  h.click('Review subdivision and phases');
-  const dialog = h.child('CustomCohortSubdivisionDialog');
-  assert.equal(dialog.family.label, 'WILLOW RUN'); assert.equal(dialog.family.basis, 'candidate_numbered_name');
-  assert.equal(dialog.family.member_count, 307);
-  assert.deepEqual([...dialog.family.pocket_ids].sort(), [2, 3, 4, 5, 6, 7].map(groupId));
-  assert.equal(dialog.family.pocket_ids.includes(groupId(1)), false, 'NO 5 remains a separate original leaf');
-  assert.deepEqual(h.intents, []); assert.equal(h.calls.length, 1, 'opening family review is not a save or main-preview request');
-  dialog.onInspectPhase(groupId(2)); await h.drain();
-  assert.deepEqual(h.child('CustomCohortParcelMap').inspectedPocketIds, dialog.family.pocket_ids);
-  h.child('CustomCohortSubdivisionDialog').onInspectPhase(groupId(7)); await h.drain();
-  assert.deepEqual(h.child('CustomCohortParcelMap').inspectedPocketIds, dialog.family.pocket_ids, 'the map highlights the whole recorded subdivision');
-  assert.deepEqual(h.intents, []);
-  h.child('CustomCohortSubdivisionDialog').onInclude(dialog.family.pocket_ids); await h.drain();
-  const expected = [1, 2, 3, 4, 5, 6, 7].map(groupId).concat(catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP).sort();
-  assert.equal(h.intents.length, 1); assert.deepEqual([...h.intents[0]].sort(), expected);
-  assert.deepEqual(h.intents[0].slice(0, 3), props.workspace.selection.included_recorded_group_ids,
-    'the unrelated NO 5 leaf and unassigned group retain their original IDs and ordering');
-  assert.equal(h.child('CustomCohortStatistics').group, originalGroup, 'saved statistics wait for coherent selection acknowledgment');
-  h.render({ ...props, workspace: { ...props.workspace, selection: { revision: 8, included_recorded_group_ids: h.intents[0] } } });
-  await h.tick(); await h.waitForRequest(1); await h.complete();
-  const allAccounts = [...props.workspace.catalog.pockets.flatMap(pocket => pocket.account_ids), 'C'].sort();
-  assert.equal(allAccounts.length, 309); assert.deepEqual(h.calls[1].request.selection.pockets[0].account_ids, allAccounts);
-  assert.equal(JSON.stringify(props.workspace.catalog), before, 'review never rewrites original labels, counts, account arrays or leaf IDs');
-});
 
-test('closing full review restores list inspection even when no map snapshot is available', async t => {
-  const h = harness(); t.after(() => h.unmount()); const props = phasedProps(h);
-  h.render(props); await h.tick(); await h.complete();
-  const card = h.nodes().find(node => node.type === 'button' && text(node).startsWith('MONICA PARK 1'));
-  assert.ok(card); card.props.onClick(); await h.drain();
-  h.click('Review subdivision and phases');
-  assert.ok(h.child('CustomCohortSubdivisionDialog'));
-  h.child('CustomCohortSubdivisionDialog').onClose(); await h.drain();
-  assert.equal(h.child('CustomCohortSubdivisionDialog'), undefined);
-  assert.equal(h.child('CustomCohortMapSnapshot'), undefined);
-  assert.equal(h.child('CustomCohortParcelMap').inspectedPocketId, groupId(1));
-  assert.equal(h.child('CustomCohortPocketInspector'), undefined);
-  assert.deepEqual(h.intents, []);
-});
+
+
 
 test('mixed bare/PH Willow broad activation unions all six original leaves once and preserves separate NO 5 plus unrelated selection', async t => {
   const h = harness(); t.after(() => h.unmount());
   const unrelated = [groupId(1), catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP], props = mixedWillowProps(h, unrelated);
   h.render(props); await h.tick(); await h.waitForRequest(0); await h.complete();
   h.child('CustomCohortParcelMap').onActivatePocket(groupId(3), 'subdivision'); await h.drain();
-  const snapshot = h.child('CustomCohortMapSnapshot');
-  assert.equal(snapshot.family.member_count, 307); assert.equal(snapshot.family.pocket_ids.length, 6);
-  assert.equal(h.intents.length, 1); assert.deepEqual(h.intents[0], [...unrelated, ...snapshot.family.pocket_ids]);
+  const familyIds = h.child('CustomCohortParcelMap').inspectedPocketIds;
+  assert.equal(familyIds.length, 6); assert.equal(h.child('CustomCohortMapSnapshot'), undefined);
+  assert.equal(h.intents.length, 1); assert.deepEqual(h.intents[0], [...unrelated, ...familyIds]);
   assert.deepEqual([...h.intents[0]].sort(), [1, 2, 3, 4, 5, 6, 7].map(groupId).concat(catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP).sort());
-  assert.deepEqual(snapshot.included, unrelated, 'no optimistic saved membership is invented');
-  assert.deepEqual(h.child('CustomCohortParcelMap').inspectedPocketIds, snapshot.family.pocket_ids);
+  assert.deepEqual(h.propsNow.workspace.selection.included_recorded_group_ids, unrelated, 'no optimistic saved membership is invented');
   h.render({ ...props, workspace: { ...props.workspace, selection: { revision: 8, included_recorded_group_ids: h.intents[0] } } });
   await h.tick(); await h.waitForRequest(1); await h.complete();
   h.child('CustomCohortParcelMap').onActivatePocket(groupId(7), 'subdivision'); await h.drain();
@@ -920,10 +858,8 @@ test('broad click includes entire subdivision in one saved intent, preserves unr
   const prior = h.child('CustomCohortStatistics').group;
   h.child('CustomCohortParcelMap').onActivatePocket(groupId(1), 'subdivision'); await h.drain();
   assert.deepEqual(h.intents, [[groupId(1), catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP, groupId(2)]]);
-  const snapshot = h.child('CustomCohortMapSnapshot');
-  assert.equal(snapshot.family.label, 'MONICA PARK'); assert.equal(snapshot.phaseId, undefined);
-  assert.deepEqual(snapshot.family.pocket_ids, [groupId(1), groupId(2)]);
-  assert.deepEqual(snapshot.included, props.workspace.selection.included_recorded_group_ids, 'not optimistic saved choices');
+  assert.equal(h.child('CustomCohortMapSnapshot'), undefined);
+  assert.deepEqual(h.propsNow.workspace.selection.included_recorded_group_ids, props.workspace.selection.included_recorded_group_ids, 'not optimistic saved choices');
   assert.deepEqual(h.child('CustomCohortParcelMap').inspectedPocketIds, [groupId(1), groupId(2)]);
   assert.equal(h.child('CustomCohortStatistics').group, prior); assert.equal(h.calls.length, 1);
   h.render({ ...props, workspace: { ...props.workspace, saving: true } });
@@ -933,53 +869,31 @@ test('broad click includes entire subdivision in one saved intent, preserves unr
   h.child('CustomCohortParcelMap').onActivatePocket(groupId(2), 'subdivision'); await h.drain();
   assert.equal(h.intents.length, 1, 'already included does not write again');
 });
-test('subdivision snapshot follows the map with statistics below it, ahead of source details', async t => {
-  const h = harness(); t.after(() => h.unmount()); const props = phasedProps(h, [groupId(1), groupId(2)]);
-  h.render(props); await h.tick(); await h.complete();
-  const mapProps = h.child('CustomCohortParcelMap');
-  assert.equal(Object.hasOwn(mapProps, 'overlay'), false); assert.equal(h.child('CustomCohortMapSnapshot'), undefined);
-  mapProps.onActivatePocket(groupId(2), 'phase'); await h.drain();
-  const snapshotProps = h.child('CustomCohortMapSnapshot'), nodes = h.nodes();
-  assert.ok(snapshotProps); assert.equal(snapshotProps.phaseId, undefined);
-  const mapNode = nodes.find(node => node.props === h.child('CustomCohortParcelMap'));
-  const snapshotNode = nodes.find(node => node.props === snapshotProps);
-  const groupsNode = nodes.find(node => node.props['aria-label'] === 'Recorded groups');
-  const row = nodes.find(node => children(node).includes(mapNode));
-  assert.ok(row);
-  assert.equal(mapProps.belowMapStatistics.props['aria-label'], 'Live neighborhood characteristics and market observations');
-  assert.equal(mapProps.scoreBandSelector.type.name, 'Stub');
-  assert.equal(walk(mapNode).includes(snapshotNode), false);
-  assert.equal(Object.hasOwn(mapNode.props, 'overlay'), false);
-  const siblings = children(nodes.find(node => children(node).includes(row)));
-  assert.ok(siblings.indexOf(snapshotNode) > siblings.indexOf(row), 'snapshot follows the map with nested statistics');
-  const sourceDetails = nodes.find(node => node.type === 'details' && children(node).includes(groupsNode));
-  assert.ok(sourceDetails); assert.equal(sourceDetails.props.open, undefined, 'individual CAD groups start collapsed');
-  assert.ok(siblings.indexOf(sourceDetails) > siblings.indexOf(snapshotNode), 'combined snapshot precedes source-record details');
-  assert.equal(snapshotProps.catalog, props.workspace.catalog); assert.equal(snapshotProps.input.accountId, props.accountId);
-  assert.equal(snapshotProps.input.assignmentFileId, props.assignmentFileId);
-  assert.equal(snapshotProps.previewTransport, h.previewTransport);
-  assert.deepEqual(snapshotProps.included, props.workspace.selection.included_recorded_group_ids);
-  assert.equal(h.calls.length, 1); assert.deepEqual(h.intents, [], 'opening an already-included phase is inspection-only');
-  snapshotProps.onClose(); await h.drain();
-  assert.equal(h.child('CustomCohortMapSnapshot'), undefined); assert.equal(h.calls.length, 1); assert.deepEqual(h.intents, []);
+test('subdivision clicks retain combined map-strip statistics with no additional area breakdown', async t => {
+  const h = harness(); t.after(() => h.unmount()); h.render(phasedProps(h, [groupId(1), groupId(2)])); await h.tick(); await h.complete();
+  const map = h.child('CustomCohortParcelMap'), group = map.group;
+  map.onActivatePocket(groupId(2)); await h.drain();
+  assert.equal(h.child('CustomCohortMapSnapshot'), undefined); assert.equal(h.child('CustomCohortSubdivisionDialog'), undefined);
+  assert.doesNotMatch(h.text(), /Recorded CAD source details|Review subdivision and phases/);
+  assert.equal(map.belowMapStatistics.props['aria-label'], 'Live neighborhood characteristics and market observations');
+  assert.equal(h.child('CustomCohortCompactStatistics').group, group);
+  assert.equal(h.child('CustomCohortStatistics').group, group); assert.equal(h.calls.length, 1); assert.deepEqual(h.intents, []);
 });
 
 test('near click and right-click operate on the complete subdivision, with no silent reselection', async t => {
   const h = harness(); t.after(() => h.unmount()); h.render(phasedProps(h, [groupId(1), groupId(2)])); await h.tick(); await h.complete();
   h.child('CustomCohortParcelMap').onActivatePocket(groupId(2), 'phase'); await h.drain();
-  assert.equal(h.intents.length, 0); assert.equal(h.child('CustomCohortMapSnapshot').phaseId, undefined);
+  assert.equal(h.intents.length, 0); assert.equal(h.child('CustomCohortMapSnapshot'), undefined);
   assert.deepEqual(h.child('CustomCohortParcelMap').inspectedPocketIds, [groupId(1), groupId(2)]);
   const highlights = h.child('CustomCohortParcelMap').inspectedPocketIds;
   h.render(h.propsNow); assert.equal(h.child('CustomCohortParcelMap').inspectedPocketIds, highlights,
     'unrelated owner renders do not rebuild the full map just to highlight the subdivision');
   h.child('CustomCohortParcelMap').onExcludePocket(groupId(2), 'phase'); assert.deepEqual(h.intents, [[]]);
   h.render(phasedProps(h, [], 8)); await h.tick(); await h.complete();
-  h.child('CustomCohortMapSnapshot').onClose(); await h.drain();
   assert.equal(h.intents.length, 1); assert.equal(h.child('CustomCohortMapSnapshot'), undefined);
   h.render(phasedProps(h, [], 8)); await h.tick(); assert.equal(h.intents.length, 1);
   h.child('CustomCohortParcelMap').onActivatePocket(groupId(2), 'phase'); await h.drain();
   assert.deepEqual(h.intents[1], [groupId(1), groupId(2)], 'near click deliberately includes the entire excluded subdivision');
-  h.child('CustomCohortMapSnapshot').onClose(); await h.drain();
   assert.equal(h.child('CustomCohortMapSnapshot'), undefined);
   h.render(phasedProps(h, [], 8)); await h.tick(); assert.equal(h.intents.length, 2);
   assert.equal(h.calls.length, 2, 'same selection on render does not refetch');
@@ -996,14 +910,7 @@ test('unknown map pocket does not change selection or open a family', async t =>
   h.child('CustomCohortParcelMap').onActivatePocket('not-in-catalog', 'subdivision'); await h.drain();
   assert.equal(h.intents.length, 0); assert.equal(h.child('CustomCohortSubdivisionDialog'), undefined);
 });
-test('keyboard/list family review opens the same modal without silently selecting phases', async t => {
-  const h = harness(); t.after(() => h.unmount()); h.render(phasedProps(h)); await h.tick(); await h.complete();
-  const card = h.nodes().find(n => n.type === 'button' && text(n).startsWith('MONICA PARK 11 accounts'));
-  assert.ok(card); card.props.onClick(); await h.drain(); h.click('Review subdivision and phases');
-  assert.equal(h.child('CustomCohortSubdivisionDialog').family.pocket_ids.length, 2); assert.equal(h.intents.length, 0);
-  h.child('CustomCohortSubdivisionDialog').onInclude([groupId(1), groupId(2)]);
-  assert.deepEqual(h.intents, [[groupId(1), catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP, groupId(2)]]);
-});
+
 test('near click on a county-name variant selects and excludes its complete subdivision once', async t => {
   const h = harness(); t.after(() => h.unmount());
   const props = phasedProps(h, [groupId(1), groupId(2), groupId(3)]);
@@ -1013,7 +920,7 @@ test('near click on a county-name variant selects and excludes its complete subd
     coverage: { discovery_member_count: 4, assigned_account_count: 3, unassigned_account_count: 1 } };
   h.render(props); await h.tick(); await h.complete();
   h.child('CustomCohortParcelMap').onActivatePocket(groupId(3), 'phase'); await h.drain();
-  assert.equal(h.intents.length, 0); assert.equal(h.child('CustomCohortMapSnapshot').phaseId, undefined);
+  assert.equal(h.intents.length, 0); assert.equal(h.child('CustomCohortMapSnapshot'), undefined);
   assert.deepEqual([...h.child('CustomCohortParcelMap').inspectedPocketIds].sort(), [groupId(1), groupId(2), groupId(3)]);
   h.child('CustomCohortParcelMap').onExcludePocket(groupId(3), 'phase');
   assert.deepEqual(h.intents, [[]]);

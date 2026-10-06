@@ -52,6 +52,7 @@ import { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog, CUSTO
   CUSTOM_COHORT_DENSE_CATALOG_VERSION, customCohortCatalogGroupLimit } from './customCohortPocketCatalog.js';
 import { buildCustomCohortPocketRecommendationPresentationBatched,
   CUSTOM_COHORT_DENSE_RECOMMENDATION_PRESENTATION_BYTES } from './customCohortPocketRecommendationPresentation.js';
+import { buildCustomCohortMapScoresBatched } from './customCohortPocketRecommendation.js';
 import { deriveCustomCohortRecordedProximity } from './customCohortRecordedProximity.js';
 import { prepareCohortDecisionCommandV1 } from './cohortDecisionCommand.js';
 import { createCustomCohortReviewRepository } from './customCohortReviewRepository.js';
@@ -888,7 +889,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const map = manifestOpening ? { status: 'omitted', reason: 'viewport_required' }
           : projection('map_select', () => selectCustomCohortPreparedParcelMap(cached.prepared.parcel_map, preview.selected.account_ids));
         response.initial_preview = { status: 'preview', target: response.target, ...expected,
-          subject_freshness: 'matched', summary: projection('summary_projection', () => presentCustomCohortPreview({ preview, expected })), parcel_map: map,
+          subject_freshness: 'matched', summary: projection('summary_projection', () => presentCustomCohortPreview({ preview, expected, includeNarrative: true })), parcel_map: map,
           ...(manifestOpening ? { map_manifest: projection('map_manifest', () => buildCustomCohortMapManifest(catalog, cached.prepared.parcel_map)) } : {}),
           apply: { status: 'blocked', reasons: ['observation_preview_only'] } };
       }
@@ -929,7 +930,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     }));
   }
   async function runPreview(value, options, { includeMap = true, exposure = 'none', additionalExposures = [], outputLimit = null,
-    recommendedAreaOpening = false, preparedFast = false, preparedCatalog = false, mapViewport = null, project } = {}) {
+    recommendedAreaOpening = false, preparedFast = false, preparedCatalog = false, manifestOpening = false, mapViewport = null, project } = {}) {
     const input = previewInputOf(value), budget = operationBudget(options);
     if (preparedFast) {
       const cached = await transaction(pool, 'READ COMMITTED', budget, async client => {
@@ -967,7 +968,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
               preview.selected.account_ids, mapViewport)
             : selectCustomCohortPreparedParcelMap(cached.prepared.parcel_map, preview.selected.account_ids)
           : { status: 'omitted', reason: 'geometry_not_requested' };
-        const content = { summary: presentCustomCohortPreview({ preview, expected }), parcel_map: selectedMap };
+        const content = { summary: presentCustomCohortPreview({ preview, expected, includeNarrative: true }), parcel_map: selectedMap };
         return transaction(pool, 'READ COMMITTED', budget, async client => {
           assertTarget(await resolveTarget(client, input, true, 'read'), cached.target);
           if ((await createCustomCohortSubjectRepository(client, cached.scopeJson)
@@ -1046,7 +1047,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         selected_account_ids: [...new Set(checked.pockets.flatMap(p => p.account_ids))] }, { check: budget.check });
       if (map.status === 'available') preparedOpening = { preview: selected, map };
       const privateSales = privateFor(checked, selected);
-      const result = envelope({ summary: presentCustomCohortPreview({ preview: selected, expected }), parcel_map: map,
+      const result = envelope({ summary: presentCustomCohortPreview({ preview: selected, expected, includeNarrative: true }), parcel_map: map,
         ...(privateSales ? { private_sales: privateSales } : {}) });
       if (Buffer.byteLength(JSON.stringify(result)) > CUSTOM_COHORT_OPENING_PREVIEW_BYTES) fail('catalog_transport_limit');
       return result;
@@ -1095,6 +1096,14 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if (Object.hasOwn(content, 'initial_preview')) {
         const { initial_preview: _opening, ...catalogOnly } = response;
         if (Buffer.byteLength(JSON.stringify(catalogOnly)) > CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes) fail('catalog_transport_limit');
+      }
+      if (manifestOpening && response.initial_preview?.parcel_map?.status === 'available') {
+        // A first authorized replay must honor the same geometry-free opening
+        // as its prepared-cache reopens. Keep the original map internally for
+        // write-through and viewport tiles; only its wire projection changes.
+        response = { ...response, initial_preview: { ...response.initial_preview,
+          map_manifest: buildCustomCohortMapManifest(response.catalog, response.initial_preview.parcel_map),
+          parcel_map: { status: 'omitted', reason: 'viewport_required' } } };
       }
       if (outputLimit !== null && Object.hasOwn(response, 'prepared_secondary_map')
         && Buffer.byteLength(JSON.stringify(response)) > outputLimit) {
@@ -1147,7 +1156,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       try {
         await transaction(pool, 'READ COMMITTED', budget, async client => {
           const repository = createCustomCohortPreparedCatalogRepository(client, loaded.scopeJson, input.contextRef);
-          if (!await repository.exists()) await repository.put(publicCatalog);
+          if (!await repository.exists({ currentOnly: true })) await repository.put(publicCatalog);
         });
       } catch (error) {
         const reason = /^custom_cohort_prepared_catalog_[a-z_]+$/.test(error?.message)
@@ -1715,6 +1724,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     return runPreview(input, options, { includeMap: false, exposure: 'report_observation_catalog',
       additionalExposures: include || opening ? ['report_observation_summary'] : [],
       preparedCatalog: include && catalogVersion === 3,
+      manifestOpening,
       outputLimit: opening ? CUSTOM_COHORT_OPENING_RESPONSE_BYTES : include ? CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes : null,
       recommendedAreaOpening: modeRequested && value.initialPreviewMode === 'recommended_area',
       project: async (preview, expected, _parcelMap, retained_inputs, deriveProximity, presentOpening, checkBudget, deriveSecondary, setCatalogPhaseTiming) => {
@@ -1729,11 +1739,17 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         if (!include && opening) response.initial_preview = await timed('opening', () => presentOpening(customCohortOpeningSelection(catalog,
           groups ?? customCohortOpeningGroupIds(catalog), expected.selection_revision)));
         if (!include) return response;
-        // Do not spend native work on an unresolved catalog or pretend current
-        // parcel locations establish a retrospective housing population.
+        // Ranking/report safeguards stay separate from display-only colors.
+        // Current retained CAD can inform manual map review without pretending
+        // it establishes a retrospective housing population. Reuse the same
+        // preview/kernel and prepared catalog, never a fresh source capture.
         const current = customCohortCurrentStockSupport({ effective_date: retained_inputs.subject.effective_date,
           retained_capture_at: retained_inputs.acquisition.capture_result.captured_at });
         if (!catalog.catalog_complete || current.status === 'historical_stock_evidence_required') {
+          if (catalog.catalog_complete) response.prepared_secondary_map = await timed('retained_map_scores', () =>
+            buildCustomCohortMapScoresBatched({ context_ref: expected.context_ref, retained_inputs,
+              catalog_version: catalogVersion, observation_preview: catalogVersion >= 2 ? preview : undefined,
+              selection: { revision: expected.selection_revision, included_recorded_group_ids: [] } }, { checkBudget }));
           if (opening) response.initial_preview = await timed('opening', () => presentOpening(customCohortOpeningSelection(catalog,
             groups ?? customCohortOpeningGroupIds(catalog), expected.selection_revision)));
           return response;
@@ -1770,7 +1786,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     exactKeys(presentation, ['includeMap']);
     if (typeof presentation.includeMap !== 'boolean') fail('invalid_input');
     return runPreview(value, options, { includeMap: presentation.includeMap, exposure: 'report_observation_summary', preparedFast: true,
-      project: (preview, expected, parcelMap) => ({ summary: presentCustomCohortPreview({ preview, expected }), parcel_map: parcelMap }) });
+      project: (preview, expected, parcelMap) => ({ summary: presentCustomCohortPreview({ preview, expected, includeNarrative: true }), parcel_map: parcelMap }) });
   }, async viewport(value, viewport, options = {}) {
     const checked = prepareCustomCohortViewport(viewport);
     const preview = await runPreview(value, options, { includeMap: true, exposure: 'report_observation_summary', preparedFast: true,

@@ -11,8 +11,6 @@ import type { CheckedRecordedProximity } from '../customCohortPocketRecommendati
 import { buildCustomCohortSubdivisionFamilies, customCohortSubdivisionFamilyForPocket } from '../customCohortSubdivisionFamilies';
 import CustomCohortParcelMap from './CustomCohortParcelMap';
 import CustomCohortStatistics, { CustomCohortCompactStatistics } from './CustomCohortStatistics';
-import CustomCohortSubdivisionDialog from './CustomCohortSubdivisionDialog';
-import CustomCohortMapSnapshot from './CustomCohortMapSnapshot';
 import CustomCohortScoreBandSelector from './CustomCohortScoreBandSelector';
 
 export interface CustomCohortControlledWorkspace {
@@ -89,18 +87,13 @@ function WorkspaceSession(props: Props) {
   const [retry, setRetry] = useState(0);
   const [inspected, setInspected] = useState<string | null>(null);
   const [inspectedFamilyId, setInspectedFamilyId] = useState<string | null>(null);
-  const [inspectedPhaseId, setInspectedPhaseId] = useState<string | null>(null);
-  const [fullReviewFamilyId, setFullReviewFamilyId] = useState<string | null>(null);
   const [minimumScoreBand, setMinimumScoreBand] = useState(90);
-  const [search, setSearch] = useState('');
-  const [groupPage, setGroupPage] = useState(0);
   const [preview, setPreview] = useState<CustomCohortPreviewState>(idle);
   const controller = useRef<ReturnType<typeof createCustomCohortPreviewController> | null>(null);
   const controlled = props.workspace !== undefined;
   const catalog = props.workspace?.catalog ?? localCatalog;
   const subdivisionFamilies = useMemo(() => catalog ? buildCustomCohortSubdivisionFamilies(catalog) : undefined, [catalog]);
   const inspectedFamily = subdivisionFamilies?.families.find(family => family.id === inspectedFamilyId) ?? null;
-  const fullReviewFamily = subdivisionFamilies?.families.find(family => family.id === fullReviewFamilyId) ?? null;
   const highlightedIds = inspectedFamily?.pocket_ids;
   const included = props.workspace?.selection.included_recorded_group_ids ?? localIncluded;
   const revision = props.workspace?.selection.revision ?? localRevision;
@@ -166,7 +159,6 @@ function WorkspaceSession(props: Props) {
     if (props.workspace) props.workspace.onSelectionIntent(Object.freeze([...ids]));
     else { setIncluded(ids); setRevision(n => n + 1); }
   };
-  const toggle = (id: string) => choose(included.includes(id) ? included.filter(value => value !== id) : [...included, id]);
   const includeGroups = (ids: readonly string[]) => {
     const added = ids.filter(id => !included.includes(id));
     if (added.length) choose([...included, ...added]);
@@ -180,7 +172,6 @@ function WorkspaceSession(props: Props) {
     const family = subdivisionFamilies && customCohortSubdivisionFamilyForPocket(subdivisionFamilies, id);
     setInspected(id);
     setInspectedFamilyId(family?.id ?? null);
-    setInspectedPhaseId(null);
     // Map selection always applies to the complete recorded-name family,
     // regardless of zoom. Individual CAD leaves remain intact in the workfile.
     includeGroups(family?.pocket_ids ?? [id]);
@@ -191,24 +182,9 @@ function WorkspaceSession(props: Props) {
     excludeGroups(family?.pocket_ids ?? [id]);
   };
   const recommendation = desired ? catalog?.recommendation ?? null : null;
-  const reviewById = useMemo(() => new Map(recommendation?.pockets.map(pocket => [pocket.id, pocket])), [recommendation]);
-  const groups = useMemo(() => catalog ? [...catalog.pockets.map(p => ({ id: p.id, label: p.label, county: p.county, count: p.member_count })),
-    ...(catalog.unassigned.member_count ? [{ id: CUSTOM_COHORT_UNASSIGNED_GROUP,
-      label: catalog.status === 'incomplete' ? 'Grouping unavailable — capture limit' : 'CAD subdivision not confirmed',
-      county: catalog.status === 'incomplete' ? 'Capacity reached' : 'Needs source review', count: catalog.unassigned.member_count }] : [])]
-    .sort((a, b) => (reviewById.get(a.id)?.review_rank ?? 0) - (reviewById.get(b.id)?.review_rank ?? 0)) : [], [catalog, reviewById]);
-  const selectedGroup = groups.find(p => p.id === inspected);
-  const selectedFamily = subdivisionFamilies && inspected ? customCohortSubdivisionFamilyForPocket(subdivisionFamilies, inspected) : null;
-  const countyMatches = useMemo(() => catalog && inspected ? customCohortCountyNameMatches(catalog, inspected) : [], [catalog, inspected]);
+  const groups = useMemo(() => catalog ? customCohortCatalogGroupIds(catalog) : [], [catalog]);
   const subjectCountyMatches = useMemo(() => catalog?.subject_membership.assigned_pocket_id
     ? customCohortCountyNameMatches(catalog, catalog.subject_membership.assigned_pocket_id) : [], [catalog]);
-  const filteredGroups = useMemo(() => {
-    const query = search.toLowerCase();
-    return groups.filter(p => `${p.label} ${p.county}`.toLowerCase().includes(query));
-  }, [groups, search]);
-  const pageSize = 50, pageCount = Math.max(1, Math.ceil(filteredGroups.length / pageSize));
-  const currentPage = Math.min(groupPage, pageCount - 1);
-  const visibleGroups = filteredGroups.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
   const pending = preview.status === 'debouncing' || preview.status === 'loading';
   const requestMatches = useMemo(() => {
     const requested = preview.requested?.selection, selected = desired?.selection;
@@ -247,7 +223,7 @@ function WorkspaceSession(props: Props) {
   const allGroupsIncluded = useMemo(() => {
     if (!groups.length || included.length !== groups.length) return false;
     const selected = new Set(included);
-    return groups.every(pocket => selected.has(pocket.id));
+    return groups.every(id => selected.has(id));
   }, [groups, included]);
   const scoreBandSelector = <CustomCohortScoreBandSelector recommendation={recommendation}
     preparedMap={catalog?.prepared_secondary_map} included={included}
@@ -379,84 +355,8 @@ function WorkspaceSession(props: Props) {
             {liveStatistics}
           </div>}
       </div>
-      {group && inspectedFamily && desired && <CustomCohortMapSnapshot key={inspectedFamily.id}
-        family={inspectedFamily} catalog={catalog} input={input} included={included}
-        paused={inspectionsPaused} previewTransport={transport}
-        onClose={() => { setInspectedFamilyId(null); setInspectedPhaseId(null); }} />}
-      <details className="rounded-xl border border-violet-200 p-3">
-        <summary className="cursor-pointer font-semibold">Recorded CAD source details</summary>
-      <section className="mt-3 space-y-3" aria-label="Recorded groups">
-        <h4 className="font-semibold">Recorded subdivisions and groups</h4>
-        <p className="text-xs text-slate-600">The map and area snapshot combine related recorded names. Original CAD groups remain separately reviewable here for traceability.</p>
-          <label className="block text-sm">Find a recorded group<input value={search} maxLength={200}
-            onChange={event => { setSearch(event.target.value); setGroupPage(0); }} className="input input-bordered mt-1 w-full" /></label>
-          <div className="grid max-h-96 gap-2 overflow-auto sm:grid-cols-2 xl:grid-cols-3">
-            {visibleGroups.map(p =>
-              <div key={p.id} className="flex items-start gap-2 rounded-lg border border-violet-100 p-2">
-                <input type="checkbox" aria-label={`Include ${p.label}`} checked={included.includes(p.id)} disabled={selectionDisabled} onChange={() => toggle(p.id)} />
-                <button type="button" className="custom-cohort-pocket-card min-w-0 flex-1 text-left text-sm" disabled={inspectionsPaused}
-                  style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', justifyItems: 'stretch',
-                    alignItems: 'start', gap: '0.375rem', whiteSpace: 'normal', overflowWrap: 'anywhere' }}
-                  onClick={() => { if (!inspectionsPaused) { setInspectedFamilyId(null); setInspectedPhaseId(null); setInspected(p.id); } }}
-                  aria-pressed={inspected === p.id}><span className="block font-medium">{p.label}</span>
-                  <span className="text-xs opacity-75">{p.count.toLocaleString('en-US')} accounts · {p.county}</span>
-                  {reviewById.has(p.id) && <span className="mt-1 block text-xs">
-                    Review rank {reviewById.get(p.id)!.review_rank} · {boundsLabel(reviewById.get(p.id)!.similarity)}
-                    <span className="block opacity-75">Observed factor coverage {reviewById.get(p.id)!.similarity.known_weight_percent?.toFixed(1) ?? 'unavailable'}{reviewById.get(p.id)!.similarity.known_weight_percent === null ? '' : '%'}
-                      {reviewById.get(p.id)!.suggested_for_review ? ' · Suggested' : ''}
-                      {reviewById.get(p.id)!.subject_group_review ? ' · Subject group review' : ''}</span>
-                    {recommendation?.recorded_proximity && <span className="block opacity-75">
-                      Recorded point proximity: {reviewById.get(p.id)!.factor_coverage.proximity.observed_count.toLocaleString('en-US')} observed /{' '}
-                      {p.count.toLocaleString('en-US')} accounts; {reviewById.get(p.id)!.factor_coverage.proximity.unknown_count.toLocaleString('en-US')} unknown.
-                    </span>}
-                    {recommendation?.recorded_housing && <span className="block opacity-75">
-                      Recorded housing comparison: {reviewById.get(p.id)!.factor_coverage.housing_type.observed_count.toLocaleString('en-US')} observed /{' '}
-                      {p.count.toLocaleString('en-US')} accounts; {reviewById.get(p.id)!.factor_coverage.housing_type.unknown_count.toLocaleString('en-US')} unknown.
-                    </span>}
-                  </span>}</button>
-              </div>)}
-          </div>
-          {filteredGroups.length > pageSize && <nav aria-label="Recorded group pages" className="flex flex-wrap items-center justify-between gap-2 text-xs">
-            <button type="button" className={button} disabled={currentPage === 0} onClick={() => setGroupPage(currentPage - 1)}>Previous groups</button>
-            <span>Page {currentPage + 1} of {pageCount} · {filteredGroups.length.toLocaleString('en-US')} groups</span>
-            <button type="button" className={button} disabled={currentPage === pageCount - 1} onClick={() => setGroupPage(currentPage + 1)}>Next groups</button>
-          </nav>}
-          {selectedGroup && <div className="space-y-2 border-t border-violet-200 pt-3">
-            <h4 className="font-semibold">{selectedGroup.label}</h4><p className="text-sm">{selectedGroup.count.toLocaleString('en-US')} retained accounts.
-              CAD recorded-name grouping does not establish builder, HOA dues, amenities or legal phase boundaries.</p>
-            {selectedGroup.id === CUSTOM_COHORT_UNASSIGNED_GROUP && <p className="text-xs text-amber-900">
-              {catalog.status === 'incomplete' ? 'Grouping stopped at a capacity limit; this does not mean the CAD names are missing. '
-                : 'The retained CAD rows could not confirm one subdivision for these accounts. '}
-              {catalog.unassigned.reason_counts.map(row => `${unassignedReasonLabel(row.reason)}: ${row.member_count.toLocaleString('en-US')}`).join(' · ')}.
-              {' '}These accounts stay visible and selectable; proximity alone cannot verify a legal subdivision.</p>}
-            <button type="button" className={button} disabled={selectionDisabled} onClick={() => toggle(selectedGroup.id)}>
-              {included.includes(selectedGroup.id) ? 'Exclude this group' : 'Include this group'}</button>
-            {selectedFamily && selectedFamily.pocket_ids.length > 1 && <button type="button" className={button} disabled={inspectionsPaused}
-              onClick={() => { if (!inspectionsPaused) { setInspectedFamilyId(selectedFamily.id); setFullReviewFamilyId(selectedFamily.id); setInspectedPhaseId(null); } }}>
-              Review subdivision and phases</button>}
-            {countyMatches.length > 1 && <div aria-label="Matching recorded county names" className="space-y-2 rounded-lg border border-amber-300 p-3 text-sm">
-              <p>The same subdivision label is recorded under county-name variants: {[...new Set(countyMatches.map(p => p.county))].join(' / ')}.</p>
-              <p>{countyMatches.length.toLocaleString('en-US')} groups · {countyMatches.reduce((sum, p) => sum + p.member_count, 0).toLocaleString('en-US')} accounts.
-                {' '}{selectedFamily && countyMatches.every(pocket => selectedFamily.pocket_ids.includes(pocket.id))
-                  ? 'They share one map label and map clicks select them together. Each CAD group remains separately editable here.'
-                  : 'Review these together if appropriate. Saved groups remain separate.'}
-                {' '}Matching names do not prove a common legal subdivision.</p>
-              <button type="button" className={button} disabled={selectionDisabled || countyMatches.every(p => included.includes(p.id))}
-                onClick={() => choose([...included, ...countyMatches.filter(p => !included.includes(p.id)).map(p => p.id)])}>Include matching groups</button>
-              <button type="button" className={button} disabled={selectionDisabled || countyMatches.every(p => !included.includes(p.id))}
-                onClick={() => choose(included.filter(id => !countyMatches.some(p => p.id === id)))}>Exclude matching groups</button>
-            </div>}
-          </div>}
-      </section>
-      </details>
-      {fullReviewFamily && desired && <CustomCohortSubdivisionDialog key={fullReviewFamily.id}
-        family={fullReviewFamily} families={subdivisionFamilies} mapGroup={group} catalog={catalog} input={input} included={included} phaseId={inspectedPhaseId}
-        selectionDisabled={selectionDisabled} inspectionsPaused={inspectionsPaused} previewTransport={transport}
-        memberTransport={props.workspace?.memberTransport} onInclude={includeGroups} onExclude={excludeGroups}
-        onInspectPhase={id => { if (!inspectionsPaused && (id === null || fullReviewFamily.pocket_ids.includes(id))) {
-          setInspectedPhaseId(id); setInspected(id ?? fullReviewFamily.pocket_ids[0]);
-        } }}
-        onClose={() => { setFullReviewFamilyId(null); setInspectedFamilyId(null); setInspectedPhaseId(null); }} />}
+      {/* Detailed source evidence remains in the workfile. Map selection feeds
+          only the combined live statistics and the independent market studies. */}
     </>}
   </section>;
 }

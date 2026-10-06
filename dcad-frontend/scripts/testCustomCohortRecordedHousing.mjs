@@ -269,21 +269,13 @@ test('seven human labels retain mobile/manufactured distinction without undersco
   assert.match(render(await fixture({ code: null, overrides: { structure_type: 'MANUFACTURED HOME' } })), /Subject category: Manufactured home/);
 });
 
-test('pocket buttons explicitly stack label, counts and scores despite the global inline-flex button base', async () => {
+test('source-pocket cards no longer duplicate the selected-area map and retained evidence is unchanged', async () => {
   const f = await fixture(), checked = structuredClone(f.checked);
   const long = 'Recorded subdivision with a long, precise name and phase identifier '.repeat(3);
   checked.pockets[0].label = long;
   const html = render({ ...f, checked }), cards = [...html.matchAll(/<button[^>]*class="[^"]*custom-cohort-pocket-card[^>]*>[\s\S]*?<\/button>/g)].map(match => match[0]);
-  assert.equal(cards.length, f.checked.pockets.length);
-  for (const card of cards) {
-    assert.match(card, /display:grid/); assert.match(card, /grid-template-columns:minmax\(0, 1fr\)/);
-    assert.match(card, /justify-items:stretch/); assert.match(card, /white-space:normal/); assert.match(card, /overflow-wrap:anywhere/);
-    assert.match(card, /aria-pressed="false"/); assert.doesNotMatch(card, /type="checkbox"/);
-    assert.match(card, /Review rank/); assert.match(card, /Observed factor coverage/); assert.match(card, /Recorded housing comparison/);
-  }
-  assert.ok(cards.some(card => card.includes(long))); assert.equal(requests, 0); assert.equal(intents, 0);
+  assert.equal(cards.length, 0); assert.doesNotMatch(html, /Recorded CAD source details|Find a recorded group/);
+  assert.equal(checked.pockets[0].label, long); assert.equal(requests, 0); assert.equal(intents, 0);
   const css = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
   assert.match(css, /:where\(\.app-action-button, button:not\(\[aria-label\]\)[\s\S]*?display: inline-flex/);
-  // This is real React markup + exact scoped CSS precedence, not a claim of
-  // browser layout at a particular viewport. Parent performs that visual QA.
 });

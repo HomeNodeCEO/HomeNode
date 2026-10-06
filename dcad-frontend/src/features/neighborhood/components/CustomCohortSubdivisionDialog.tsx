@@ -4,7 +4,8 @@ import { buildCustomCohortSubdivisionFamilies, buildCustomCohortSubdivisionPhase
 import { buildCustomCohortSubdivisionInspection } from '../customCohortSubdivisionInspection';
 import { createCustomCohortStockCompositionComparison } from '../customCohortStockCompositionComparison.ts';
 import type { CheckedPocketCatalog } from '../customCohortPocketCatalog';
-import type { CustomCohortPreviewInput, CustomCohortPreviewGroup } from '../customCohortPreviewController';
+import type { CustomCohortPreviewInput } from '../customCohortPreviewController';
+import type { CustomCohortMapDisplay } from '../customCohortMapPresentation';
 import { buildCustomCohortSubdivisionFamilyLocationReview } from '../customCohortSubdivisionLocationReview';
 import type { requestCustomCohortObservationPreview } from '../customCohortPreviewApi';
 import type { CustomCohortMemberTransport } from '../customCohortPreviewTransport';
@@ -13,7 +14,7 @@ import CustomCohortStockCompositionComparison from './CustomCohortStockCompositi
 
 interface Props {
   family: CustomCohortSubdivisionFamily; catalog: CheckedPocketCatalog; input: CustomCohortPreviewInput;
-  families?: CustomCohortSubdivisionFamilies; mapGroup?: CustomCohortPreviewGroup | null;
+  families?: CustomCohortSubdivisionFamilies; mapGroup?: CustomCohortMapDisplay | null;
   included: readonly string[]; phaseId: string | null; selectionDisabled: boolean; inspectionsPaused: boolean;
   previewTransport: typeof requestCustomCohortObservationPreview; memberTransport?: CustomCohortMemberTransport;
   onInclude: (ids: readonly string[]) => void; onExclude: (ids: readonly string[]) => void;

@@ -1,5 +1,5 @@
 import type { CheckedPocketCatalog } from './customCohortPocketCatalog';
-import type { CustomCohortPreviewGroup } from './customCohortPreviewController';
+import type { CustomCohortMapDisplay } from './customCohortMapPresentation';
 import { buildCustomCohortSubdivisionFamilies } from './customCohortSubdivisionFamilies.ts';
 import type { CustomCohortSubdivisionFamilies, CustomCohortSubdivisionFamily } from './customCohortSubdivisionFamilies';
 
@@ -50,7 +50,7 @@ function sameFamily(a: CustomCohortSubdivisionFamily, b: CustomCohortSubdivision
  */
 export function buildCustomCohortSubdivisionFamilyLocationReview({ families, catalog, group, familyId }: {
   families: CustomCohortSubdivisionFamilies; catalog: CheckedPocketCatalog;
-  group: CustomCohortPreviewGroup | null; familyId: string;
+  group: CustomCohortMapDisplay | null; familyId: string;
 }): CustomCohortSubdivisionLocationReview {
   const context_ref = Object.freeze({ ...catalog.binding.context_ref });
   const children: Child[] = [];

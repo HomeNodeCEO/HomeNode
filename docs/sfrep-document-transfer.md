@@ -2,8 +2,8 @@
 
 The Custom Appraisal Document Evidence Center has an **Export to SFREP** action.
 Review documents to populate and save the HomeNode Subject and Assignment fields.
-Then choose up to ten supporting documents, preview the saved fields, and download an RPTI
-package. Appraise-It Pro can open the package as a new report or import it into an
+Then choose up to ten supporting documents, preview the saved fields and verified
+inspection photos, and download one combined RPTI package. Appraise-It Pro can open the package as a new report or import it into an
 existing compatible report. Original PDFs are included as named PDF addenda when
 the source-copy option is selected. This can include engagement letters, contracts,
 MLS sheets, CAD records, Realist reports, and other uploaded PDFs.
@@ -175,7 +175,7 @@ canonical report value or bypass unresolved source conflicts.
 
 `POST /api/accounts/:id/sfrep/preview` and `/sfrep/export` use authenticated Custom
 Appraisal workflow and exact assignment read access. Their input is
-`assignment_file_id`, `document_ids`, `include_documents`, and `form_id`; export
+`assignment_file_id`, `document_ids`, `include_documents`, optional `include_photos`, and `form_id`; export
 also requires the `preview_digest` returned by preview. There is no public download
 URL or credential-free source endpoint. Export does not modify the HomeNode report.
 
@@ -186,12 +186,47 @@ Original bytes are fetched only after scope checks, then rechecked for assignmen
 size and SHA-256 integrity. Originals retain their exact bytes. The package uses
 UTF-8 `Report.xml` and deterministic `Pdf/document-ID.pdf` archive paths.
 
-The transfer is bounded to ten source documents, 200 candidates per document,
+The transfer is bounded to ten source documents, 100 active photos, 200 candidates per document,
 50 MiB of package payload, a 60-second transfer budget, and two concurrent exports
 per server process. Slots remain held while response bytes drain. Stalled downloads
 are closed; duplicate simultaneous exports for one file are refused.
 All responses are private/no-store. Failures return fixed error codes and do not
 expose source text, object keys, or database diagnostics.
+
+### Inspection photos in the existing preview
+
+The same dialog includes a photo section with thumbnails, the existing HomeNode
+display labels (including manual caption edits), and explicit upload-verification
+status. The photo option defaults on in the UI; requests that omit `include_photos`
+retain the old fields/PDF-only behavior. Pending and failed uploads remain visible
+but cannot claim inclusion. Excluded/deleted photos and other assignment files,
+organizations, UAD workfiles, and Property Tax files are never included.
+
+Verified JPEG/PNG display copies are preferred, with a verified compatible original
+as fallback. Photos without a checksum-verified compatible copy are visibly excluded.
+The package contains actual image bytes at `Images/photo-UUID.jpg` or `.png`, not
+URLs, and editable native `GeneralPhotos-4x6` addenda with image, label, and caption
+fields (three photos per page). These IDs were checked against the installed SFREP
+dictionary. This adds photo pages without replacing existing primary-form photo
+slots. The same download carries the existing mapped fields and selected original
+PDFs, subject to the shared 50 MiB budget. Upload verification is not appraiser
+approval or certification that a 1004/2055 is complete.
+
+Preview uses one bounded metadata query and five-minute signed thumbnail URLs;
+there is no background photo poller or extra connection-check loop. Download
+re-reads evidence, requires the exact preview digest, and validates every included
+image's byte count, SHA-256, and JPEG/PNG signature. Changed labels, photos, revisions,
+or files require a fresh preview. Image previews can expire without invalidating
+the package digest. HomeNode originals and retention records are unchanged.
+
+The mobile app's existing **Continue** and **Create appraisal file** actions use the
+same desktop assignment registry; this export does not create a parallel field
+report. New file creation requires connectivity; locally saved inspection photos
+must finish synchronization before they become exportable. The encrypted queue,
+automatic upload lanes, native app, and UAD review workflow are untouched.
+See SFREP's [RPTI introduction](https://api.sfrep.com/rpti/intro.html) and
+[AIXML specification](https://api.sfrep.com/rpti/aixml_spec.html). Automated packaging
+and schema tests do not replace a native Appraise-It Pro import/layout check.
 
 ## Verification
 

@@ -12,7 +12,7 @@ const actor = randomUUID(), otherActor = randomUUID();
 function fixture(extraAccounts = []) {
   const data = new Map(), revisions = new Map(), operations = new Map(), calls = [];
   const state = { head: null, actor, allowed: true, finalAllowed: true, summaryAllowed: true,
-    missing: null, before: null, summaryInputs: [], viewportInputs: [] };
+    missing: null, before: null, summaryInputs: [], viewportInputs: [], memberInputs: [] };
   const row = value => ({ rowCount: value ? 1 : 0, rows: value ? [{ ...value }] : [] });
   const client = { release() { assert.fail('caller owns release'); }, async query(sql, args = []) {
     const tag = /\/\* ([^*]+) \*\//.exec(sql)?.[1]; calls.push(tag); await state.before?.(tag);
@@ -68,6 +68,11 @@ function fixture(extraAccounts = []) {
           assert.equal(projection, 'viewport'); assert.ok(Object.isFrozen(accounts));
           state.viewportInputs.push({ accounts, reference, viewport });
           return { display_only: true, selected_count: accounts.length };
+        },
+        presentSelectionMembers: (accounts, reference, population, page) => {
+          assert.equal(projection, 'members'); assert.ok(Object.isFrozen(accounts));
+          state.memberInputs.push({ accounts, reference, population, page });
+          return { page: { total_count: accounts.length } };
         },
         budget: { signal: options.signal, check() { if (options.signal?.aborted) throw new Error('cancelled'); } } });
       if (!state.finalAllowed) throw new Error('current rights revoked before commit');
@@ -247,5 +252,33 @@ test('exact-reference viewport verifies the whole offscreen union before map wor
   for (const changed of [{ selectionRef: null }, { account_ids: [] }, { includedRecordedGroupIds: [] },
     { viewport: { ...viewport, east: -98 } }, { viewport: { ...viewport, extra: true } }])
     await assert.rejects(f.owner.viewportRecordedGroupSelection({ ...request, ...changed }), /invalid_input/);
+  assert.equal(f.state.head, 2); assert.equal(f.revisions.size, 2);
+});
+
+test('member inspection reopens all original pages before paginating; empty, stale, missing and denied reads cannot broaden or mutate', async () => {
+  const f = fixture(), first = await f.owner.selectRecordedGroups(f.select);
+  const request = { ...f.read, selectionRef: first.selection_ref, population: { group: 'selected', kind: 'stock' },
+    page: { limit: 1, after_member_id: null } };
+  const out = await f.owner.inspectRecordedGroupSelection(request);
+  assert.deepEqual(f.state.memberInputs[0].accounts, ['A', 'B', 'C']);
+  assert.equal(out.page.total_count, 3, 'page limit never becomes the analytical population');
+  assert.equal(out.status, 'members'); assert.deepEqual(out.selection_ref, first.selection_ref);
+  const manifest = JSON.parse(f.data.get(first.selection_ref.manifest_ref.content_sha256).canonical_utf8);
+  f.state.missing = manifest.account_pages[0].page.content_sha256;
+  await assert.rejects(f.owner.inspectRecordedGroupSelection(request), /page_conflict/);
+  assert.equal(f.state.memberInputs.length, 1); f.state.missing = null;
+  f.state.summaryAllowed = false;
+  await assert.rejects(f.owner.inspectRecordedGroupSelection(request), /rights denied/);
+  assert.equal(f.state.memberInputs.length, 1); f.state.summaryAllowed = true;
+  f.state.finalAllowed = false;
+  await assert.rejects(f.owner.inspectRecordedGroupSelection(request), /revoked before commit/); f.state.finalAllowed = true;
+  const empty = await f.owner.selectRecordedGroups({ ...f.select, operationId: randomUUID(),
+    expectedSelectionRef: first.selection_ref, includedRecordedGroupIds: [] });
+  await assert.rejects(f.owner.inspectRecordedGroupSelection(request), /selection_changed/);
+  assert.equal((await f.owner.inspectRecordedGroupSelection({ ...request, selectionRef: empty.selection_ref })).page.total_count, 0);
+  for (const change of [{ account_ids: [] }, { selectionRef: null }, { population: { group: 'pocket', kind: 'stock', pocket_id: A } },
+    { page: { limit: 51, after_member_id: null } }, { page: { limit: 1, after_member_id: 'PRIVATE' } }])
+    await assert.rejects(f.owner.inspectRecordedGroupSelection({ ...request, ...change }), /invalid_input/);
+  assert.equal(f.state.viewportInputs.length, 0); assert.equal(f.state.summaryInputs.length, 0);
   assert.equal(f.state.head, 2); assert.equal(f.revisions.size, 2);
 });

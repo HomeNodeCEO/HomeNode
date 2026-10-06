@@ -12,6 +12,7 @@ import { COHORT_PAGED_GROUP_SELECTION_V1_LIMITS as L,
   prepareCohortPagedGroupSelectionV1Metadata } from './cohortPagedGroupSelectionV1.js';
 import { CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS } from './customCohortObservationPreview.js';
 import { prepareCustomCohortViewport } from './customCohortViewportMap.js';
+import { prepareCustomCohortGroupMemberInspection } from './customCohortGroupMemberTransport.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 function fail(reason) { throw new TypeError(`custom_cohort_recorded_group_owner_${reason}`); }
@@ -45,14 +46,16 @@ export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, exec
     const preview = projection !== 'intent';
     const v = admit(value, ['auth', 'accountId', 'assignmentFileId', 'contextRef',
       ...(write ? ['operationId', 'expectedSelectionRef', 'includedRecordedGroupIds'] : []),
-      ...(preview ? ['selectionRef'] : []), ...(projection === 'viewport' ? ['viewport'] : [])]);
+      ...(preview ? ['selectionRef'] : []), ...(projection === 'viewport' ? ['viewport'] : []),
+      ...(projection === 'members' ? ['population', 'page'] : [])]);
     const identity = identityOf(v);
     if (!UUID.test(identity.auth.userId)) fail('invalid_actor');
     const contextRef = prepareCustomCohortContextReference(json(v.contextRef));
     if (!write) return Object.freeze({ ...identity, contextRef,
       ...(preview ? { selectionRef: prepareCustomCohortGroupSelectionReference(v.selectionRef) } : {}),
       ...(projection === 'viewport' ? { viewport: prepareCustomCohortViewport(admit(v.viewport,
-        ['west', 'south', 'east', 'north'])) } : {}) });
+        ['west', 'south', 'east', 'north'])) } : {}),
+      ...(projection === 'members' ? prepareCustomCohortGroupMemberInspection(v.population, v.page) : {}) });
     if (typeof v.operationId !== 'string' || !UUID.test(v.operationId)) fail('invalid_operation');
     const expectedSelectionRef = v.expectedSelectionRef === null ? null
       : prepareCustomCohortGroupSelectionReference(v.expectedSelectionRef);
@@ -165,6 +168,22 @@ export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, exec
         return Object.freeze({ status: 'viewport', authority: 'not_established',
           selection_ref: reference, viewport_map });
       }, 'viewport');
+    },
+    async inspectRecordedGroupSelection(value, options = {}) {
+      const input = inputOf(value, false, 'members');
+      return execute(input, options, false, async owned => {
+        if (typeof owned.presentSelectionMembers !== 'function') fail('members_owner_required');
+        const { accounts, reference } = await completeAccounts(owned, input);
+        // Paging only bounds delivery. The complete analytical union has been
+        // reopened; a cursor can never become a partial replacement selection.
+        const content = await owned.presentSelectionMembers(accounts, reference, input.population, input.page);
+        owned.budget.check();
+        return Object.freeze({ status: 'members', authority: 'not_established',
+          target: { account_id: input.accountId, assignment_file_id: input.assignmentFileId },
+          context_ref: input.contextRef, selection_ref: reference,
+          selection_revision: reference.selection_revision, subject_freshness: 'matched', ...content,
+          apply: { status: 'blocked', reasons: ['observation_preview_only'] } });
+      }, 'members');
     },
   });
 }

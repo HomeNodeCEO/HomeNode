@@ -10,9 +10,14 @@ export const CUSTOM_COHORT_PREVIEW_PRESENTATION_LIMITS = Object.freeze({
 });
 const L = CUSTOM_COHORT_PREVIEW_PRESENTATION_LIMITS;
 const publicSummaries = new WeakSet();
+const publicMemberPages = new WeakMap();
 /** Process-local projection witness, never a source grant or report authority.
  * Exact-reference transport must not serialize raw/unprojected owner results. */
 export const isCustomCohortPresentedSummary = value => publicSummaries.has(value);
+export const isCustomCohortPresentedMemberPage = (value, requested) => {
+  const receipt = publicMemberPages.get(value);
+  return Boolean(receipt && receipt.limit === requested?.limit && receipt.after_member_id === requested?.after_member_id);
+};
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const hash = value => createHash('sha256').update(value, 'utf8').digest('hex');
 const freeze = value => {
@@ -228,8 +233,9 @@ export function inspectCustomCohortPreviewMembers({ preview, expected, populatio
   }
   const end = Math.min(start + page.limit, rows.length), has_more = end < rows.length;
   const members = ordered.slice(start, end).map((entry, index) => inspectMember(entry.row, ids[start + index], resolved.kind, resolved.population));
-  return boundedResult({ ...header(preview, binding), contents: 'member_page', population: resolved.key, population_id,
+  const result = boundedResult({ ...header(preview, binding), contents: 'member_page', population: resolved.key, population_id,
     member_unit: resolved.population[metricKind].member_unit, total_count: rows.length, returned_count: members.length,
     start_index: start, end_index_exclusive: end, is_full_population: start === 0 && end === rows.length,
     has_more, next_after_member_id: has_more ? ids[end - 1] : null, members }, L.page_utf8_bytes);
+  publicMemberPages.set(result, Object.freeze({ limit: page.limit, after_member_id: page.after_member_id })); return result;
 }

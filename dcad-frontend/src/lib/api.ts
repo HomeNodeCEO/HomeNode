@@ -1,3 +1,5 @@
+import type { PropertyComplexityLevel, PropertyContextSourceHealth, PropertyComplexityAssessment } from './propertyContextTypes';
+export type { PropertyComplexityLevel, PropertyContextSourceHealth, PropertyComplexityFactor, PropertyComplexityAssessment } from './propertyContextTypes';
 import { isAuthenticatedSessionEditorCredential } from '@/lib/editorCredential';
 import {
   clearCustomAppraisalSignatureEventId,
@@ -242,6 +244,9 @@ export interface ReportManualValue {
 
 export interface AssignmentDetailsPayload {
   subject_neighborhood_summary?: string;
+  subject_neighborhood_summary_template?: string;
+  subject_neighborhood_summary_review_items?: string[];
+  subject_neighborhood_summary_school?: import('./nearbySchoolContext').NearbySchoolContext;
   subject_condition_rating?: string;
   subject_condition_notes?: string;
   significant_physical_deficiencies?: boolean | null;
@@ -1249,6 +1254,8 @@ export type MarketConditionsAreaKey =
   | 'radius_5'
   | 'custom';
 
+export type MarketConditionsStudyAreaKey = MarketConditionsAreaKey | 'exploration';
+
 export type GeoJsonPolygon = {
   type: 'Polygon';
   coordinates: number[][][];
@@ -1383,8 +1390,8 @@ export interface MarketStudyStatistics {
 
 export interface MarketConditionsAnalysis {
   market: {
-    key: MarketConditionsAreaKey;
-    scope: 'city' | 'zip' | 'radius' | 'custom';
+    key: MarketConditionsStudyAreaKey;
+    scope: 'city' | 'zip' | 'radius' | 'custom' | 'exploration';
     label: string;
     city: string | null;
     county: string | null;
@@ -1463,7 +1470,7 @@ export interface MarketConditionsResponse {
     recommended_change_percent: number | null;
     ranked_studies: Array<{
       rank: number;
-      key: MarketConditionsAreaKey;
+      key: MarketConditionsStudyAreaKey;
       label: string;
       reliability_score: number | null;
       reconciliation_weight_percent?: number | null;
@@ -1475,7 +1482,7 @@ export interface MarketConditionsResponse {
     }>;
   };
   unavailable_areas: Array<{
-    key: MarketConditionsAreaKey;
+    key: MarketConditionsStudyAreaKey;
     label: string;
     reason: string;
   }>;
@@ -1485,7 +1492,7 @@ export interface MarketConditionsResponse {
 export interface MarketConditionsRequest {
   subjectAccountId: string;
   assignmentFileId?: number | null;
-  areaKeys: MarketConditionsAreaKey[];
+  areaKeys: MarketConditionsStudyAreaKey[];
   asOf?: string;
   periodMonths: 12 | 24 | 36;
   customGeometry?: GeoJsonPolygon | null;
@@ -1941,7 +1948,7 @@ export async function searchAccounts(q: string, limit = 25, offset = 0): Promise
   return fetchJSON<AccountRow[]>(url);
 }
 
-/** Get a single account (core + latest market values + primary improvements) */
+/** Get account, market values and primary improvements. */
 export async function getAccount(
   accountId: string,
   options: { assignmentFileId?: number | null } = {},
@@ -1953,7 +1960,7 @@ export async function getAccount(
   return fetchJSON<AccountDetail>(url);
 }
 
-/** Load the latest ordered MLS photo gallery available for an account. */
+/** Load ordered MLS photos. */
 export async function getAccountPhotos(accountId: string): Promise<AccountPhotosResponse> {
   const id = (accountId || '').trim();
   const url = makeUrl(`/api/accounts/${encodeURIComponent(id)}/photos`);
@@ -2078,113 +2085,6 @@ export interface NeighborhoodPropertyProfileMetric {
   predominant: number | null;
 }
 
-export type PropertyComplexityLevel = 'simple' | 'moderate' | 'complex';
-
-export interface PropertyContextSourceHealth {
-  source_key: string;
-  label: string;
-  status: 'current' | 'stale' | 'unavailable';
-  usable: boolean;
-  serving_stale_data: boolean;
-  row_count: number;
-  last_attempt_at: string | null;
-  last_success_at: string | null;
-  last_source_update_at: string | null;
-  age_hours: number | null;
-  stale_after_hours: number;
-  source_url: string | null;
-  source_vintage: string | null;
-  last_error: string | null;
-}
-
-export interface PropertyComplexityFactor {
-  code: string;
-  label: string;
-  severity: 'low' | 'moderate' | 'high';
-  points: number;
-  detail: string;
-  evidence?: Record<string, unknown>;
-}
-
-export interface PropertyComplexityAssessment {
-  id: number;
-  account_id: string;
-  scope_key: string;
-  assignment_file_id: number | null;
-  methodology_version: number;
-  computed_at: string;
-  updated_at: string;
-  automatic_complexity: PropertyComplexityLevel;
-  effective_complexity: PropertyComplexityLevel;
-  score: number;
-  confidence: 'high' | 'moderate' | 'limited';
-  geography: 'urban' | 'suburban' | 'semi_rural' | 'rural';
-  recommended_search_profile: ComparableSearchProfileKey;
-  factors: PropertyComplexityFactor[];
-  warnings: string[];
-  subject: {
-    account_id: string;
-    address: string | null;
-    gross_living_area_sqft: number | null;
-    year_built: number | null;
-    actual_age: number | null;
-    site_area_sqft: number | null;
-    housing_type: string | null;
-    attachment_type: string | null;
-    amenities: Array<{ key: string; label: string; present: boolean }>;
-  };
-  peer_statistics: {
-    peer_count: number;
-    context: 'appraiser_defined_area' | 'two_mile_radius';
-    radius_miles: number | null;
-    gla: { count: number; percentile: number | null; median: number | null };
-    age: { count: number; percentile: number | null; median: number | null };
-    site_area: { count: number; percentile: number | null; median: number | null };
-    pool_prevalence_percent: number | null;
-  };
-  spatial_context: {
-    parcel_available: boolean;
-    parcel_match_method: string | null;
-    subject_site_area_sqft: number | null;
-    site_percentile: number | null;
-    site_comparison_count: number;
-    parcel_compactness: number | null;
-    corner_lot: boolean;
-    road_frontage_count: number;
-    road_frontages: string[];
-    nearest_major_road: {
-      name: string | null;
-      road_class: string;
-      distance_feet: number;
-    } | null;
-    nearest_railroad?: {
-      name: string | null;
-      distance_feet: number;
-    } | null;
-    nearest_high_traffic_road?: {
-      name: string | null;
-      route_prefix: string | null;
-      route_number: string | null;
-      roadway_type: string | null;
-      annual_average_daily_traffic: number;
-      distance_feet: number;
-      source_date: string | null;
-      synced_at: string | null;
-      source: 'TxDOT AADT';
-    } | null;
-    zoning_context?: Record<string, unknown> | null;
-    flood_context?: Record<string, unknown> | null;
-    adjacent_influences: Array<Record<string, unknown>>;
-    nearby_influences: Array<Record<string, unknown>>;
-  };
-  source_health: PropertyContextSourceHealth[];
-  requires_appraiser_review: true;
-  review_status: 'automatic' | 'reviewed' | 'overridden';
-  appraiser_complexity: PropertyComplexityLevel | null;
-  appraiser_notes: string | null;
-  reviewer: string | null;
-  reviewed_at: string | null;
-}
 
 export interface PropertyInfluenceSignature {
   methodology_version: number;
@@ -2974,7 +2874,7 @@ export async function savePropertyZoningVerification(
   });
 }
 
-/** Resolve one property's Census tract immediately, ahead of the background queue. */
+/** Resolve the subject Census tract. */
 export async function lookupAccountCensusGeography(
   accountId: string,
   editorKey: string,
@@ -3028,7 +2928,7 @@ export async function getCensusZipProfile(postalCode: string): Promise<CensusZip
   );
 }
 
-/** Load the official ACS 5-year unemployment estimate for a city/place. */
+/** Load city/place ACS unemployment. */
 export async function getCensusCityProfile(
   city: string,
   state = 'TX',
@@ -3055,7 +2955,7 @@ export async function updateAccountHousingProfile(
   });
 }
 
-/** Save one or more explicitly edited Property Report sections with audit history. */
+/** Save edited report sections with audit history. */
 export async function updatePropertyReportSections(
   accountId: string,
   sections: Partial<Record<ReportManualSectionKey, unknown>>,
@@ -3084,7 +2984,7 @@ export async function updatePropertyReportSections(
   });
 }
 
-/** Load the immutable assignment-file log and the latest values available to inherit. */
+/** Load assignment-file log and inheritable values. */
 export async function getAssignmentFiles(
   accountId: string,
   assignmentFileId?: number | null,
@@ -3547,7 +3447,7 @@ export async function getComparableRecommendations(
   return fetchJSON<ComparableRecommendationsResponse>(url, { timeoutMs: 90000 });
 }
 
-/** Load the subject location used to center the independent market-study map. */
+/** Load the subject location for market studies. */
 export async function getMarketConditionsContext(
   subjectAccountId: string,
   assignmentFileId?: number | null,
@@ -3574,7 +3474,7 @@ export async function getRelatedParcels(
   return fetchJSON<RelatedParcelsResponse>(url, { timeoutMs: 90000 });
 }
 
-/** Build independent market-condition studies without filtering comparable inventory. */
+/** Independent market studies. */
 export async function runMarketConditionsAnalysis(
   request: MarketConditionsRequest,
 ): Promise<MarketConditionsResponse> {
@@ -3667,6 +3567,7 @@ export async function analyzePropertyContext(
     assignmentFileId?: number | null;
     customGeometry?: GeoJsonPolygon | null;
     geography?: string | null;
+    marketStudyContextOnly?: boolean;
   } = {},
 ): Promise<PropertyComplexityAssessment> {
   const response = await fetchJSON<{
@@ -3680,6 +3581,7 @@ export async function analyzePropertyContext(
       assignment_file_id: options.assignmentFileId || null,
       custom_geometry: options.customGeometry || null,
       geography: options.geography || null,
+      market_study_context_only: options.marketStudyContextOnly === true,
     }),
     timeoutMs: 90000,
   });

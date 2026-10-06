@@ -140,7 +140,8 @@ test('fresh draft read precedes one coherent exact opening without a generic wri
   assert.deepEqual(actions(db), ['workfile', 'catalog', 'group-selection', 'selection-preview', 'selection-map-opening']);
   const d = h.workspace().exact.display; displayModule.requireCustomCohortGroupDisplay(d);
   assert.equal(h.workspace().workspace, undefined); assert.deepEqual(d.active.selection_ref, db.fixture.request.selection_ref);
-  assert.equal(h.workspace().exact.freshness, 'current'); assert.equal(h.adoption().workspaceRevision, db.section.revision);
+  assert.equal(h.workspace().exact.freshness, 'current'); assert.equal(h.adoption(), undefined);
+  assert.doesNotMatch(h.html(), /data-testid="adoption"/);
   assert.equal(await h.controls.flush(), true); assert.deepEqual(db.section, initial); assert.deepEqual(db.accepted, accepted);
   assert.equal(db.keys, 0); assert.equal(db.maxOpen, 1); assert.match(h.html(), /Neighborhood ready/);
   h.render({ ...h.props, target: clone(db.target), initialPeriod: null }); await h.settle(); assert.equal(db.calls.length, 5);
@@ -217,22 +218,24 @@ test('stale display and queued detail callbacks cannot acquire reads after a sel
   assert.equal(actions(db).filter(a => a === 'save-groups').length, 1);
 });
 
-test('read-only closes retained read/action/report callbacks while an admitted page remains owned by flush', async t => {
+test('read-only closes retained read/action callbacks while an admitted page remains owned by flush', async t => {
   const db = await server(), hold = deferred(); db.overrides.set('selection-members', async (_call, respond) => { await hold.promise; return respond(); });
-  const h = harness(t, db); await h.settle(); const exact = h.workspace().exact, report = h.adoption();
+  const h = harness(t, db); await h.settle(); const exact = h.workspace().exact;
   const page = exact.readMembers(exact.display, 'stock', PAGE, io()); await h.settle(); h.controls.setReadOnly(true);
   await assert.rejects(exact.readViewport(exact.display, WINDOW, io()), /read_only/);
   await assert.rejects(exact.readMembers(exact.display, 'stock', PAGE, io()), /read_only/);
-  exact.onSelectionIntent([]); assert.equal(await report.run(async () => assert.fail('no report')), false);
+  exact.onSelectionIntent([]); assert.equal(h.adoption(), undefined);
   let ended = false; const flushed = h.controls.flush().then(v => { ended = true; return v; }); await h.settle(); assert.equal(ended, false);
   hold.resolve(); const result = await page; assert.equal(result.members.page.returned_count, 1);
   assert.equal(await flushed, true); assert.equal(actions(db).includes('save-groups'), false);
 });
 
 test('independent subset inspections use original preview/members ports, never the main exact-reference population', async t => {
-  const db = await server(), h = harness(t, db); await h.settle(); const exact = h.workspace().exact;
+  const db = await server(), h = harness(t, db); await h.settle(); h.select([]); await h.settle();
+  const exact = h.workspace().exact;
+  assert.equal(exact.display.active.selection_ref.selection_revision, 2, 'inspection must still work after changing the main selection');
   const input = { accountId: db.target.accountId, assignmentFileId: db.target.assignmentFileId, contextRef: exact.display.active.context_ref, include_map: false,
-    selection: catalog.selectionFromRecordedGroups(exact.display.catalog, [catalog.CUSTOM_COHORT_UNASSIGNED_GROUP], exact.display.active.selection_ref.selection_revision) };
+    selection: catalog.selectionFromRecordedGroups(exact.display.catalog, [catalog.CUSTOM_COHORT_UNASSIGNED_GROUP], 1) };
   await exact.inspectionPreview(input, { signal: new AbortController().signal });
   await exact.inspectionMembers(input, { group: 'selected', kind: 'stock' }, PAGE, { signal: new AbortController().signal });
   assert.deepEqual(actions(db).slice(-2), ['preview', 'members']);
@@ -240,6 +243,18 @@ test('independent subset inspections use original preview/members ports, never t
   const before = db.calls.length;
   await assert.rejects(exact.inspectionPreview({ ...input, contextRef: { ...input.contextRef, context_sha256: 'b'.repeat(64) } }, io()), /context_changed/);
   assert.equal(db.calls.length, before); assert.equal(h.workspace().exact.display, exact.display); assert.equal(db.maxOpen, 1);
+});
+
+test('independent subset revision remains validated without substituting the saved main revision', async t => {
+  const db = await server(), h = harness(t, db); await h.settle(); const exact = h.workspace().exact, before = db.calls.length;
+  for (const revision of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    const input = { accountId: db.target.accountId, assignmentFileId: db.target.assignmentFileId,
+      contextRef: exact.display.active.context_ref, include_map: false,
+      selection: { ...catalog.selectionFromRecordedGroups(exact.display.catalog, [], 1), revision } };
+    await assert.rejects(exact.inspectionPreview(input, io()), /context_changed/);
+  }
+  assert.equal(db.calls.length, before); assert.equal(h.workspace().exact.display, exact.display);
+  assert.equal(db.keys, 0); assert.equal(await h.controls.flush(), true);
 });
 
 test('deadline quarantine needs actual settlement and explicit fresh recovery, never an automatic retry', async t => {
@@ -255,15 +270,13 @@ test('deadline quarantine needs actual settlement and explicit fresh recovery, n
   assert.equal(db.calls.at(count).action, 'workfile'); assert.equal(await h.controls.flush(), true);
 });
 
-test('report uncertainty freezes exploration but retains explicit same mounted report recovery under the lane', async t => {
-  const db = await server(), h = harness(t, db); await h.settle(); const report = h.adoption(), exact = h.workspace().exact;
-  report.onOutcomeUncertain(true); await h.settle(); exact.onSelectionIntent([]);
-  assert.equal(h.adoption().disabled, false, 'uncertainty must not disable the explicit same Apply/reopen recovery');
-  await assert.rejects(exact.readMembers(exact.display, 'stock', PAGE, io()), /read_only/);
-  assert.equal(await h.controls.flush(), false); let requests = 0;
-  assert.equal(await report.run(async options => { assert.ok(options.signal instanceof AbortSignal); requests++; }), true);
-  report.onOutcomeUncertain(false); await h.settle(); assert.equal(requests, 1); assert.equal(await h.controls.flush(), true);
-  assert.equal(actions(db).includes('save-groups'), false);
+test('the removed report-adoption panel stays absent across coherent selection changes without accepted-report writes', async t => {
+  const db = await server(), accepted = clone(db.accepted), h = harness(t, db); await h.settle();
+  assert.equal(h.adoption(), undefined); h.select([]); await h.settle();
+  assert.equal(h.workspace().exact.display.observations.summary.selected.account_count, 0);
+  assert.equal(h.adoption(), undefined); assert.doesNotMatch(h.html(), /data-testid="adoption"/);
+  assert.equal(actions(db).filter(a => a === 'save-groups').length, 1);
+  assert.deepEqual(db.accepted, accepted); assert.equal(db.keys, 0); assert.equal(await h.controls.flush(), true);
 });
 
 test('pending saved capture is not silently resumed; a checked explicit set-aside keeps the completed study', async t => {
@@ -320,10 +333,16 @@ test('uncommitted lost response uses the exact recorded save UUID only after fre
   assert.equal(commands.length, 2); assert.deepEqual(commands[1], original); assert.equal(await h.controls.flush(), true);
 });
 
-test('retained report callbacks cannot submit against a later selected display', async t => {
-  const db = await server(), h = harness(t, db); await h.settle(); const report = h.adoption(); h.select([]); await h.settle();
-  assert.equal(await report.run(async () => assert.fail('old report must not acquire lane')), false);
-  assert.equal(await h.adoption().run(async () => {}), true); assert.equal(await h.controls.flush(), true);
+test('retained read and selection callbacks cannot acquire a later display or restore the removed report panel', async t => {
+  const db = await server(), accepted = clone(db.accepted), h = harness(t, db); await h.settle();
+  const old = h.workspace().exact; h.select([]); await h.settle();
+  await assert.rejects(old.readMembers(old.display, 'stock', PAGE, io()), /read_only/);
+  old.onSelectionIntent(old.display.selected.included_recorded_group_ids); await h.settle();
+  const current = h.workspace().exact;
+  const page = await current.readMembers(current.display, 'stock', PAGE, io());
+  assert.equal(page.members.page.returned_count, 0);
+  assert.equal(actions(db).filter(a => a === 'save-groups').length, 1);
+  assert.equal(h.adoption(), undefined); assert.deepEqual(db.accepted, accepted); assert.equal(await h.controls.flush(), true);
 });
 
 test('queued independent inspection cannot be rebound by mutating file/context input before actual admission', async t => {

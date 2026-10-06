@@ -215,3 +215,32 @@ There is no automatic deletion owner in these slices. Future cleanup must
 enumerate all job/context/selection/accepted-report roots, preserve shared
 immutable originals and honor the applicable retention policy before deleting
 anything; job termination is not evidence that a blob is unreferenced.
+
+### Original recorded-group selection bridge (not installed in the live owner)
+
+`customCohortRecordedGroupSelection.js` derives the selection metadata and a
+repeatable ordered membership stream from an owner-authorized JSON-encoded v3
+catalog and its independently retained complete roster. Every group, including
+unselected groups and unresolved membership, must match that roster exactly.
+Existing v3 catalogs are partitions; overlap in this producer is refused rather
+than silently given a new meaning. The generic paged selection contract still
+supports explicitly versioned overlapping membership.
+
+A small canonical original binds the complete catalog/roster digests, exact
+scope/context and per-group ordered membership digests. Selected memberships
+are retained separately in their complete original pages. A bounded heap merges
+those ordered groups without flattening and sorting every membership into a
+second giant array. Explicit empty selection remains empty, and the existing
+disjoint-group selection hash is unchanged. A synthetic 60,000-account test
+exercises many interleaved groups, and a 120,000-account fixture exceeds both
+legacy whole-blob byte/node ceilings; neither is live capacity or load acceptance.
+
+The read-model inputs preserve their exact compact JSON round trip under a
+separate four-megabyte ceiling. They are not forced through the legacy
+1.5-megabyte/100k-node source-blob canonicalizer. Raw source evidence retains
+its original existing validation and limits; this bridge does not bypass them.
+
+The bridge does not read a source, authorize a request, save a workspace, move a
+selection head or publish statistics. Its strings must come from freshly
+authorized originals, never a browser body. Wiring that owner, current-rights
+rechecks and browser/statistics/publication consumers remains outstanding.

@@ -162,11 +162,11 @@ export type CustomCohortMemberTransport = ReturnType<typeof createCustomCohortMe
 /** Shared bounded transport for the read-only views and idempotent context
  * capture. Operation names are closed; callers cannot supply arbitrary URLs. */
 export function createCustomCohortJsonTransport(options: Options) {
-  return async (accountId: string, operation: 'preview' | 'viewport' | 'catalog' | 'members' | 'capture' | 'reported-proposal' | 'reported-apply' | 'select-groups' | 'group-selection' | 'selection-preview' | 'selection-viewport' | 'selection-members' | 'selection-map-opening' | 'market-analysis' | 'selection-market-analysis' | 'save-groups' | 'start-group-capture' | 'cancel-group-capture' | 'complete-group-capture',
+  return async (accountId: string, operation: 'preview' | 'viewport' | 'catalog' | 'members' | 'capture' | 'reported-proposal' | 'reported-apply' | 'select-groups' | 'group-selection' | 'selection-preview' | 'selection-viewport' | 'selection-members' | 'selection-map-opening' | 'market-analysis' | 'selection-market-analysis' | 'land-use' | 'save-groups' | 'start-group-capture' | 'cancel-group-capture' | 'complete-group-capture',
     payload: unknown, { signal }: { signal: AbortSignal }): Promise<unknown> => {
     checkSignal(signal);
     if (typeof accountId !== 'string' || !accountId || accountId.length > 64
-      || !['preview', 'viewport', 'catalog', 'members', 'capture', 'reported-proposal', 'reported-apply', 'select-groups', 'group-selection', 'selection-preview', 'selection-viewport', 'selection-members', 'selection-map-opening', 'market-analysis', 'selection-market-analysis', 'save-groups', 'start-group-capture', 'cancel-group-capture', 'complete-group-capture'].includes(operation)) throw new Error('Invalid neighborhood request');
+      || !['preview', 'viewport', 'catalog', 'members', 'capture', 'reported-proposal', 'reported-apply', 'select-groups', 'group-selection', 'selection-preview', 'selection-viewport', 'selection-members', 'selection-map-opening', 'market-analysis', 'selection-market-analysis', 'land-use', 'save-groups', 'start-group-capture', 'cancel-group-capture', 'complete-group-capture'].includes(operation)) throw new Error('Invalid neighborhood request');
     const groupSelection = ['select-groups', 'group-selection', 'save-groups', 'start-group-capture', 'cancel-group-capture', 'complete-group-capture'].includes(operation);
     const selectionSummary = operation === 'selection-preview';
     const selectionViewport = operation === 'selection-viewport';

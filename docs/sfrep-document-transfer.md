@@ -495,3 +495,36 @@ The next profiles should add verified composite listing/contract mappings, then
 dynamic UAD 3.6, and finally live report identity binding and explicit transfer
 through SFREP's web bridge. Preserve review/source provenance and the existing
 assignment access boundary through each addition.
+
+## Saved Neighborhood section — legacy 1004 and 2055 (October 2026)
+
+Both legacy form profiles now include the saved Neighborhood section, with
+matching destination IDs/types independently checked in the installed Appraise-It
+Pro 3.7.9 MISMO 2.6 dictionary. No vendor dictionary/source is bundled or copied.
+This does not activate UAD 3.6 export. Runtime import verification remains a
+separate QA step from XML/dictionary and strict producer/consumer tests.
+
+Location and description come from saved assignment data. Appraiser controls
+provide built-up override, growth, demand/supply and boundaries; growth is not
+inferred from price direction, and closed sales do not establish inventory.
+“Use exploration study figures” copies selected-map closed-sale low/high/median
+prices in the legacy form's `$000` display units and selected CAD housing
+low/high/median ages at the chosen study end. These are reviewable starting
+figures, not an unsupported claim that every median is predominant market value.
+Current CAD stock is not verified historical stock.
+
+Saved selected-study reconciliation provides property-value trend, market
+conditions narrative and trailing-year reconciled study-median marketing band.
+The saved land-use result provides the five area-weighted categories and built-up
+band only while its exact context/selection still matches the saved workspace.
+Stale land-use output is not represented as a current calculation; existing
+entered figures and reconciliation remain exportable with review flags.
+Unknown land use does not become Other and does not disappear in normalization.
+No PDFs need to be attached to export supported saved fields.
+
+The assignment-scoped snapshot now reads market/workspace sections in the same
+SQL statement as existing subject/evidence data. Market section revision is
+carried through strict preview provenance and preview digest. Changing studies,
+land use or saved figures requires a new preview before downloading. Existing
+assignment access, signed-file restrictions, source priority, attachment limits
+and unified addendum behavior remain in place.

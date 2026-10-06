@@ -8,6 +8,8 @@ import {
   type BrowserDraftSession,
 } from './browserDraftIdentity.ts';
 import type { MarketStudyComplexity } from './marketStudyComplexity';
+import type { ExplorationLandUse } from './explorationLandUse';
+import type { NeighborhoodFormReview } from './neighborhoodFormReview';
 
 export type MarketTrendConclusion =
   | 'increasing'
@@ -34,6 +36,8 @@ export type MarketConditionsDraft = {
   response: MarketConditionsResponse;
   reconciliation: MarketConditionsReconciliation;
   propertyComplexity?: MarketStudyComplexity | null;
+  landUse?: ExplorationLandUse | null;
+  neighborhoodForm?: NeighborhoodFormReview | null;
 };
 
 const STORAGE_PREFIX = 'homenode-market-conditions:';

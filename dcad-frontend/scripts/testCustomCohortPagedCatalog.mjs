@@ -73,6 +73,8 @@ test('foreign or changed root/metadata/target/context and malformed closed page 
     { ...actualPage, page_json: json({ ...p, groups: p.groups.slice(1) }) },
     { ...actualPage, page_json: json({ ...p, account_ids: [] }) },
     { ...actualPage, page_json: json({ ...p, groups: p.groups.map((g, i) => i ? g : { ...g, member_count: 1000000 }) }) },
+    ...['bad\u0000label', 'bad\u001flabel', 'bad\u007flabel', 'bad\ud800label'].map(label => ({ ...actualPage,
+      page_json: json({ ...p, groups: p.groups.map((g, i) => i ? g : { ...g, label }) }) })),
     { ...actualPage, page_json: actualPage.page_json + ' ' }]) {
     await assert.rejects(reader({ open: h.ports.open, async page() { return body; } })(h.request, io()), /invalid_custom_cohort_paged_catalog/);
   }

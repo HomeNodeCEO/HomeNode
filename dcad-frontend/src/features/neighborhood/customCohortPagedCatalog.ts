@@ -54,10 +54,10 @@ function decimalCount(value: unknown, maximum: number): number {
   if (typeof value !== 'string' || !/^(0|[1-9]\d*)$/.test(value) || value.length > 7) fail(); return count(Number(value), maximum);
 }
 function text(value: unknown, maximum = 512): string {
-  if (typeof value !== 'string' || !value || value.trim() !== value || utf8.encode(value).length > maximum
-    || /[\u0000-\u001f\u007f]/.test(value)) fail();
+  if (typeof value !== 'string' || !value || value.trim() !== value || utf8.encode(value).length > maximum) fail();
   for (let i = 0; i < value.length; i++) {
     const c = value.charCodeAt(i);
+    if (c < 32 || c === 127) fail();
     if (c >= 0xd800 && c <= 0xdbff) { const next = value.charCodeAt(++i); if (!(next >= 0xdc00 && next <= 0xdfff)) fail(); }
     else if (c >= 0xdc00 && c <= 0xdfff) fail();
   }

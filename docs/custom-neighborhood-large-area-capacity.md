@@ -7,9 +7,12 @@ group-selection reference to the existing closed-sale market calculator. The
 internal selection owner reopens every original membership/union page, checks
 current database actor/assignment/subject and catalog/summary/private-source
 rights, and returns the complete account union only after its ending fences.
-It does not request geometry, run the neighborhood numeric kernel, accept a
+It does not request a map or neighborhood numeric presentation, accept a
 browser member list, or change the saved selection or accepted report. An empty
 union stays empty. The installed 50k analytical account ceiling is unchanged.
+The coordinator still uses its existing prepared catalog/roster path or the
+authorized original-source fallback to reconstruct that catalog. This adapter
+does not itself remove the legacy fallback's source/index calculation work.
 
 The adapter detaches the closed reference, observation window and scalar study
 context before awaiting. The window remains independent of the appraisal

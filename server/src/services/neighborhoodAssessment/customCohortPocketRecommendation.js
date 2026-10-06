@@ -138,9 +138,22 @@ export async function buildCustomCohortPocketRecommendationBatched(args = {}, { 
   checkBudget(); return step.value;
 }
 
+/** Display-only group means from the SAME retained scoring kernel. This skips
+ * property/factor publication, ranking and stock composition. In particular,
+ * current CAD colors do not establish a historical population or authorize
+ * automatic selection/report Apply. The prepared catalog stores this once. */
+export async function buildCustomCohortMapScoresBatched(args = {}, { checkBudget = () => {} } = {}) {
+  const batches = recommendationBatches({ ...args, include_stock_composition: false }, true);
+  checkBudget();
+  let step = batches.next();
+  while (!step.done) { await yieldToRequests(); checkBudget(); step = batches.next(); }
+  checkBudget(); return step.value;
+}
+
 function* recommendationBatches({ context_ref, retained_inputs: input, selection, recorded_proximity,
-  catalog_version = 1, observation_preview, include_stock_composition = false } = {}) {
+  catalog_version = 1, observation_preview, include_stock_composition = false } = {}, map_scores_only = false) {
   check(typeof include_stock_composition === 'boolean', 'composition_option');
+  check(typeof map_scores_only === 'boolean', 'map_scores_option');
   customCohortCatalogGroupLimit(catalog_version);
   check(NEIGHBORHOOD_RELEVANCE_METHODOLOGY_VERSION === P.curve_methodology_version
     && KEYS.every(key => NEIGHBORHOOD_RELEVANCE_WEIGHTS[key] === P.weights[key]), 'curve_policy_changed');
@@ -201,6 +214,8 @@ function* recommendationBatches({ context_ref, retained_inputs: input, selection
   let outputBytes = 16000;
   const charge = value => { outputBytes += Buffer.byteLength(JSON.stringify(value)); check(outputBytes <= P.output_utf8_bytes, 'output_byte_limit'); return value; };
   const properties = [];
+  const mapGroups = map_scores_only ? new Map(groups.map(group => [group.id,
+    { id: group.id, member_count: 0, supported_member_count: 0, lower: 0, upper: 0 }])) : null;
   for (const [index, row] of members.entries()) {
     if (index % 125 === 0) yield;
     const scored = scoreNeighborhoodCandidate({ subject: reference, candidate: candidateRows[index], distributions,
@@ -230,11 +245,24 @@ function* recommendationBatches({ context_ref, retained_inputs: input, selection
       return [key, { score: state === 'observed' ? score : null, state }];
     }));
     const groupId = groupByAccount.get(row.account_id);
+    if (mapGroups) {
+      const similarity = bounds(factors), group = mapGroups.get(groupId);
+      group.member_count++;
+      group.supported_member_count += Number(similarity.known_weight_percent > 0);
+      group.lower += similarity.lower; group.upper += similarity.upper;
+      continue;
+    }
     properties.push(charge({ account_id: row.account_id, recorded_group_id: groupId, is_subject: row.account_id === subjectAccount,
       selected: included.has(groupId), similarity: bounds(factors), factors,
       partially_observed_factors: Object.entries(PHYSICAL).filter(([, field]) => row.observations[field].state === 'observed'
         && row.observations[field].missing_record_count > 0).map(([key]) => key) }));
   }
+  if (mapGroups) return freeze({ version: 2, basis: 'current_retained_cad_snapshot_diagnostic_only',
+    authority: 'not_established', generation_id: null, source_observed_at: preview.captured_at,
+    retained_capture_at: preview.captured_at,
+    groups: [...mapGroups.values()].map(group => ({ ...group,
+      lower: group.member_count ? rounded(group.lower / group.member_count) : null,
+      upper: group.member_count ? rounded(group.upper / group.member_count) : null })) });
   const byAccount = new Map(properties.map(row => [row.account_id, row]));
   const subjectGroup = catalog.subject_membership.assigned_pocket_id;
   const pockets = groups.map(group => {

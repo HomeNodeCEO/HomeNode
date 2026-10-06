@@ -9,6 +9,7 @@ import {
   reviewNeighborhoodBoundary,
 } from "../../services/neighborhoodBoundaryEngine.js";
 import { getNeighborhoodEngineReadiness } from "../../services/neighborhoodEngineReadiness.js";
+import { createNearbySchoolLookup } from "../../services/nearbySchool.js";
 import {
   generateNeighborhoodRelevance,
   getLatestNeighborhoodRelevance,
@@ -35,6 +36,7 @@ export function createNeighborhoodRouter({
   reviewBoundary = reviewNeighborhoodBoundary,
   getRelevance = getLatestNeighborhoodRelevance,
   generateRelevance = generateNeighborhoodRelevance,
+  nearbySchool,
   logger = console,
 } = {}) {
   if (!pool || typeof pool.query !== "function") {
@@ -58,9 +60,30 @@ export function createNeighborhoodRouter({
   }
 
   const router = express.Router();
+  const lookupSchool = nearbySchool ?? createNearbySchoolLookup({ pool });
+  if (typeof lookupSchool !== 'function') throw new TypeError('neighborhood_router_dependency_required');
   router.use((_req, res, next) => {
     res.set("cache-control", "no-store");
     next();
+  });
+
+  router.get("/api/accounts/:id/neighborhood-summary-school", async (req, res) => {
+    try {
+      const accountId = await resolveAccountId(pool, String(req.params.id || "").trim());
+      const assignmentFileId = normalizeFileId(req.query.assignment_file_id);
+      if (!assignmentFileId) return res.status(400).json({ error: "invalid_assignment_file" });
+      if (!await requireCustomAccountScope(req, res, accountId, assignmentFileId, "read")) return undefined;
+      const school = await lookupSchool({ accountId });
+      if (req.aborted || res.destroyed) return undefined;
+      // Recheck assignment ownership/access after the bounded public lookup.
+      if (!await requireCustomAccountScope(req, res, accountId, assignmentFileId, "read")) return undefined;
+      return res.json({ account_id: accountId, assignment_file_id: String(assignmentFileId), ...school });
+    } catch (error) {
+      const code = knownErrorCode(error, new Set(["account_not_found", "invalid_account_id", "invalid_assignment_file"]));
+      if (!code) logBoundedFailure(logger, "neighborhood summary school lookup failed", error);
+      return res.status(code === "account_not_found" ? 404 : code ? 400 : 503)
+        .json({ error: code || "neighborhood_summary_school_unavailable" });
+    }
   });
 
   /** Audit locally stored inputs for the boundary and relevance engines. */

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AssignmentDocument } from '@/lib/api';
 import { sfrepApi } from './sfrepApi';
-import { SFREP_FORM_ID, SFREP_2055_FORM_ID, sfrepContractChecklist, sfrepDownloadFilename, sfrepNoticeText, sfrepProvenanceText, sfrepSubjectChecklist, type SfrepFormId, type SfrepPreview } from './sfrepTransport';
+import { SFREP_FORM_ID, SFREP_2055_FORM_ID, sfrepCanExport, sfrepContractChecklist, sfrepDownloadFilename, sfrepNoticeText, sfrepProvenanceText, sfrepSubjectChecklist, type SfrepFormId, type SfrepPreview } from './sfrepTransport';
 
 interface Props {
   accountId: string;
@@ -21,11 +21,13 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
   const downloadUrlRef = useRef<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [includeDocuments, setIncludeDocuments] = useState(true);
+  const [includePhotos, setIncludePhotos] = useState(true);
   const [formId, setFormId] = useState<SfrepFormId>(SFREP_FORM_ID);
   const [preview, setPreview] = useState<SfrepPreview | null>(null);
   const [busy, setBusy] = useState<'preview' | 'export' | null>(null);
   const [error, setError] = useState('');
   const [preparedDownload, setPreparedDownload] = useState<{ url: string; filename: string } | null>(null);
+  const [unavailablePhotoIds, setUnavailablePhotoIds] = useState<string[]>([]);
 
   useEffect(() => {
     const dialog = dialogRef.current, previousFocus = document.activeElement;
@@ -43,25 +45,24 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
     if (downloadUrlRef.current) URL.revokeObjectURL(downloadUrlRef.current);
     downloadUrlRef.current = null; setPreparedDownload(null);
   };
-  const invalidate = () => { clearDownload(); setPreview(null); setError(''); };
+  const invalidate = () => { clearDownload(); setPreview(null); setUnavailablePhotoIds([]); setError(''); };
   const selectDocument = (id: number, checked: boolean) => {
     if (requestRef.current) return;
     if (checked && (selectedIds.length >= 10 || selectedIds.includes(id))) return;
     invalidate(); setSelectedIds(current => checked ? [...current, id] : current.filter(value => value !== id));
   };
   const run = async (operation: 'preview' | 'export') => {
-    if (requestRef.current || (operation === 'export' && (!preview
-      || (!preview.fields.length && (!includeDocuments || !preview.documents.length))))) return;
+    if (requestRef.current || (operation === 'export' && (!preview || !sfrepCanExport(preview, includeDocuments)))) return;
     const controller = new AbortController(); requestRef.current = controller;
     const timer = window.setTimeout(() => controller.abort(), 120_000);
     clearDownload(); setBusy(operation); setError('');
     if (operation === 'preview') setPreview(null);
     try {
-      const selection = { accountId, assignmentFileId, documentIds: [...selectedIds], includeDocuments, formId };
+      const selection = { accountId, assignmentFileId, documentIds: [...selectedIds], includeDocuments, includePhotos, formId };
       const io = { signal: controller.signal, editorKey: getEditorKey() };
       if (operation === 'preview') {
         const result = await sfrepApi.preview(selection, io);
-        if (!controller.signal.aborted && requestRef.current === controller) setPreview(result);
+        if (!controller.signal.aborted && requestRef.current === controller) { setUnavailablePhotoIds([]); setPreview(result); }
       } else if (preview) {
         const blob = await sfrepApi.export(selection, preview.preview_digest, io);
         if (controller.signal.aborted || requestRef.current !== controller) return;
@@ -96,6 +97,7 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
   const formLabel = formId === SFREP_2055_FORM_ID ? '2055 Exterior-Only' : '1004 URAR';
   const checklistForm = formId === SFREP_2055_FORM_ID ? '2055' : '1004';
   const reviewAssumptions = preview?.assumptions.filter(assumption => assumption.rule !== 'user_requested_fee_simple_default') || [];
+  const verifiedPhotoCount = preview?.photos?.filter(photo => photo.included).length || 0;
 
   return <dialog ref={dialogRef} onCancel={event => { event.preventDefault(); onClose(); }} aria-label="Export report to SFREP"
     className="m-auto max-h-[90vh] w-[min(1000px,95vw)] overflow-y-auto rounded-xl border border-amber-300 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-slate-950/50 print:hidden">
@@ -105,7 +107,7 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
       <button type="button" autoFocus className={secondary} onClick={onClose}>Close</button>
     </header>
     <div className="space-y-4 p-5 text-sm" aria-busy={Boolean(busy)}>
-      <p>Choose a report form, then preview the saved HomeNode data and supporting documents. The 1004 URAR and 2055 Exterior-Only exports map the Subject and Contract sections; other report sections will be added as their mappings are completed. Unsaved edits are not exported. This export does not support UAD 3.6.</p>
+      <p>Choose a report form, then preview the saved HomeNode data, supporting documents, and inspection photos. The 1004 URAR and 2055 Exterior-Only exports map the Subject and Contract sections; other report sections will be added as their mappings are completed. Unsaved edits are not exported. This export does not support UAD 3.6.</p>
       <fieldset disabled={Boolean(busy)} className="space-y-2 rounded-lg border border-violet-200 bg-violet-50/50 p-3">
         <legend className="px-1 font-semibold text-violet-950">Report form</legend>
         <label className="flex items-center gap-2"><input type="radio" name="sfrep-report-form" checked={formId === SFREP_FORM_ID}
@@ -133,8 +135,11 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
         <label className="flex items-start gap-3 pt-2"><input type="checkbox" className="checkbox checkbox-sm" checked={includeDocuments}
           onChange={event => { if (!requestRef.current) { invalidate(); setIncludeDocuments(event.target.checked); } }} />
           <span>Include original PDFs as report addenda</span></label>
-        <p className="text-xs text-slate-600">Supported, reviewed evidence from this HomeNode workfile fills the form whether or not its PDF is attached. These checkboxes only choose which original PDFs become visible report pages in SFREP. Upload CAD and Realist reference PDFs using “Other Appraisal Document.” Fields without a supported mapping remain in their source documents. Maximum: 10 documents and 50 MiB of original PDFs per export.</p>
+        <p className="text-xs text-slate-600">Supported, reviewed evidence from this HomeNode workfile fills the form whether or not its PDF is attached. These checkboxes only choose which original PDFs become visible report pages in SFREP. Upload CAD and Realist reference PDFs using “Other Appraisal Document.” Fields without a supported mapping remain in their source documents. Maximum: 10 PDFs, 100 photos, and 50 MiB combined per export.</p>
       </fieldset>
+      <label className="flex items-start gap-3"><input type="checkbox" className="checkbox checkbox-sm" checked={includePhotos} disabled={Boolean(busy)}
+        onChange={event => { if (!requestRef.current) { invalidate(); setIncludePhotos(event.target.checked); } }} />
+        <span>Include verified inspection photos and their labels in this RPTI</span></label>
       <button type="button" className={secondary} disabled={Boolean(busy) || documentsLoading || Boolean(documentLoadError)} onClick={() => void run('preview')}>
         {busy === 'preview' ? 'Preparing preview…' : 'Preview SFREP export'}
       </button>
@@ -142,7 +147,7 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
       {preview && <section className="space-y-3 rounded-xl border border-violet-200 p-4" aria-label="SFREP export preview">
         <h4 className="font-semibold text-violet-950">2. Review export</h4>
         {preview.savedReport && <p className="text-xs text-slate-600">Saved HomeNode file {preview.savedReport.assignmentFileId} · Subject revision {preview.savedReport.subjectRevision} · Assignment revision {preview.savedReport.assignmentRevision}</p>}
-        <p>{preview.fields.length} mapped field(s) · {includeDocuments ? preview.documents.length : 0} original PDF(s) included</p>
+        <p>{preview.fields.length} mapped field(s) · {includeDocuments ? preview.documents.length : 0} original PDF(s) · {verifiedPhotoCount} verified photo(s) included</p>
         <section aria-label="Effective-date context" className="space-y-1 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950">
           <h5 className="font-semibold">Effective-date context</h5>
           {preview.effectiveDateContext.effectiveDate ? <>
@@ -194,7 +199,7 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
             <td className="max-w-sm whitespace-pre-wrap break-words p-2">{field.value}</td>
             <td className="max-w-sm break-words p-2" title={field.candidateId !== null ? `Candidate ${field.candidateId}` : undefined}>{field.provenance.kind === 'saved_report' ? 'Saved HomeNode report' : field.provenance.kind === 'account_reference' ? 'Canonical county account' : documentTitle(field.documentId)}<span className="mt-1 block text-slate-600">{sfrepProvenanceText(field)}</span></td>
           </tr>)}</tbody>
-        </table></div></details> : <p className="rounded-lg bg-amber-50 p-3 text-amber-900">No supported confirmed fields are available. {includeDocuments ? 'This export contains reference PDFs only.' : 'No report fields or PDFs would be included. Select original PDFs or review document candidates first.'}</p>}
+        </table></div></details> : <p className="rounded-lg bg-amber-50 p-3 text-amber-900">No supported confirmed fields are available. {verifiedPhotoCount ? 'Verified photos are included; selected reference PDFs can accompany them.' : includeDocuments && preview.documents.length ? 'This export contains reference PDFs only.' : 'No report fields, PDFs, or verified photos would be included. Select attachments or review document candidates first.'}</p>}
         {([['Conflicting fields (not exported)', preview.conflicts], ['Omitted fields', preview.omitted], ['Warnings', preview.warnings]] as const).map(([label, notices]) => notices.length > 0 && <details key={label} open={label === 'Conflicting fields (not exported)'} className="rounded-lg border border-amber-200 bg-amber-50 p-3">
           <summary className="cursor-pointer font-semibold text-amber-950">{label} ({notices.length})</summary>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-amber-950">{notices.map((notice, index) => <li key={index} className="break-words">{sfrepNoticeText(notice)}</li>)}</ul>
@@ -202,12 +207,29 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
         {includeDocuments && preview.documents.length > 0 && <details className="rounded-lg border border-slate-200 p-3"><summary className="cursor-pointer font-medium">Included reference PDFs ({preview.documents.length})</summary>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-xs">{preview.documents.map(doc => <li key={doc.id}>{doc.title || doc.file_name} · {Math.max(1, Math.round(doc.file_size_bytes / 1024)).toLocaleString()} KB</li>)}</ul>
         </details>}
-        <p className="text-xs text-slate-600">Review the fields and exclusions above before downloading. Resolve conflicts in the Document Evidence Center if you want those fields included.</p>
-        <button type="button" className="hn-action-gold btn btn-sm rounded-lg normal-case" disabled={Boolean(busy) || (!preview.fields.length && (!includeDocuments || !preview.documents.length))}
+        {includePhotos && <section aria-label="Inspection photo export preview" className="space-y-3 rounded-lg border border-violet-200 bg-violet-50/30 p-3">
+          <h5 className="font-semibold text-violet-950">Inspection photos and labels</h5>
+          <p className="text-xs text-slate-600">Verified JPEG/PNG copies are packaged as editable SFREP photo addenda, preferring the display copy. Original inspection files remain in HomeNode. Verification confirms the stored upload, not appraiser review or report completion. Images below expire after five minutes; preview again if needed.</p>
+          {!preview.photos?.length && <p className="text-sm text-slate-600">No inspection photos are attached to this assignment yet.</p>}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">{preview.photos?.map(photo => <figure key={photo.id} className="min-w-0 rounded-lg border border-amber-200 bg-white p-2">
+            {photo.view_url && !unavailablePhotoIds.includes(photo.id) ? <img src={photo.view_url} alt={photo.label} loading="lazy" referrerPolicy="no-referrer"
+              onError={() => setUnavailablePhotoIds(ids => ids.includes(photo.id) ? ids : [...ids, photo.id])} className="h-44 w-full rounded object-contain bg-slate-50" />
+              : <div className="flex h-44 items-center justify-center rounded bg-slate-50 px-3 text-center text-xs text-slate-600">{photo.included ? 'Preview unavailable — verified file is included.' : 'Upload not ready for export.'}</div>}
+            <figcaption className="mt-2 space-y-1 break-words text-xs">
+              <p className="font-semibold text-violet-950">{photo.label}</p>
+              {photo.caption && photo.caption !== photo.label && <p className="whitespace-pre-wrap text-slate-700">{photo.caption}</p>}
+              <p className={photo.included ? 'font-medium text-emerald-800' : 'font-medium text-amber-900'}>{photo.included ? 'Verified upload — included' : 'Not included'}</p>
+              {photo.reason && <p className="text-amber-900">{photo.reason}</p>}
+              {photo.included && <p className="text-slate-500">{photo.variant === 'display' ? 'Display copy' : 'Original JPEG/PNG'} · {Math.max(1, Math.round((photo.byteSize || 0) / 1024)).toLocaleString()} KB</p>}
+            </figcaption>
+          </figure>)}</div>
+        </section>}
+        <p className="text-xs text-slate-600">Review the fields, photos, and exclusions above before downloading. Resolve conflicts in the Document Evidence Center if you want those fields included.</p>
+        <button type="button" className="hn-action-gold btn btn-sm rounded-lg normal-case" disabled={Boolean(busy) || !sfrepCanExport(preview, includeDocuments)}
           onClick={() => void run('export')}>{busy === 'export' ? 'Preparing download…' : 'Download SFREP .rpti'}</button>
       </section>}
       {preparedDownload && <div role="status" className="space-y-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-emerald-900">
-        <p>RPTI prepared. If no download appeared, use the save link below. Import the saved .rpti file into SFREP, then verify the imported fields and attached documents.</p>
+        <p>RPTI prepared. If no download appeared, use the save link below. Import the saved .rpti file into SFREP, then verify the imported fields, documents, photos, and labels.</p>
         <a className={`${secondary} inline-flex`} href={preparedDownload.url} download={preparedDownload.filename}>Save prepared RPTI</a>
         <p className="text-xs">Keep this dialog open until you have saved the file.</p>
       </div>}

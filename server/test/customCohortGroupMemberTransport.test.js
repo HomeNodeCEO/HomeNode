@@ -67,6 +67,24 @@ test('optional current-authenticated member route keeps no-store, exact identity
   const old = await harness(t, { enabled: false }); assert.equal((await old.post()).status, 404);
 });
 
+test('genuine private member envelope binds scope under binding.target, with exact period and selection', async () => {
+  const f = await selectionMemberFixture({ privateSales: true }), request = prepare(f.request);
+  const out = present(f.result, request, 'R-001');
+  assert.equal(out.private_sales.binding.target.account_id, 'R-001');
+  assert.equal(Object.hasOwn(out.private_sales, 'target'), false);
+  assert.equal(Object.hasOwn(out.private_sales, 'rows'), false);
+  assert.equal(out.private_sales.selected.included_source_record_count, 1);
+  assert.equal(out.private_sales.selected.metrics.close_price.median, '300000');
+  assert.deepEqual(out.private_sales.observation_period, out.page.observation_period);
+  const next = { limit: 1, after_member_id: out.page.next_after_member_id };
+  assert.equal(present(f.resultFor(request.population, next), prepare({ ...request, page: next }), 'R-001')
+    .private_sales, out.private_sales);
+  const foreign = await selectionMemberFixture({ accountId: 'FOREIGN', privateSales: true });
+  const revised = await selectionMemberFixture({ revision: 2, privateSales: true });
+  for (const private_sales of [structuredClone(out.private_sales), foreign.result.private_sales, revised.result.private_sales])
+    assert.throws(() => present({ ...f.result, private_sales }, request, 'R-001'), /invalid_response/);
+});
+
 test('member injection and decoded UTF-8 request cap refuse before source I/O even on a pre-parsed body', async t => {
   for (const parsed of [false, true]) {
     const h = await harness(t, { parsed });

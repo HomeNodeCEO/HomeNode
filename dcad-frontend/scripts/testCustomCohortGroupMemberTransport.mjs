@@ -7,8 +7,8 @@ import { selectionMemberFixture } from '../../server/test/fixtures/customCohortS
 
 const A = `recorded-cad:${'a'.repeat(64)}`;
 const json = (value, headers = {}) => new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json', ...headers } });
-async function harness({ respond, empty = false, accountCount = 3 } = {}) {
-  const f = await selectionMemberFixture({ accountId: 'R-001/#1', empty, accountCount }), calls = [], abort = new AbortController();
+async function harness({ respond, empty = false, accountCount = 3, privateSales = false } = {}) {
+  const f = await selectionMemberFixture({ accountId: 'R-001/#1', empty, accountCount, privateSales }), calls = [], abort = new AbortController();
   const transport = createCustomCohortRecordedGroupTransport({ urlFor: p => `https://example.invalid${p}`,
     request: async (url, init) => {
       calls.push({ url, init }); const r = JSON.parse(init.body);
@@ -66,6 +66,26 @@ test('101 real projections traverse exact compact continuation and refuse cloned
   await assert.rejects(h.inspect(next), /invalid_custom_cohort/);
   const wrongPopulation = h.input({ group: 'selected', kind: 'stock' }, next.page);
   await assert.rejects(h.inspect(wrongPopulation, f), /Neighborhood preview request failed/);
+});
+
+test('genuine private aggregate stays assignment-bound across exact-reference member continuation', async () => {
+  const h = await harness({ privateSales: true }), first = await h.inspect();
+  assert.deepEqual(first.members.private_sales, h.result.private_sales);
+  assert.equal(first.members.private_sales.binding.target.account_id, 'R-001/#1');
+  assert.equal(first.members.private_sales.selected.included_source_record_count, 1);
+  assert.equal(Object.hasOwn(first.members.private_sales, 'rows'), false);
+  const next = h.input(h.request.population, { limit: 1, after_member_id: first.members.page.next_after_member_id });
+  const out = await h.inspect(next, { selection_ref: first.selection_ref,
+    members: createCustomCohortMemberContinuation(first.members) });
+  assert.deepEqual(out.members.private_sales, first.members.private_sales);
+  for (const change of [r => { r.private_sales.binding.target.account_id = 'FOREIGN'; },
+    r => { r.private_sales.binding.selection_sha256 = 'd'.repeat(64); },
+    r => { r.private_sales.rows = ['PRIVATE']; }, r => { r.private_sales.observation_period.end_date = '2024-06-29'; }]) {
+    const invalid = await harness({ privateSales: true, respond: f => {
+      const r = structuredClone(f.result); change(r); return json(r);
+    } });
+    await assert.rejects(invalid.inspect(), /invalid_custom_cohort/);
+  }
 });
 
 test('reference, population, cursor, counts and lookup accounts detach before authenticated I/O', async () => {

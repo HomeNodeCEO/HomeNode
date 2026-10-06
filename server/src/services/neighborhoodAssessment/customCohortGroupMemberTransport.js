@@ -71,8 +71,10 @@ export function presentCustomCohortGroupMemberTransportResponse(result, request,
       || json(apply.reasons) !== '["observation_preview_only"]') fail();
     if (privatePage) {
       const p = v.private_sales;
-      if (!isCustomCohortPresentedPrivateSales(p) || p.target.account_id !== accountId
-        || p.target.assignment_file_id !== request.assignment_file_id
+      // The closed private projection retains its assignment scope in binding,
+      // not as a top-level target. Match the same envelope as summary delivery.
+      if (!isCustomCohortPresentedPrivateSales(p) || p.binding.target.account_id !== accountId
+        || p.binding.target.assignment_file_id !== request.assignment_file_id
         || json(p.binding.context_ref) !== json(request.context_ref)
         || p.binding.selection_revision !== ref.selection_revision || p.binding.selection_sha256 !== ref.selection_sha256
         || p.effective_date !== page.effective_date || json(p.observation_period) !== json(page.observation_period)) fail();

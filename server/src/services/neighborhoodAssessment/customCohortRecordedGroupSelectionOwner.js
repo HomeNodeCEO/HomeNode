@@ -11,6 +11,7 @@ import { prepareNeighborhoodCohortBlobReference as blobRef } from './cohortEvide
 import { COHORT_PAGED_GROUP_SELECTION_V1_LIMITS as L,
   prepareCohortPagedGroupSelectionV1Metadata } from './cohortPagedGroupSelectionV1.js';
 import { CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS } from './customCohortObservationPreview.js';
+import { prepareCustomCohortViewport } from './customCohortViewportMap.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 function fail(reason) { throw new TypeError(`custom_cohort_recorded_group_owner_${reason}`); }
@@ -57,15 +58,18 @@ async function headOriginal(owned, selectionRef) {
  */
 export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, execute } = {}) {
   if (typeof identityOf !== 'function' || typeof execute !== 'function') fail('dependencies_required');
-  function inputOf(value, write, preview = false) {
+  function inputOf(value, write, projection = 'intent') {
+    const preview = projection !== 'intent';
     const v = admit(value, ['auth', 'accountId', 'assignmentFileId', 'contextRef',
       ...(write ? ['operationId', 'expectedSelectionRef', 'includedRecordedGroupIds'] : []),
-      ...(preview ? ['selectionRef'] : [])]);
+      ...(preview ? ['selectionRef'] : []), ...(projection === 'viewport' ? ['viewport'] : [])]);
     const identity = identityOf(v);
     if (!UUID.test(identity.auth.userId)) fail('invalid_actor');
     const contextRef = prepareCustomCohortContextReference(json(v.contextRef));
     if (!write) return Object.freeze({ ...identity, contextRef,
-      ...(preview ? { selectionRef: prepareCustomCohortGroupSelectionReference(v.selectionRef) } : {}) });
+      ...(preview ? { selectionRef: prepareCustomCohortGroupSelectionReference(v.selectionRef) } : {}),
+      ...(projection === 'viewport' ? { viewport: prepareCustomCohortViewport(admit(v.viewport,
+        ['west', 'south', 'east', 'north'])) } : {}) });
     if (typeof v.operationId !== 'string' || !UUID.test(v.operationId)) fail('invalid_operation');
     const expectedSelectionRef = v.expectedSelectionRef === null ? null
       : prepareCustomCohortGroupSelectionReference(v.expectedSelectionRef);
@@ -96,6 +100,16 @@ export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, exec
       fail('original_mismatch');
     await repository.getCurrent({ metadataJson, selectionRef: selection_ref }, { onAccountPage });
     return { selection_ref, included_recorded_group_ids: derived.included_recorded_group_ids };
+  }
+  async function completeAccounts(owned, input) {
+    const accounts = [];
+    const opened = await reopen(owned, input, page => {
+      if (accounts.length + page.account_ids.length > CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS.accounts)
+        fail('summary_account_limit');
+      accounts.push(...page.account_ids);
+    });
+    // Only after the final original and whole union match may a consumer see it.
+    return { accounts: Object.freeze(accounts), reference: opened.selection_ref };
   }
   return Object.freeze({
     async selectRecordedGroups(value, options = {}) {
@@ -142,26 +156,32 @@ export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, exec
       });
     },
     async previewRecordedGroupSelection(value, options = {}) {
-      const input = inputOf(value, false, true);
+      const input = inputOf(value, false, 'summary');
       return execute(input, options, false, async owned => {
         if (typeof owned.presentSelectionSummary !== 'function') fail('summary_owner_required');
-        const accounts = [];
-        const opened = await reopen(owned, input, page => {
-          if (accounts.length + page.account_ids.length > CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS.accounts)
-            fail('summary_account_limit');
-          accounts.push(...page.account_ids);
-        });
+        const { accounts, reference } = await completeAccounts(owned, input);
         // No source-statistics consumer sees a prefix. All original pages and
         // the exact current head have succeeded before numeric projection.
-        const content = await owned.presentSelectionSummary(Object.freeze(accounts), opened.selection_ref);
+        const content = await owned.presentSelectionSummary(accounts, reference);
         owned.budget.check();
         return Object.freeze({ status: 'preview', authority: 'not_established',
           target: { account_id: input.accountId, assignment_file_id: input.assignmentFileId },
-          context_ref: input.contextRef, selection_ref: opened.selection_ref,
-          selection_revision: opened.selection_ref.selection_revision, subject_freshness: 'matched',
+          context_ref: input.contextRef, selection_ref: reference,
+          selection_revision: reference.selection_revision, subject_freshness: 'matched',
           ...content, parcel_map: { status: 'omitted', reason: 'geometry_not_requested' },
           apply: { status: 'blocked', reasons: ['observation_preview_only'] } });
       }, 'summary');
+    },
+    async viewportRecordedGroupSelection(value, options = {}) {
+      const input = inputOf(value, false, 'viewport');
+      return execute(input, options, false, async owned => {
+        if (typeof owned.presentSelectionViewport !== 'function') fail('viewport_owner_required');
+        const { accounts, reference } = await completeAccounts(owned, input);
+        const viewport_map = await owned.presentSelectionViewport(accounts, reference, input.viewport);
+        owned.budget.check();
+        return Object.freeze({ status: 'viewport', authority: 'not_established',
+          selection_ref: reference, viewport_map });
+      }, 'viewport');
     },
   });
 }

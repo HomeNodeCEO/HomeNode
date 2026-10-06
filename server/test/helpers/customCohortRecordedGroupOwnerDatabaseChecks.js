@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import express from 'express';
 import { createCustomCohortContextCapture } from '../../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { createCustomNeighborhoodCohortRouter } from '../../src/modules/accounts/customNeighborhoodCohortRouter.js';
+import { runCustomCohortPreparedViewportTileJob } from '../../src/services/neighborhoodAssessment/customCohortPreparedViewportTileJob.js';
 
 /** Invoked only by the verified disposable PostgreSQL fixture. No live accounts,
  * source provider, user report choices, accepted sections or shared database.
@@ -209,6 +210,8 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
   const readBody = { assignment_file_id: scope.assignment_file_id, context_ref: read.contextRef };
   const writeBody = { ...readBody, operation_id: randomUUID(), expected_selection_ref: empty.selection_ref,
     included_recorded_group_ids: [...ids].reverse() };
+  // Exact synthetic subject/other parcel window, not an empty ocean viewport.
+  const viewport = { west: -96.701, south: 32.799, east: -96.69, north: 32.803 };
   try {
     const reopened = await request('group-selection', readBody);
     assert.equal(reopened.status, 200); assert.equal(reopened.headers.get('cache-control'), 'no-store');
@@ -216,6 +219,14 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
     const numericEmpty = await request('selection-preview', { ...readBody, selection_ref: empty.selection_ref });
     assert.equal(numericEmpty.status, 200); assert.equal(numericEmpty.headers.get('cache-control'), 'no-store');
     assert.deepEqual(await numericEmpty.json(), emptySummary);
+    const emptyMap = await request('selection-viewport', { ...readBody, selection_ref: empty.selection_ref, viewport });
+    assert.equal(emptyMap.status, 200);
+    const emptyView = await emptyMap.json();
+    assert.deepEqual(emptyView.viewport_map, await owner.viewport({ ...read, selection: { revision: 2, pockets: [] } }, viewport));
+    assert.deepEqual(emptyView.selection_ref, empty.selection_ref);
+    assert.equal(emptyView.viewport_map.status, 'available');
+    assert.ok(emptyView.viewport_map.geojson.features.length > 0, 'empty selection still displays actual captured parcels');
+    assert.ok(emptyView.viewport_map.geojson.features.every(f => !f.properties.selected));
     loseCommitAck = true;
     const uncertain = await request('select-groups', writeBody);
     assert.equal(uncertain.status, 409);
@@ -231,8 +242,33 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
     const numeric = await request('selection-preview', numericBody);
     assert.equal(numeric.status, 200);
     assert.deepEqual(await numeric.json(), await owner.previewRecordedGroupSelection({ ...read, selectionRef: receipt.selection_ref }));
+    const mapBody = { ...numericBody, viewport };
+    const map = await request('selection-viewport', mapBody);
+    assert.equal(map.status, 200); assert.equal(map.headers.get('cache-control'), 'no-store');
+    const view = await map.json();
+    assert.deepEqual(view, await owner.viewportRecordedGroupSelection({ ...read, selectionRef: receipt.selection_ref, viewport }));
+    assert.equal(view.viewport_map.selection_sha256, receipt.selection_ref.selection_sha256);
+    assert.equal(view.viewport_map.selection_revision, 3);
+    assert.equal(Object.hasOwn(view, 'summary'), false);
+    assert.equal(Object.hasOwn(view, 'account_ids'), false);
+    assert.equal(view.viewport_map.status, 'available');
+    assert.ok(view.viewport_map.geojson.features.length > 0);
+    assert.ok(view.viewport_map.geojson.features.some(f => f.properties.selected), 'nonempty selection geometry witness cannot be vacuous');
+    // Only this verified disposable fixture database: exercise the real bounded
+    // offline tile worker before proving the same exact-reference fast read.
+    await runCustomCohortPreparedViewportTileJob(pool, { maximumContexts: 100, maximumRuntimeMinutes: 1, logger: {} });
+    assert.equal((await pool.query(`SELECT status FROM app.neighborhood_custom_cohort_prepared_tile_manifests
+      WHERE organization_id=$1 AND context_id=$2`, [scope.organization_id, read.contextRef.context_id])).rows[0]?.status, 'available');
+    const tiledFrom = calls.length;
+    const tiled = await request('selection-viewport', mapBody);
+    assert.equal(tiled.status, 200); assert.deepEqual(await tiled.json(), view);
+    assert.ok(calls.slice(tiledFrom).some(sql => sql.includes('custom-cohort-prepared-tiles:read-cells')));
+    assert.ok(!calls.slice(tiledFrom).some(sql => (sql.includes('/* custom-cohort-prepared-preview:read */') && sql.includes('compressed_map'))
+      || sql.includes('neighborhood-cohort-blob:read-batch')), 'prepared tiled read does not replay full source/map blobs');
     const staleNumeric = await request('selection-preview', { ...readBody, selection_ref: empty.selection_ref });
     assert.equal(staleNumeric.status, 409); assert.deepEqual(await staleNumeric.json(), { error: 'neighborhood_selection_changed' });
+    const staleMap = await request('selection-viewport', { ...mapBody, selection_ref: empty.selection_ref });
+    assert.equal(staleMap.status, 409); assert.deepEqual(await staleMap.json(), { error: 'neighborhood_selection_changed' });
     const stale = await request('select-groups', { ...writeBody, operation_id: randomUUID() });
     assert.equal(stale.status, 409); assert.deepEqual(await stale.json(), { error: 'neighborhood_selection_changed' });
     const invalidFrom = calls.length;
@@ -240,17 +276,29 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
     assert.equal(injected.status, 400); assert.equal(calls.length, invalidFrom);
     const injectedNumeric = await request('selection-preview', { ...numericBody, account_ids: [] });
     assert.equal(injectedNumeric.status, 400); assert.equal(calls.length, invalidFrom);
+    const injectedMap = await request('selection-viewport', { ...mapBody, account_ids: [] });
+    assert.equal(injectedMap.status, 400); assert.equal(calls.length, invalidFrom);
     denySummary = true;
     try {
       const denied = await request('selection-preview', numericBody);
       assert.equal(denied.status, 403); assert.deepEqual(await denied.json(), { error: 'neighborhood_access_denied' });
+      const deniedMap = await request('selection-viewport', mapBody);
+      assert.equal(deniedMap.status, 403); assert.deepEqual(await deniedMap.json(), { error: 'neighborhood_access_denied' });
     } finally { denySummary = false; }
+    summaryPolicyCalls = 0; denyFinalSummary = true;
+    try {
+      const finalDeniedMap = await request('selection-viewport', mapBody);
+      assert.equal(finalDeniedMap.status, 403);
+      assert.deepEqual(await finalDeniedMap.json(), { error: 'neighborhood_access_denied' });
+    } finally { denyFinalSummary = false; }
     await suspend('suspended');
     try {
       const revoked = await request('group-selection', readBody);
       assert.equal(revoked.status, 403); assert.deepEqual(await revoked.json(), { error: 'neighborhood_access_denied' });
       const revokedNumeric = await request('selection-preview', numericBody);
       assert.equal(revokedNumeric.status, 403); assert.deepEqual(await revokedNumeric.json(), { error: 'neighborhood_access_denied' });
+      const revokedMap = await request('selection-viewport', mapBody);
+      assert.equal(revokedMap.status, 403); assert.deepEqual(await revokedMap.json(), { error: 'neighborhood_access_denied' });
     } finally { await suspend('active'); }
     denyPolicy = true;
     try {
@@ -260,6 +308,7 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
     assert.equal(await head(), 3); assert.deepEqual(await protectedState(), before);
     checks.push('native authenticated ID-only HTTP save/reopen preserves exact lost-ACK operation, stale/current-role/source fences and unchanged report state');
     checks.push('native exact-reference HTTP numeric summaries preserve complete and empty populations, refuse stale/injected/summary-denied/current-role requests and disclose no geometry or raw member pages');
+    checks.push('native exact-reference HTTP viewport has non-vacuous selected/empty geometry and actual offline prepared-tile parity without full source/map replay; stale, injected members and current actor/source refusals leave report state unchanged');
   } finally {
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   }

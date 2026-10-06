@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { prepareCustomCohortViewport, projectCustomCohortViewportMap,
   registerCustomCohortPreparedViewportMap,
-  visibleCustomCohortPreparedFeatures } from '../src/services/neighborhoodAssessment/customCohortViewportMap.js';
+  visibleCustomCohortPreparedFeatures, presentCustomCohortSelectionViewportMap,
+  isCustomCohortPresentedSelectionViewport } from '../src/services/neighborhoodAssessment/customCohortViewportMap.js';
 
 const square = (id, account, x, selected = false) => ({ type: 'Feature', id: `gis.dcad_parcels:${id}`,
   properties: { object_id: String(id), account_id: account, selected },
@@ -14,6 +15,33 @@ const preview = { status: 'preview', target: { account_id: 'subject', assignment
     geometry_semantics: 'current_observed_cached_parcels_not_legal_subdivision_boundary',
     geojson: { type: 'FeatureCollection', features: [square(1, 'subject', -96.8, true), square(2, 'other', -96.9)] },
     counts: { parcels: 2 } } };
+
+test('new exact-selection projection freezes only its own public path and refuses hitchhiking source fields or malformed geometry', () => {
+  const bounds = { west: -96.805, south: 31.99, east: -96.79, north: 32.01 };
+  const own = structuredClone(preview), result = presentCustomCohortSelectionViewportMap(own, bounds);
+  assert.equal(isCustomCohortPresentedSelectionViewport(result), true);
+  assert.equal(isCustomCohortPresentedSelectionViewport(structuredClone(result)), false);
+  assert.ok(Object.isFrozen(result.geojson.features[0].properties));
+  assert.ok(Object.isFrozen(result.geojson.features[0].geometry.coordinates[0]));
+  assert.equal(Object.isFrozen(own.target), false, 'caller identity is not frozen');
+  assert.equal(Object.isFrozen(own.context_ref), false, 'caller context is not frozen');
+  assert.equal(Object.isFrozen(own.parcel_map.geojson.features[0]), false, 'actual supplied legacy feature is not frozen');
+  assert.equal(Object.isFrozen(own.parcel_map.geojson.features[0].geometry.coordinates[0]), false, 'actual supplied legacy ring is not frozen');
+  const expected = structuredClone(result);
+  own.target.account_id = 'changed'; own.context_ref.context_sha256 = 'e'.repeat(64);
+  own.parcel_map.geojson.features[0].properties.selected = false;
+  own.parcel_map.geojson.features[0].geometry.coordinates[0][0][0] -= .001;
+  assert.deepEqual(result, expected, 'later source mutation cannot change the witnessed public response');
+  assert.equal(Object.isFrozen(preview.parcel_map.geojson.features[0]), false, 'legacy source remains mutable');
+  for (const change of [v => { v.target.raw = 'PRIVATE'; }, v => { v.context_ref.raw = 'PRIVATE'; },
+    v => { v.parcel_map.geojson.features[0].properties.raw = 'PRIVATE'; },
+    v => { v.parcel_map.geojson.features[0].geometry.raw = 'PRIVATE'; },
+    v => { v.parcel_map.geojson.features[0].geometry.coordinates[0][4] = [-96.799, 32]; },
+    v => { v.parcel_map.geojson.features.push(structuredClone(v.parcel_map.geojson.features[0])); }]) {
+    const v = structuredClone(preview); change(v);
+    assert.throws(() => presentCustomCohortSelectionViewportMap(v, bounds), /invalid_input/);
+  }
+});
 
 test('viewport delivers only visible captured geometry with explicit display-only scope', () => {
   const result = projectCustomCohortViewportMap(preview, { west: -96.805, south: 31.99, east: -96.79, north: 32.01 });

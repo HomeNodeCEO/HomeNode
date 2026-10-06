@@ -369,6 +369,44 @@ refusal, and actual private CSV projection parity. These are CI assertions, not
 live latency or greater-than-50k acceptance. The workspace UI still needs a
 coherent exact-reference map/member/save/Apply integration before activation.
 
+### Exact-reference display viewport (existing capacity)
+
+`viewportRecordedGroupSelection` reopens the same complete current selection as
+the numeric summary. Only after all membership/union originals and the exact
+head verify does it load geometry. A viewport never changes the analytical
+population, and a pan does not rerun the numeric kernel. Current actor,
+assignment, original source, subject and private CSV review fences repeat before
+delivery. Catalog and the existing viewport's summary exposure are both required.
+
+Shared captures prefer the existing complete prepared tile manifest and only
+the requested cells. Missing/unsupported tile windows keep the verified complete
+prepared-map fallback; private captures preserve their original, independently
+authorized source graph. Missing geometry remains unavailable. No hull, sampled
+parcel, replacement source snapshot or viewport-limited statistical union is
+substituted. The public display projection admits only the closed parcel fields
+and exact retained coordinates, preserving the existing browser coordinate cap.
+Its frozen public response is detached only after the existing byte and complete
+visible-geometry checks, so it cannot freeze or retain mutable legacy identity,
+feature or coordinate aliases. The legacy projection path remains unchanged.
+
+The optional `selection-viewport` POST accepts only assignment/context identity,
+the exact selection reference and finite viewport bounds. Its request retains
+the 262,144-byte reference-only ceiling; its complete decoded response, including
+the reference envelope, stays within the existing four-megabyte viewport ceiling.
+Authentication/CSRF composition, the execution gate, no-store, cancellation and
+the one-minute budget remain unchanged. Existing compression applies to this
+new display route too; compressed bytes do not widen decoded capacity.
+
+The browser helper binds the response to the accepted intent receipt, context,
+revision, digest, whole manifest, target and requested viewport. Selected flags
+must match the receipt's groups in the checked local catalog, not a fabricated
+legacy member-array request. Missing/stale/unknown choices refuse, and a deliberate
+empty choice keeps every visible parcel unselected. Legacy viewport validation
+continues through the same closed geometry decoder. Neither transport activates
+the workspace UI, saves an accepted report, changes installed source capacity or
+proves live speed. Exact-reference member/workspace/Apply consumers, partial
+page capture, >50k exact numeric studies and live acceptance still remain.
+
 The worker CLI validates its database URL before constructing the pool and
 requires certificate-verified TLS for every non-loopback host, including internal
 hosts. Only literal localhost/127.0.0.1/::1 development connections may be

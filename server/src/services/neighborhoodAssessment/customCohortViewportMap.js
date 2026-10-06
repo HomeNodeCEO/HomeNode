@@ -13,6 +13,7 @@ const MAX_QUERY_CELLS = 20_000;
 const frozenBounds = new WeakMap();
 const preparedSources = new WeakMap();
 const preparedIndexes = new WeakMap();
+const selectionViewportProjections = new WeakSet();
 
 function invalid() { throw Object.assign(new TypeError('invalid_input'), { reason: 'invalid_input' }); }
 
@@ -209,4 +210,61 @@ export function projectCustomCohortViewportMap(preview, requestedViewport) {
     throw Object.assign(new TypeError('viewport_capacity_exceeded'), { reason: 'viewport_capacity_exceeded' });
   }
   return result;
+}
+
+/** A public, exact viewport projection witness only, never source permission.
+ * Freeze this new consumer's output without changing legacy mutable inputs. */
+export function presentCustomCohortSelectionViewportMap(preview, viewport) {
+  const output = projectCustomCohortViewportMap(preview, viewport);
+  // Raw read-model fields cannot hitchhike on a future geometry producer. Keep
+  // the browser's existing complete-visible coordinate budget; never truncate.
+  const exact = (value, keys) => value && Object.getPrototypeOf(value) === Object.prototype
+    && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+  if (!exact(output.target, ['account_id', 'assignment_file_id'])
+    || !exact(output.context_ref, ['context_id', 'context_revision', 'context_sha256'])
+    || output.geometry_semantics !== 'current_observed_cached_parcels_not_legal_subdivision_boundary') invalid();
+  let points = 0;
+  const capacity = () => { throw Object.assign(new TypeError('viewport_capacity_exceeded'), { reason: 'viewport_capacity_exceeded' }); };
+  const polygon = value => {
+    if (!Array.isArray(value) || !value.length || value.length > 50_000) invalid();
+    for (const ring of value) {
+      if (!Array.isArray(ring) || ring.length < 4 || ring.length > 200_000) invalid();
+      for (const point of ring) {
+        if (!Array.isArray(point) || point.length !== 2 || !point.every(x => typeof x === 'number' && Number.isFinite(x))
+          || Math.abs(point[0]) > 180 || Math.abs(point[1]) > 90) invalid();
+        if (++points > 200_000) capacity();
+      }
+      if (ring[0][0] !== ring.at(-1)[0] || ring[0][1] !== ring.at(-1)[1]) invalid();
+    }
+  };
+  if (output.status === 'available') {
+    const ids = new Set();
+    for (const feature of output.geojson.features) {
+      const p = feature.properties, g = feature.geometry;
+      if (!exact(feature, ['type', 'id', 'properties', 'geometry']) || feature.type !== 'Feature'
+        || !exact(p, ['object_id', 'account_id', 'selected']) || typeof p.object_id !== 'string'
+        || typeof p.account_id !== 'string' || typeof p.selected !== 'boolean'
+        || feature.id !== `gis.dcad_parcels:${p.object_id}` || ids.has(feature.id) || !exact(g, ['type', 'coordinates'])) invalid();
+      ids.add(feature.id);
+      if (g.type === 'Polygon') polygon(g.coordinates);
+      else {
+        if (g.type !== 'MultiPolygon' || !Array.isArray(g.coordinates) || !g.coordinates.length) invalid();
+        g.coordinates.forEach(polygon);
+      }
+    }
+  }
+  const freeze = value => {
+    if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+      for (const child of Object.values(value)) freeze(child);
+      Object.freeze(value);
+    }
+  };
+  // The legacy projection deliberately shares source feature/geometry and
+  // identity objects. Freeze a detached, already byte-bounded public response
+  // so this consumer neither mutates those inputs nor retains their aliases.
+  const detached = structuredClone(output);
+  freeze(detached); selectionViewportProjections.add(detached); return detached;
+}
+export function isCustomCohortPresentedSelectionViewport(value) {
+  return selectionViewportProjections.has(value);
 }

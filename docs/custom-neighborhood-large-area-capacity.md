@@ -568,6 +568,11 @@ initial/final role and source refusal, lost acknowledgments and v3 original
 reopening. They retain the coordinator's cold-start assignment and accepted
 sections, receipts, report and geography unchanged. These assertions must pass
 actual CI; local recording doubles are not claimed as PostgreSQL proof.
+An additional isolated report fixture performs a real V7 start/capture/complete
+transition and passes its current command-v3 selection directly to reviewed
+inputs, report proposal and coherent Apply/replay. The existing two-revision V7
+fixture still checks actual stale-head swaps with identical checkpoint bytes;
+the fresh one-revision transition case does not fabricate a predecessor for it.
 Public save/transition HTTP routes and the complete V7 browser lifecycle are
 still unactivated. Installed source/numerical limits, release policy, background
 schedules and production speed claims are unchanged; partial source paging,

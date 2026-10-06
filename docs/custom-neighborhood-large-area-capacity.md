@@ -385,6 +385,9 @@ authorized source graph. Missing geometry remains unavailable. No hull, sampled
 parcel, replacement source snapshot or viewport-limited statistical union is
 substituted. The public display projection admits only the closed parcel fields
 and exact retained coordinates, preserving the existing browser coordinate cap.
+Its frozen public response is detached only after the existing byte and complete
+visible-geometry checks, so it cannot freeze or retain mutable legacy identity,
+feature or coordinate aliases. The legacy projection path remains unchanged.
 
 The optional `selection-viewport` POST accepts only assignment/context identity,
 the exact selection reference and finite viewport bounds. Its request retains
@@ -688,6 +691,18 @@ context/runtime bounds and no provider/source recapture or report writes. The
 new checksummed migration retains a new immutable derivative; it does not edit
 any original, tile, selection, accepted report or historical migration.
 
+The map-opening CLI reuses the reviewed certificate-verifying remote database
+URL boundary, retains one connection and its 120-second statement timeout, and
+sanitizes both idle connection failures and unknown worker errors. This does
+not alter runtime trust stores, production settings or the worker schedule.
+
+Preview format and source catalog format are independent. Each derivative is
+keyed and foreign-keyed to its exact catalog format (1 or 2), and preparation
+and reads choose the same latest supported original as the catalog repository.
+A newer catalog can receive a new immutable derivative without overwriting its
+predecessor. Until that derivative exists, the normal full-map fallback remains;
+an older derivative is never relabelled as the newer catalog's opening.
+
 The manifest is selection-neutral. It preserves the original exact parcel
 bounds/counts, one retained exterior-ring anchor per named group, and retained
 subject anchors. Neither a label nor a viewport defines a legal subdivision
@@ -809,3 +824,12 @@ source access or Apply. No genuine appraisal, accepted report, production worker
 schedule, installed capacity, release policy or speed SLA changes here. Local
 actual producer/browser-render tests are not native PostgreSQL or realistic
 greater-than-50k/5-/10-mile/retrospective/live acceptance proof.
+
+The worker CLI validates its database URL before constructing the pool and
+requires certificate-verified TLS for every non-loopback host, including internal
+hosts. Only literal localhost/127.0.0.1/::1 development connections may be
+plaintext. Admitted TLS query options are stripped before pg receives the URL;
+duplicate, conflicting, insecure remote, and driver-setting overrides are refused.
+The runtime trust store must contain the provider's trusted certificate chain.
+There is no fallback that disables verification, no raw driver error logging,
+and no automatic worker schedule or production environment change from this fix.

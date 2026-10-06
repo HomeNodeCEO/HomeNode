@@ -26,7 +26,7 @@ import { validateCachedTransactionClosure } from './cachedTransactionClosure.js'
 import { decodeNeighborhoodOriginalValue } from './originalValueDecoding.js';
 import { prepareCustomCohortPrivateSalesSupplement } from './customCohortPrivateSales.js';
 import { SPATIAL_TUPLE_LIMITS, spatialParcelEncoding, iterateSpatialParcels } from './spatialMembershipEncoding.js';
-import { withCustomCohortRetentionTiming } from './customCohortRetentionTiming.js';
+import { withCustomCohortRetentionTiming, withCustomCohortLoadTiming } from './customCohortRetentionTiming.js';
 
 export const CUSTOM_COHORT_CAPTURE_INPUT_LIMITS = Object.freeze({
   blobs: 4000, references: 12000, logical_utf8_bytes: 512_000_000, page_entries: 250,
@@ -553,6 +553,12 @@ async function persistPreparedInputs(client, scopeJson, prepared) {
  * Current permission/freshness and uncertain-COMMIT intent matching stay with
  * the coordinator. Every reference traversal is bounded, even duplicate refs. */
 export async function loadCustomCohortCaptureInputs(client, scopeJson, refs) {
+  if (typeof client?.query !== 'function' || typeof client.release !== 'function')
+    return loadRetainedInputs(client, scopeJson, refs);
+  return withCustomCohortLoadTiming(client, observed => loadRetainedInputs(observed, scopeJson, refs));
+}
+
+async function loadRetainedInputs(client, scopeJson, refs) {
   closed(refs, REFS); const scope = prepareCustomCohortContextScope(scopeJson), started = await transaction(client);
   const store = createNeighborhoodCohortBlobRepository(client, scope.organization_id), budget = meter(), cache = new Map(), seen = new Map();
   // Request-local receipts only: no cached source bytes, permissions, or graph

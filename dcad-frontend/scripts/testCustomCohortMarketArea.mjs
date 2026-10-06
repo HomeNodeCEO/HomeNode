@@ -85,11 +85,11 @@ const draft = response => ({ version: 3, accountId: 'A', assignmentFileId: 15, s
 
 /** Actual component with deterministic hooks, as in the workspace harness.
  * External requests are stubbed; JSX, input handlers and effects are real. */
-function marketComponent(overrides = {}) {
+function marketComponent(overrides = {}, { localDraft = null, standalone = false } = {}) {
   let cursor = 0, tree, dirty = false, props = { subjectAccountId: 'A', assignmentFileId: 15,
     explorationArea: group, embedded: true, initialAsOfDate: request.asOf, ...overrides };
-  const cells = [], pending = [], published = [], queries = [], operation = deferred();
-  props.onCompletionChange = value => published.push(value);
+  const cells = [], pending = [], published = [], queries = [], localReads = [], operation = deferred();
+  if (!standalone) props.onCompletionChange = value => published.push(value);
   const react = {
     useState(initial) {
       const index = cursor++; cells[index] ??= { value: typeof initial === 'function' ? initial() : initial };
@@ -108,7 +108,9 @@ function marketComponent(overrides = {}) {
     if (dependency === '@/features/auth/ApplicationAuth') return { useApplicationAuth: () => ({ session: null }) };
     if (dependency === '@/lib/api') return { getMarketConditionsContext: async () => ({ subject: { account_id: 'A' } }),
       runMarketConditionsAnalysis: () => { throw new Error('Exploration must not use the legacy market request.'); } };
-    if (dependency === '@/lib/marketConditionsDraft') return { readMarketConditionsDraft: () => null, saveMarketConditionsDraft: () => assert.fail('Unexpected local save') };
+    if (dependency === '@/lib/marketConditionsDraft') return { readMarketConditionsDraft: (...args) => {
+      localReads.push(args); return localDraft;
+    }, saveMarketConditionsDraft: () => assert.fail('Unexpected local save') };
     if (dependency === '@/features/neighborhood/customCohortMarketArea') return { ...helper, runMarketStudies: (...args) => { queries.push(args); return operation.promise; } };
     if (dependency === './MarketStudyPropertyContext') return { default: 'MarketStudyPropertyContext' };
     if (dependency === './ExplorationLandUsePanel') return { default: 'ExplorationLandUsePanel' };
@@ -125,7 +127,7 @@ function marketComponent(overrides = {}) {
   function render() { let passes = 0; do { dirty = false; cursor = 0; tree = Component(props); while (pending.length) pending.shift()();
     assert.ok(++passes < 40, 'Component effects must settle'); } while (dirty); return tree; }
   async function settle() { for (let index = 0; index < 5; index++) { await Promise.resolve(); render(); } }
-  return { render, settle, published, queries, operation, update(change) { props = { ...props, ...change }; return render(); },
+  return { render, settle, published, queries, localReads, operation, update(change) { props = { ...props, ...change }; return render(); },
     button(label) { const node = walk(render()).find(item => item.type === 'button' && text(item).startsWith(label)); assert.ok(node, label); return node; },
     get text() { return text(render()); },
     dispose() { for (const cell of cells) cell?.cleanup?.(); } };
@@ -190,6 +192,48 @@ test('a database draft arriving after lazy mount restores results and the saved 
   h.button('Clear').props.onClick(); await h.settle();
   h.update({ initialDraft: { ...restored, savedAt: '2026-10-06T01:00:00Z' } }); await h.settle();
   assert.equal(h.button('Run  market studies').props.disabled, true, 'A later save cannot reset current edits');
+});
+
+test('a stale browser draft cannot overwrite late authoritative workfile weighting or Neighborhood fields', async t => {
+  const value = completeResult(), keys = ['zip', 'radius_1', 'radius_2', 'exploration'];
+  value.analyses = keys.map(key => ({ ...value.analyses[0], market: { key, label: key } }));
+  const cached = { ...draft(value), selectedAreaKeys: keys,
+    reconciliation: { trendConclusion: 'stable', reliedUponAreaKeys: keys, explanation: 'Older browser reconciliation' } };
+  const restored = { ...cached, savedAt: '2026-10-06T02:00:00Z',
+    reconciliation: { trendConclusion: 'increasing', reliedUponAreaKeys: ['zip', 'radius_1'], explanation: 'New database reconciliation' },
+    neighborhoodForm: { builtUp: 'over_75', growth: 'stable', demandSupply: 'in_balance',
+      boundaries: 'Saved selected area', priceLow: '100', priceHigh: '785', pricePredominant: '278',
+      ageLow: '1', ageHigh: '131', agePredominant: '55' },
+    landUse: { explorationIdentity: fixture().api.explorationAreaIdentity(group.binding), result: { proof: 'saved land use' } } };
+  const h = marketComponent({ initialDraft: null }, { localDraft: cached }); t.after(h.dispose); await h.settle();
+  assert.equal(h.localReads.length, 0, 'Database editors never consult browser-owned market drafts');
+  assert.match(h.text, /Study required/);
+  assert.equal(h.published.filter(Boolean).length, 0, 'No cached draft can be republished before workfile hydration');
+  h.update({ initialDraft: restored }); await h.settle();
+  const published = h.published.at(-1);
+  assert.match(h.text, /Study complete/);
+  assert.deepEqual(published.reconciliation, restored.reconciliation);
+  assert.deepEqual(published.neighborhoodForm, restored.neighborhoodForm);
+  assert.deepEqual(published.landUse, restored.landUse);
+  assert.equal(h.queries.length, 0, 'Restoration reuses saved results without another analysis');
+  h.button('Clear').props.onClick(); await h.settle();
+  h.update({ initialDraft: { ...cached, savedAt: '2026-10-06T03:00:00Z' } }); await h.settle();
+  assert.equal(h.button('Run  market studies').props.disabled, true, 'Later callbacks do not overwrite edits');
+});
+
+test('standalone market editors retain their exact-file browser draft fallback', async t => {
+  const saved = draft(completeResult());
+  const h = marketComponent({}, { localDraft: saved, standalone: true }); t.after(h.dispose); await h.settle();
+  assert.equal(h.localReads.length, 1);
+  assert.deepEqual(h.localReads[0], ['A', 15, null]);
+  assert.match(h.text, /Study complete/);
+  assert.equal(h.queries.length, 0);
+  assert.equal(h.published.length, 0);
+  for (const change of [{ accountId: 'OTHER' }, { assignmentFileId: 16 }]) {
+    const foreign = marketComponent({}, { localDraft: { ...saved, ...change }, standalone: true });
+    t.after(foreign.dispose); await foreign.settle();
+    assert.match(foreign.text, /Study required/, 'Browser drafts remain bound to the exact appraisal file');
+  }
 });
 
 test('late workfile hydration cannot overwrite edits or import another appraisal file', async t => {

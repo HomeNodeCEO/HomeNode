@@ -53,6 +53,12 @@ an edited explanation. Completed study results remain unchanged, and applying a
 different combination sends no market, map or capture request. Save market
 reconciliation persists the choices through the existing workfile section/CAS.
 
+Callback-owned report editors hydrate only from the exact database workfile
+draft, including when that draft arrives after the lazy editor mounts. They
+never republish a stale browser draft over saved weighting, land use, or form
+review fields. Standalone editors retain their exact-file local draft fallback;
+late hydration still cannot overwrite an appraiser's intervening edits.
+
 Past six- and three-month changes compare the exact end-month sale-price median
 with the median six or three months earlier. They are not fractions of an annual
 rate, do not infer a missing endpoint, and do not control the annual trend label.

@@ -19,6 +19,8 @@ import { prepareCustomCohortGroupWorkspaceTransportRequest,
   presentCustomCohortGroupWorkspaceTransportResponse } from '../../services/neighborhoodAssessment/customCohortGroupWorkspaceTransport.js';
 import { CUSTOM_COHORT_GROUP_MAP_OPENING_RESPONSE_BYTES, prepareCustomCohortGroupMapOpeningTransportRequest,
   presentCustomCohortGroupMapOpeningTransportResponse } from '../../services/neighborhoodAssessment/customCohortGroupMapOpening.js';
+import { prepareCustomCohortRecordedGroupMarketRequest }
+  from '../../services/neighborhoodAssessment/customCohortRecordedGroupMarketAnalysis.js';
 
 const BASE = '/api/accounts/:id/neighborhood-cohort';
 const BODY_BYTES = 4_000_000;
@@ -127,7 +129,7 @@ function publicFailure(error) {
  * The owner resolves and rechecks the exact organization/assignment in the DB.
  * Never supply its internal raw `.preview` method as `.present` here.
  */
-export function createCustomNeighborhoodCohortRouter({ cohortService, marketAnalysis, landUseAnalysis, logger = console,
+export function createCustomNeighborhoodCohortRouter({ cohortService, marketAnalysis, landUseAnalysis, recordedGroupMarketAnalysis, logger = console,
   recordedGroupWorkspaceTransitions = false } = {}) {
   if (['capture', 'present', 'inspect', 'catalog'].some(key => typeof cohortService?.[key] !== 'function')) {
     throw new TypeError('custom_neighborhood_cohort_router_dependencies_required');
@@ -334,6 +336,12 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, marketAnal
   if (typeof landUseAnalysis === 'function') route('land-use',
     ['assignment_file_id', 'context_ref', 'selection', 'selection_sha256'],
     (identity, body, options) => landUseAnalysis(identity, body, options), [], { responseBytes: 32_000 });
+  if (typeof recordedGroupMarketAnalysis === 'function') route('selection-market-analysis',
+    ['assignment_file_id', 'context_ref', 'selection_ref', 'area_keys', 'as_of', 'period_months', 'context_override'],
+    (identity, body, options) => recordedGroupMarketAnalysis(identity, body, options), [], {
+      bodyBytes: CUSTOM_COHORT_GROUP_TRANSPORT_BYTES, responseBytes: BODY_BYTES,
+      prepareBody: prepareCustomCohortRecordedGroupMarketRequest,
+    });
   route('catalog', ['assignment_file_id', 'context_ref', 'selection'], (identity, body, options) => {
     const versioned = Object.hasOwn(body, 'catalog_version');
     if (versioned && ![1, 2, 3].includes(body.catalog_version)) invalid();

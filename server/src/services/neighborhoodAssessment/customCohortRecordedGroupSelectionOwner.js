@@ -92,7 +92,7 @@ export async function reopenCustomCohortRecordedGroupSelectionOriginal(owned, in
 export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, execute, executeWorkspaceTransition } = {}) {
   if (typeof identityOf !== 'function' || typeof execute !== 'function') fail('dependencies_required');
   function inputOf(value, write, projection = 'intent') {
-    const preview = ['summary', 'viewport', 'members', 'opening'].includes(projection), completing = projection === 'complete';
+    const preview = ['summary', 'viewport', 'members', 'opening', 'market'].includes(projection), completing = projection === 'complete';
     const workspace = projection === 'workspace' || completing;
     const v = admit(value, ['auth', 'accountId', 'assignmentFileId', 'contextRef',
       ...(write ? ['operationId', 'expectedSelectionRef', 'includedRecordedGroupIds'] : []),
@@ -238,6 +238,21 @@ export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, exec
           ...content, parcel_map: { status: 'omitted', reason: 'geometry_not_requested' },
           apply: { status: 'blocked', reasons: ['observation_preview_only'] } });
       }, 'summary');
+    },
+    async authorizeRecordedGroupMarketSelection(value, options = {}) {
+      const input = inputOf(value, false, 'market');
+      return execute(input, options, false, async owned => {
+        const { accounts, reference } = await completeAccounts(owned, input);
+        owned.budget.check();
+        // Internal calculator input only, never an HTTP roster or an Apply
+        // grant. Complete original pages and CURRENT source rights precede it.
+        return Object.freeze({
+          target: Object.freeze({ account_id: input.accountId, assignment_file_id: input.assignmentFileId }),
+          selection_ref: reference, accountIds: accounts,
+          binding: Object.freeze({ context_ref: input.contextRef,
+            selection_revision: reference.selection_revision, selection_sha256: reference.selection_sha256 }),
+        });
+      }, 'market');
     },
     async openRecordedGroupSelectionMap(value, options = {}) {
       const input = inputOf(value, false, 'opening');

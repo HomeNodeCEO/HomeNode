@@ -283,6 +283,8 @@ test('opt-in exact-reference map renders the saved display through its host port
     ['remove', f.saved.included_recorded_group_ids[0], 'subdivision']]);
   assert.equal(f.props.display.observations.summary.selected.account_count, 2);
   assert.equal(map.fits.length, 1); assert.match(h.html(), /Included · red outline/);
+  assert.equal(h.cityProps(), null, 'exact mode preserves the protected city-selector removal');
+  assert.doesNotMatch(h.html(), /City limits marker|Select a reference city/);
 });
 
 test('opt-in deliberate empty paints no red selected parcels and does not invent a default area', async t => {

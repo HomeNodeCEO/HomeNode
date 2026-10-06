@@ -794,8 +794,9 @@ they cannot become a statistical population, source capability or report input.
 
 The existing parcel-map component now also accepts that display plus a host-owned
 viewport read port. Its labels, subdivision clicks/right-clicks, red inclusion
-outlines, similarity fills, retained subject pointer, city reference control and
-layout are unchanged. The exact path never calls the legacy flat-selection HTTP
+outlines, similarity fills and retained subject pointer are unchanged. The
+protected UI cleanup is retained: the removed city-reference selector is not
+restored in either mode. The exact path never calls the legacy flat-selection HTTP
 function. A stale display keeps the old map/observations paired; late pans cannot
 paint a newer selection. Legacy map inputs remain supported unchanged, and the
 production workspace still uses that legacy path.
@@ -818,7 +819,8 @@ responses may retain previously complete geometry marked incomplete for a new
 camera; access, conflict and integrity failures cannot hide behind that fallback.
 
 This opt-in still requires coherent V7 host admission/draft/read-only/flush fences,
-member/subdivision inspection and report consumers before production activation.
+optional member/subdivision read ports and report consumers before production
+activation; it must not restore removed inspection or adoption panels.
 Neither the component's optional port nor its local composition witness grants
 source access or Apply. No genuine appraisal, accepted report, production worker,
 schedule, installed capacity, release policy or speed SLA changes here. Local

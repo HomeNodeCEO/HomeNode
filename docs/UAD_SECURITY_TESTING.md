@@ -185,7 +185,7 @@ suppressed for these advisories. HomeNode does not run Metro or `image-size` in
 the deployed API; untrusted appraisal images must not be processed through the
 mobile build toolchain.
 
-### Mobile Forge and braces backports (native/OTA release hold)
+### Mobile Forge and braces backports (release hold)
 
 As checked on October 2, 2026, the official registry has no fixed release for
 `node-forge` 1.4.0 (`GHSA-86w9-cpqp-85rv`) or `braces` 3.0.3
@@ -220,18 +220,11 @@ workers and native/OTA publishing are not covered. Local Android/iOS JavaScript
 exports are compatibility evidence, not signed native build approval. No
 authentication, photo synchronization or server signing policy is changed.
 
-The dependency audit still reports both high advisories. For the web-only
-neighborhood-control release, the owner approved a temporary exception on
-October 5, 2026. The CI job must first verify the installed patch hashes and
-behavior, then show the unfiltered audit output, then ignore only
-`GHSA-86w9-cpqp-85rv` and `GHSA-vfj7-8cjw-p6xm` for its final result. The
-exception expires after October 19, 2026; all other Moderate/High/Critical
-findings and registry failures remain blocking. This is risk acceptance, not a
-claim that either vulnerable upstream package has been fixed or that a
-single-user deployment cannot be attacked. The native/OTA release hold stays
-in place. Reassess the exception before its expiry and replace these backports
-with official fixed versions when available; rerun compatibility/security
-checks and remove the exception and patches then. Do not fake versions.
+The ordinary dependency audit still reports both high advisories and blocks
+release. Neither a successful test nor this documentation grants a release
+exception. Keep raw findings visible. Replace these backports with official
+fixed versions when available, rerun all compatibility/security checks, and
+remove the patches; do not fake versions or disable the existing gate.
 
 `pnpm run verify:toolchain` first hashes the reviewed patched files resolved
 through the two Expo Forge consumers and both Metro/micromatch braces paths,
@@ -250,8 +243,8 @@ Per Expo's lifecycle contract, it runs after prebuild (and CocoaPods on iOS),
 so it is evidence of the installed project graph at that point, not protection
 for earlier build steps or an attestation of global EAS tooling. Custom EAS
 workflows must invoke it explicitly. No remote EAS execution has been attested
-by the local checks. The native/OTA release hold remains separate and
-unchanged; this command makes no network calls or audit exceptions by itself.
+by the local checks. The raw audit and native/OTA release hold remain separate
+and unchanged; this command makes no network calls or audit exceptions.
 
 ## Finding lifecycle
 

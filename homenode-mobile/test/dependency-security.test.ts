@@ -209,19 +209,21 @@ test('dependency security gates reject moderate or higher findings', () => {
     (workflow.match(/npm audit --package-lock-only --audit-level=moderate/g) ?? []).length,
     1,
   );
-  assert.equal(
-    (workflow.match(/pnpm audit --fetch-timeout=300000 --audit-level=moderate/g) ?? []).length,
-    2,
-  );
-  assert.equal(
-    (workflow.match(/--ignore GHSA-[a-z0-9-]+/g) ?? []).join(','),
-    '--ignore GHSA-86w9-cpqp-85rv,--ignore GHSA-vfj7-8cjw-p6xm',
-  );
+  assert.equal((workflow.match(/run: node scripts\/temporary-audit-exception\.mjs/g) ?? []).length, 1);
   assert.equal(
     (workflow.match(/run: pnpm run verify:toolchain/g) ?? []).length,
     1,
   );
-  assert.match(workflow, /2026-10-19/);
+  assert.ok(workflow.indexOf('run: pnpm run verify:toolchain') <
+    workflow.indexOf('run: node scripts/temporary-audit-exception.mjs'));
+  assert.match(workflow, /fetch-depth: 0/);
+  const exception = readFileSync(
+    path.join(repositoryRoot, 'homenode-mobile/scripts/temporary-audit-exception.mjs'),
+    'utf8',
+  );
+  assert.match(exception, /2026-10-19/);
+  assert.match(exception, /'--audit-level=moderate'/);
+  assert.match(exception, /'--ignore', 'GHSA-86w9-cpqp-85rv', '--ignore', 'GHSA-vfj7-8cjw-p6xm'/);
   assert.doesNotMatch(workflow, /--ignore-unfixable|--ignore-registry-errors/);
   assert.doesNotMatch(workflow, /audit-level=high|fail-on-severity:\s*high/);
 });

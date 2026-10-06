@@ -80,6 +80,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
         with:
           version: 11.19.0
@@ -95,22 +96,14 @@ jobs:
         # Keep the unfiltered audit visible. The two exact, locally patched
         # Expo/Metro toolchain advisories have no published fixed versions.
         # This temporary exception expires after 2026-10-19; every other
-        # Moderate/High/Critical advisory remains blocking. See
-        # docs/UAD_SECURITY_TESTING.md before changing this scope or deadline.
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "$(date -u +%F)" > "2026-10-19" ]]; then
-            echo "::error::Mobile advisory exception expired; review GHSA-86w9-cpqp-85rv and GHSA-vfj7-8cjw-p6xm before release."
-            exit 1
-          fi
-          if pnpm audit --fetch-timeout=300000 --audit-level=moderate; then
-            exit 0
-          fi
-          echo "::warning::Checking only the two reviewed Expo/Metro advisories as temporary exceptions."
-          pnpm audit --fetch-timeout=300000 --audit-level=moderate \
-            --ignore GHSA-86w9-cpqp-85rv \
-            --ignore GHSA-vfj7-8cjw-p6xm
+        # Moderate/High/Critical advisory remains blocking. Review the
+        # recorded scope and decision on PR #1131 before changing this gate.
+        env:
+          AUDIT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          AUDIT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          AUDIT_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          AUDIT_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: node scripts/temporary-audit-exception.mjs
 
   pip-audit:
     runs-on: ubuntu-latest

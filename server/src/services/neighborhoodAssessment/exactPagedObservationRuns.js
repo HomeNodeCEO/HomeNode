@@ -187,6 +187,48 @@ export function createExactPagedObservationRunStore(blobs) {
     run.page_refs = array(run.page_refs, Math.ceil(run.count / L.page_values)).map(ref => reference(ref, L.page_bytes));
     return { metadata, run };
   }
+  async function calculate({ bindingJson, manifestRef, minimum_count = 1, ...options }, original = null) {
+    const bound = binding(bindingJson), root = reference(manifestRef, L.manifest_bytes), op = operation(options);
+    if (!Number.isSafeInteger(minimum_count) || minimum_count < 1) fail('minimum_count');
+    if (original && (typeof original.pages !== 'function' || typeof original.valueAtOrdinal !== 'function')) fail('original_source');
+    const members = original ? memberCount(original.member_count) : null;
+    const initial = await header(root, bound, op);
+    if (original) {
+      if (members !== initial.metadata.member_count) fail('original_member_count');
+      const input = digest(); let count = 0;
+      await drain(original.pages, members, op, async (values, start) => {
+        for (let i = 0; i < values.length; i++) {
+          const value = values[i];
+          if (!Object.is(original.valueAtOrdinal(start + i), value)) fail('original_value');
+          input.update(`${start + i ? ',' : ''}${value === null ? 'null' : token(value)}`, 'utf8');
+          if (value !== null) count++;
+          if ((i + 1) % 125 === 0) await op.pause();
+        }
+      });
+      if (count !== initial.metadata.count || finish(input) !== initial.metadata.input_sha256) fail('original_input');
+    }
+    return exactDistributionFromSortedPages({ member_count: initial.metadata.member_count,
+      count: initial.metadata.count, minimum_count, signal: options.signal, checkBudget: op.check,
+      pages: () => (async function* () {
+        const { metadata, run } = await header(root, bound, op);
+        const seen = new Uint8Array(Math.ceil(metadata.member_count / 8));
+        const c = cursor(run, metadata.member_count, op); let page = [];
+        for (let current = await c.next(); current; current = await c.next()) {
+          const byte = Math.floor(current.ordinal / 8), bit = 1 << (current.ordinal % 8);
+          if (seen[byte] & bit) fail('duplicate_ordinal'); seen[byte] |= bit;
+          // A numeric digest or opaque binding alone does not prove a source
+          // cell. The original-bound path compares EVERY finite ordinal/value
+          // in BOTH passes with the freshly owned immutable source producer.
+          if (original && !Object.is(original.valueAtOrdinal(current.ordinal), current.value)) fail('original_value');
+          page.push(current.value);
+          if (page.length === L.page_values) { yield page; page = []; }
+        }
+        if (page.length) yield page;
+        // The immutable root and metadata must remain readable at the actual
+        // end of EACH complete pass, not only before provisional observations.
+        await header(root, bound, op); op.check();
+      })() });
+  }
   return Object.freeze({
     async stage({ bindingJson, member_count, pages, ...options } = {}) {
       const bound = binding(bindingJson), members = memberCount(member_count), op = operation(options);
@@ -218,26 +260,16 @@ export function createExactPagedObservationRunStore(blobs) {
       op.check(); return Object.freeze({ authority: 'not_established', manifest_ref });
     },
     async distribution({ bindingJson, manifestRef, minimum_count = 1, ...options } = {}) {
-      const bound = binding(bindingJson), root = reference(manifestRef, L.manifest_bytes), op = operation(options);
-      if (!Number.isSafeInteger(minimum_count) || minimum_count < 1) fail('minimum_count');
-      const initial = await header(root, bound, op);
-      return exactDistributionFromSortedPages({ member_count: initial.metadata.member_count,
-        count: initial.metadata.count, minimum_count, signal: options.signal, checkBudget: op.check,
-        pages: () => (async function* () {
-          const { metadata, run } = await header(root, bound, op);
-          const seen = new Uint8Array(Math.ceil(metadata.member_count / 8));
-          const c = cursor(run, metadata.member_count, op); let page = [];
-          for (let current = await c.next(); current; current = await c.next()) {
-            const byte = Math.floor(current.ordinal / 8), bit = 1 << (current.ordinal % 8);
-            if (seen[byte] & bit) fail('duplicate_ordinal'); seen[byte] |= bit;
-            page.push(current.value);
-            if (page.length === L.page_values) { yield page; page = []; }
-          }
-          if (page.length) yield page;
-          // The immutable root and metadata must remain readable at the actual
-          // end of EACH complete pass, not only before provisional observations.
-          await header(root, bound, op); op.check();
-        })() });
+      return calculate({ bindingJson, manifestRef, minimum_count, ...options });
+    },
+    /** Internal supplying-owner bridge. Original pages must be a COMPLETE,
+     * uniquely ordered, freshly verified immutable population, with a trusted
+     * synchronous O(1) ordinal reader over those same originals. This checks the
+     * input witness/null denominator AND each sorted pair, not merely the input
+     * hash. It grants no source/member authority, rights or root registration.
+     */
+    async distributionFromOriginalPages({ member_count, pages, valueAtOrdinal, ...input } = {}) {
+      return calculate(input, { member_count, pages, valueAtOrdinal });
     },
   });
 }

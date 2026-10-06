@@ -8,6 +8,12 @@ interface Options {
   readonly signal: AbortSignal;
   readonly request: (bounds: CustomCohortViewportBounds, signal: AbortSignal) => Promise<unknown>;
 }
+interface TileOptions extends Options {
+  readonly admit: (response: unknown, bounds: CustomCohortViewportBounds) => CheckedViewportMap;
+  readonly concurrency: 1 | 2;
+  readonly waitForSettlement: boolean;
+  readonly freezeSingle: boolean;
+}
 // Match the complete dense-map contract, not a larger map/API allowance.
 // Each authenticated response still has the independent 4 MB transport guard.
 const LIMITS = { leaves: 32, requests: 63, depth: 8, features: 100_000,
@@ -26,18 +32,21 @@ function abortReason(signal: AbortSignal): unknown {
 function active(signal: AbortSignal) { if (signal.aborted) throw abortReason(signal); }
 function checkedBounds(value: CustomCohortViewportBounds): CustomCohortViewportBounds {
   if (!value || Object.getPrototypeOf(value) !== Object.prototype || Object.keys(value).length !== 4
-    || !['west', 'south', 'east', 'north'].every(key => Object.hasOwn(value, key)
-      && typeof value[key as keyof CustomCohortViewportBounds] === 'number'
-      && Number.isFinite(value[key as keyof CustomCohortViewportBounds]))) invalid();
+    || Reflect.ownKeys(value).length !== 4
+    || !['west', 'south', 'east', 'north'].every(key => {
+      const d = Object.getOwnPropertyDescriptor(value, key);
+      return d?.enumerable && Object.hasOwn(d, 'value') && typeof d.value === 'number' && Number.isFinite(d.value);
+    })) invalid();
   const { west, south, east, north } = value;
   if (west < -180 || east > 180 || south < -90 || north > 90 || east <= west || north <= south) invalid();
   return Object.freeze({ west, south, east, north });
 }
 function denseResponse(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
-  const failure = error as { status?: unknown; errorCode?: unknown };
+  const failure = error as { status?: unknown; errorCode?: unknown; workspaceCode?: unknown };
   // The router's public code differs from its internal viewport_capacity_exceeded reason.
-  return failure.status === 422 && failure.errorCode === 'neighborhood_viewport_too_dense';
+  return failure.status === 422 && (failure.errorCode === 'neighborhood_viewport_too_dense'
+    || failure.workspaceCode === 'viewport_too_dense');
 }
 function split(bounds: CustomCohortViewportBounds): readonly CustomCohortViewportBounds[] {
   const { west, south, east, north } = bounds;
@@ -51,8 +60,14 @@ function split(bounds: CustomCohortViewportBounds): readonly CustomCohortViewpor
   return [Object.freeze({ west, south, east, north: middle }), Object.freeze({ west, south: middle, east, north })];
 }
 /** An ignored transport signal must not keep the owner pending or start later tiles. */
-function requestTile(bounds: CustomCohortViewportBounds, { signal, request }: Options): Promise<unknown> {
+function requestTile(bounds: CustomCohortViewportBounds, { signal, request, waitForSettlement }: TileOptions): Promise<unknown> {
   active(signal);
+  // The opt-in exact-reference reader lives inside the host request lane. Do
+  // not release it while an injected port still owns an ignored request. The
+  // host may cancel its subscriber promptly while keeping this work quarantined.
+  if (waitForSettlement) return Promise.resolve().then(() => {
+    active(signal); return request(bounds, signal);
+  }).then(value => { active(signal); return value; });
   return new Promise((resolve, reject) => {
     const abort = () => reject(abortReason(signal));
     signal.addEventListener('abort', abort, { once: true });
@@ -96,8 +111,36 @@ function featureBytes(feature: Feature, budget: { coordinates: number }): number
  * All leaves are checked against the same immutable preview/catalog binding. */
 export async function loadCustomCohortViewportMap(group: CustomCohortPreviewGroup, catalog: CheckedPocketCatalog,
   viewport: CustomCohortViewportBounds, options: Options): Promise<CheckedViewportMap> {
+  return loadViewportTiles(group.map_manifest, viewport, { ...options, concurrency: MAX_CONCURRENT_TILES,
+    waitForSettlement: false, freezeSingle: false,
+    admit: (response, bounds) => checkCustomCohortViewportResponse(response, group, catalog, bounds) });
+}
+
+/** Shared exact-geometry kernel for already checked reference ports. Admission
+ * stays in that port; this is not a raw HTTP/source API. Sequential leaves use
+ * one caller-owned finite lane and retain its actual in-flight settlement.
+ * The legacy raw-response reader keeps its original two-tile behavior above. */
+export async function loadCustomCohortCheckedViewportTiles(manifest: CustomCohortPreviewGroup['map_manifest'],
+  viewport: CustomCohortViewportBounds, options: {
+    readonly signal: AbortSignal;
+    readonly request: (bounds: CustomCohortViewportBounds, signal: AbortSignal) => Promise<CheckedViewportMap>;
+  }): Promise<CheckedViewportMap> {
+  if (manifest?.status !== 'available' || !Object.isFrozen(manifest)
+    || !Number.isSafeInteger(manifest.counts.captured_parcels) || manifest.counts.captured_parcels < 1
+    || manifest.counts.captured_parcels > LIMITS.features) invalid();
+  return loadViewportTiles(manifest, viewport, { ...options, concurrency: 1, waitForSettlement: true, freezeSingle: true,
+    admit: response => {
+      if (!response || typeof response !== 'object' || !Object.isFrozen(response)) invalid();
+      const map = response as CheckedViewportMap;
+      if (!['available', 'unavailable'].includes(map.status) || !Array.isArray(map.features)) invalid();
+      return map;
+    } });
+}
+
+async function loadViewportTiles(manifest: CustomCohortPreviewGroup['map_manifest'],
+  viewport: CustomCohortViewportBounds, options: TileOptions): Promise<CheckedViewportMap> {
   active(options.signal);
-  const pending = [{ bounds: checkedBounds(viewport), depth: 0 }];
+  const requested = checkedBounds(viewport), pending = [{ bounds: requested, depth: 0 }];
   const features = new Map<string, Feature>();
   const budget = { coordinates: 0 };
   let leaves = 1, requests = 0;
@@ -113,12 +156,11 @@ export async function loadCustomCohortViewportMap(group: CustomCohortPreviewGrou
   // whole-view projections before the normal density-split path takes over.
   // This is display-only: every leaf must still be checked and merged before
   // any parcel detail is published as complete.
-  const manifest = group.map_manifest;
   if (manifest?.status === 'available' && manifest.counts.captured_parcels >= 30_000
     && Array.isArray(manifest.bounds) && manifest.bounds.length === 2) {
     const [[west, south], [east, north]] = manifest.bounds;
     const capturedArea = (east - west) * (north - south);
-    const requestedArea = (viewport.east - viewport.west) * (viewport.north - viewport.south);
+    const requestedArea = (requested.east - requested.west) * (requested.north - requested.south);
     if (capturedArea > 0 && requestedArea >= capturedArea / 2) {
       for (let level = 0; level < 3; level++) {
         const current = pending.splice(0);
@@ -129,7 +171,7 @@ export async function loadCustomCohortViewportMap(group: CustomCohortPreviewGrou
   while (pending.length) {
     active(options.signal);
     const batch: typeof pending = [];
-    while (pending.length && batch.length < MAX_CONCURRENT_TILES) {
+    while (pending.length && batch.length < options.concurrency) {
       const tile = pending.pop()!;
       if (tile.bounds.east - tile.bounds.west > 1 || tile.bounds.north - tile.bounds.south > 1) {
         subdivide(tile); continue;
@@ -149,15 +191,16 @@ export async function loadCustomCohortViewportMap(group: CustomCohortPreviewGrou
         if (!denseResponse(result.error)) throw result.error;
         subdivide(tile); continue;
       }
-      const checked = checkCustomCohortViewportResponse(result.response, group, catalog, tile.bounds);
-      if (checked.status === 'unavailable') return checked;
+      const checked = options.admit(result.response, tile.bounds);
+      if (checked.status === 'unavailable') return options.freezeSingle
+        ? Object.freeze({ ...checked, features: Object.freeze([]) }) : checked;
       // Normal pans stay on the existing one-pass checker/4 MB transport path.
-      if (leaves === 1) return checked;
+      if (leaves === 1 && !options.freezeSingle) return checked;
       for (const feature of checked.features) {
         const previous = features.get(feature.id);
         if (previous) { if (!sameFeature(previous, feature)) invalid(); continue; }
         if (features.size >= LIMITS.features) capacity();
-        const captured = group.map_manifest?.status === 'available' ? group.map_manifest.counts.captured_parcels : 0;
+        const captured = manifest?.status === 'available' ? manifest.counts.captured_parcels : 0;
         if (features.size >= captured) invalid();
         bytes += featureBytes(feature, budget) + Number(features.size > 0);
         if (bytes > LIMITS.geojsonBytes) capacity();

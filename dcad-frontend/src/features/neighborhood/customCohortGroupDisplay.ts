@@ -115,3 +115,10 @@ export function checkCustomCohortGroupDisplayResult(value: unknown, expected: Cu
     && same(result.selected, pinned.selected));
   return result;
 }
+
+/** View adapters may only project the actual composed immutable display, not a
+ * look-alike legacy group or a raw response. This is not server authority. */
+export function requireCustomCohortGroupDisplay(value: unknown): CustomCohortGroupDisplay {
+  requireThat(value && typeof value === 'object' && admitted.has(value));
+  return value as CustomCohortGroupDisplay;
+}

@@ -4,6 +4,7 @@ import * as catalog from '../src/features/neighborhood/customCohortPocketCatalog
 import * as discovery from '../src/features/neighborhood/customWorkspaceDiscovery.ts';
 import * as transport from '../src/features/neighborhood/customCohortPreviewTransport.ts';
 import * as selection from '../src/features/neighborhood/customCohortRecordedGroupTransport.ts';
+import * as loader from '../src/features/neighborhood/customCohortViewportLoader.ts';
 import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 import { prepareCustomCohortGroupWorkspaceTransportRequest as serverRequest,
   presentCustomCohortGroupWorkspaceTransportResponse as serverResponse } from '../../server/src/services/neighborhoodAssessment/customCohortGroupWorkspaceTransport.js';
@@ -19,11 +20,13 @@ const workspace = load('customCohortGroupWorkspaceTransport', { './customWorkspa
   './customCohortPreviewTransport.ts': transport, './customCohortRecordedGroupTransport.ts': selection });
 const display = load('customCohortGroupDisplay', { './customCohortGroupWorkspaceTransport.ts': workspace,
   './customCohortRecordedGroupTransport.ts': selection });
+const mapView = load('customCohortGroupMapView', { './customCohortGroupDisplay.ts': display, './customCohortViewportLoader.ts': loader });
 const legacy = load('customWorkspaceApi', { './customWorkspaceCheckpoint': checkpoint, './customCohortPreviewTransport': transport });
 const { createCustomCohortGroupWorkspaceApi: create } = load('customCohortGroupWorkspaceApi', {
   './customWorkspaceApi.ts': legacy, './customCohortPreviewTransport.ts': transport,
   './customCohortGroupWorkspaceTransport.ts': workspace, './customCohortRecordedGroupTransport.ts': selection,
   './customCohortGroupDisplay.ts': display,
+  './customCohortGroupMapView.ts': mapView,
 });
 const { createCustomCohortGroupWorkspaceLifecycle: lifecycle } = load('customCohortGroupWorkspaceLifecycle', {
   './customCohortGroupWorkspaceTransport.ts': workspace, './customCohortRecordedGroupTransport.ts': selection,

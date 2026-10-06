@@ -3,6 +3,23 @@ import test from 'node:test';
 import { createRequire } from 'node:module';
 import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 import { loadCustomCohortViewportMap } from '../src/features/neighborhood/customCohortViewportLoader.ts';
+import * as viewportLoader from '../src/features/neighborhood/customCohortViewportLoader.ts';
+import * as catalogHelpers from '../src/features/neighborhood/customCohortPocketCatalog.ts';
+import * as discovery from '../src/features/neighborhood/customWorkspaceDiscovery.ts';
+import * as transport from '../src/features/neighborhood/customCohortPreviewTransport.ts';
+import * as selection from '../src/features/neighborhood/customCohortRecordedGroupTransport.ts';
+import { selectionMapOpeningFixture } from '../../server/test/fixtures/customCohortSelectionMapOpeningFixture.js';
+import { selectionSummaryTransportFixture } from '../../server/test/fixtures/customCohortSelectionSummaryTransportFixture.js';
+import { presentCustomCohortSelectionViewportMap } from '../../server/src/services/neighborhoodAssessment/customCohortViewportMap.js';
+
+const loadExact = (name, dependencies) => loadTrustedRepositoryCommonJs(new URL(`../src/features/neighborhood/${name}.ts`, import.meta.url),
+  key => { assert.ok(Object.hasOwn(dependencies, key), `unexpected exact map import ${key}`); return dependencies[key]; });
+const exactCheckpoint = loadExact('customWorkspaceCheckpoint', { './customCohortPocketCatalog': catalogHelpers, './customWorkspaceDiscovery.ts': discovery });
+const exactWorkspace = loadExact('customCohortGroupWorkspaceTransport', { './customWorkspaceCheckpoint.ts': exactCheckpoint,
+  './customCohortPreviewTransport.ts': transport, './customCohortRecordedGroupTransport.ts': selection });
+const exactDisplay = loadExact('customCohortGroupDisplay', { './customCohortGroupWorkspaceTransport.ts': exactWorkspace,
+  './customCohortRecordedGroupTransport.ts': selection });
+const exactMapView = loadExact('customCohortGroupMapView', { './customCohortGroupDisplay.ts': exactDisplay, './customCohortViewportLoader.ts': viewportLoader });
 
 const requireRuntime = createRequire(new URL('../package.json', import.meta.url));
 const { renderToStaticMarkup } = requireRuntime('react-dom/server');
@@ -62,6 +79,41 @@ function deferredFixture() {
     geometry_semantics: 'current_observed_cached_parcels_not_legal_subdivision_boundary',
     geojson: { type: 'FeatureCollection', features: [all[0]] }, counts: { visible_parcels: 1, captured_parcels: 3 } });
   return { props, all, result };
+}
+async function exactFixture(options = {}) {
+  const f = await selectionMapOpeningFixture(options), numerical = await selectionSummaryTransportFixture({ accountId: f.accountId, ...options });
+  const catalog = catalogHelpers.checkCustomCohortPocketCatalog({ status: 'catalog', subject_freshness: 'matched',
+    target: { account_id: f.accountId, assignment_file_id: f.request.assignment_file_id }, context_ref: f.request.context_ref,
+    selection_revision: f.request.selection_ref.selection_revision, apply: { status: 'blocked' }, catalog: { ...f.catalog,
+      binding: { ...f.catalog.binding, selection_revision: f.request.selection_ref.selection_revision },
+      pockets: f.catalog.pockets.map(p => ({ ...p, disposition: 'needs_review' })), unassigned: { ...f.catalog.unassigned, reason_counts: [] },
+      coverage: { discovery_member_count: 3, assigned_account_count: 3, unassigned_account_count: 0 }, limitations: [] } },
+    { accountId: f.accountId, assignmentFileId: f.request.assignment_file_id, contextRef: f.request.context_ref,
+      selection: { revision: f.request.selection_ref.selection_revision, pockets: [] } });
+  const features = [-97, -96.9, -96.98].map((x, i) => ({ type: 'Feature', id: `gis.dcad_parcels:${i + 1}`,
+    properties: { object_id: String(i + 1), account_id: String(10000000000000000n + BigInt(i)), selected: !options.empty && i < 2 },
+    geometry: { type: 'Polygon', coordinates: [[[x, 32], [x + .001, 32], [x + .001, 32.001], [x, 32.001], [x, 32]]] } }));
+  const calls = [], json = value => new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } });
+  const ports = selection.createCustomCohortRecordedGroupTransport({ urlFor: p => p, request: async (url, init) => {
+    const action = url.split('/').at(-1), body = JSON.parse(init.body); calls.push({ action, body, signal: init.signal });
+    if (action === 'selection-preview') return json(numerical.result);
+    if (action === 'selection-map-opening') return json(f.result);
+    assert.equal(action, 'selection-viewport');
+    return json({ status: 'viewport', authority: 'not_established', selection_ref: f.request.selection_ref,
+      viewport_map: presentCustomCohortSelectionViewportMap({ ...numerical.result, parcel_map: { status: 'available',
+        geometry_semantics: f.result.map_opening.manifest.geometry_semantics,
+        geojson: { type: 'FeatureCollection', features }, counts: { parcels: 3 } } }, body.viewport) });
+  } });
+  const display = await exactDisplay.createCustomCohortGroupDisplayReader(ports)({
+    target: { accountId: f.accountId, assignmentFileId: f.request.assignment_file_id, sessionKey: 'exact-map-render-session' },
+    workspaceRevision: 5, checkpoint: { workspace_version: 7, pending_capture: null,
+      active: { context_ref: f.request.context_ref, selection_ref: f.request.selection_ref, observation_period: numerical.result.summary.observation_period } },
+    catalog, selected: f.saved }, { signal: new AbortController().signal, deadline: performance.now() + 60000 });
+  return { ...f, calls, props: { display, readViewport: exactMapView.createCustomCohortGroupMapReader(ports), freshness: 'current' } };
+}
+async function settleExactMap(h) {
+  for (let i = 0; i < 10; i++) { await h.drain(); await new Promise(resolve => setImmediate(resolve)); }
+  await h.drain();
 }
 function familyFixture({ largerSecondChild = false } = {}) {
   const props = fixture(), [first, second] = props.catalog.pockets;
@@ -155,6 +207,7 @@ function harness({ rejectLoad = false, delayedLoad = false, throwPaint = false, 
     if (name === 'react/jsx-runtime') return requireRuntime(name);
     if (/\/customCohortMapPresentation(?:\.ts)?$/.test(name)) return { ...presentationModule,
       buildCustomCohortMapPresentation(...args) { presentationCount++; return buildCustomCohortMapPresentation(...args); } };
+    if (name.endsWith('/customCohortGroupMapView')) return exactMapView;
     if (name.endsWith('/NeighborhoodCityReferenceControl')) return { default: CityReferenceStub };
     if (name.endsWith('/customCohortPreviewApi')) return { requestCustomCohortOperation(...args) {
       viewportCalls.push(args); if (!viewportResult) throw new Error('full-map fixture must not request viewport detail');
@@ -210,6 +263,69 @@ function harness({ rejectLoad = false, delayedLoad = false, throwPaint = false, 
     timeout() { [...timers.values()].forEach(t => t.fn()); flush(); },
   };
 }
+test('opt-in exact-reference map renders the saved display through its host port with existing labels, red outlines, subject and click actions', async t => {
+  const f = await exactFixture(), h = harness(), actions = [];
+  const props = { ...f.props, onActivatePocket: (...args) => actions.push(['add', ...args]),
+    onExcludePocket: (...args) => actions.push(['remove', ...args]), belowMapStatistics: 'Exact display statistics marker' };
+  t.after(() => h.unmount()); await h.ready(props); h.fireTimers(200); await settleExactMap(h);
+  const map = h.maps[0], source = map.getSource('custom-cohort-parcels');
+  assert.equal(source.data.features.length, 3); assert.deepEqual(source.data.features.map(p => p.properties.selected), [true, true, false]);
+  assert.equal(map.getSource('custom-cohort-subject-parcels').data.features.length, 1);
+  assert.deepEqual(map.getSource('custom-cohort-group-labels').data.features.map(p => p.properties.selected), [true, false]);
+  assert.ok(map.getLayer('custom-cohort-group-labels-dot')); assert.match(h.html(), /Exact display statistics marker/);
+  assert.equal(h.viewportCalls.length, 0, 'exact UI never calls legacy flat-selection HTTP');
+  assert.equal(f.calls.filter(c => c.action === 'selection-viewport').length, 1);
+  assert.doesNotMatch(JSON.stringify(f.calls.at(-1).body), /account_ids|included_recorded_group_ids|operation_id/);
+  map.camera.zoom = 14;
+  const label = { features: [{ properties: { pocket_id: f.saved.included_recorded_group_ids[0] } }] };
+  h.emit('click', label, 'custom-cohort-group-labels-dot'); h.emit('contextmenu', label, 'custom-cohort-group-labels-dot');
+  assert.deepEqual(actions, [['add', f.saved.included_recorded_group_ids[0], 'subdivision'],
+    ['remove', f.saved.included_recorded_group_ids[0], 'subdivision']]);
+  assert.equal(f.props.display.observations.summary.selected.account_count, 2);
+  assert.equal(map.fits.length, 1); assert.match(h.html(), /Included · red outline/);
+  assert.equal(h.cityProps(), null, 'exact mode preserves the protected city-selector removal');
+  assert.doesNotMatch(h.html(), /City limits marker|Select a reference city/);
+});
+
+test('opt-in deliberate empty paints no red selected parcels and does not invent a default area', async t => {
+  const f = await exactFixture({ empty: true }), h = harness(); t.after(() => h.unmount());
+  await h.ready(f.props); h.fireTimers(200); await settleExactMap(h);
+  assert.ok(h.maps[0].getSource('custom-cohort-parcels').data.features.every(p => !p.properties.selected));
+  assert.ok(h.maps[0].getSource('custom-cohort-group-labels').data.features.every(p => !p.properties.selected));
+  assert.equal(f.props.display.observations.summary.selected.account_count, 0);
+  assert.equal(h.viewportCalls.length, 0); assert.equal(h.maps[0].getSource('custom-cohort-subject-parcels').data.features.length, 1);
+});
+
+test('opt-in stale coherent display retains original matching geometry/flags without reading pending selections', async t => {
+  const f = await exactFixture(), h = harness(); t.after(() => h.unmount());
+  await h.ready(f.props); h.fireTimers(200); await settleExactMap(h);
+  const source = h.maps[0].getSource('custom-cohort-parcels'), prior = source.data, calls = f.calls.length;
+  h.render({ ...f.props, freshness: 'stale' }); h.fireTimers(200); await settleExactMap(h);
+  assert.equal(source.data, prior); assert.equal(f.calls.length, calls);
+  assert.match(h.html(), /Showing the previous map and statistics together/);
+  assert.equal(h.maps.length, 1); assert.equal(h.maps[0].fits.length, 1);
+});
+
+test('opt-in exact display change discards late old pan flags without recreating the immutable capture map', async t => {
+  const f = await exactFixture(), next = await exactFixture({ empty: true, revision: 2 }), h = harness(); t.after(() => h.unmount());
+  let finish;
+  await h.ready({ ...f.props, readViewport: () => new Promise(resolve => { finish = resolve; }) });
+  h.fireTimers(200); await h.drain(); assert.equal(typeof finish, 'function');
+  h.render(next.props); h.fireTimers(200); await settleExactMap(h);
+  const source = h.maps[0].getSource('custom-cohort-parcels'), current = source.data;
+  assert.equal(current.features.length, 3); assert.ok(current.features.every(p => !p.properties.selected));
+  finish(await f.props.readViewport(f.props.display, { west: -97, south: 32, east: -96.9, north: 32.001 },
+    { signal: new AbortController().signal, deadline: performance.now() + 60000 })); await settleExactMap(h);
+  assert.equal(source.data, current); assert.equal(h.maps.length, 1); assert.equal(h.maps[0].fits.length, 1);
+  assert.equal(h.viewportCalls.length, 0);
+});
+
+test('opt-in map rejects a cloned display before loading a runtime or calling a viewport port', async () => {
+  const f = await exactFixture(), h = harness();
+  assert.throws(() => h.render({ ...f.props, display: structuredClone(f.props.display) }), /invalid_custom_cohort_group_display/);
+  assert.equal(h.maps.length, 0); assert.equal(h.viewportCalls.length, 0); assert.equal(f.calls.length, 2); h.unmount();
+});
+
 test('renders exact retained Polygon holes and disconnected MultiPolygons, never a hull/circle', async () => {
   const props = fixture(), h = harness(); await h.ready(props);
   const map = h.maps[0], data = map.getSource('custom-cohort-parcels').data;

@@ -4,6 +4,7 @@ import { createCustomCohortGroupWorkspaceTransport, readCustomCohortGroupWorkspa
 import type { CustomCohortGroupWorkspaceSection } from './customCohortGroupWorkspaceTransport';
 import { createCustomCohortRecordedGroupTransport } from './customCohortRecordedGroupTransport.ts';
 import { createCustomCohortGroupDisplayReader } from './customCohortGroupDisplay.ts';
+import { createCustomCohortGroupMapReader } from './customCohortGroupMapView.ts';
 import type { CustomWorkspaceTarget, CustomWorkspaceOperationOptions } from './customWorkspaceLifecycle';
 
 export interface CustomCohortGroupWorkspaceApiRead {
@@ -12,7 +13,9 @@ export interface CustomCohortGroupWorkspaceApiRead {
 }
 class ApiError extends Error {
   readonly workspaceCode: string; readonly status?: number;
-  constructor(code: string, status?: number) { super(`custom_workspace_${code}`); this.workspaceCode = code; this.status = status; }
+  readonly code?: 'viewport_detail_capacity_exceeded';
+  constructor(code: string, status?: number) { super(`custom_workspace_${code}`); this.workspaceCode = code; this.status = status;
+    if (code === 'viewport_detail_capacity_exceeded') this.code = code; }
 }
 const requireThat: (value: unknown, code: string) => asserts value = (value, code) => { if (!value) throw new ApiError(code); };
 const object = (value: unknown): Record<string, unknown> => {
@@ -36,6 +39,7 @@ const FAILURES = new Map<string, readonly [number, string]>([
   ['neighborhood_operation_outcome_unknown', [409, 'save_outcome_unknown']],
   ['neighborhood_service_busy', [503, 'save_service_busy']],
   ['neighborhood_request_interrupted', [503, 'save_interrupted']],
+  ['neighborhood_viewport_too_dense', [422, 'viewport_too_dense']],
 ]);
 async function safely<T>(signal: AbortSignal, fn: () => Promise<T>): Promise<T> {
   const live = () => { if (signal.aborted) throw new DOMException('Custom workspace request cancelled', 'AbortError'); };
@@ -43,6 +47,8 @@ async function safely<T>(signal: AbortSignal, fn: () => Promise<T>): Promise<T> 
   catch (error) {
     if (signal.aborted || (error instanceof Error && error.name === 'AbortError')) throw new DOMException('Custom workspace request cancelled', 'AbortError');
     if (error instanceof ApiError) throw error;
+    if (error instanceof Error && 'code' in error && error.code === 'viewport_detail_capacity_exceeded')
+      throw new ApiError('viewport_detail_capacity_exceeded', 422);
     const status = error && typeof error === 'object' && 'status' in error ? error.status : undefined;
     const code = error instanceof Error && 'errorCode' in error && typeof error.errorCode === 'string' ? FAILURES.get(error.errorCode) : undefined;
     if (code && status === code[0]) throw new ApiError(code[1], code[0]);
@@ -60,6 +66,7 @@ export function createCustomCohortGroupWorkspaceApi(options: Parameters<typeof c
   const legacy = createCustomWorkspaceApi(options), workfile = createCustomWorkspaceSectionTransport(options);
   const atomic = createCustomCohortGroupWorkspaceTransport(options), selected = createCustomCohortRecordedGroupTransport(options);
   const display = createCustomCohortGroupDisplayReader(selected);
+  const map = createCustomCohortGroupMapReader(selected);
   return Object.freeze({
     read(input: CustomWorkspaceTarget, io: CustomWorkspaceOperationOptions): Promise<CustomCohortGroupWorkspaceApiRead> {
       return safely(io.signal, async () => {
@@ -84,6 +91,7 @@ export function createCustomCohortGroupWorkspaceApi(options: Parameters<typeof c
     save(input: Parameters<typeof atomic.save>[0], io: CustomWorkspaceOperationOptions) { return safely(io.signal, () => atomic.save(input, io)); },
     readSelection(input: Parameters<typeof selected.read>[0], io: CustomWorkspaceOperationOptions) { return safely(io.signal, () => selected.read(input, io)); },
     display(input: Parameters<typeof display>[0], io: CustomWorkspaceOperationOptions) { return safely(io.signal, () => display(input, io)); },
+    map(...args: Parameters<typeof map>) { return safely(args[2].signal, () => map(...args)); },
     preview(input: Parameters<typeof selected.preview>[0], io: CustomWorkspaceOperationOptions) { return safely(io.signal, () => selected.preview(input, io)); },
     opening(...args: Parameters<typeof selected.opening>) { return safely(args[3].signal, () => selected.opening(...args)); },
     viewport(...args: Parameters<typeof selected.viewport>) { return safely(args[4].signal, () => selected.viewport(...args)); },

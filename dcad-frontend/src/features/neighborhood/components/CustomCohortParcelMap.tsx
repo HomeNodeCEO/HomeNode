@@ -4,6 +4,10 @@ import { loadMapLibreRuntime, MAPLIBRE_BASE_STYLE } from '../../../lib/mapLibreR
 import type { ParcelMapClick, ParcelMapRuntimeInstance } from '../../../lib/mapLibreRuntime';
 import { buildCustomCohortMapPresentation } from '../customCohortMapPresentation';
 import type { CustomCohortMapLabel, CustomCohortMapPresentation, CustomCohortMapScore } from '../customCohortMapPresentation';
+import type { CustomCohortMapDisplay } from '../customCohortMapPresentation';
+import { prepareCustomCohortGroupMapView } from '../customCohortGroupMapView';
+import type { createCustomCohortGroupMapReader } from '../customCohortGroupMapView';
+import type { CustomCohortGroupDisplay } from '../customCohortGroupDisplay';
 import { requestCustomCohortOperation } from '../customCohortPreviewApi';
 import { loadCustomCohortViewportMap } from '../customCohortViewportLoader';
 import type { CustomCohortViewportBounds, CheckedViewportMap } from '../customCohortViewportClient';
@@ -13,9 +17,7 @@ import type { CustomCohortPreviewGroup, CustomCohortPreviewState } from '../cust
 import type { CustomCohortSubdivisionFamilies } from '../customCohortSubdivisionFamilies';
 import { createCustomCohortSubdivisionPhaseReader } from '../customCohortSubdivisionFamilies';
 
-interface Props {
-  group: CustomCohortPreviewGroup;
-  catalog: CheckedPocketCatalog;
+interface SharedProps {
   freshness: CustomCohortPreviewState['freshness'];
   inspectedPocketId?: string | null;
   inspectedPocketIds?: readonly string[];
@@ -27,6 +29,16 @@ interface Props {
   scoreBandSelector?: ReactNode;
   belowMapStatistics?: ReactNode;
 }
+type Props = SharedProps & ({
+  group: CustomCohortPreviewGroup; catalog: CheckedPocketCatalog;
+  display?: undefined; readViewport?: undefined;
+} | {
+  display: CustomCohortGroupDisplay;
+  // The host wraps this entire read in its existing finite assignment lane.
+  // Component timers cancel the display subscriber, not a separate SQL owner.
+  readViewport: ReturnType<typeof createCustomCohortGroupMapReader>;
+  group?: never; catalog?: never;
+});
 const SOURCE = 'custom-cohort-parcels', FILL = 'custom-cohort-parcels-fill';
 const LABEL_SOURCE = 'custom-cohort-group-labels', LABEL_LAYER = `${LABEL_SOURCE}-text`, LABEL_DOT = `${LABEL_SOURCE}-dot`;
 const SUBJECT_SOURCE = 'custom-cohort-subject-parcels', SUBJECT_LAYER = `${SUBJECT_SOURCE}-text`;
@@ -97,7 +109,7 @@ type SubjectMarker = { readonly type: 'Feature'; readonly id: string;
   readonly geometry: { readonly type: 'Point'; readonly coordinates: readonly [number, number] };
   readonly properties: { readonly subject_marker: true; readonly account_id: string; readonly parcel_id: string;
     readonly anchor_basis: 'retained_exterior_ring_vertex' } };
-function subjectParcelMarkers(group: CustomCohortPreviewGroup, matches: boolean) {
+function subjectParcelMarkers(group: CustomCohortMapDisplay, matches: boolean) {
   const features: SubjectMarker[] = [];
   if (matches && group.parcel_map.status === 'deferred' && group.map_manifest?.status === 'available') {
     for (const marker of group.map_manifest.subject_parcels) features.push({ type: 'Feature', id: marker.parcel_id,
@@ -121,7 +133,7 @@ function subjectParcelMarkers(group: CustomCohortPreviewGroup, matches: boolean)
   return { type: 'FeatureCollection' as const, features };
 }
 
-function contextMatches(group: CustomCohortPreviewGroup, catalog: CheckedPocketCatalog) {
+function contextMatches(group: CustomCohortMapDisplay, catalog: CheckedPocketCatalog) {
   const a = group.binding.contextRef, b = catalog.binding.context_ref;
   return a.context_id === b.context_id && a.context_revision === b.context_revision && a.context_sha256 === b.context_sha256
     && group.binding.accountId === catalog.subject_membership.account_id;
@@ -170,7 +182,9 @@ function transientViewportFailure(error: unknown) {
   // Generic transport errors can include authentication-provider failures;
   // generic 500s can hide storage integrity failures. Neither is safe to retain.
   return error instanceof Error && 'status' in error && error.status === 503 && 'errorCode' in error
-    && (error.errorCode === 'neighborhood_service_busy' || error.errorCode === 'neighborhood_request_interrupted');
+    && (error.errorCode === 'neighborhood_service_busy' || error.errorCode === 'neighborhood_request_interrupted')
+    || error instanceof Error && 'status' in error && error.status === 503 && 'workspaceCode' in error
+    && (error.workspaceCode === 'save_service_busy' || error.workspaceCode === 'save_interrupted');
 }
 const paintFor = (f: PaintedParcel): Paint => ({ selected: f.properties.selected, inspected: f.properties.inspected,
   unresolved: f.properties.unresolved, subject: f.properties.subject, fillColor: f.properties.fillColor });
@@ -178,9 +192,12 @@ const state = (key: keyof Paint) => ['coalesce', ['feature-state', key], ['get',
 
 /** Exact cached parcel outlines with optional existing group-level similarity.
  * View controls never change the accepted controller selection or statistics. */
-export default function CustomCohortParcelMap({ group, catalog, freshness, inspectedPocketId, inspectedPocketIds,
-  subdivisionFamilies, onActivatePocket, onExcludePocket, onInspectPocket, onInspectAccount,
-  scoreBandSelector, belowMapStatistics }: Props) {
+export default function CustomCohortParcelMap(props: Props) {
+  const { freshness, inspectedPocketId, inspectedPocketIds, subdivisionFamilies, onActivatePocket, onExcludePocket,
+    onInspectPocket, onInspectAccount, scoreBandSelector, belowMapStatistics } = props;
+  const exact = useMemo(() => props.display ? prepareCustomCohortGroupMapView(props.display) : null, [props.display]);
+  const group = exact?.group ?? props.group!, catalog = exact?.display.catalog ?? props.catalog!;
+  const legacyGroup = props.group, legacyRequest = legacyGroup?.request, readViewport = props.readViewport;
   const container = useRef<HTMLDivElement>(null), mapRef = useRef<ParcelMapRuntimeInstance | null>(null);
   const painted = useRef<readonly PaintedParcel[]>([]);
   const paintedLabels = useRef('');
@@ -199,7 +216,7 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
   const contextKey = JSON.stringify([group.binding.accountId, group.binding.assignmentFileId,
     ref.context_id, ref.context_revision, ref.context_sha256]);
   const viewportBindingKey = JSON.stringify([contextKey, group.binding.selectionRevision, group.binding.selectionFingerprint]);
-  const presentationCache = useRef<{ group: CustomCohortPreviewGroup; catalog: CheckedPocketCatalog;
+  const presentationCache = useRef<{ group: CustomCohortMapDisplay; catalog: CheckedPocketCatalog;
     value: ReturnType<typeof buildCustomCohortMapPresentation> | null } | null>(null);
   const presentation = useMemo(() => {
     const prior = presentationCache.current;
@@ -218,8 +235,8 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
     presentationCache.current = { group, catalog, value }; return value;
   }, [group, catalog, matches]);
   const deferredMode = group.parcel_map.status === 'deferred';
-  const selectedAccounts = useMemo(() => new Set(deferredMode
-    ? group.request.selection.pockets.flatMap(pocket => pocket.account_ids) : []), [deferredMode, group.request]);
+  const selectedAccounts = useMemo(() => exact ? { has: exact.isSelectedAccount } : new Set(deferredMode
+    ? legacyRequest!.selection.pockets.flatMap(pocket => pocket.account_ids) : []), [deferredMode, legacyRequest, exact]);
   const currentViewport = useMemo(() => {
     if (!deferredMode || viewportState?.contextKey !== contextKey || viewportState.catalog !== catalog
       || viewportState.manifest !== group.map_manifest) return null;
@@ -230,7 +247,7 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
     // Keep identity fences on both immutable capture projections; a new capture,
     // catalog, manifest or target must still load and validate its own geometry.
     if (viewportState.map.status !== 'available' || !Object.isFrozen(catalog)
-      || !Object.isFrozen(group.map_manifest) || !Object.isFrozen(group.request)) return null;
+      || !Object.isFrozen(group.map_manifest) || (!exact && !Object.isFrozen(legacyRequest))) return null;
     const features = viewportState.map.features.map(feature => {
       const selected = selectedAccounts.has(feature.properties.account_id);
       return selected === feature.properties.selected ? feature
@@ -238,9 +255,9 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
     });
     return { ...viewportState, bindingKey: viewportBindingKey,
       map: Object.freeze({ status: 'available' as const, features: Object.freeze(features) }) };
-  }, [deferredMode, viewportState, contextKey, viewportBindingKey, catalog, group.map_manifest, group.request, selectedAccounts]);
-  const selectedGroups = useMemo(() => new Set(deferredMode ? group.request.selection.pockets.map(p => p.id) : []),
-    [deferredMode, group.request]);
+  }, [deferredMode, viewportState, contextKey, viewportBindingKey, catalog, group.map_manifest, legacyRequest, selectedAccounts, exact]);
+  const selectedGroups = useMemo(() => new Set(exact ? exact.included_recorded_group_ids
+    : deferredMode ? legacyRequest!.selection.pockets.map(p => p.id) : []), [deferredMode, legacyRequest, exact]);
   const labels = useMemo(() => showLabels && presentation?.status === 'available'
     ? { type: 'FeatureCollection' as const, features: deferredMode
       ? subdivisionLabels(presentation.labels.features, catalog, subdivisionFamilies)
@@ -325,11 +342,13 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
     }, 30_000);
     setDetailState('loading');
     const timer = window.setTimeout(() => {
-      const request = group.request;
-      void loadCustomCohortViewportMap(group, catalog, bounds, { signal: controller.signal,
+      const request = legacyRequest!;
+      const work = exact ? readViewport!(exact.display, bounds, { signal: controller.signal, deadline: performance.now() + 30_000 })
+        : loadCustomCohortViewportMap(legacyGroup!, catalog, bounds, { signal: controller.signal,
         request: (viewport, signal) => requestCustomCohortOperation(request.accountId, 'viewport', {
           assignment_file_id: request.assignmentFileId, context_ref: request.contextRef,
-          selection: request.selection, viewport }, { signal }) })
+          selection: request.selection, viewport }, { signal }) });
+      void work
         .then(checked => {
           if (controller.signal.aborted) return;
           const next = { contextKey, bindingKey: viewportBindingKey, catalog, manifest: group.map_manifest, bounds, map: checked };
@@ -344,7 +363,7 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
         }).finally(() => window.clearTimeout(deadline));
     }, 200);
     return () => { window.clearTimeout(timer); window.clearTimeout(deadline); controller.abort(); };
-  }, [cameraRevision, group, catalog, hasMap, contextKey, viewportBindingKey]);
+  }, [cameraRevision, group, catalog, hasMap, contextKey, viewportBindingKey, legacyGroup, legacyRequest, exact, readViewport]);
 
   useEffect(() => {
     if (!hasMap || !container.current) return;

@@ -59,6 +59,31 @@ test('ZIP/city numeric studies honor the chosen observation dates without waitin
   assert.ok(queries.every(values => values[0] === '2026-10-31' && values[1] === 12));
 });
 
+test('every numeric study exposes its fixed parameters to the planner without trimming sales or exploration membership', async () => {
+  const accounts = Array.from({ length: 50000 }, (_, index) => `A${index}`), queries = [];
+  const pool = { async query(sql, values) {
+    if (sql.includes('market_spatial_support_probe')) return { rows: [{ column_present: true, migration_applied: true, index_valid: true }] };
+    if (sql.includes('FROM core.accounts account')) return { rows: [{ account_id: '26355500170360000', city: 'Garland', county: 'Dallas',
+      postal_code: '75041', latitude: 32.9, longitude: -96.6, location_status: 'matched' }] };
+    queries.push({ sql, values });
+    assert.match(sql, /WITH parameters AS NOT MATERIALIZED \(/);
+    assert.match(sql, /sale\.closing_date >= parameters\.period_start/);
+    assert.match(sql, /sale\.closing_date <= parameters\.period_end/);
+    assert.match(sql, /sale\.primary_account_id = ANY\(parameters\.exploration_accounts\)/);
+    assert.match(sql, /link\.account_id = ANY\(parameters\.exploration_accounts\)/);
+    assert.doesNotMatch(sql.slice(0, sql.indexOf('numeric_medians AS')), /\bLIMIT\b/);
+    assert.doesNotMatch(sql, /\bSET\b|set_config\(/i, 'No global or session planner setting changes');
+    return { rows: [{}] };
+  } };
+  const result = await buildMarketConditionsAnalyses(pool, { subjectAccountId: '26355500170360000',
+    areaKeys: ['zip', 'city', 'radius_1', 'radius_2', 'exploration'], explorationAccountIds: accounts,
+    asOfDate: '2026-09-30', periodMonths: 12 });
+  assert.deepEqual(result.analyses.map(item => item.market.key), ['zip', 'city', 'radius_1', 'radius_2', 'exploration']);
+  assert.deepEqual(queries.map(query => query.values[7]), ['zip', 'city', 'radius', 'radius', 'exploration']);
+  assert.ok(queries.every(query => query.values[0] === '2026-09-30' && query.values[1] === 12));
+  assert.deepEqual(queries.at(-1).values[10], accounts);
+});
+
 test("spatial support is a shared migration-and-index readiness probe, never request-path maintenance", async () => {
   const statements = [];
   const parameters = [];

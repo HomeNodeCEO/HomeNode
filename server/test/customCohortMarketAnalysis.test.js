@@ -12,9 +12,9 @@ const body = () => ({ context_ref: context, selection: { revision: 7, pockets: [
 const options = () => ({ signal: new AbortController().signal, deadline: performance.now() + 60_000 });
 function fixture({ present } = {}) {
   const reads = [], calculations = [], gates = [];
-  const cohortService = { async present(...args) {
-    reads.push(args); return present ? present(...args) : { target: identity, summary: { binding } };
-  } };
+  const cohortService = { async authorizeMarketSelection(...args) {
+    reads.push(args); return present ? present(...args) : { target: identity, binding, accountIds: ['A', 'B', 'C'] };
+  }, present() { assert.fail('Market analysis must not request a full neighborhood summary'); } };
   const result = { analyses: [], recommendation: {} };
   const analyze = createCustomCohortMarketAnalysis({ pool: {}, cohortService,
     buildAnalyses: async (_pool, input) => { calculations.push(input); return result; },
@@ -32,7 +32,7 @@ test('exact selected account union feeds the existing market calculator without 
   assert.equal(f.calculations[0].periodMonths, 24);
   assert.equal(f.calculations[0].customGeometry, null);
   assert.equal(f.reads.length, 2, 'authorize first and recheck before publishing');
-  assert.ok(f.reads.every(read => read[1].includeMap === false));
+  assert.ok(f.reads.every(read => read.length === 2));
   assert.equal(f.reads[0][0].auth, identity.auth);
   assert.deepEqual(f.gates[0].settings, { allowCached: false, cacheResult: false });
   assert.equal(response.exploration_binding, binding);
@@ -41,7 +41,7 @@ test('exact selected account union feeds the existing market calculator without 
 });
 
 test('empty selection stays empty instead of falling back to a radius or city', async () => {
-  const f = fixture(), input = body(); input.selection.pockets = [];
+  const f = fixture({ present: () => ({ target: identity, binding, accountIds: [] }) }), input = body(); input.selection.pockets = [];
   await f.analyze(identity, input, options());
   assert.deepEqual(f.calculations[0].explorationAccountIds, []);
 });
@@ -64,7 +64,7 @@ test('changed access while the query runs prevents the result from being publish
   let reads = 0;
   const f = fixture({ present() {
     if (++reads === 2) throw Object.assign(new Error('market_data_access_denied'), { reason: 'market_data_access_denied' });
-    return { target: identity, summary: { binding } };
+    return { target: identity, binding, accountIds: ['A', 'B', 'C'] };
   } });
   await assert.rejects(f.analyze(identity, body(), options()), /market_data_access_denied/);
   assert.equal(f.calculations.length, 1);
@@ -91,8 +91,18 @@ test('an aborted request does not start a market calculation', async () => {
 
 test('shared numeric gate saturation remains a retryable busy response', async () => {
   const analyze = createCustomCohortMarketAnalysis({ pool: {},
-    cohortService: { async present() { return { target: identity, summary: { binding } }; } },
+    cohortService: { async authorizeMarketSelection() { return { target: identity, binding, accountIds: ['A'] }; } },
     run: async () => { throw new Error('neighborhood_profile_capacity_exceeded'); },
     buildAnalyses: () => assert.fail('Saturated gate must not start another query') });
   await assert.rejects(analyze(identity, body(), options()), error => error.code === 'custom_cohort_execution_busy');
+});
+
+test('market observation dates are independent of the retained appraisal effective date', async () => {
+  const f = fixture(), input = { ...body(), as_of: '2026-10-31', period_months: 12 };
+  const before = JSON.stringify(input);
+  await f.analyze(identity, input, options());
+  assert.equal(f.calculations[0].asOfDate, '2026-10-31');
+  assert.equal(f.calculations[0].periodMonths, 12);
+  assert.equal(JSON.stringify(input), before);
+  assert.equal(f.reads.length, 2, 'fresh access checks remain independent of the numeric window');
 });

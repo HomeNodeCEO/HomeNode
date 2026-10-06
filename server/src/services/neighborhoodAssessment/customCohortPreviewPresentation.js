@@ -61,8 +61,16 @@ export function customCohortPreviewBinding(preview, expected) {
   const requested = prepareCustomCohortContextReference(canonicalAssessmentJson(expected.context_ref));
   check(canonicalAssessmentJson(actual) === canonicalAssessmentJson(requested), 'context_mismatch');
   check(count(preview.selection_revision) > 0 && preview.selection_revision === expected.selection_revision, 'selection_mismatch');
+  return customCohortSelectionBinding({ revision: preview.selection_revision, pockets: preview.pockets }, actual);
+}
+
+/** Content identity only. Membership and current access belong to the owner. */
+export function customCohortSelectionBinding(selection, contextRef) {
+  object(selection);
+  check(count(selection.revision) > 0, 'selection_mismatch');
+  const actual = prepareCustomCohortContextReference(canonicalAssessmentJson(contextRef));
   let memberships = 0; const pocketIds = new Set();
-  const pockets = array(preview.pockets, L.pockets).map(pocket => {
+  const pockets = array(selection.pockets, L.pockets).map(pocket => {
     const id = text(pocket.id, L.identity_utf8_bytes), label = text(pocket.label);
     check(!pocketIds.has(id), 'duplicate_pocket'); pocketIds.add(id);
     const account_ids = array(pocket.account_ids, 50000).map(account => text(account, 400)).sort(compare);
@@ -72,8 +80,8 @@ export function customCohortPreviewBinding(preview, expected) {
   }).sort((a, b) => compare(a.id, b.id));
   // This exact insertion/key order is shared with the browser controller.
   // It is a content identity only, never permission or a signed token.
-  const selection_sha256 = hash(JSON.stringify({ pockets, revision: preview.selection_revision }));
-  return { context_ref: actual, selection_revision: preview.selection_revision, selection_sha256 };
+  const selection_sha256 = hash(JSON.stringify({ pockets, revision: selection.revision }));
+  return { context_ref: actual, selection_revision: selection.revision, selection_sha256 };
 }
 const bindingOf = customCohortPreviewBinding;
 function header(preview, binding) {

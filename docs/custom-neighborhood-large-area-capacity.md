@@ -1019,3 +1019,42 @@ consumer limits, default-off V7 activation, accepted reports, source rights,
 cron schedule and live appraisal choices are unchanged. Complete >50k numeric/
 publication, compact catalog, partial source/spatial recovery and real 5/10-mile,
 retrospective and live QA acceptance still remain.
+
+## Exact paged numerical kernel (not a live numerical owner)
+
+`exactPagedDistribution.js` consumes two fresh, complete passes of globally
+ordered finite observations in fixed, at-most-1,000-value pages. It retains one
+working-page copy and six Type-7 quantile positions, not a full value array or
+page medians. The owner separately owns the iterator receipts and their memory.
+Mean and absolute deviation use the identical ascending per-value reductions
+as the legacy `exactDistribution`; COD remains descriptive, not reliability.
+Counts include explicitly missing observations in the original member
+denominator. Known values, page lengths, full stream exhaustion, order and a
+second-pass numerical witness (including signed zero) must all agree before a
+result exists. Cancellation/deadlines surround actual iterator settlement and
+cooperative yields. Closed page/iterator receipts refuse holes, extra fields,
+accessors, proxies and nonfinite values without executing data getters.
+
+This kernel requires a trusted owner that derives both counts from the complete
+verified selected population and verifies each original page before yielding
+it. Its numerical digest does not prove original source/lineage, authorization,
+housing eligibility, transaction deduplication, currency, measurement units or
+historical support. Those meanings remain the existing owners' responsibility.
+It neither creates persistent sorted runs nor authorizes a database read, and
+does not replace the legacy calculator or alter any installed capture limit.
+The existing 250,000-measurement ceiling is preserved, including explicit
+one-over refusal before I/O. No iterator receipt or numeric result is report
+publication authority; final current rights/head and coherent Apply remain
+required.
+
+Synthetic tests compare every result field with legacy calculations over
+missing/invalid inputs, signed zero, extreme arithmetic, skewed and deterministic
+populations, 60,001 observations and the exact existing ceiling. They test missing
+and changed later pages, count/order/grammar refusals, settlement cancellation,
+deadline cleanup and detached pages across cooperative yields. These are
+numerical parity/admission tests, not a >50k cohort capture, realistic geometry,
+production peak-memory/latency or complete large-area Apply acceptance. The
+next numerical owner still needs original-bound persisted ordered observations,
+complete-population/period/unit/provenance validation and bounded run/merge
+preparation. Compact catalogs, partial source/spatial recovery, publication
+budgets, production activation and 5/10-mile/retrospective live acceptance remain.

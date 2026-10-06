@@ -696,6 +696,13 @@ URL boundary, retains one connection and its 120-second statement timeout, and
 sanitizes both idle connection failures and unknown worker errors. This does
 not alter runtime trust stores, production settings or the worker schedule.
 
+Preview format and source catalog format are independent. Each derivative is
+keyed and foreign-keyed to its exact catalog format (1 or 2), and preparation
+and reads choose the same latest supported original as the catalog repository.
+A newer catalog can receive a new immutable derivative without overwriting its
+predecessor. Until that derivative exists, the normal full-map fallback remains;
+an older derivative is never relabelled as the newer catalog's opening.
+
 The manifest is selection-neutral. It preserves the original exact parcel
 bounds/counts, one retained exterior-ring anchor per named group, and retained
 subject anchors. Neither a label nor a viewport defines a legal subdivision

@@ -108,8 +108,13 @@ export function createCustomCohortPreparedMapOpeningRepository(client, scopeJson
         AND p.context_sha256=m.context_sha256 AND p.format_version=m.format_version
       JOIN app.neighborhood_custom_cohort_prepared_catalogs c
         ON c.organization_id=m.organization_id AND c.context_id=m.context_id
-        AND c.context_sha256=m.context_sha256 AND c.format_version=m.format_version
+        AND c.context_sha256=m.context_sha256 AND c.format_version=m.source_catalog_format_version
         AND c.catalog_version=m.catalog_version
+        AND c.format_version=(
+          SELECT max(latest.format_version) FROM app.neighborhood_custom_cohort_prepared_catalogs latest
+          WHERE latest.organization_id=c.organization_id AND latest.context_id=c.context_id
+            AND latest.context_sha256=c.context_sha256 AND latest.catalog_version=3
+            AND latest.format_version IN (1,2))
       WHERE m.organization_id=$1::uuid AND m.context_id=$2::uuid
         AND m.context_sha256=$3 AND m.format_version=1 AND m.catalog_version=3
         AND o.report_file_id=$4::uuid AND o.assignment_file_id=$5::bigint AND o.account_id=$6`,
@@ -118,6 +123,7 @@ export function createCustomCohortPreparedMapOpeningRepository(client, scopeJson
     check(found && [0, 1].includes(found.rowCount) && Array.isArray(found.rows) && found.rows.length === found.rowCount);
     if (!found.rowCount) return null;
     const row = found.rows[0];
+    check([1, 2].includes(row.source_catalog_format_version));
     for (const kind of ['catalog', 'compressed_catalog', 'preview', 'compressed_preview', 'map', 'compressed_map'])
       check(/^[a-f0-9]{64}$/.test(row[`source_${kind}_sha256`])
         && row[`source_${kind}_sha256`] === row[`current_${kind}_sha256`]);

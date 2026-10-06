@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { requestCustomCohortObservationPreview, requestCustomCohortOperation } from '../customCohortPreviewApi';
 import { createCustomCohortPreviewController } from '../customCohortPreviewController';
-import type { CustomCohortContextRef, CustomCohortPreviewInput, CustomCohortPreviewState, CustomCohortInitialResponse } from '../customCohortPreviewController';
+import type { CustomCohortContextRef, CustomCohortPreviewInput, CustomCohortPreviewState, CustomCohortInitialResponse, CustomCohortPreviewGroup } from '../customCohortPreviewController';
 import type { CustomCohortMemberTransport } from '../customCohortPreviewTransport';
 import { isCustomCohortPreviewCapacityError } from '../customCohortPreviewTransport';
 import { checkCustomCohortPocketCatalog, customCohortCatalogGroupIds, selectionFromRecordedGroups,
@@ -50,6 +50,7 @@ interface BaseProps {
   accountId: string; assignmentFileId: string; contextRef: CustomCohortContextRef;
   /** Changes on session/organization transition, even for the same file. */
   sessionKey: string; subjectLabel: string; enabled: boolean;
+  onAnalysisSelection?: (group: CustomCohortPreviewGroup | null, includesTownhomes?: boolean) => void;
 }
 type Props = BaseProps & ({ workspace?: CustomCohortControlledWorkspace; exact?: never }
   | { exact: CustomCohortExactWorkspace; workspace?: never });
@@ -114,7 +115,6 @@ function WorkspaceSession(props: Props) {
   const [input] = useState<CustomCohortPreviewInput>(() => ({ accountId: props.accountId,
     assignmentFileId: props.assignmentFileId, contextRef: { ...props.contextRef }, selection: { revision: 1, pockets: [] } }));
   const { accountId, assignmentFileId, contextRef } = input;
-  const { subjectLabel } = props;
   const [localCatalog, setCatalog] = useState<CheckedPocketCatalog | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
@@ -267,6 +267,19 @@ function WorkspaceSession(props: Props) {
   const group = exact?.display.observations ?? (desired ? preview.group : null);
   const mapGroup = exact ? prepareCustomCohortGroupMapView(exact.display).group : preview.group;
   const freshness = group ? current ? 'current' : 'stale' : 'none';
+  // Analysis never borrows stale figures while a selection save/preview is in
+  // flight. Its identity includes the exact context and selection fingerprint.
+  const onAnalysisSelection = props.onAnalysisSelection;
+  const includesTownhomes = useMemo(() => {
+    const composition = catalog?.recommendation?.stock_composition_v1;
+    if (composition?.status !== 'available') return false;
+    const selected = new Set(included);
+    // The checked composition uses the fixed housing-category order:
+    // detached single family, townhouse, condominium, duplex, apartment, etc.
+    return composition.pockets.some(row => selected.has(row[0]) && row[3][1][1] > 0);
+  }, [catalog, included]);
+  useEffect(() => { onAnalysisSelection?.(current ? group : null, current ? includesTownhomes : undefined); }, [current, group, includesTownhomes, onAnalysisSelection]);
+  useEffect(() => () => onAnalysisSelection?.(null), [onAnalysisSelection]);
   const selectionDisabled = selectionBlocked || !selectionUsable;
   const area = recommendation?.sales_aware_area;
   const suggested = area && area.status !== 'unavailable' && area.selected_recorded_group_ids.length
@@ -279,14 +292,15 @@ function WorkspaceSession(props: Props) {
     const selected = new Set(included);
     return groups.every(pocket => selected.has(pocket.id));
   }, [groups, included]);
-  const scoreBandSelector = <CustomCohortScoreBandSelector recommendation={recommendation} included={included}
+  const scoreBandSelector = <CustomCohortScoreBandSelector recommendation={recommendation}
+    preparedMap={catalog?.prepared_secondary_map} included={included}
     minimum={minimumScoreBand} onMinimumChange={setMinimumScoreBand}
     subjectGroupId={catalog?.subject_membership.assigned_pocket_id ?? null} disabled={selectionDisabled}
     allGroupsIncluded={Boolean(current && allGroupsIncluded)}
     onReplace={ids => choose(ids)} onAdd={includeGroups} onRemove={excludeGroups} />;
   const liveStatistics = <aside className="min-w-0 rounded-xl border border-violet-200 bg-violet-50/30 p-3"
     aria-label="Live neighborhood characteristics and market observations">
-    <CustomCohortCompactStatistics group={group} freshness={freshness} includePrivateSales />
+    <CustomCohortCompactStatistics group={group} freshness={freshness} includePrivateSales mapStrip />
     <details className="mt-3 rounded-lg border border-violet-200 bg-white p-2 text-xs">
       <summary className="cursor-pointer font-medium">Full observation breakdown</summary>
       <div className="mt-3"><CustomCohortStatistics group={group} freshness={freshness} selectedOnly /></div>
@@ -296,12 +310,11 @@ function WorkspaceSession(props: Props) {
 
   return <section aria-label="Neighborhood pocket exploration" className="space-y-4 rounded-2xl border border-violet-200 p-4 print:hidden">
     <header className="flex flex-wrap items-start justify-between gap-3">
-      <div><h3 className="text-base font-semibold">Neighborhood pocket exploration</h3>
-        <p className="text-sm opacity-80">{subjectLabel} · Recorded CAD groups in the retained discovery area</p></div>
+      <div><h3 className="text-base font-semibold">Neighborhood pocket exploration</h3></div>
       <span className="rounded-full border border-amber-300 px-3 py-1 text-xs">Preview only · report unchanged</span>
     </header>
-    <p className="text-sm">Explore broad observations, then include or exclude recorded groups. These parcel shapes are not legal subdivision
-      or appraiser-defined neighborhood boundaries. Current-observation similarity is for review only; reliability and report-ready eligibility are not established.</p>
+    {/* Parcel geometry and similarity limitations remain in the retained workfile,
+        not in explanatory paragraphs above the appraiser's controls. */}
     {!catalog && !catalogError && <p role="status">Loading recorded groups…</p>}
     {!controlled && catalogError && <div role="alert" className="space-y-2"><p>{catalogError}</p>
       <button type="button" className={button} onClick={() => setReload(n => n + 1)}>Retry group loading</button></div>}
@@ -309,11 +322,6 @@ function WorkspaceSession(props: Props) {
       {!selectionUsable && <p role="alert">The saved group selection does not match this retained context. Reload the workspace; no replacement selection has been inferred.</p>}
       {catalog.status === 'incomplete' && <p role="alert">Subdivision grouping reached a capacity limit: {catalog.unassigned.reason_counts.map(row => unassignedReasonLabel(row.reason)).join(', ')}.
         {' '}All captured accounts remain selectable together; their individual CAD subdivision names have not been judged missing.</p>}
-      {!recommendation && catalog.pockets.length > 128 && <p className="text-sm">
-        All {catalog.pockets.length.toLocaleString('en-US')} recorded groups are available for inspection and inclusion.
-        Automatic ranking is unavailable for this retained study; historical applicability and complete recommendation capacity are required.
-        No subset was ranked or omitted. The page list is paginated, not the map or selected statistics.
-        {catalog.catalog_version < 3 && ' This saved file uses an older grouping version; Refresh subdivision grouping above requests the expanded version while retaining the saved selection.'}</p>}
       {recommendation && <details className="rounded-xl border border-amber-300 bg-violet-50/40 p-4">
         <summary className="cursor-pointer text-sm font-medium">Optional automatic recommendation</summary>
         <section aria-label="Recommended pockets for review" className="mt-3 space-y-2">
@@ -417,7 +425,6 @@ function WorkspaceSession(props: Props) {
           scoreBandSelector={scoreBandSelector} belowMapStatistics={liveStatistics} />
           : <div className="space-y-3 rounded-xl border border-violet-200 p-4">
             <p role="status" className="grid min-h-40 place-content-center">Waiting for a coherent map and statistics…</p>
-            <p className="text-xs text-slate-600">Fill reflects recorded-group similarity to the subject, not an individual parcel score or statistical reliability. Missing observations remain unknown.</p>
             {scoreBandSelector}
             {liveStatistics}
           </div>}
@@ -500,7 +507,9 @@ function WorkspaceSession(props: Props) {
           setInspectedPhaseId(id); setInspected(id ?? fullReviewFamily.pocket_ids[0]);
         } }}
         onClose={() => { setFullReviewFamilyId(null); setInspectedFamilyId(null); setInspectedPhaseId(null); }} />}
-      {!inspectedFamily && selectedGroup && selectionUsable && <CustomCohortPocketInspector input={input} catalog={catalog}
+      {/* Legacy inspection stays in the existing map snapshot. Exact unassigned
+          inspection has its own original-subset ports, never the main selection. */}
+      {exact && !inspectedFamily && selectedGroup && selectionUsable && <CustomCohortPocketInspector input={input} catalog={catalog}
         pocketId={selectedGroup.id} label={selectedGroup.label} previewTransport={transport} paused={inspectionsPaused}
         memberTransport={memberTransport} membersPaused={selectionBlocked} />}
     </>}

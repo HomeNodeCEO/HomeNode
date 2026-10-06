@@ -77,7 +77,9 @@ export function createCustomCohortGroupSelectionRepository(client, scopeJson, co
       FROM app.neighborhood_custom_cohort_contexts
       WHERE organization_id=$1 AND context_id=$2 AND report_file_id=$3 AND assignment_file_id=$4::bigint
         AND account_id=$5 AND context_revision=$6::smallint AND context_sha256=$7
-      FOR ${write ? 'UPDATE' : 'SHARE'} NOWAIT`, values));
+      -- Serialize head writers/readers without blocking child FK key-share
+      -- checks: this parent context and its key are immutable.
+      FOR ${write ? 'NO KEY UPDATE' : 'SHARE'} NOWAIT`, values));
     if (row.context_id !== context.context_id || row.context_revision !== context.context_revision
       || row.context_sha256 !== context.context_sha256) fail('target_mismatch');
   };

@@ -113,6 +113,7 @@ export default function CustomNeighborhoodCharacteristicsSection(props: Props) {
         <MarketConditionsAnalysis key={`${props.accountId}:${props.assignmentFileId}`} subjectAccountId={props.accountId}
           assignmentFileId={props.assignmentFileId} initialDraft={props.marketConditionsDraft}
           initialAsOfDate={props.effectiveDate}
+          geography={props.summaryInput?.locationType || null}
           onCompletionChange={props.onMarketConditionsChange} explorationArea={explorationArea} embedded />
       </Suspense>
     </section> : null}

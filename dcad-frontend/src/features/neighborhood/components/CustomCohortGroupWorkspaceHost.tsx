@@ -160,7 +160,7 @@ function HostSession(props: Props) {
       io => { inspectedDisplay(input); return initial.api.inspectionMembers(input, population, page, io); }); } catch (error) { return Promise.reject(error); }
   });
 
-  async function reload(bootstrap = false) {
+  const [reload] = useState(() => async (bootstrap = false) => {
     const requests = lane.current, epoch = generation.current;
     if (!requests || (owner.current && !owner.current.isSettled())) throw fault('busy');
     await requests.flush().catch(() => {});
@@ -199,7 +199,7 @@ function HostSession(props: Props) {
       }
       if (live.current && generation.current === epoch) setReportEpoch(value => value + 1);
     } finally { if (freshAbort.current === abort) freshAbort.current = null; }
-  }
+  });
   useEffect(() => {
     live.current = true; const epoch = ++generation.current, requests = createCustomWorkspaceRequestLane(); lane.current = requests;
     initial.registerControls?.({ target: initial.target,
@@ -220,7 +220,7 @@ function HostSession(props: Props) {
       freshAbort.current?.abort(); reportAbort.current?.abort(); owner.current?.dispose(); requests.dispose();
       owner.current = null; lane.current = null; initial.registerControls?.(null);
     };
-  }, [initial]);
+  }, [initial, reload]);
 
   async function recover() {
     await reload(); if (lockedRef.current) return;

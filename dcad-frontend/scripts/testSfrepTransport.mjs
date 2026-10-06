@@ -709,3 +709,30 @@ test('download names remove path and control characters, notices remain plain st
   assert.match(sfrepNoticeText({ sourceField: 'contract_price', values: ['1', '2'], documentIds: [21, 22] }), /contract price: 1 \/ 2/);
   assert.match(sfrepNoticeText({ sourceField: 'seller_name', documentId: 21, candidateId: null, reason: 'not_mapped' }), /seller name: not mapped/);
 });
+
+const verifiedPhoto = () => ({ id: '10000000-0000-4000-8000-000000000001', label: 'Kitchen', category: 'Kitchen',
+  roomLabel: 'Kitchen', caption: 'North wall', position: 1, revision: 2, status: 'verified', included: true,
+  verifiedAt: '2026-10-06T12:00:00Z', variant: 'display', byteSize: 100,
+  fileName: 'photo-10000000-0000-4000-8000-000000000001.jpg', reason: null,
+  view_url: 'https://synthetic.example/photo?signature=short-lived' });
+
+test('photo selection is sent through the existing preview/export transport and an old server cannot silently omit images', async () => {
+  const h = harness(async (_url, init) => init.headers.accept === 'application/json'
+    ? json({ ...preview(), photos: [verifiedPhoto()] })
+    : new Response('rpti', { headers: { 'content-type': 'application/octet-stream' } }));
+  const request = { ...selection, includePhotos: true };
+  assert.equal((await h.api.preview(request, h.io)).photos[0].label, 'Kitchen');
+  await h.api.export(request, digest, h.io);
+  assert.ok(h.calls.every(call => JSON.parse(call.init.body).include_photos === true));
+  const old = harness(); await assert.rejects(old.api.preview(request, old.io), /not available on this server/);
+});
+
+test('photo receipts reject private internals, unsafe URLs, duplicate IDs and false verification claims', () => {
+  for (const change of [{ id: '../foreign' }, { included: true, status: 'uploading' }, { verifiedAt: null },
+    { fileName: '../photo.jpg' }, { byteSize: 0 }, { variant: 'unknown' },
+    { view_url: 'javascript:alert(1)' }, { view_url: 'https://user:password@synthetic.example/photo' },
+    { objectKey: 'private' }, { checksumSha256: 'private' }]) {
+    assert.throws(() => checkSfrepPreview({ ...preview(), photos: [{ ...verifiedPhoto(), ...change }] }), /photo preview is invalid/);
+  }
+  assert.throws(() => checkSfrepPreview({ ...preview(), photos: [verifiedPhoto(), verifiedPhoto()] }), /photo preview is invalid/);
+});

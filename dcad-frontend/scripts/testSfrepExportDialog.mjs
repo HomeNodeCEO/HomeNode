@@ -129,7 +129,7 @@ test('preview shows fields and exclusions; only explicit download sends the revi
   const h = harness(); h.render(); h.check('Contract', true); h.click('Preview SFREP export'); await h.drain();
   assert.match(h.text, /Attaching its PDF is optional/);
   assert.equal(h.calls.length, 1); assert.equal(h.calls[0][0], 'preview');
-  assert.deepEqual(h.calls[0][1], { accountId: 'R1', assignmentFileId: 12, documentIds: [21], includeDocuments: true,
+  assert.deepEqual(h.calls[0][1], { accountId: 'R1', assignmentFileId: 12, documentIds: [21], includeDocuments: true, includePhotos: true,
     formId: helpers.SFREP_FORM_ID });
   assert.equal(h.calls[0][2].editorKey, 'editor');
   for (const expected of ['SalePriceAmount', '200000', 'No verified mapping', 'First bank / Second bank', 'Review imported fields.']) assert.ok(h.text.includes(expected));
@@ -416,4 +416,33 @@ test('document center exposes export only for saved custom assignments and scope
   assert.match(source, /!isUad && assignmentFileId \? <div/);
   assert.match(source, /sfrepOpen && !isUad && assignmentFileId \? <SfrepExportDialog key=\{scopeKey\}/);
   assert.match(source, /setSfrepOpen\(false\)/);
+});
+
+const photoResponse = () => ({ ...response(), fields: [], documents: [], omitted: [], conflicts: [],
+  photos: [{ id: '10000000-0000-4000-8000-000000000001', label: 'Kitchen / first floor', caption: 'North wall',
+    included: true, variant: 'display', byteSize: 100, reason: null, view_url: 'https://synthetic.example/photo' }] });
+
+test('photos and labels appear inside the existing preview and can export without fields or PDFs', async () => {
+  const h = harness({ preview: async () => photoResponse() }); h.render();
+  assert.equal(h.checkbox('Include verified inspection photos').props.checked, true);
+  h.click('Preview SFREP export'); await h.drain();
+  assert.match(h.text, /Kitchen \/ first floor/); assert.match(h.text, /North wall/);
+  assert.match(h.text, /Verified upload — included/);
+  const image = walk(h.tree).find(node => node.type === 'img');
+  assert.equal(image.props.alt, 'Kitchen / first floor'); assert.equal(image.props.referrerPolicy, 'no-referrer');
+  assert.equal(h.button('Download SFREP .rpti').props.disabled, false);
+  image.props.onError(); h.render(); assert.match(h.text, /Preview unavailable — verified file is included/);
+  assert.equal(h.calls.length, 1); // Broken/expired thumbnails do not trigger API polling.
+  h.click('Download SFREP .rpti'); await h.drain(); assert.equal(h.calls[1][0], 'export');
+  h.check('Include verified inspection photos', false);
+  assert.equal(h.link('Save prepared RPTI'), undefined); assert.equal(h.button('Download SFREP .rpti'), undefined);
+  h.close();
+});
+
+test('unverified photos are explicitly excluded and cannot enable an empty export', async () => {
+  const value = photoResponse(); Object.assign(value.photos[0], { included: false, variant: null, byteSize: null,
+    view_url: null, reason: 'Upload is not verified yet.' });
+  const h = harness({ preview: async () => value }); h.render(); h.click('Preview SFREP export'); await h.drain();
+  assert.match(h.text, /Not included/); assert.match(h.text, /Upload is not verified yet/);
+  assert.equal(h.button('Download SFREP .rpti').props.disabled, true); h.close();
 });

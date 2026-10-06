@@ -1,9 +1,11 @@
 import { useMemo } from 'react';
 import type { CheckedPocketRecommendation } from '../customCohortPocketRecommendation';
+import type { CheckedPreparedSecondaryMap } from '../customCohortPreparedSecondaryMap';
 import { customCohortScoreBands } from '../customCohortScoreBands';
 
 interface Props {
   recommendation: CheckedPocketRecommendation | null;
+  preparedMap?: CheckedPreparedSecondaryMap;
   included: readonly string[];
   minimum: number;
   onMinimumChange: (minimum: number) => void;
@@ -19,9 +21,9 @@ const button = 'hn-action-secondary btn btn-sm normal-case';
 
 /** Appraiser-directed selection over already checked group scores. All three
  * actions use the workspace's existing atomic selection save/preview path. */
-export default function CustomCohortScoreBandSelector({ recommendation, included, minimum, onMinimumChange,
+export default function CustomCohortScoreBandSelector({ recommendation, preparedMap, included, minimum, onMinimumChange,
   subjectGroupId, disabled, allGroupsIncluded, onReplace, onAdd, onRemove }: Props) {
-  const bands = useMemo(() => customCohortScoreBands(recommendation), [recommendation]);
+  const bands = useMemo(() => customCohortScoreBands(recommendation, preparedMap), [recommendation, preparedMap]);
   const band = bands.find(item => item.minimum === minimum);
   const ids = band?.recorded_group_ids ?? [];
   const selected = useMemo(() => new Set(included), [included]);

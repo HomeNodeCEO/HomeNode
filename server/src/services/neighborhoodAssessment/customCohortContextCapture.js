@@ -21,7 +21,9 @@ import { createCustomCohortSubjectRepository } from './customCohortSubjectReposi
 import { createCustomCohortContextRepository } from './customCohortContextRepository.js';
 import { createCustomCohortCaptureJobRepository, prepareCustomCohortCaptureJobClaim } from './customCohortCaptureJobRepository.js';
 import { loadCurrentCustomCohortJobActor } from './customCohortJobActor.js';
-import { createCustomCohortRecordedGroupSelectionOwner } from './customCohortRecordedGroupSelectionOwner.js';
+import { createCustomCohortRecordedGroupSelectionOwner,
+  reopenCustomCohortRecordedGroupSelectionOriginal } from './customCohortRecordedGroupSelectionOwner.js';
+import { createCustomCohortGroupSelectionRepository } from './customCohortGroupSelectionRepository.js';
 import { prepareCustomCohortGroupWorkspaceSave } from './customCohortGroupWorkspaceSave.js';
 import { resumeCustomCohortSubjectCheckpoint } from './customCohortCaptureSubjectCheckpoint.js';
 import { resumeCustomCohortPreparationCheckpoint } from './customCohortCapturePreparationCheckpoint.js';
@@ -850,6 +852,50 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       throw error;
     }
   }
+  async function workspaceSelection(client, input, { scopeJson, workspace, retained }, budget) {
+    if (workspace.checkpoint.workspace_version !== 7) return null;
+    // The catalog grant must already have succeeded before retained row pages
+    // are loaded. Rebuild only the exact retained catalog/independent roster,
+    // never today's source tables, a viewport or browser-supplied memberships.
+    let catalog, roster;
+    if (!retained.privateAuthorization) {
+      const cached = await createCustomCohortPreparedCatalogRepository(client, scopeJson, input.contextRef).read();
+      const prepared = cached ? await createCustomCohortPreparedPreviewRepository(client, scopeJson, input.contextRef)
+        .read({ includeMap: false, useVerifiedPreviewCache: true }) : null;
+      if (prepared) {
+        if (!same(prepared.preview.observation_period, retained.observationPeriod)
+          || prepared.preview.effective_date !== retained.context.effective_date) fail('operation_conflict');
+        catalog = rebindCustomCohortPreparedCatalog(cached, 1).catalog;
+        roster = prepared.preview.all.account_ids;
+      }
+    }
+    if (!catalog) {
+      const preview = await buildCustomCohortIndexedObservationPreviewBatched({ context_ref: input.contextRef,
+        retained_inputs: retained.retained.retained_inputs, selection: { revision: 1, pockets: [] } }, { check: budget.check });
+      const batches = customCohortPocketCatalogBatches({ retained_inputs: retained.retained.retained_inputs, preview, catalog_version: 3 });
+      let step;
+      do { budget.check(); step = batches.next(); if (!step.done) await yieldToRequests(); } while (!step.done);
+      catalog = presentCustomCohortPocketCatalog({ catalog: step.value, preview,
+        expected: { context_ref: input.contextRef, selection_revision: 1 } });
+      roster = retained.retained.retained_inputs.spatial.account_ids;
+    }
+    const original = await reopenCustomCohortRecordedGroupSelectionOriginal({ client, scopeJson, budget,
+      catalogJson: JSON.stringify(catalog), rosterJson: JSON.stringify({ account_ids: roster }),
+      blobs: createNeighborhoodCohortBlobRepository(client, JSON.parse(scopeJson).organization_id) },
+    { contextRef: input.contextRef, selectionRef: workspace.checkpoint.active.selection_ref });
+    if (!original) fail('selection_changed');
+    budget.check();
+    return freeze({ reference: original.selection_ref, selection: { revision: original.selection_ref.selection_revision,
+      included_recorded_group_ids: original.included_recorded_group_ids } });
+  }
+  async function recheckWorkspaceSelection(client, input, loaded, budget) {
+    if (!loaded.workspaceSelection) return;
+    budget.check();
+    const current = await createCustomCohortGroupSelectionRepository(client, loaded.scopeJson,
+      canonicalAssessmentJson(input.contextRef), { signal: budget.signal, checkBudget: budget.check }).peekCurrent();
+    if (!same(current.selection_ref, loaded.workspaceSelection.reference)) fail('selection_changed');
+    budget.check();
+  }
   function reportRequest(input, target) {
     return { actor_user_id: input.auth.userId, target: Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])),
       context_ref: input.contextRef, workspace_section_revision: input.expectedWorkspaceRevision,
@@ -863,6 +909,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       subject_reference: loaded.retained.retained.subject_reference,
       market_decision: loaded.retained.decision, private_decision: loaded.retained.privateAuthorization?.decision ?? null,
       report_decision: loaded.retained.beforeLoadResult,
+      ...(loaded.workspaceSelection ? { selection_ref: loaded.workspaceSelection.reference } : {}),
       ...(loaded.replacement ? { replacement: loaded.replacement.fence } : {}) };
   }
   const attachmentTarget = (target, id, revision) => ({ organizationId: target.organization_id,
@@ -941,9 +988,15 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     const target = await resolveTarget(client, input, true, 'write', true);
     const scopeJson = canonicalAssessmentJson(Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])));
     const workspace = await savedWorkspace(client, input);
-    const retained = await authorizedRetainedInputs(client, { scopeJson, reference: input.contextRef, input,
+    const exactSelection = workspace.checkpoint.workspace_version === 7;
+    const currentInput = exactSelection ? { ...input,
+      auth: await loadCurrentCustomCohortJobActor(client, input.auth.userId, target.organization_id) } : input;
+    if (exactSelection) assertTarget(await resolveTarget(client, currentInput, true, 'write', true), target);
+    const retained = await authorizedRetainedInputs(client, { scopeJson, reference: input.contextRef, input: currentInput,
       authorizeMarketData, authorizePrivateSales, budget, study: workspace.checkpoint.active,
-      beforeLoad: metadata => reportPermission(client, input, metadata, budget) });
+      additionalExposures: exactSelection ? ['report_observation_catalog'] : [],
+      beforeLoad: metadata => reportPermission(client, currentInput, metadata, budget) });
+    const selection = await workspaceSelection(client, currentInput, { scopeJson, workspace, retained }, budget);
     const reportEditor = await reportEditorState(client, input), savedBoundary = await reportGeographyState(client, input);
     let reportGeography = null, derivedAt = null;
     if (geography) {
@@ -953,11 +1006,15 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       reportGeography = completeCustomCohortReportGeography(admission, admission.geometry_for_validation === null ? null
         : await reportGeometryTopology(client, admission.geometry_for_validation, admission.subject_point_for_validation));
     }
-    return { workfile, target, scopeJson, workspace, retained, reportEditor, savedBoundary, reportGeography, derivedAt };
+    return { workfile, target, scopeJson, workspace, retained, reportEditor, savedBoundary, reportGeography, derivedAt,
+      ...(selection ? { workspaceSelection: selection } : {}) };
   }
   async function recheckReported(client, input, loaded, budget, { acceptedReplay = false, editorAfterSave = false } = {}) {
+    if (loaded.workspaceSelection) input = { ...input,
+      auth: await loadCurrentCustomCohortJobActor(client, input.auth.userId, loaded.target.organization_id) };
     assertTarget(await resolveTarget(client, input, true, 'write', true), loaded.target);
     if (!same(await savedWorkspace(client, input), loaded.workspace)) fail('workspace_changed');
+    await recheckWorkspaceSelection(client, input, loaded, budget);
     if (!editorAfterSave && !same(await reportEditorState(client, input), loaded.reportEditor)) fail('report_editor_changed');
     if (!same(await reportGeographyState(client, input), loaded.savedBoundary)) fail('report_geography_changed');
     if (loaded.replacement && !acceptedReplay && !editorAfterSave
@@ -969,7 +1026,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     const decision = await boundedPolicy(authorizeMarketData, client, input.auth, loaded.retained.context,
       loaded.retained.purpose, budget);
     if (!same(decision, loaded.retained.decision)) fail('market_policy_changed');
-    await recheckPrivatePolicy(client, input, loaded.retained, budget);
+    if (loaded.workspaceSelection && !same(await boundedPolicy(authorizeMarketData, client, input.auth,
+      loaded.retained.context, loaded.retained.purpose, budget, 'report_observation_catalog'), loaded.retained.decision)) fail('market_policy_changed');
+    await recheckPrivatePolicy(client, input, loaded.retained, budget,
+      loaded.workspaceSelection ? ['none', 'report_observation_catalog'] : ['none']);
     if (!same(await reportPermission(client, input, loaded.retained, budget), loaded.retained.beforeLoadResult)) fail('report_policy_changed');
   }
   function proposalResponse(input, loaded, candidate, assessment, issues = [], reused = false) {
@@ -1653,7 +1713,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     const buildReported = loaded.retained.reportedInterpretation
       ? buildCustomCohortReportedAssessmentWitnessV2Batched : buildCustomCohortReportedAssessmentBatched;
     const prepared = await phase('assembly', () => buildReported({ context_ref: input.contextRef,
-      retained_inputs: loaded.retained.retained.retained_inputs, selection: active.selection, target,
+      retained_inputs: loaded.retained.retained.retained_inputs, selection: loaded.workspaceSelection?.selection ?? active.selection, target,
       catalog_version: customWorkspaceCatalogVersion(loaded.workspace.checkpoint),
       preparation_identity: identity, report_geography: loaded.reportGeography, derived_at: loaded.derivedAt,
       proposal_binding: { operation_id: input.operationId, actor_user_id: input.auth.userId,
@@ -1766,8 +1826,14 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       const target = await resolveTarget(client, input, true, 'read');
       const scopeJson = canonicalAssessmentJson(Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])));
       const workspace = await savedWorkspace(client, input);
+      const exactSelection = workspace.checkpoint.workspace_version === 7;
+      const currentInput = exactSelection ? { ...input,
+        auth: await loadCurrentCustomCohortJobActor(client, input.auth.userId, target.organization_id) } : input;
+      if (exactSelection) assertTarget(await resolveTarget(client, currentInput, true, 'read'), target);
       const retained = await authorizedRetainedInputs(client, { scopeJson, reference: input.contextRef,
-        input, authorizeMarketData, authorizePrivateSales, budget, study: workspace.checkpoint.active });
+        input: currentInput, authorizeMarketData, authorizePrivateSales, budget, study: workspace.checkpoint.active,
+        additionalExposures: exactSelection ? ['report_observation_catalog'] : [] });
+      const selection = await workspaceSelection(client, currentInput, { scopeJson, workspace, retained }, budget);
       if ((await createCustomCohortSubjectRepository(client, scopeJson)
         .compareCurrent(retained.retained.subject_reference)).status !== 'matched') fail('subject_changed');
       const review = await createCustomCohortReviewRepository(client, scopeJson)
@@ -1795,7 +1861,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           : await reportGeometryTopology(client, admitted.geometry_for_validation, admitted.subject_point_for_validation);
         reportGeography = completeCustomCohortReportGeography(admitted, topology);
       }
-      return { target, scopeJson, workspace, review, retained, reportEditor, savedBoundary, reportGeography, now, derivedAt };
+      return { target, scopeJson, workspace, review, retained, reportEditor, savedBoundary, reportGeography, now, derivedAt,
+        ...(selection ? { workspaceSelection: selection } : {}) };
     });
     budget.check();
     const active = loaded.workspace.checkpoint.active;
@@ -1812,7 +1879,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       preparation_input: { context_header_json: loaded.retained.header.header_blob.canonical_json,
         expected: { context_ref: input.contextRef, target: JSON.parse(loaded.scopeJson),
           observation_period: active.observation_period },
-        retained_inputs: loaded.retained.retained.retained_inputs, selection: active.selection,
+        retained_inputs: loaded.retained.retained.retained_inputs, selection: loaded.workspaceSelection?.selection ?? active.selection,
         catalog_version: customWorkspaceCatalogVersion(loaded.workspace.checkpoint) },
       review_state: loaded.review, derived_at: loaded.derivedAt,
     });
@@ -1837,9 +1904,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           attachment_id: randomUUID(), attachment_revision: 1 }, report_geography: loaded.reportGeography });
     budget.check();
     return transaction(pool, 'READ COMMITTED', budget, async client => {
-      assertTarget(await resolveTarget(client, input, true, 'read'), loaded.target);
+      const currentInput = loaded.workspaceSelection ? { ...input,
+        auth: await loadCurrentCustomCohortJobActor(client, input.auth.userId, loaded.target.organization_id) } : input;
+      assertTarget(await resolveTarget(client, currentInput, true, 'read'), loaded.target);
       const workspace = await savedWorkspace(client, input);
       if (!same(workspace, loaded.workspace)) fail('workspace_changed');
+      await recheckWorkspaceSelection(client, currentInput, loaded, budget);
       if (loaded.reportEditor !== null && !same(await reportEditorState(client, input), loaded.reportEditor)) fail('report_editor_changed');
       if (loaded.savedBoundary !== null && !same(await reportGeographyState(client, input), loaded.savedBoundary)) fail('report_geography_changed');
       if ((await createCustomCohortSubjectRepository(client, loaded.scopeJson)
@@ -1847,10 +1917,13 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       const review = await createCustomCohortReviewRepository(client, loaded.scopeJson)
         .getCurrent(canonicalAssessmentJson(input.contextRef), input.expectedReviewGeneration);
       if (review.state_sha256 !== loaded.review.state_sha256) fail('review_state_changed');
-      const decision = await boundedPolicy(authorizeMarketData, client, input.auth,
+      const decision = await boundedPolicy(authorizeMarketData, client, currentInput.auth,
         loaded.retained.context, loaded.retained.purpose, budget);
       if (!same(decision, loaded.retained.decision)) fail('market_policy_changed');
-      await recheckPrivatePolicy(client, input, loaded.retained, budget);
+      if (loaded.workspaceSelection && !same(await boundedPolicy(authorizeMarketData, client, currentInput.auth,
+        loaded.retained.context, loaded.retained.purpose, budget, 'report_observation_catalog'), loaded.retained.decision)) fail('market_policy_changed');
+      await recheckPrivatePolicy(client, currentInput, loaded.retained, budget,
+        loaded.workspaceSelection ? ['none', 'report_observation_catalog'] : ['none']);
       // Internal source-bearing computation only, never a public presentation
       // response or a publish/Apply authorization. No accepted section changes.
       return Object.freeze({ status: 'prepared_reviewed_inputs', authority: 'not_established',

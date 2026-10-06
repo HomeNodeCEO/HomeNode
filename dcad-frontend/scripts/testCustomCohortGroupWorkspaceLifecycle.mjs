@@ -15,9 +15,12 @@ const load = (name, dependencies) => loadTrustedRepositoryCommonJs(new URL(`../s
 const checkpoint = load('customWorkspaceCheckpoint', { './customCohortPocketCatalog': catalogHelpers, './customWorkspaceDiscovery.ts': discovery });
 const workspace = load('customCohortGroupWorkspaceTransport', { './customWorkspaceCheckpoint.ts': checkpoint,
   './customCohortPreviewTransport.ts': transport, './customCohortRecordedGroupTransport.ts': selection });
+const display = load('customCohortGroupDisplay', { './customCohortGroupWorkspaceTransport.ts': workspace,
+  './customCohortRecordedGroupTransport.ts': selection });
 const { createCustomCohortGroupWorkspaceLifecycle: create } = load('customCohortGroupWorkspaceLifecycle', {
   './customCohortGroupWorkspaceTransport.ts': workspace, './customCohortRecordedGroupTransport.ts': selection,
   './customWorkspaceCheckpoint.ts': checkpoint, './customCohortPocketCatalog.ts': catalogHelpers,
+  './customCohortGroupDisplay.ts': display,
 });
 const TARGET = { accountId: 'SUBJECT', assignmentFileId: '9007199254740993', sessionKey: 'synthetic-session' };
 const PERIOD = { start_date: '2023-01-01', end_date: '2024-02-29' };

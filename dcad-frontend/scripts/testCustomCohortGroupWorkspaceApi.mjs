@@ -17,14 +17,18 @@ const load = (name, modules) => loadTrustedRepositoryCommonJs(new URL(`../src/fe
 const checkpoint = load('customWorkspaceCheckpoint', { './customCohortPocketCatalog': catalog, './customWorkspaceDiscovery.ts': discovery });
 const workspace = load('customCohortGroupWorkspaceTransport', { './customWorkspaceCheckpoint.ts': checkpoint,
   './customCohortPreviewTransport.ts': transport, './customCohortRecordedGroupTransport.ts': selection });
+const display = load('customCohortGroupDisplay', { './customCohortGroupWorkspaceTransport.ts': workspace,
+  './customCohortRecordedGroupTransport.ts': selection });
 const legacy = load('customWorkspaceApi', { './customWorkspaceCheckpoint': checkpoint, './customCohortPreviewTransport': transport });
 const { createCustomCohortGroupWorkspaceApi: create } = load('customCohortGroupWorkspaceApi', {
   './customWorkspaceApi.ts': legacy, './customCohortPreviewTransport.ts': transport,
   './customCohortGroupWorkspaceTransport.ts': workspace, './customCohortRecordedGroupTransport.ts': selection,
+  './customCohortGroupDisplay.ts': display,
 });
 const { createCustomCohortGroupWorkspaceLifecycle: lifecycle } = load('customCohortGroupWorkspaceLifecycle', {
   './customCohortGroupWorkspaceTransport.ts': workspace, './customCohortRecordedGroupTransport.ts': selection,
   './customWorkspaceCheckpoint.ts': checkpoint, './customCohortPocketCatalog.ts': catalog,
+  './customCohortGroupDisplay.ts': display,
 });
 const TARGET = { accountId: 'SUBJECT', assignmentFileId: '37', sessionKey: 'synthetic-session' };
 const CONTEXT = { context_id: '70000000-0000-4000-8000-000000000001', context_revision: '1', context_sha256: 'a'.repeat(64) };
@@ -153,7 +157,10 @@ test('fresh API V7 read and exact catalog/head ports reopen in the actual lifecy
       } });
   });
   const fresh = await h.api.read(TARGET, io()), states = [];
-  const owner = lifecycle({ ...h.api, target: fresh.target, initialSection: fresh.section, initialGroups: () => [], onChange: state => states.push(state) });
+  // This older fixture tests the explicitly observation-free lifecycle. The
+  // coherent-display fixture below exercises the full API composition.
+  const owner = lifecycle({ ...h.api, display: undefined, target: fresh.target, initialSection: fresh.section,
+    initialGroups: () => [], onChange: state => states.push(state) });
   try {
     const ready = await owner.reopen(); assert.equal(ready.status, 'ready');
     assert.deepEqual(ready.checkpoint.active.selection_ref, ready.selected.selection_ref);

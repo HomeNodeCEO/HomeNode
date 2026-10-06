@@ -10,6 +10,7 @@ import { buildCachedSourceCaptures } from '../../server/src/services/neighborhoo
 import { mapCachedParcelRow, mapCachedAccountRow, mapCachedSaleRow } from '../../server/src/services/neighborhoodAssessment/cachedRowMappings.js';
 import { contextFixture } from '../../server/test/fixtures/customCohortContextFixture.js';
 import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
+import { groupMemberViewFixture, memberView, json } from './customCohortGroupMemberViewFixture.mjs';
 
 const requireRuntime = createRequire(new URL('../package.json', import.meta.url));
 
@@ -62,7 +63,7 @@ const walk = node => node && typeof node === 'object' ? [node, ...children(node)
 const text = node => typeof node === 'string' || typeof node === 'number' ? String(node)
   : node && typeof node === 'object' ? children(node).map(text).join('') : '';
 function harness(f = fixture()) {
-  let cells = [], effects = [], cursor = 0, dirty = false, props, tree, key, serial = 0;
+  let cells = [], effects = [], cursor = 0, dirty = false, props, tree, key, serial = 0, digestCalls = 0;
   const calls = [], digests = new Set(), waiters = new Map(), timers = new Map();
   const react = {
     useState(initial) { const i = cursor++; cells[i] ??= { value: typeof initial === 'function' ? initial() : initial };
@@ -82,7 +83,9 @@ function harness(f = fixture()) {
     if (name === 'react/jsx-runtime') return requireRuntime(name);
     if (name === '../customCohortMemberPage') return members;
     if (name === '../customCohortPreviewTransport') return previewTransportHelpers;
+    if (name === '../customCohortGroupMemberView') return memberView;
     assert.equal(name, '../customCohortPreviewController'); return { ...controller, fingerprintCustomCohortSelection(value) {
+      digestCalls++;
       const digest = controller.fingerprintCustomCohortSelection(value); digests.add(digest);
       void digest.then(() => digests.delete(digest), () => digests.delete(digest)); return digest;
     } };
@@ -101,19 +104,30 @@ function harness(f = fixture()) {
   const h = { calls, timers, transport, fixture: f,
     props: () => ({ input: f.input, group: f.group, memberTransport: transport }),
     get propsNow() { return props; }, get tree() { return tree; }, nodes: () => walk(tree), text: () => text(tree),
+    get digestCalls() { return digestCalls; },
     render(value) { render(value); flush(); },
     button(label) { const found = walk(tree).find(node => node.type === 'button' && text(node) === label); assert.ok(found, `Button ${label}`); return found; },
     click(label, bypassDisabled = false) { const b = this.button(label); if (!b.props.disabled || bypassDisabled) b.props.onClick(); flush(); },
     population(kind) { const b = walk(tree).find(node => node.type === 'button' && text(node).startsWith({ stock: 'Current CAD accounts (',
       transactions: 'In-period transaction observations (', source_reported: 'Source-reported records (', omitted_transactions: 'Omitted transaction observations (' }[kind]));
       assert.ok(b); if (!b.props.disabled) b.props.onClick(); flush(); },
-    async drain() { for (let i = 0; i < 16; i++) await Promise.resolve(); flush(); },
+    async drain() { for (let i = 0; i < 16; i++) await Promise.resolve(); await new Promise(resolve => setImmediate(resolve)); flush(); },
     async settle() { await Promise.allSettled([...digests]); await this.drain(); },
     async wait(index = calls.length) { if (!calls[index]) await new Promise(resolve => {
       const list = waiters.get(index) ?? []; list.push(resolve); waiters.set(index, list);
     }); await this.drain(); return calls[index]; },
     async complete(index = calls.length - 1, transform = value => value, source = f) {
-      const call = calls[index]; call.resolve(transform(source.response(call.population, call.page))); await this.drain();
+      const call = calls[index];
+      call.resolve(call.exact ? json(transform(source.resultFor(call.population, call.page))) : transform(source.response(call.population, call.page)));
+      await this.drain();
+    },
+    exactProps(source) {
+      const reader = source.readerFrom((_url, init) => new Promise((resolve, reject) => {
+        const body = JSON.parse(init.body), call = { exact: true, body, population: body.population, page: body.page, signal: init.signal,
+          resolve, reject }, index = calls.length;
+        calls.push(call); waiters.get(index)?.forEach(fn => fn(call)); waiters.delete(index);
+      }));
+      return { display: source.display, readMembers: reader };
     },
     async fail(index = calls.length - 1) { calls[index].reject(new Error('PRIVATE_DATABASE_ERROR')); await this.drain(); },
     async timeout() { const entries = [...timers.entries()]; entries.forEach(([id, timer]) => { timers.delete(id); timer.fn(); }); await this.drain(); },
@@ -296,4 +310,81 @@ test('malformed inspection descriptors never default to all or zero and unmount 
   h.render({ ...h.props(), group }); assert.match(h.text(), /unavailable for this summary/); await h.settle(); assert.equal(h.calls.length, 0);
   h.render(h.props()); h.click('Show records'); await h.wait(0); h.unmount(); assert.equal(h.calls[0].signal.aborted, true);
   await h.complete(0); assert.equal(h.timers.size, 0);
+});
+
+test('exact display inspection stays lazy and pages the complete selected population without the legacy hash or member transport', async t => {
+  const f = await groupMemberViewFixture(), h = harness(); t.after(() => h.unmount());
+  const props = h.exactProps(f); h.render(props); await h.settle(); assert.equal(h.calls.length, 0);
+  h.click('Show records'); await h.wait(0); await h.complete(0, v => v, f);
+  assert.match(h.text(), /records 1–2 of 2/); assert.match(h.text(), /CAD account 10000000000000000/);
+  assert.equal(h.digestCalls, 0); assert.equal(h.calls[0].exact, true);
+  assert.deepEqual(h.calls[0].body.selection_ref, f.display.active.selection_ref);
+  assert.doesNotMatch(JSON.stringify(h.calls[0].body), /account_ids|included_recorded_group_ids|operation_id/);
+  for (const kind of ['source_reported', 'transactions', 'omitted_transactions']) {
+    h.population(kind); await h.drain();
+    const count = memberView.prepareCustomCohortGroupMemberView(f.display)[kind].total_count;
+    if (count) { const index = h.calls.length - 1; await h.complete(index, v => v, f); }
+    assert.equal(h.calls.at(-1).body.population.group, 'selected');
+  }
+  assert.equal(h.digestCalls, 0); h.click('Hide records'); h.click('Show records'); await h.drain();
+  const savedCalls = h.calls.length; h.render({ ...props }); await h.drain(); assert.equal(h.calls.length, savedCalls);
+});
+
+test('exact empty selection never starts a member request or substitutes the full capture', async t => {
+  const f = await groupMemberViewFixture({ empty: true }), h = harness(); t.after(() => h.unmount());
+  h.render(h.exactProps(f)); h.click('Show records');
+  for (const kind of ['stock', 'source_reported', 'transactions', 'omitted_transactions']) h.population(kind);
+  await h.drain(); assert.equal(h.calls.length, 0); assert.equal(h.digestCalls, 0);
+  assert.match(h.text(), /No records in this population/); assert.equal(f.display.observations.summary.all.account_count, 3);
+});
+
+test('exact 101-member selected union remains reachable with 50 rows and compact refetched Back', async t => {
+  const f = await groupMemberViewFixture({ accountCount: 102 }), h = harness(); t.after(() => h.unmount());
+  h.render(h.exactProps(f)); h.click('Show records'); await h.wait(0); await h.complete(0, v => v, f);
+  assert.match(h.text(), /records 1–50 of 101/); assert.equal(h.nodes().filter(n => n.type === 'li').length, 50);
+  h.click('Next page'); await h.wait(1); await h.complete(1, v => v, f); assert.match(h.text(), /records 51–100 of 101/);
+  h.click('Next page'); await h.wait(2); await h.complete(2, v => v, f); assert.match(h.text(), /records 101–101 of 101/);
+  assert.equal(h.nodes().filter(n => n.type === 'li').length, 1); assert.equal(h.button('Next page').props.disabled, true);
+  h.click('Previous page'); await h.wait(3); await h.complete(3, v => v, f); assert.match(h.text(), /records 51–100 of 101/);
+  h.click('Previous page'); await h.wait(4); await h.complete(4, v => v, f); assert.match(h.text(), /records 1–50 of 101/);
+  assert.equal(h.calls[4].body.page.after_member_id, null); assert.equal(h.digestCalls, 0);
+});
+
+test('exact pause and cancellation retain the previous checked page and do not admit or retry reads until explicitly released', async t => {
+  const f = await groupMemberViewFixture({ accountCount: 52 }), h = harness(); t.after(() => h.unmount());
+  const props = h.exactProps(f); h.render(props); h.click('Show records'); await h.wait(0); await h.complete(0, v => v, f);
+  h.click('Next page'); await h.wait(1); h.render({ ...props, paused: true });
+  assert.equal(h.calls[1].signal.aborted, true); assert.match(h.text(), /records 1–50 of 51/);
+  h.click('Retry records', true); h.click('Next page', true); await h.drain(); assert.equal(h.calls.length, 2);
+  await h.complete(1, v => v, f); assert.doesNotMatch(h.text(), /records 51–51/);
+  h.render(props); await h.drain(); assert.equal(h.calls.length, 2);
+  h.click('Retry records'); await h.wait(2); await h.complete(2, v => v, f); assert.match(h.text(), /records 51–51 of 51/);
+});
+
+test('a new exact reference clears old rows/cursors and a late prior page cannot populate the new display', async t => {
+  const f = await groupMemberViewFixture(), next = await groupMemberViewFixture({ accountCount: 6, revision: 2 }), h = harness();
+  t.after(() => h.unmount()); h.render(h.exactProps(f)); h.click('Show records'); await h.wait(0);
+  h.render(h.exactProps(next)); assert.equal(h.calls[0].signal.aborted, true); assert.doesNotMatch(h.text(), /CAD account/);
+  assert.equal(h.button('Show records').props['aria-expanded'], false);
+  await h.complete(0, v => v, f); assert.doesNotMatch(h.text(), /CAD account/);
+  h.click('Show records'); await h.wait(1); await h.complete(1, v => v, next);
+  assert.match(h.text(), /records 1–5 of 5/); assert.equal(h.calls[1].body.selection_ref.selection_revision, 2); assert.equal(h.digestCalls, 0);
+});
+
+test('exact malformed later page retains only the previous checked rows and never exposes raw errors or auto-retries', async t => {
+  const f = await groupMemberViewFixture({ accountCount: 52 }), h = harness(); t.after(() => h.unmount());
+  h.render(h.exactProps(f)); h.click('Show records'); await h.wait(0); await h.complete(0, v => v, f);
+  h.click('Next page'); await h.wait(1); await h.complete(1, raw => { const result = structuredClone(raw); result.page.total_count++; return result; }, f);
+  assert.match(h.text(), /could not be verified/); assert.match(h.text(), /records 1–50 of 51/); assert.doesNotMatch(h.text(), /records 51–51/);
+  await h.drain(); assert.equal(h.calls.length, 2); h.click('Retry records'); await h.wait(2); await h.fail(2);
+  assert.doesNotMatch(h.text(), /PRIVATE_DATABASE_ERROR/); assert.match(h.text(), /records 1–50 of 51/);
+});
+
+test('exact inspection rejects cloned display before reading and supports read-only maximum revision/int64 without legacy fingerprint', async t => {
+  const f = await groupMemberViewFixture({ assignmentFileId: '9223372036854775807', revision: 2147483647, privateSales: true }), h = harness();
+  t.after(() => h.unmount()); const props = h.exactProps(f);
+  assert.throws(() => h.render({ ...props, display: structuredClone(f.display) }), /invalid_custom_cohort_group_display/);
+  assert.equal(h.calls.length, 0); h.render(props); h.click('Show records'); await h.wait(0); await h.complete(0, v => v, f);
+  assert.match(h.text(), /records 1–2 of 2/); assert.equal(h.calls[0].body.assignment_file_id, '9223372036854775807');
+  assert.equal(h.digestCalls, 0); assert.equal(h.timers.size, 0);
 });

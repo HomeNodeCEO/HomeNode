@@ -6,17 +6,27 @@ import type { CheckedCustomCohortMemberPage, CustomCohortInspectedMember, Custom
   CustomCohortMemberKind, CustomCohortMemberPageRequest } from '../customCohortMemberPage';
 import type { CustomCohortMemberTransport } from '../customCohortPreviewTransport';
 import { isCustomCohortPreviewCapacityError } from '../customCohortPreviewTransport';
+import { prepareCustomCohortGroupMemberView, createCustomCohortGroupMemberViewContinuation } from '../customCohortGroupMemberView';
+import type { createCustomCohortGroupMemberReader } from '../customCohortGroupMemberView';
+import type { CustomCohortGroupDisplay } from '../customCohortGroupDisplay';
+import type { CustomCohortRecordedGroupMemberContinuation } from '../customCohortRecordedGroupTransport';
 
-interface Props {
+interface LegacyProps {
   input: CustomCohortPreviewInput;
   group: ReturnType<typeof checkCustomCohortSummaryResponse>;
-  paused?: boolean;
   /** The exact pocket descriptor from the original, unchanged batch response. */
   pocketId?: string;
   memberTransport: CustomCohortMemberTransport;
+  display?: undefined; readMembers?: undefined;
 }
+type Props = { paused?: boolean } & (LegacyProps | {
+  display: CustomCohortGroupDisplay;
+  // The host admits this entire read under its current display/session lane.
+  readMembers: ReturnType<typeof createCustomCohortGroupMemberReader>;
+  input?: never; group?: never; pocketId?: never; memberTransport?: never;
+});
 type Row = Record<string, unknown>;
-type Continuation = ReturnType<typeof createCustomCohortMemberContinuation>;
+type Continuation = ReturnType<typeof createCustomCohortMemberContinuation> | CustomCohortRecordedGroupMemberContinuation;
 type Intent = { kind: CustomCohortMemberKind; index: number; page: CustomCohortMemberPageRequest; previous?: Continuation };
 type Status = 'idle' | 'loading' | 'ready' | 'failed' | 'interrupted' | 'capacity_exceeded';
 const LIMIT = 50, MAX_PAGES = 2000;
@@ -26,7 +36,7 @@ const object = (value: unknown): Row => value !== null && typeof value === 'obje
 const count = (value: number) => value.toLocaleString('en-US');
 const button = 'rounded-lg border border-amber-300 bg-purple-50 px-3 py-2 text-xs font-medium text-purple-950 hover:border-amber-500 hover:bg-purple-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-purple-600 disabled:cursor-not-allowed disabled:opacity-50';
 
-function expectations(group: Props['group'], pocketId?: string): Record<CustomCohortMemberKind, CustomCohortMemberExpectation> | null {
+function expectations(group: LegacyProps['group'], pocketId?: string): Record<CustomCohortMemberKind, CustomCohortMemberExpectation> | null {
   const pockets = Array.isArray(group.summary.pockets) ? group.summary.pockets.map(object) : [];
   const matches = pocketId === undefined ? [] : pockets.filter(p => p.id === pocketId);
   if (pocketId !== undefined && matches.length !== 1) return null;
@@ -46,7 +56,7 @@ function expectations(group: Props['group'], pocketId?: string): Record<CustomCo
   }
   return result;
 }
-function aligned(input: Props['input'], group: Props['group']): boolean {
+function aligned(input: LegacyProps['input'], group: LegacyProps['group']): boolean {
   const binding = group.binding;
   return binding.accountId === input.accountId && binding.assignmentFileId === input.assignmentFileId
     && binding.selectionRevision === input.selection.revision
@@ -56,6 +66,13 @@ function aligned(input: Props['input'], group: Props['group']): boolean {
 /** Explicit, read-only inspection of the very same captured summary. A changed
  * context or selection remounts closed; no request is made by merely mounting. */
 export default function CustomCohortMemberBrowser(props: Props) {
+  if (props.display) {
+    const populations = prepareCustomCohortGroupMemberView(props.display);
+    const display = props.display;
+    const key = JSON.stringify([display.target, display.workspace_revision, display.active, populations,
+      display.observations.summary.selected, display.observations.summary.effective_date, display.observations.summary.captured_at]);
+    return <MemberSession key={key} {...props} populations={populations} />;
+  }
   const populations = expectations(props.group, props.pocketId);
   if (!populations || !aligned(props.input, props.group)) return <p role="status" className="text-xs text-amber-800 print:hidden">Record inspection is unavailable for this summary. Refresh the pocket information first.</p>;
   const key = JSON.stringify([props.input, props.group.binding, props.pocketId ?? null, populations, props.group.summary.selected,
@@ -64,10 +81,11 @@ export default function CustomCohortMemberBrowser(props: Props) {
 }
 
 function MemberSession(props: Props & { populations: Record<CustomCohortMemberKind, CustomCohortMemberExpectation> }) {
-  const [snapshot] = useState(() => ({ input: props.input, group: props.group, populations: props.populations }));
+  const [snapshot] = useState(() => props);
   const [open, setOpen] = useState(false), [kind, setKind] = useState<CustomCohortMemberKind>('stock');
   const [status, setStatus] = useState<Status>('idle'), [result, setResult] = useState<CheckedCustomCohortMemberPage | null>(null);
   const transport = useRef(props.memberTransport); transport.current = props.memberTransport;
+  const readMembers = useRef(props.readMembers); readMembers.current = props.readMembers;
   const paused = useRef(props.paused === true); paused.current = props.paused === true;
   const live = useRef(true), opened = useRef(false), active = useRef<{ abort: AbortController; timer: ReturnType<typeof setTimeout> } | null>(null);
   const lastIntent = useRef<Intent | null>(null), cursors = useRef<{ token: Continuation; next: string | null }[]>([]);
@@ -98,21 +116,33 @@ function MemberSession(props: Props & { populations: Record<CustomCohortMemberKi
     const current = () => live.current && opened.current && !paused.current && active.current === pending && !abort.signal.aborted;
     void (async () => {
       try {
-        const hash = await fingerprintCustomCohortSelection(snapshot.input);
-        if (!current()) return;
-        if (hash !== snapshot.group.binding.selectionFingerprint) throw new TypeError('summary_selection_changed');
-        const population = expected.group === 'pocket' ? { group: 'pocket' as const, pocket_id: expected.pocket_id, kind: intent.kind }
-          : { group: 'selected' as const, kind: intent.kind };
-        const value = await transport.current(snapshot.input, population, intent.page, { signal: abort.signal });
-        if (!current()) return;
-        const checked = checkCustomCohortMemberPage(value, snapshot.input, hash, expected, intent.page, intent.previous);
-        const summary = snapshot.group.summary, period = object(summary.observation_period);
+        let checked: CheckedCustomCohortMemberPage, continuation: Continuation;
+        const summary = snapshot.display ? snapshot.display.observations.summary : snapshot.group.summary;
+        if (snapshot.display) {
+          if (!readMembers.current) throw new TypeError('record_reader_unavailable');
+          const result = await readMembers.current(snapshot.display, intent.kind, intent.page,
+            { signal: abort.signal, deadline: performance.now() + 65000 }, intent.previous as CustomCohortRecordedGroupMemberContinuation | undefined);
+          if (!current()) return;
+          checked = result.members; continuation = createCustomCohortGroupMemberViewContinuation(result);
+        } else {
+          const hash = await fingerprintCustomCohortSelection(snapshot.input);
+          if (!current()) return;
+          if (hash !== snapshot.group.binding.selectionFingerprint || !transport.current) throw new TypeError('summary_selection_changed');
+          const population = expected.group === 'pocket' ? { group: 'pocket' as const, pocket_id: expected.pocket_id, kind: intent.kind }
+            : { group: 'selected' as const, kind: intent.kind };
+          const value = await transport.current(snapshot.input, population, intent.page, { signal: abort.signal });
+          if (!current()) return;
+          checked = checkCustomCohortMemberPage(value, snapshot.input, hash, expected, intent.page,
+            intent.previous as ReturnType<typeof createCustomCohortMemberContinuation> | undefined);
+          continuation = createCustomCohortMemberContinuation(checked);
+        }
+        const period = object(summary.observation_period);
         if (checked.page.effective_date !== summary.effective_date || checked.page.captured_at !== summary.captured_at
           || checked.page.observation_period.start_date !== period.start_date || checked.page.observation_period.end_date !== period.end_date) throw new TypeError('summary_period_changed');
         if (populationId.current !== null && populationId.current !== checked.page.population_id) throw new TypeError('population_changed');
         populationId.current = checked.page.population_id;
         // Compact decoder-issued tokens hold continuity, not prior record pages.
-        cursors.current[intent.index] = { token: createCustomCohortMemberContinuation(checked), next: checked.page.next_after_member_id };
+        cursors.current[intent.index] = { token: continuation, next: checked.page.next_after_member_id };
         cursors.current.length = intent.index + 1;
         setResult(checked); setStatus('ready');
       } catch (error) { if (current()) setStatus(isCustomCohortPreviewCapacityError(error) ? 'capacity_exceeded' : 'failed'); }
@@ -142,7 +172,8 @@ function MemberSession(props: Props & { populations: Record<CustomCohortMemberKi
     request({ kind, index, page: { limit: LIMIT, after_member_id: after }, ...(previous ? { previous } : {}) });
   }
   const population = snapshot.populations[kind], page = result?.page, busy = status === 'loading', disabled = props.paused === true;
-  return <section className="space-y-3 rounded-xl border border-purple-200 bg-white/80 p-3 print:hidden" aria-label="Pocket record inspection" data-selection-revision={snapshot.input.selection.revision}>
+  return <section className="space-y-3 rounded-xl border border-purple-200 bg-white/80 p-3 print:hidden" aria-label="Pocket record inspection"
+    data-selection-revision={snapshot.display ? snapshot.display.active.selection_ref.selection_revision : snapshot.input.selection.revision}>
     <button type="button" className={button} aria-expanded={open} disabled={!open && disabled} onClick={toggle}>{open ? 'Hide records' : 'Show records'}</button>
     {open && <>
       <p className="text-xs text-slate-600">Read-only records for the inspected group, independent of its inclusion in the main analysis. At most 50 records per page; the complete population count is retained.</p>

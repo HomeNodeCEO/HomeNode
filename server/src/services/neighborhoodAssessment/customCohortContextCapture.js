@@ -1651,7 +1651,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     const checked = prepareCustomCohortViewport(viewport);
     const preview = await runPreview(value, options, { includeMap: true, exposure: 'report_observation_summary', preparedFast: true,
       mapViewport: checked,
-      project: (observation, expected, parcelMap) => ({ summary: presentCustomCohortPreview({ preview: observation, expected, includeNarrative: true }), parcel_map: parcelMap }) });
+      project: (observation, expected, parcelMap) => ({ summary: presentCustomCohortPreview({ preview: observation, expected }), parcel_map: parcelMap }) });
     return projectCustomCohortViewportMap(preview, checked);
   }, inspect(value, inspection, options = {}) {
     exactKeys(inspection, ['population', 'page']);

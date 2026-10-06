@@ -7,6 +7,8 @@ import { customCaptureDiagnostic } from '../../services/neighborhoodAssessment/c
 import { customCohortReadDiagnostic } from '../../services/neighborhoodAssessment/customCohortReadDiagnostics.js';
 import { customCohortExecutionGate } from '../../services/neighborhoodAssessment/customCohortExecutionGate.js';
 import { CUSTOM_COHORT_OPERATION_LIMITS } from '../../services/neighborhoodAssessment/customCohortOperationLimits.js';
+import { CUSTOM_COHORT_GROUP_TRANSPORT_BYTES, prepareCustomCohortRecordedGroupTransportRequest,
+  presentCustomCohortRecordedGroupTransportResponse } from '../../services/neighborhoodAssessment/customCohortRecordedGroupTransport.js';
 
 const BASE = '/api/accounts/:id/neighborhood-cohort';
 const BODY_BYTES = 4_000_000;
@@ -29,11 +31,11 @@ const PREVIEW_CAPACITY_ERRORS = new Set([
 ]);
 
 function invalid() { throw Object.assign(new Error('invalid_input'), { reason: 'invalid_input' }); }
-function bodyOf(body, required, optional = []) {
+function bodyOf(body, required, optional = [], maximum = BODY_BYTES) {
   if (!body || Object.getPrototypeOf(body) !== Object.prototype
     || !required.every(key => Object.hasOwn(body, key))
     || Object.keys(body).some(key => !required.includes(key) && !optional.includes(key))) invalid();
-  if (Buffer.byteLength(JSON.stringify(body)) > BODY_BYTES) {
+  if (Buffer.byteLength(JSON.stringify(body)) > maximum) {
     throw Object.assign(new Error('request_too_large'), { status: 413 });
   }
   if (typeof body.assignment_file_id !== 'string' || !FILE_ID.test(body.assignment_file_id)
@@ -44,6 +46,14 @@ function publicFailure(error) {
   if (error?.code === 'custom_cohort_execution_busy') return [503, { error: 'neighborhood_service_busy' }];
   if (error?.code === 'custom_cohort_execution_interrupted') return [503, { error: 'neighborhood_request_interrupted' }];
   if (error?.outcome_unknown) return [409, { error: 'neighborhood_operation_outcome_unknown', retry_same_operation: true }];
+  if (error instanceof TypeError && error.message === 'custom_cohort_job_actor_access_revoked')
+    return [403, { error: 'neighborhood_access_denied' }];
+  if (error instanceof TypeError && error.message === 'custom_cohort_group_selection_selection_changed')
+    return [409, { error: 'neighborhood_selection_changed' }];
+  if (error instanceof TypeError && error.message === 'custom_cohort_group_selection_operation_conflict')
+    return [409, { error: 'neighborhood_operation_conflict' }];
+  if (error instanceof TypeError && error.message === 'custom_cohort_recorded_group_selection_unknown_group')
+    return [409, { error: 'neighborhood_selection_changed' }];
   if (['assignment_sales_import_revision_conflict', 'assignment_sales_import_capture_changed'].includes(error?.code)) {
     return [409, { error: 'neighborhood_private_review_changed' }];
   }
@@ -106,8 +116,9 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, marketAnal
     throw new TypeError('custom_neighborhood_cohort_router_dependencies_required');
   }
   const router = express.Router();
-  const parse = express.json({ limit: BODY_BYTES, strict: true });
-  function route(action, fields, execute, optional = []) {
+  function route(action, fields, execute, optional = [], { bodyBytes = BODY_BYTES,
+    prepareBody = value => value, presentResult = value => value, responseBytes = null } = {}) {
+    const parse = express.json({ limit: bodyBytes, strict: true });
     router.post(`${BASE}/${action}`, (req, res, next) => {
       res.set('cache-control', 'no-store');
       if (typeof req.mobileAuth?.userId !== 'string' || !req.mobileAuth.userId.trim()) {
@@ -123,7 +134,7 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, marketAnal
       const closed = () => { if (!res.writableFinished) abort(); };
       req.once('aborted', abort); res.once('close', closed);
       try {
-        const body = bodyOf(req.body, fields, optional);
+        const body = prepareBody(bodyOf(req.body, fields, optional, bodyBytes));
         const requested = req.params.id;
         if (typeof requested !== 'string' || !requested || requested.length > 64
           || requested.trim() !== requested || /[\u0000-\u001f\u007f]/.test(requested)) invalid();
@@ -135,7 +146,13 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, marketAnal
         // Principal is taken only from middleware. Never spread body into input.
         const identity = { auth: req.mobileAuth, accountId, assignmentFileId: body.assignment_file_id };
         releaseExecution = await customCohortExecutionGate.acquire({ signal: controller.signal, deadline });
-        const result = await execute(identity, body, { signal: controller.signal, deadline });
+        const result = presentResult(await execute(identity, body, { signal: controller.signal, deadline }), body);
+        if (responseBytes !== null) {
+          const encoded = JSON.stringify(result);
+          if (Buffer.byteLength(encoded, 'utf8') > responseBytes) throw new Error('neighborhood_selection_response_limit');
+          if (!controller.signal.aborted && !res.destroyed) return res.type('application/json').send(encoded);
+          return;
+        }
         if (action === 'catalog' || action === 'viewport') {
           const encoded = JSON.stringify(result);
           const encodedBytes = Buffer.byteLength(encoded, 'utf8');
@@ -199,6 +216,25 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, marketAnal
     cohortService.capture({ ...identity, operationId: body.operation_id, observationPeriod: body.observation_period,
       ...(Object.hasOwn(body, 'private_sales_import') ? { privateSalesImport: body.private_sales_import } : {}),
       ...(Object.hasOwn(body, 'discovery') ? { discovery: body.discovery } : {}) }, options), ['private_sales_import', 'discovery']);
+  // Additive ID-only intent commands. Older owners omit both methods and keep
+  // their route surface unchanged. These do not edit legacy workspace/Apply or
+  // activate a paged-statistics/map consumer; those must bind the exact receipt.
+  if (typeof cohortService.selectRecordedGroups === 'function'
+    && typeof cohortService.readRecordedGroupSelection === 'function') {
+    for (const writing of [false, true]) {
+      route(writing ? 'select-groups' : 'group-selection', ['assignment_file_id', 'context_ref',
+        ...(writing ? ['operation_id', 'expected_selection_ref', 'included_recorded_group_ids'] : [])],
+      (identity, body, options) => writing
+        ? cohortService.selectRecordedGroups({ ...identity, contextRef: body.context_ref,
+          operationId: body.operation_id, expectedSelectionRef: body.expected_selection_ref,
+          includedRecordedGroupIds: body.included_recorded_group_ids }, options)
+        : cohortService.readRecordedGroupSelection({ ...identity, contextRef: body.context_ref }, options), [], {
+        bodyBytes: CUSTOM_COHORT_GROUP_TRANSPORT_BYTES, responseBytes: CUSTOM_COHORT_GROUP_TRANSPORT_BYTES,
+        prepareBody: body => prepareCustomCohortRecordedGroupTransportRequest(body, writing),
+        presentResult: (result, body) => presentCustomCohortRecordedGroupTransportResponse(result, body, writing),
+      });
+    }
+  }
   route('preview', ['assignment_file_id', 'context_ref', 'selection', 'include_map'], (identity, body, options) => {
     if (typeof body.include_map !== 'boolean') invalid();
     return cohortService.present({ ...identity, contextRef: body.context_ref, selection: body.selection },

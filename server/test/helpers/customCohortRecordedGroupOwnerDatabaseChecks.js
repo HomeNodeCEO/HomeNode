@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import express from 'express';
 import { createCustomCohortContextCapture } from '../../src/services/neighborhoodAssessment/customCohortContextCapture.js';
+import { createCustomNeighborhoodCohortRouter } from '../../src/modules/accounts/customNeighborhoodCohortRouter.js';
 
 /** Invoked only by the verified disposable PostgreSQL fixture. No live accounts,
  * source provider, user report choices, accepted sections or shared database.
@@ -160,5 +162,49 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
   assert.equal(await head(), 2); assert.equal(await blobs(), originalCount);
   assert.deepEqual(await protectedState(), before);
   checks.push('native saved selection rechecks current actor, source license and signing state while report sections, assignment geometry and acceptances remain byte-identical');
+  const application = express();
+  application.use((req, _res, next) => { req.mobileAuth = auth; next(); });
+  application.use(createCustomNeighborhoodCohortRouter({ cohortService: owner, logger: {} }));
+  const server = await new Promise(resolve => { const s = application.listen(0, '127.0.0.1', () => resolve(s)); });
+  const request = (action, body) => fetch(`http://127.0.0.1:${server.address().port}/api/accounts/${encodeURIComponent(scope.account_id)}/neighborhood-cohort/${action}`,
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(15_000) });
+  const readBody = { assignment_file_id: scope.assignment_file_id, context_ref: read.contextRef };
+  const writeBody = { ...readBody, operation_id: randomUUID(), expected_selection_ref: empty.selection_ref,
+    included_recorded_group_ids: [...ids].reverse() };
+  try {
+    const reopened = await request('group-selection', readBody);
+    assert.equal(reopened.status, 200); assert.equal(reopened.headers.get('cache-control'), 'no-store');
+    assert.deepEqual((await reopened.json()).included_recorded_group_ids, []);
+    loseCommitAck = true;
+    const uncertain = await request('select-groups', writeBody);
+    assert.equal(uncertain.status, 409);
+    assert.deepEqual(await uncertain.json(), { error: 'neighborhood_operation_outcome_unknown', retry_same_operation: true });
+    const retry = await request('select-groups', writeBody);
+    assert.equal(retry.status, 200);
+    const receipt = await retry.json();
+    assert.equal(receipt.status, 'reused'); assert.equal(receipt.selection_ref.selection_revision, 3);
+    assert.deepEqual(receipt.included_recorded_group_ids, [...ids].sort());
+    assert.equal(Object.hasOwn(receipt, 'account_ids'), false);
+    assert.equal(Object.hasOwn(receipt, 'catalog'), false);
+    const stale = await request('select-groups', { ...writeBody, operation_id: randomUUID() });
+    assert.equal(stale.status, 409); assert.deepEqual(await stale.json(), { error: 'neighborhood_selection_changed' });
+    const invalidFrom = calls.length;
+    const injected = await request('select-groups', { ...writeBody, actor_user_id: auth.userId, source_rows: [] });
+    assert.equal(injected.status, 400); assert.equal(calls.length, invalidFrom);
+    await suspend('suspended');
+    try {
+      const revoked = await request('group-selection', readBody);
+      assert.equal(revoked.status, 403); assert.deepEqual(await revoked.json(), { error: 'neighborhood_access_denied' });
+    } finally { await suspend('active'); }
+    denyPolicy = true;
+    try {
+      const denied = await request('group-selection', readBody);
+      assert.equal(denied.status, 403); assert.deepEqual(await denied.json(), { error: 'neighborhood_access_denied' });
+    } finally { denyPolicy = false; }
+    assert.equal(await head(), 3); assert.deepEqual(await protectedState(), before);
+    checks.push('native authenticated ID-only HTTP save/reopen preserves exact lost-ACK operation, stale/current-role/source fences and unchanged report state');
+  } finally {
+    server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+  }
   return { checks };
 }

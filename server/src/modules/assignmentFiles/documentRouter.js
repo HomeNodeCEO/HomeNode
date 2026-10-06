@@ -160,7 +160,6 @@ export function createAssignmentDocumentRouter({
     }
     const { rows } = await pool.query(
       `SELECT document.id, document.assignment_file_id,
-              document.account_id AS document_account_id,
               assignment.account_id, assignment.organization_id,
               assignment.assigned_appraiser_user_id, assignment.supervisory_appraiser_user_id
          FROM app.assignment_documents document
@@ -176,7 +175,6 @@ export function createAssignmentDocumentRouter({
     }
     if (!rows[0].assignment_file_id
         || !rows[0].account_id
-        || rows[0].document_account_id !== rows[0].account_id
         || !decideAccess(req.mobileAuth, rows[0], permission)) {
       res.set("cache-control", "no-store")
         .status(403)

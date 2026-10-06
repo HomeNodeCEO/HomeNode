@@ -23,7 +23,6 @@ function accessibleDocumentPool() {
   return createPool(async () => ({ rows: [{
     id: 1,
     assignment_file_id: 7,
-    document_account_id: "canonical-42",
     account_id: "canonical-42",
     organization_id: "org-1",
     assigned_appraiser_user_id: "appraiser-1",
@@ -293,7 +292,7 @@ test("document access fails closed before reads in enforced mode", async (contex
     queryInputs.push(params);
     if (params[0] === 1) return { rows: [] };
     if (params[0] === 2) return { rows: [{ id: 2, assignment_file_id: null }] };
-    return { rows: [{ id: 3, assignment_file_id: 7, document_account_id: "canonical-42",
+    return { rows: [{ id: 3, assignment_file_id: 7,
       account_id: "canonical-42", organization_id: "org-1" }] };
   });
   const routerOptions = options({
@@ -343,11 +342,12 @@ test("document routes reject mismatched or unjoined assignment accounts", async 
     queries.push(sql);
     return { rows: [{
       id: Number(params[0]),
-      assignment_file_id: 7,
-      document_account_id: "canonical-other",
-      account_id: Number(params[0]) === 4 ? null : "canonical-42",
-      organization_id: "org-1",
-      assigned_appraiser_user_id: identity.userId,
+      assignment_file_id: Number(params[0]) === 3 ? 7 : 8,
+      // The account-equality LEFT JOIN yields no assignment row for a
+      // mismatched document (3) or a missing assignment (4).
+      account_id: null,
+      organization_id: null,
+      assigned_appraiser_user_id: null,
     }] };
   });
   const rejectUnexpectedAccess = async () => {
@@ -620,7 +620,6 @@ test("subject mismatch override requires signing authority and ignores a forged 
   const pool = createPool(async () => ({ rows: [{
     id: 5,
     assignment_file_id: 7,
-    document_account_id: "canonical-42",
     account_id: "canonical-42",
     organization_id: "org-1",
     assigned_appraiser_user_id: "appraiser-1",

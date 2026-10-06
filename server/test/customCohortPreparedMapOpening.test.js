@@ -59,6 +59,16 @@ test('missing or explicitly unsupported derivative preserves full-map fallback, 
   await assert.rejects(reader(row).repo.read(payload), /storage_conflict/);
 });
 
+test('caller catalog mutation during an asynchronous read cannot change its pinned original binding', async () => {
+  const input = structuredClone(payload), row = await storedRow();
+  const repo = createCustomCohortPreparedMapOpeningRepository({ async query() {
+    input.catalog.pockets[0].label = 'Changed while waiting';
+    input.catalog.pockets[0].account_ids = ['UNKNOWN'];
+    await Promise.resolve(); return { rowCount: 1, rows: [row] };
+  } }, json(scope), context);
+  assert.deepEqual(await repo.read(input), expected);
+});
+
 test('changed original text or actual compressed bytes refuse even if derivative metadata is unchanged', async () => {
   for (const kind of ['catalog', 'compressed_catalog', 'preview', 'compressed_preview', 'map', 'compressed_map']) {
     const row = await storedRow(); row[`current_${kind}_sha256`] = '0'.repeat(64);

@@ -87,6 +87,12 @@ export function createCustomCohortPreparedMapOpeningRepository(client, scopeJson
   const scope = prepareCustomCohortContextScope(scopeJson);
   const context = prepareCustomCohortContextReference(canonicalAssessmentJson(contextRef));
   return Object.freeze({ async read(payload) {
+    // Pin the already-checked catalog bytes before any database/decompression
+    // wait. A later caller mutation cannot change which immutable display
+    // binding is validated after the original-source hashes have succeeded.
+    const catalogText = JSON.stringify(payload);
+    check(typeof catalogText === 'string' && Buffer.byteLength(catalogText) <= CUSTOM_COHORT_MAP_OPENING_BYTES);
+    const capturedPayload = JSON.parse(catalogText), catalogDigest = customCohortMapOpeningDigest(catalogText);
     const found = await client.query(`/* custom-cohort-prepared-map-opening:read */
       SELECT m.*, p.preview_sha256 AS current_preview_sha256, p.map_sha256 AS current_map_sha256,
         c.payload_sha256 AS current_catalog_sha256,
@@ -115,7 +121,7 @@ export function createCustomCohortPreparedMapOpeningRepository(client, scopeJson
     for (const kind of ['catalog', 'compressed_catalog', 'preview', 'compressed_preview', 'map', 'compressed_map'])
       check(/^[a-f0-9]{64}$/.test(row[`source_${kind}_sha256`])
         && row[`source_${kind}_sha256`] === row[`current_${kind}_sha256`]);
-    check(row.source_catalog_sha256 === customCohortMapOpeningDigest(JSON.stringify(payload)));
+    check(row.source_catalog_sha256 === catalogDigest);
     if (row.status === 'unavailable') {
       check(['capacity_exceeded', 'source_invalid', 'catalog_geometry_mismatch'].includes(row.reason)
         && row.payload_sha256 === null && row.payload_utf8_bytes === null && row.compressed_payload === null);
@@ -130,6 +136,6 @@ export function createCustomCohortPreparedMapOpeningRepository(client, scopeJson
     try { text = await decompress(row.compressed_payload, { maxOutputLength: CUSTOM_COHORT_MAP_OPENING_BYTES });
       manifest = JSON.parse(text.toString('utf8')); } catch { check(false); }
     check(text.length === row.payload_utf8_bytes && customCohortMapOpeningDigest(text) === row.payload_sha256);
-    return checkCustomCohortPreparedMapOpening(manifest, payload, context, scope.account_id);
+    return checkCustomCohortPreparedMapOpening(manifest, capturedPayload, context, scope.account_id);
   } });
 }

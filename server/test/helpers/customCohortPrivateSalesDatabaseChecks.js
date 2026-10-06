@@ -536,22 +536,23 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
   assert.deepEqual(groupSummary.private_sales, groupLegacy.private_sales,
     'exact server-owned union must preserve private CSV statistics and period, not silently fall back to shared-only facts');
   assert.ok(groupSummary.private_sales, 'private parity must not be vacuous');
-  await writeRights({ ...rights, exposures: { ...rights.exposures, report_observation_summary: false } });
-  const privateSummaryDeniedFrom = calls.length;
-  try { await assert.rejects(owner.previewRecordedGroupSelection({ ...groupRead,
-    selectionRef: groupSaved.selection_ref }), reason('market_data_access_denied')); }
-  finally { await writeRights(rights); }
-  assert.ok(!calls.slice(privateSummaryDeniedFrom).some(sql => sql.includes('neighborhood-cohort-blob:read-batch')
+  // Keep the recorded catalog decision unchanged to reach the INDEPENDENT
+  // summary grant. Mutating the rights metadata also changes its fingerprint
+  // and correctly refuses earlier as market_policy_changed, not this witness.
+  const deniedSummary = makeOwner({ privatePolicy: (...args) => args[4].exposure === 'report_observation_summary'
+    ? { allowed: false } : authorizeCustomNeighborhoodPrivateSales(...args) });
+  await assert.rejects(deniedSummary.owner.previewRecordedGroupSelection({ ...groupRead,
+    selectionRef: groupSaved.selection_ref }), reason('market_data_access_denied'));
+  assert.ok(!deniedSummary.calls.some(sql => sql.includes('neighborhood-cohort-blob:read-batch')
     || sql.includes('custom-cohort-group-selection:head')), 'private catalog grant is not permission to expose numeric facts');
   let selectionSummaryCalls = 0;
   const revokedSummary = makeOwner({ privatePolicy: async (...args) => {
     if (args[4].exposure === 'report_observation_summary' && ++selectionSummaryCalls === 2)
-      await writeRights({ ...rights, exposures: { ...rights.exposures, report_observation_summary: false } });
+      return { allowed: false };
     return authorizeCustomNeighborhoodPrivateSales(...args);
   } });
-  try { await assert.rejects(revokedSummary.owner.previewRecordedGroupSelection({ ...groupRead,
-    selectionRef: groupSaved.selection_ref }), reason('market_data_access_denied')); }
-  finally { await writeRights(rights); }
+  await assert.rejects(revokedSummary.owner.previewRecordedGroupSelection({ ...groupRead,
+    selectionRef: groupSaved.selection_ref }), reason('market_data_access_denied'));
   assert.equal(selectionSummaryCalls, 2, 'private summary exposure is repeated at the final delivery fence');
   checks.push('native exact-reference numeric summary preserves the full private CSV period/statistics and independently refuses initial/final private summary rights without changing saved intent or report sections');
   await writeRights({ ...rights, revoked_at: times.past });

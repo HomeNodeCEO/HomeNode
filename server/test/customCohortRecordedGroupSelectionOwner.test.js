@@ -4,6 +4,9 @@ import { randomUUID } from 'node:crypto';
 import { canonicalAssessmentJson as json, assessmentEvidenceDigest as digest } from '../src/services/neighborhoodAssessment/contract.js';
 import { createCustomCohortRecordedGroupSelectionOwner as createOwner } from '../src/services/neighborhoodAssessment/customCohortRecordedGroupSelectionOwner.js';
 import { createNeighborhoodCohortBlobRepository, prepareNeighborhoodCohortBlob as blob } from '../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
+import { prepareCustomCohortRecordedGroupSelection as prepare } from '../src/services/neighborhoodAssessment/customCohortRecordedGroupSelection.js';
+import { createCustomCohortGroupSelectionRepository as createSelectionRepository } from '../src/services/neighborhoodAssessment/customCohortGroupSelectionRepository.js';
+import { createCohortPagedGroupSelectionV1Store as createStore } from '../src/services/neighborhoodAssessment/cohortPagedGroupSelectionV1Store.js';
 
 const A = `recorded-cad:${'a'.repeat(64)}`, B = `recorded-cad:${'b'.repeat(64)}`;
 const scope = { organization_id: randomUUID(), report_file_id: randomUUID(), assignment_file_id: '8', account_id: 'A' };
@@ -47,6 +50,7 @@ function fixture() {
       { id: B, member_count: 1, account_ids: ['B'] }], unassigned: { account_ids: [], member_count: 0 },
     unresolved_membership: null, coverage: { discovery_member_count: 3, stock_member_count: 3,
       unassigned_account_count: 0, assigned_account_count: 3 } };
+  const roster = { account_ids: ['A', 'B', 'C'] };
   const identityOf = value => ({ auth: structuredClone(value.auth), accountId: value.accountId, assignmentFileId: value.assignmentFileId });
   const owner = createOwner({ identityOf, execute: async (input, options, write, work) => {
     if (!state.allowed) throw new Error('current source rights denied');
@@ -54,7 +58,7 @@ function fixture() {
     const snapshot = { head: state.head, data: new Map(data), revisions: new Map(revisions), operations: new Map(operations) };
     try {
       const result = await work({ client, auth: { userId: state.actor }, scopeJson: json(scope),
-        catalogJson: JSON.stringify(catalog), rosterJson: JSON.stringify({ account_ids: ['A', 'B', 'C'] }),
+        catalogJson: JSON.stringify(catalog), rosterJson: JSON.stringify(roster),
         blobs: createNeighborhoodCohortBlobRepository(client, scope.organization_id),
         budget: { signal: options.signal, check() { if (options.signal?.aborted) throw new Error('cancelled'); } } });
       if (!state.finalAllowed) throw new Error('current rights revoked before commit');
@@ -70,7 +74,7 @@ function fixture() {
   const read = { auth: { userId: actor }, accountId: scope.account_id,
     assignmentFileId: scope.assignment_file_id, contextRef: context };
   const select = { ...read, operationId: randomUUID(), expectedSelectionRef: null, includedRecordedGroupIds: [B, A] };
-  return { owner, calls, state, data, revisions, catalog, read, select };
+  return { owner, calls, state, data, revisions, catalog, roster, client, read, select };
 }
 
 test('internal owner retains server actor, complete originals and current head; bounded reopen returns IDs not members', async () => {
@@ -83,6 +87,7 @@ test('internal owner retains server actor, complete originals and current head; 
   assert.deepEqual(await f.owner.selectRecordedGroups(f.select), { ...first, status: 'reused' });
   const receipts = [...f.data.values()].map(row => JSON.parse(row.canonical_utf8)).filter(value => value.selection_command);
   assert.equal(receipts.length, 1); assert.equal(receipts[0].selection_command.actor_user_id, actor);
+  assert.equal(receipts[0].selection_catalog_version, 2);
   // Another CURRENT authorized reader may reopen the prior reviewer's receipt.
   f.state.actor = otherActor;
   const reopened = await f.owner.readRecordedGroupSelection({ ...f.read, auth: { userId: otherActor } });
@@ -91,6 +96,58 @@ test('internal owner retains server actor, complete originals and current head; 
   assert.ok(!Object.hasOwn(reopened, 'account_ids')); assert.equal(f.state.head, 1);
   await assert.rejects(f.owner.selectRecordedGroups(f.select), /operation_conflict/);
   assert.equal(f.revisions.size, 1);
+});
+
+test('v2 saved selections reopen and replay after presentation, key/group order and roster order refreshes', async () => {
+  const f = fixture(), first = await f.owner.selectRecordedGroups(f.select);
+  const originals = [...f.data.entries()];
+  f.catalog.presentation.note = 'refreshed rendering, no membership change';
+  f.catalog.pockets[0].label = 'Updated display label';
+  f.catalog.pockets[0].reasons = ['New explanation'];
+  f.catalog.pockets.reverse(); f.roster.account_ids.reverse();
+  const reordered = Object.fromEntries(Object.entries(f.catalog).reverse());
+  for (const key of Object.keys(f.catalog)) delete f.catalog[key];
+  Object.assign(f.catalog, reordered);
+  assert.deepEqual((await f.owner.readRecordedGroupSelection(f.read)).selection_ref, first.selection_ref);
+  assert.deepEqual(await f.owner.selectRecordedGroups(f.select), { ...first, status: 'reused' });
+  assert.deepEqual([...f.data.entries()], originals, 'no immutable evidence is rewritten or newly staged by the replay');
+  assert.equal(f.revisions.size, 1);
+  f.catalog.presentation.membership_complete = false;
+  await assert.rejects(f.owner.readRecordedGroupSelection(f.read), /invalid_catalog/);
+});
+
+test('v2 still binds unselected complete memberships, not just chosen members', async () => {
+  const f = fixture(); await f.owner.selectRecordedGroups({ ...f.select, includedRecordedGroupIds: [A] });
+  f.catalog.pockets[0].account_ids = ['A', 'B']; f.catalog.pockets[1].account_ids = ['C'];
+  await assert.rejects(f.owner.readRecordedGroupSelection(f.read), /original_mismatch/);
+  assert.equal(f.state.head, 1); assert.equal(f.revisions.size, 1);
+});
+
+test('retained v1 originals reopen and exact lost-ACK replay uses v1 without rewriting lineage; new writes use v2', async () => {
+  const f = fixture(), blobs = createNeighborhoodCohortBlobRepository(f.client, scope.organization_id);
+  const commandJson = json({ command_version: 1, actor_user_id: actor, operation_id: f.select.operationId,
+    expected_selection_ref: null, included_recorded_group_ids: [A, B], selection_revision: 1 });
+  // Unit fixture seeds an actual old-format original through the same pure
+  // producer/store/repository contracts, not a hand-edited manifest/hash.
+  const old = await prepare({ scopeJson: json(scope), contextJson: json(context), catalogJson: JSON.stringify(f.catalog),
+    rosterJson: JSON.stringify(f.roster), includedGroupIds: [A, B], revision: 1, commandJson, catalogIdentityVersion: 1 });
+  await blobs.put(old.catalog_original_json);
+  const staged = await createStore(blobs).stage({ metadataJson: old.metadata_json, membershipPages: old.membershipPages() });
+  const first = await createSelectionRepository(f.client, json(scope), json(context)).put({ operationId: f.select.operationId,
+    expectedSelectionRef: null, metadataJson: old.metadata_json, manifestRef: staged.manifest_ref });
+  const originals = [...f.data.entries()];
+  assert.deepEqual((await f.owner.readRecordedGroupSelection(f.read)).selection_ref, first.selection_ref);
+  assert.equal((await f.owner.selectRecordedGroups(f.select)).status, 'reused');
+  assert.deepEqual([...f.data.entries()], originals);
+  f.catalog.pockets[0].label = 'A changed display label';
+  await assert.rejects(f.owner.readRecordedGroupSelection(f.read), /original_mismatch/, 'v1 is not silently reinterpreted');
+  const next = await f.owner.selectRecordedGroups({ ...f.select, operationId: randomUUID(),
+    expectedSelectionRef: first.selection_ref, includedRecordedGroupIds: [A] });
+  assert.equal(next.selection_ref.selection_revision, 2);
+  assert.deepEqual((await f.owner.readRecordedGroupSelection(f.read)).included_recorded_group_ids, [A]);
+  for (const [key, value] of originals) assert.deepEqual(f.data.get(key), value);
+  await assert.rejects(f.owner.selectRecordedGroups(f.select), /operation_conflict|selection_changed/);
+  assert.equal(f.state.head, 2); assert.equal(f.revisions.size, 2);
 });
 
 test('explicit empty remains empty; stale operations cannot rewind or supply replacements', async () => {

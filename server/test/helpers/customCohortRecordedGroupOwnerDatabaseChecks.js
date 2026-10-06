@@ -10,7 +10,7 @@ import { createCustomNeighborhoodCohortRouter } from '../../src/modules/accounts
 export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, auth, scope, grant, observationPeriod }) {
   const calls = [], checks = [];
   let loseCommitAck = false, cancelAtHead = null, revokeAtHead = false, denyPolicy = false, denyFinalPolicy = false;
-  let policyCalls = 0;
+  let policyCalls = 0, pauseAtWorkfile = null, missPreparedCatalog = false;
   const suspend = status => pool.query(`UPDATE app_auth.organization_memberships SET status=$3
     WHERE organization_id=$1 AND user_id=$2`, [scope.organization_id, auth.userId, status]);
   const observed = { async connect() {
@@ -18,6 +18,17 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
     return { release: error => client.release(error), async query(config) {
       calls.push(config.text);
       const result = await client.query(config);
+      // Inject only a cache-miss boundary after the real SQL query. All fallback
+      // context/source/membership rows are read from actual PostgreSQL originals;
+      // immutable cache/source/history triggers remain enabled and untouched.
+      if (missPreparedCatalog && config.text.includes('custom-cohort-prepared-catalog:read')) {
+        assert.equal(result.rowCount, 1, 'miss witness must hide a real prepared row, not start vacuously absent');
+        return { rowCount: 0, rows: [] };
+      }
+      if (config.text.includes('custom-cohort-capture:private-workfile') && pauseAtWorkfile) {
+        const pause = pauseAtWorkfile; pauseAtWorkfile = null;
+        pause.entered(config.text); await pause.release;
+      }
       if (/custom-cohort-group-selection:head-(insert|update)/.test(config.text)) {
         cancelAtHead?.abort(); cancelAtHead = null;
         if (revokeAtHead) { revokeAtHead = false; await suspend('suspended'); }
@@ -49,6 +60,28 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
   });
   const before = await protectedState();
   assert.equal((await owner.readRecordedGroupSelection(read)).status, 'absent');
+  let entered, release;
+  const holding = new Promise(resolve => { entered = resolve; });
+  const released = new Promise(resolve => { release = resolve; });
+  pauseAtWorkfile = { entered, release: released };
+  const firstRead = owner.readRecordedGroupSelection(read);
+  // Keep rejection handled even when the bounded gate itself fails.
+  firstRead.catch(() => {});
+  let gateTimer;
+  try {
+    const heldSql = await Promise.race([holding, new Promise((_, reject) => {
+      gateTimer = setTimeout(() => reject(new Error('native reader did not hold workfile')), 3000);
+    })]);
+    assert.match(heldSql, /FOR UPDATE NOWAIT/);
+    const competitorFrom = calls.length;
+    await assert.rejects(owner.readRecordedGroupSelection(read), error => error.code === '55P03');
+    assert.ok(!calls.slice(competitorFrom).some(sql => /custom-cohort-subject:assignment|prepared-catalog:read|group-selection:head/.test(sql)),
+      'competing reader must refuse at the first parent lock, before subject-lock upgrade or cached facts');
+  } finally { clearTimeout(gateTimer); pauseAtWorkfile = null; release(); }
+  assert.equal((await firstRead).status, 'absent', 'first native reader must complete after the competing reader refuses');
+  assert.equal((await owner.readRecordedGroupSelection(read)).status, 'absent', 'a later normal read succeeds after the lock is released');
+  assert.deepEqual(await protectedState(), before);
+  checks.push('actual concurrent owner reads serialize at the first workfile UPDATE NOWAIT lock; the loser refuses before facts and the original reader completes without a SHARE-to-UPDATE upgrade');
   const select = { ...read, operationId: randomUUID(), expectedSelectionRef: null, includedRecordedGroupIds: ids };
   const from = calls.length;
   const first = await owner.selectRecordedGroups(select);
@@ -60,6 +93,24 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
   assert.ok(!calls.slice(from).some(sql => sql.includes('compressed_map')),
     'selection persistence must not transfer full geometry');
   checks.push('native server-derived recorded-group selection retains actor intent and exact pages, reopens current head, and reuses lost-ACK operation without source/map replay');
+
+  const cacheKey = [scope.organization_id, read.contextRef.context_id];
+  const cacheSnapshot = async () => (await pool.query(`SELECT selection_revision,operation_id,request_sha256,
+    selection_sha256,manifest_content_sha256,manifest_canonical_utf8_bytes
+    FROM app.neighborhood_custom_cohort_group_selections WHERE organization_id=$1 AND context_id=$2
+    ORDER BY selection_revision`, cacheKey)).rows;
+  const selectionsBefore = await cacheSnapshot();
+  const fallbackFrom = calls.length;
+  missPreparedCatalog = true;
+  try {
+    assert.deepEqual((await owner.readRecordedGroupSelection(read)).selection_ref, first.selection_ref);
+    assert.deepEqual(await owner.selectRecordedGroups(select), { ...first, status: 'reused' });
+    assert.deepEqual(await cacheSnapshot(), selectionsBefore, 'fallback must not rewrite retained selection history');
+    assert.ok(calls.slice(fallbackFrom).some(sql => sql.includes('neighborhood-cohort-blob:read-batch')),
+      'fallback witness must open actual complete retained source rows, not reuse cached presentation');
+  } finally { missPreparedCatalog = false; }
+  assert.deepEqual(await protectedState(), before);
+  checks.push('native owner reopens and replays the same complete selection through real original-row fallback after an injected cache miss; immutable triggers/history/report data remain unchanged');
 
   const emptyInput = { ...select, operationId: randomUUID(), expectedSelectionRef: first.selection_ref, includedRecordedGroupIds: [] };
   loseCommitAck = true;

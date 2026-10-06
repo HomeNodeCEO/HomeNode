@@ -9,7 +9,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test test/auth-resilience.test.ts test/braces-security.test.mjs test/completion.test.ts test/config.test.ts test/custom-appraisal.test.ts test/dependency-security.test.ts test/node-forge-security.test.mjs test/offline-sync.test.ts test/photos.test.ts test/shell-quote-security.test.mjs test/sketch.test.ts test/startup.test.ts test/target-fields.test.ts test/temporary-audit-exception.test.mjs test/toolchain-verification.test.mjs test/uad-entities.test.ts test/workflows.test.ts",
+    "test": "tsx --test test/auth-resilience.test.ts test/braces-security.test.mjs test/completion.test.ts test/config.test.ts test/custom-appraisal.test.ts test/dependency-security.test.ts test/node-forge-security.test.mjs test/offline-sync.test.ts test/photos.test.ts test/shell-quote-security.test.mjs test/sketch-layout.test.ts test/sketch.test.ts test/startup.test.ts test/target-fields.test.ts test/temporary-audit-exception.test.mjs test/toolchain-verification.test.mjs test/uad-entities.test.ts test/workflows.test.ts",
     "verify:toolchain": "node scripts/verify-toolchain.mjs && node --test test/node-forge-security.test.mjs test/braces-security.test.mjs test/shell-quote-security.test.mjs",
     "eas-build-post-install": "pnpm run verify:toolchain",
     "doctor": "expo-doctor"

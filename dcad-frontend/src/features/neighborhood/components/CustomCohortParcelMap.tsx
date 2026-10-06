@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { loadMapLibreRuntime, MAPLIBRE_BASE_STYLE } from '../../../lib/mapLibreRuntime';
 import type { ParcelMapClick, ParcelMapRuntimeInstance } from '../../../lib/mapLibreRuntime';
-import NeighborhoodCityReferenceControl from '../../../components/NeighborhoodCityReferenceControl';
 import { buildCustomCohortMapPresentation } from '../customCohortMapPresentation';
 import type { CustomCohortMapLabel, CustomCohortMapPresentation, CustomCohortMapScore } from '../customCohortMapPresentation';
 import type { CustomCohortMapDisplay } from '../customCohortMapPresentation';
@@ -201,9 +200,8 @@ export default function CustomCohortParcelMap(props: Props) {
   const legacyGroup = props.group, legacyRequest = legacyGroup?.request, readViewport = props.readViewport;
   const container = useRef<HTMLDivElement>(null), mapRef = useRef<ParcelMapRuntimeInstance | null>(null);
   const painted = useRef<readonly PaintedParcel[]>([]);
-  const paintedLabels = useRef(''), cityViewActive = useRef(false);
+  const paintedLabels = useRef('');
   const paintedSubject = useRef('');
-  const [cityMap, setCityMap] = useState<ParcelMapRuntimeInstance | null>(null);
   const [showLabels, setShowLabels] = useState(true);
   const [displayMode, setDisplayMode] = useState<ActivationMode | null>(null);
   const [mapState, setMapState] = useState<'loading' | 'drawing' | 'ready' | 'failed'>('loading');
@@ -373,7 +371,6 @@ export default function CustomCohortParcelMap(props: Props) {
     let instance: ParcelMapRuntimeInstance | null = null;
     let observer: ResizeObserver | null = null;
     setMapState('loading'); setTileError(false); painted.current = []; paintedLabels.current = ''; paintedSubject.current = '';
-    setCityMap(null); cityViewActive.current = false;
     setDisplayMode(null);
     const timeout = window.setTimeout(() => { if (!disposed && !loaded) setMapState('failed'); }, 20_000);
     const onResize = () => { if (!disposed) instance?.resize(); };
@@ -520,7 +517,7 @@ export default function CustomCohortParcelMap(props: Props) {
           const bounds = displayBounds(latest.current.presentation, data.features);
           if (bounds) instance.fitBounds(bounds, { padding: 28, maxZoom: 16, duration: 0 });
           updateDisplayMode();
-          painted.current = data.features; loaded = true; window.clearTimeout(timeout); setCityMap(instance);
+          painted.current = data.features; loaded = true; window.clearTimeout(timeout);
           setCameraRevision(n => n + 1);
           awaitingDraw.current = true; setMapState('drawing');
           drawTimeout.current = window.setTimeout(() => { awaitingDraw.current = false; if (!disposed) setMapState('failed'); }, 20_000);
@@ -535,7 +532,7 @@ export default function CustomCohortParcelMap(props: Props) {
       if (drawTimeout.current !== null) window.clearTimeout(drawTimeout.current);
       drawTimeout.current = null; awaitingDraw.current = false;
       instance?.remove(); if (mapRef.current === instance) mapRef.current = null; painted.current = [];
-      setCityMap(null); cityViewActive.current = false; paintedLabels.current = ''; paintedSubject.current = '';
+      paintedLabels.current = ''; paintedSubject.current = '';
     };
   }, [contextKey, hasMap, deferredMode]);
 
@@ -561,7 +558,7 @@ export default function CustomCohortParcelMap(props: Props) {
         const bounds = displayBounds(presentation, geojson.features);
         // A viewport response only replaces visible detail. Refitting to the
         // capture here would zoom back out and immediately discard that detail.
-        if (bounds && !cityViewActive.current && !deferredMode) map.fitBounds(bounds, { padding: 28, maxZoom: 16, duration: 0 });
+        if (bounds && !deferredMode) map.fitBounds(bounds, { padding: 28, maxZoom: 16, duration: 0 });
       }
       painted.current = geojson.features;
       if (paintedLabels.current !== labelsKey) {
@@ -579,17 +576,12 @@ export default function CustomCohortParcelMap(props: Props) {
   }, [geojson, presentation, labels, labelsKey, subjectMarkers, subjectKey, mapState, hasMap, deferredMode]);
 
   return <section className="hn-subtle-panel overflow-hidden rounded-xl border border-purple-200 print:hidden" aria-label="Captured parcel selection map"
-    data-selection-revision={group.binding.selectionRevision} data-freshness={freshness}>
+    data-selection-revision={group.binding.selectionRevision} data-freshness={freshness} data-map-interaction-mode={displayMode ?? 'unavailable'}>
     <div className="space-y-2 px-4 py-3">
       <h3 className="font-semibold">Captured parcel selection</h3>
-      <p className="text-xs text-slate-600">{onActivatePocket
-        ? 'Click a subdivision to include all its recorded groups and compare the updated statistics. Right-click to remove it. Zooming does not change your choices. '
-        : 'Click a parcel or subdivision label to inspect its recorded CAD group. '}
-        Shapes follow cached parcels, not legal subdivision or neighborhood boundaries.</p>
-      {onActivatePocket && <p className="text-xs font-medium text-violet-900" role="status" data-map-interaction-mode={displayMode ?? 'unavailable'}>
-        {displayMode === 'subdivision' ? 'Subdivision view: clicks include all captured related groups.' : 'Map interaction is not ready.'}
-        {' '}Related names are review groupings, not verified legal phases or coverage outside this capture.
-      </p>}
+      {/* Activation includes the complete captured subdivision family; right-click
+          excludes it. Zoom does not change selection semantics or legal authority. */}
+      {onActivatePocket && displayMode !== 'subdivision' && <p className="text-xs font-medium text-violet-900" role="status">Map interaction is not ready.</p>}
       <div className="flex flex-wrap items-center gap-4 text-xs">
         <label className="inline-flex items-center gap-2"><input type="checkbox" checked={showLabels} disabled={presentation?.status !== 'available'}
           onChange={event => setShowLabels(event.target.checked)} />Show recorded subdivision labels</label>
@@ -600,9 +592,12 @@ export default function CustomCohortParcelMap(props: Props) {
         <li className="inline-flex items-center gap-1.5"><span aria-hidden="true" className="h-3 w-3 rounded-sm border-[3px] bg-white" style={{ borderColor: COLORS.included }} />Included · red outline</li>
         <li className="inline-flex items-center gap-1.5"><span aria-hidden="true" className="h-3 w-3 rounded-sm border" style={{ borderColor: COLORS.subject }} />Subject pointer</li>
       </ul>
-      <p className="text-xs text-slate-600">Fill reflects recorded-group similarity to the subject, not an individual parcel score or statistical reliability. Missing observations remain unknown.</p>
+      {/* Fill describes recorded-group similarity, not an individual parcel score
+          or statistical reliability. Missing observations stay unknown. */}
       {scoreBandSelector}
-      {catalog.prepared_secondary_map && <p className="text-xs text-slate-600">Map colors include up to 10% supporting bedroom, bath, garage, pool and outbuilding similarity from the prepared CAD snapshot observed {new Date(catalog.prepared_secondary_map.source_observed_at).toLocaleString()}. This is current-recorded review support, not historical condition or a change to the report statistics.</p>}
+      {catalog.prepared_secondary_map && <p className="text-xs text-slate-600">{catalog.prepared_secondary_map.version === 2
+        ? `Similarity colors use CAD observations captured ${new Date(catalog.prepared_secondary_map.retained_capture_at).toLocaleDateString()}.`
+        : `Map colors include supporting bedroom, bath, garage, pool and outbuilding similarity from the prepared CAD snapshot observed ${new Date(catalog.prepared_secondary_map.source_observed_at).toLocaleDateString()}.`}</p>}
       {matches && hasMap && !subjectMarkers.features.length && <p className="text-xs text-slate-600">Subject pointer unavailable because captured subject geometry is missing.</p>}
       {matches && hasMap && presentation?.status !== 'available' && <p role="status" className="text-xs text-amber-800">Recorded labels and similarity colors are unavailable for this checked preview. The parcel selection is unchanged.</p>}
       {presentation?.unlabelled_group_ids.length ? <p className="text-xs text-slate-600">{presentation.unlabelled_group_ids.length} recorded groups have no retained parcel anchor for a label.</p> : null}
@@ -612,9 +607,9 @@ export default function CustomCohortParcelMap(props: Props) {
       : !hasMap ? <p role="status" className="p-4">{group.parcel_map.status === 'unavailable'
         ? `Parcel map unavailable: ${group.parcel_map.reason}.` : 'No captured parcel outlines are available for this context.'} Statistics remain observation-only.</p>
       : <div className="relative">
-        <div ref={container} className="h-[440px] min-h-80 w-full" role="region" aria-label="Interactive parcel map; use the recorded group list for keyboard selection" />
+        <div ref={container} className="h-[440px] min-h-80 w-full" role="region" aria-label="Interactive parcel map" />
         {(mapState === 'loading' || mapState === 'drawing') && <p role="status" className="absolute inset-0 grid place-content-center bg-white p-4 text-sm">{mapState === 'drawing' ? 'Drawing the matching parcel selection…' : 'Loading parcel map…'}</p>}
-        {mapState === 'failed' && <p role="alert" className="absolute inset-0 grid place-content-center bg-white p-4 text-sm">The map could not be displayed. Use the recorded group list; no substitute boundary has been drawn.</p>}
+        {mapState === 'failed' && <p role="alert" className="absolute inset-0 grid place-content-center bg-white p-4 text-sm">The map could not be displayed. Retry the preview; your saved selection is unchanged.</p>}
         {tileError && mapState === 'ready' && <p role="status" className="absolute bottom-3 left-3 rounded bg-white/95 p-2 text-xs">Some basemap resources could not load. Parcel selection and statistics are unchanged.</p>}
         {group.parcel_map.status === 'deferred' && mapState === 'ready' && detailState !== 'ready' &&
           <p role="status" className="absolute bottom-3 right-3 max-w-xs rounded bg-white/95 p-2 text-xs shadow">
@@ -627,7 +622,5 @@ export default function CustomCohortParcelMap(props: Props) {
           </p>}
       </div>}
     {belowMapStatistics && <div className="px-4 py-3">{belowMapStatistics}</div>}
-    <div className="px-4 pb-3"><NeighborhoodCityReferenceControl map={mapState === 'failed' ? null : cityMap}
-      onViewChange={active => { if (cityMap && mapRef.current === cityMap && mapState !== 'failed') cityViewActive.current = active; }} /></div>
   </section>;
 }

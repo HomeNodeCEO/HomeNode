@@ -178,7 +178,25 @@ test("property-context analysis preserves optional geometry and geography", asyn
     assignmentFileId: "file-7",
     customGeometry: { type: "Polygon", coordinates: [] },
     geography: { city: "Duncanville" },
+    marketStudyContextOnly: false,
   }]]);
+});
+
+test("market study context-only mode requires an explicit boolean", async (context) => {
+  const inputs = [];
+  const server = await startRouter(createAccountPropertyContextRouter(accountOptions({
+    analyzeContext: async (_pool, input) => { inputs.push(input); return {}; },
+  })));
+  context.after(server.close);
+  for (const value of [true, "true", false, null]) {
+    const response = await fetch(`${server.baseUrl}/api/accounts/42/property-context/analyze`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ assignment_file_id: "7", market_study_context_only: value }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(inputs.at(-1).marketStudyContextOnly, value === true);
+    assert.equal(inputs.at(-1).assignmentFileId, "file-7");
+  }
 });
 
 test("property-context review passes the complete appraiser body unchanged", async (context) => {

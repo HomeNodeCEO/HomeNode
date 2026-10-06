@@ -1,17 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApplicationAuth } from '@/features/auth/ApplicationAuth';
 import * as api from '@/lib/api';
 import type {
   GeoJsonPolygon,
   MarketContextOverride,
   MarketConditionsAnalysis,
-  MarketConditionsAreaKey,
-  MarketConditionsMapSale,
+  MarketConditionsStudyAreaKey as MarketConditionsAreaKey,
   MarketConditionsResponse,
   MarketConditionsSeriesPoint,
   MarketConditionsSubject,
-  RelatedParcel,
-  RelatedParcelsResponse,
 } from '@/lib/api';
 import {
   readMarketConditionsDraft,
@@ -20,91 +17,11 @@ import {
   type MarketConditionsReconciliation,
   type MarketTrendConclusion,
 } from '@/lib/marketConditionsDraft';
-import {
-  includeCustomMarketArea,
-  marketAreaOriginFromSource,
-  polygonsMatch,
-  resolveInitialMarketAreaGeometry,
-  shouldAdoptIncomingMarketArea,
-  type MarketAreaOrigin,
-} from '@/lib/marketAreaGeometry';
-import { makeNeighborhoodPocketFeatureCollection } from '@/lib/neighborhoodPocketMap';
-import { loadMapLibreRuntime, MAPLIBRE_BASE_STYLE } from '@/lib/mapLibreRuntime';
-
-const MAP_STYLE_URL = MAPLIBRE_BASE_STYLE;
-const CUSTOM_BOUNDARY_SOURCE_ID = 'custom-market-boundary';
-
-type GeoJsonFeature = {
-  type: 'Feature';
-  id?: string | number;
-  geometry: {
-    type: string;
-    coordinates: unknown;
-  };
-  properties: Record<string, unknown>;
-};
-
-type GeoJsonFeatureCollection = {
-  type: 'FeatureCollection';
-  features: GeoJsonFeature[];
-};
-
-type MapSource = {
-  setData: (data: GeoJsonFeatureCollection) => void;
-};
-
-type BoundaryCoordinate = [number, number];
-
-type MapClickEvent = {
-  lngLat: { lng: number; lat: number };
-  point: { x: number; y: number };
-  features?: Array<{ properties?: Record<string, unknown> }>;
-};
-
-type MapInstance = {
-  on: {
-    (event: 'load', callback: () => void): void;
-    (event: 'click', callback: (event: MapClickEvent) => void): void;
-    (
-      event: 'click',
-      layerId: string,
-      callback: (event: MapClickEvent) => void,
-    ): void;
-    (
-      event: 'mouseenter' | 'mouseleave',
-      layerId: string,
-      callback: () => void,
-    ): void;
-  };
-  addSource: (id: string, source: Record<string, unknown>) => void;
-  getSource: (id: string) => MapSource | undefined;
-  addImage: (
-    id: string,
-    image: { width: number; height: number; data: Uint8Array },
-    options?: { pixelRatio?: number },
-  ) => void;
-  addLayer: (layer: Record<string, unknown>) => void;
-  getLayer: (id: string) => unknown;
-  getCanvas: () => { style: { cursor: string } };
-  project: (coordinate: BoundaryCoordinate) => { x: number; y: number };
-  fitBounds: (
-    bounds: [BoundaryCoordinate, BoundaryCoordinate],
-    options?: Record<string, unknown>,
-  ) => void;
-  resize: () => void;
-  setPaintProperty: (layerId: string, property: string, value: unknown) => void;
-  remove: () => void;
-};
-
-type MarkerInstance = {
-  setLngLat: (coordinate: [number, number]) => MarkerInstance;
-  addTo: (map: MapInstance) => MarkerInstance;
-};
-
-type MapLibreGlobal = {
-  Map: new (options: Record<string, unknown>) => MapInstance;
-  Marker: new (options?: Record<string, unknown>) => MarkerInstance;
-};
+import type { MarketAreaOrigin } from '@/lib/marketAreaGeometry';
+import type { CustomCohortPreviewGroup } from '@/features/neighborhood/customCohortPreviewController';
+import { runMarketStudies, explorationAreaIdentity, marketExplorationIdentity, usableExplorationArea } from '@/features/neighborhood/customCohortMarketArea';
+import MarketStudyPropertyContext from './MarketStudyPropertyContext';
+import type { MarketStudyComplexity } from '@/lib/marketStudyComplexity';
 
 type TrendInterval = 'monthly' | 'quarterly' | 'semiannual' | 'yearly';
 
@@ -114,6 +31,7 @@ type Props = {
   initialDraft?: MarketConditionsDraft | null;
   initialAsOfDate?: string | null;
   onCompletionChange?: (draft: MarketConditionsDraft | null) => void;
+  explorationArea?: CustomCohortPreviewGroup | null;
   initialCustomGeometry?: GeoJsonPolygon | null;
   initialCustomGeometrySource?: string | null;
   suggestedCustomGeometry?: GeoJsonPolygon | null;
@@ -149,171 +67,8 @@ type Props = {
   ) => void;
   onRelevancePocketInspect?: (pocketId: string) => void;
   embedded?: boolean;
+  geography?: string | null;
 };
-
-const CLOSE_BOUNDARY_PIXEL_TOLERANCE = 18;
-const RELEVANCE_SOURCE_ID = 'neighborhood-relevance-pockets';
-const RELEVANCE_POCKET_SOURCE_ID = 'neighborhood-relevance-pocket-areas';
-const RELEVANCE_POCKET_FILL_LAYER_ID = 'neighborhood-relevance-pocket-fill';
-const RECOMMENDED_PROPERTY_IMAGES = [
-  { band: 'highest', id: 'recommended-property-square-highest', color: [5, 46, 22] },
-  { band: 'high', id: 'recommended-property-square-high', color: [21, 128, 61] },
-  { band: 'relevant', id: 'recommended-property-square-relevant', color: [34, 197, 94] },
-  { band: 'marginal', id: 'recommended-property-square-marginal', color: [234, 179, 8] },
-  { band: 'low', id: 'recommended-property-square-low', color: [234, 88, 12] },
-  { band: 'insufficient_data', id: 'recommended-property-square-insufficient', color: [124, 58, 237] },
-  { band: 'excluded', id: 'recommended-property-square-excluded', color: [100, 116, 139] },
-] as const;
-const RECOMMENDED_PROPERTY_FALLBACK_IMAGE_ID = 'recommended-property-square-excluded';
-
-function makeRecommendedPropertySquare(color: readonly [number, number, number]): {
-  width: number;
-  height: number;
-  data: Uint8Array;
-} {
-  const width = 10;
-  const height = 10;
-  const data = new Uint8Array(width * height * 4);
-  for (let offset = 0; offset < data.length; offset += 4) {
-    data[offset] = color[0];
-    data[offset + 1] = color[1];
-    data[offset + 2] = color[2];
-    data[offset + 3] = 245;
-  }
-  return { width, height, data };
-}
-
-function makeRelevanceFeatureCollection(
-  candidates: Props['relevanceVisualization'] = [],
-): GeoJsonFeatureCollection {
-  return {
-    type: 'FeatureCollection',
-    features: candidates.map((candidate) => ({
-      type: 'Feature',
-      id: candidate.parcel_object_id,
-      geometry: candidate.point,
-      properties: {
-        pocket_id: candidate.pocket_id || candidate.cluster_id || '',
-        score: Number(candidate.score) || 0,
-        excluded: candidate.excluded,
-        classification: candidate.classification,
-        system_selected: candidate.system_selected ?? candidate.primary_population,
-        primary_population: candidate.primary_population,
-        recommended_population: candidate.recommended_population === true,
-        relevance_band: candidate.relevance_band,
-        appraiser_override: candidate.appraiser_override || '',
-      },
-    })),
-  };
-}
-
-function coordinatesMatch(
-  left: BoundaryCoordinate,
-  right: BoundaryCoordinate,
-): boolean {
-  return left[0] === right[0] && left[1] === right[1];
-}
-
-function normalizeOpenBoundary(
-  coordinates: BoundaryCoordinate[],
-): BoundaryCoordinate[] {
-  const normalized: BoundaryCoordinate[] = [];
-  for (const coordinate of coordinates) {
-    if (
-      !Number.isFinite(coordinate[0]) ||
-      !Number.isFinite(coordinate[1]) ||
-      (normalized.length > 0 &&
-        coordinatesMatch(normalized.at(-1) as BoundaryCoordinate, coordinate))
-    ) {
-      continue;
-    }
-    normalized.push([coordinate[0], coordinate[1]]);
-  }
-  if (
-    normalized.length > 1 &&
-    coordinatesMatch(
-      normalized[0],
-      normalized.at(-1) as BoundaryCoordinate,
-    )
-  ) {
-    normalized.pop();
-  }
-  return normalized;
-}
-
-function boundaryToPolygon(
-  coordinates: BoundaryCoordinate[],
-): GeoJsonPolygon | null {
-  const boundary = normalizeOpenBoundary(coordinates);
-  if (boundary.length < 3) return null;
-  return {
-    type: 'Polygon',
-    coordinates: [[...boundary, [...boundary[0]]]],
-  };
-}
-
-function makeBoundaryFeatureCollection(
-  customGeometry: GeoJsonPolygon | null,
-  draftBoundary: BoundaryCoordinate[] = [],
-): GeoJsonFeatureCollection {
-  if (customGeometry) {
-    return {
-      type: 'FeatureCollection',
-      features: [
-        {
-          type: 'Feature',
-          geometry: customGeometry,
-          properties: { kind: 'completed' },
-        },
-      ],
-    };
-  }
-  const boundary = normalizeOpenBoundary(draftBoundary);
-  if (boundary.length === 0) {
-    return { type: 'FeatureCollection', features: [] };
-  }
-  return {
-    type: 'FeatureCollection',
-    features: [
-      {
-        type: 'Feature',
-        geometry:
-          boundary.length === 1
-            ? { type: 'Point', coordinates: boundary[0] }
-            : { type: 'LineString', coordinates: boundary },
-        properties: { kind: 'draft' },
-      },
-    ],
-  };
-}
-
-function updateBoundaryMap(
-  map: MapInstance | null,
-  customGeometry: GeoJsonPolygon | null,
-  draftBoundary: BoundaryCoordinate[] = [],
-): void {
-  map
-    ?.getSource(CUSTOM_BOUNDARY_SOURCE_ID)
-    ?.setData(makeBoundaryFeatureCollection(customGeometry, draftBoundary));
-}
-
-function fitMapToBoundary(
-  map: MapInstance | null,
-  geometry: GeoJsonPolygon | null,
-): void {
-  const ring = geometry?.coordinates?.[0] || [];
-  if (!map || ring.length < 3) return;
-  const longitudes = ring.map((coordinate) => Number(coordinate[0])).filter(Number.isFinite);
-  const latitudes = ring.map((coordinate) => Number(coordinate[1])).filter(Number.isFinite);
-  if (!longitudes.length || !latitudes.length) return;
-  map.fitBounds(
-    [
-      [Math.min(...longitudes), Math.min(...latitudes)],
-      [Math.max(...longitudes), Math.max(...latitudes)],
-    ],
-    { padding: 36, maxZoom: 14, duration: 0 },
-  );
-}
 
 const AREA_OPTIONS: Array<{
   key: MarketConditionsAreaKey;
@@ -336,9 +91,9 @@ const AREA_OPTIONS: Array<{
     description: `A cumulative ${miles}-mile area centered on the verified study location.`,
   })),
   {
-    key: 'custom',
-    label: 'Appraiser-defined area',
-    description: 'The automated neighborhood polygon, editable by the appraiser.',
+    key: 'exploration',
+    label: 'Exploration Map Area',
+    description: 'The exact properties selected on the neighborhood exploration map.',
   },
 ];
 
@@ -431,76 +186,20 @@ function periodLabel(value: string | null, interval: TrendInterval): string {
   return String(year);
 }
 
-function updateBoundaryAppearance(map: MapInstance | null, origin: MarketAreaOrigin): void {
-  if (!map) return;
-  const isAutomaticEnvelope = origin === 'automatic';
-  map.setPaintProperty(
-    'custom-market-boundary-fill',
-    'fill-opacity',
-    isAutomaticEnvelope ? 0.025 : 0.2,
-  );
-  map.setPaintProperty(
-    'custom-market-boundary-fill',
-    'fill-color',
-    isAutomaticEnvelope ? '#64748b' : '#2563eb',
-  );
-  map.setPaintProperty(
-    'custom-market-boundary-line',
-    'line-color',
-    isAutomaticEnvelope ? '#64748b' : '#0284c7',
-  );
-  map.setPaintProperty(
-    'custom-market-boundary-line',
-    'line-width',
-    isAutomaticEnvelope ? 1.5 : 4,
-  );
-  map.setPaintProperty(
-    'custom-market-boundary-line',
-    'line-dasharray',
-    isAutomaticEnvelope ? [3, 3] : [1, 0],
-  );
-}
-
 function resultFingerprint(
   areaKeys: MarketConditionsAreaKey[],
   asOfDate: string,
   periodMonths: number,
-  customGeometry: GeoJsonPolygon | null,
+  explorationIdentity: string | null,
   contextOverride: MarketContextOverride | null,
 ): string {
   return JSON.stringify({
     areaKeys: [...areaKeys].sort(),
     asOfDate,
     periodMonths,
-    customGeometry,
+    explorationIdentity: areaKeys.includes('exploration') ? explorationIdentity : null,
     contextOverride,
   });
-}
-
-function makeSalesFeatureCollection(
-  sales: MarketConditionsMapSale[],
-): GeoJsonFeatureCollection {
-  return {
-    type: 'FeatureCollection',
-    features: sales.flatMap((sale) => {
-      if (sale.latitude === null || sale.longitude === null) return [];
-      return [
-        {
-          type: 'Feature' as const,
-          id: String(sale.sale_id || sale.source_record_id || sale.account_id),
-          geometry: {
-            type: 'Point',
-            coordinates: [sale.longitude, sale.latitude],
-          },
-          properties: {
-            address: sale.address || 'Address unavailable',
-            salePrice: sale.sale_price,
-            closingDate: sale.closing_date,
-          },
-        },
-      ];
-    }),
-  };
 }
 
 function defaultReconciliation(
@@ -517,7 +216,6 @@ function defaultReconciliation(
     : 'no eligible sales';
   const recommendation = response.recommendation;
   const rankedLabels = recommendation.ranked_studies
-    .slice(0, 3)
     .map((study) => study.label)
     .join(', ');
   return {
@@ -833,7 +531,7 @@ function StudyStatistics({
                     ? ` (${summary.congruency_factors.housing_type.dominant_type})`
                     : ''}
                 </td>
-                <td className="px-2 py-1.5 text-right">10.0%</td>
+                <td className="px-2 py-1.5 text-right">20.0%</td>
                 <td className="px-2 py-1.5 text-right">
                   {summary.congruency_factors.housing_type.count.toLocaleString()}
                 </td>
@@ -848,6 +546,11 @@ function StudyStatistics({
           </table>
         </div>
       </details>
+      <div className="mt-2 flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs text-slate-600">
+        <span>{statistics.monthly_observation_count ?? 0} monthly observations</span>
+        <span>Characteristic coverage: {percentText(statistics.characteristic_weight_available * 100)}</span>
+        {statistics.reliability_score == null ? <span className="font-semibold text-amber-800">COD/CV score unavailable</span> : null}
+      </div>
     </div>
   );
 }
@@ -896,9 +599,10 @@ function RecommendedDetermination({
           </div>
         </div>
       </div>
-      <p className={`${compact ? 'hidden' : 'mt-2 leading-5'} text-xs text-slate-600`}>
-        Studies are ranked by sample sufficiency, monthly coverage, composite
-        COD/CV congruency, and characteristic coverage. A reconciled change
+      <p className={`${compact && recommendation.methodology_version >= 3 ? 'hidden' : 'mt-2 leading-5'} text-xs text-slate-600`}>
+        {recommendation.methodology_version >= 3
+          ? 'Lower average COD/CV ranks higher. Sales count and data coverage are reviewed separately; the score is not a confidence probability.'
+          : 'Saved scores use the earlier method. Rerun market studies for COD/CV ranking.'}{' '}A reconciled change
         within ±{numberText(recommendation.stable_threshold_percent, 1)}% is
         classified as stable. The appraiser may override this recommendation.
       </p>
@@ -911,7 +615,7 @@ function RecommendedDetermination({
       ) : null}
       {recommendation.ranked_studies.length > 0 && (
         <div className={`${compact ? 'mt-2 gap-1.5' : 'mt-3 gap-2'} grid md:grid-cols-3`}>
-          {recommendation.ranked_studies.slice(0, 3).map((study) => (
+          {recommendation.ranked_studies.map((study) => (
             <div
               key={study.key}
               className={`rounded-lg border border-slate-200 bg-slate-50 text-xs ${compact ? 'px-2 py-1.5' : 'px-3 py-2'}`}
@@ -943,87 +647,43 @@ export default function MarketConditionsAnalysis({
   initialDraft = null,
   initialAsOfDate = null,
   onCompletionChange,
-  initialCustomGeometry = null,
-  initialCustomGeometrySource = null,
-  suggestedCustomGeometry = null,
-  relevanceVisualization = [],
-  onCustomGeometryChange,
-  relevanceSummary = null,
-  onRelevancePocketToggle,
-  onRelevancePocketInspect,
+  explorationArea = null,
   embedded = false,
+  geography = null,
 }: Props) {
   const { session: applicationSession } = useApplicationAuth();
+  const selectedExploration = usableExplorationArea(explorationArea, subjectAccountId, assignmentFileId);
+  const explorationIdentity = selectedExploration ? explorationAreaIdentity(selectedExploration.binding) : null;
+  const onCompletionChangeRef = useRef(onCompletionChange);
+  onCompletionChangeRef.current = onCompletionChange;
   const savedDraft = useMemo(
-    () => initialDraft || readMarketConditionsDraft(subjectAccountId, assignmentFileId, applicationSession),
+    () => {
+      const value = initialDraft || readMarketConditionsDraft(subjectAccountId, assignmentFileId, applicationSession);
+      return value?.accountId.trim().toUpperCase() === subjectAccountId.trim().toUpperCase()
+        && value.assignmentFileId === assignmentFileId ? value : null;
+    },
     [applicationSession, assignmentFileId, initialDraft, subjectAccountId],
   );
   const [subject, setSubject] = useState<MarketConditionsSubject | null>(
     savedDraft?.response.subject || null,
   );
-  const [contextOverrideEnabled, setContextOverrideEnabled] = useState(
-    Boolean(savedDraft?.contextOverride),
-  );
-  const [contextOverride, setContextOverride] = useState<MarketContextOverride>(
-    savedDraft?.contextOverride || {
-      source: 'manual',
-      address: null,
-      city: null,
-      county: null,
-      postal_code: null,
-      latitude: null,
-      longitude: null,
-      source_account_id: null,
-      review_note: null,
-    },
-  );
-  const [parcelSearchAddress, setParcelSearchAddress] = useState(
-    savedDraft?.contextOverride?.address ||
-      savedDraft?.response.subject.address ||
-      '',
-  );
-  const [relatedParcels, setRelatedParcels] =
-    useState<RelatedParcelsResponse | null>(null);
-  const [loadingRelatedParcels, setLoadingRelatedParcels] = useState(false);
-  const savedStudyGeometry = savedDraft?.response.analyses.find(
-    (analysis) => analysis.market.key === 'custom',
-  )?.market.custom_geometry || null;
-  const resolvedInitialGeometry = resolveInitialMarketAreaGeometry({
-    assignmentGeometry: initialCustomGeometry,
-    savedStudyGeometry,
-    suggestedGeometry: suggestedCustomGeometry,
-  });
-  const resolvedInitialOrigin: MarketAreaOrigin = initialCustomGeometry
-    ? marketAreaOriginFromSource(initialCustomGeometrySource, initialCustomGeometry)
-    : savedStudyGeometry
-      ? 'appraiser'
-      : 'automatic';
   const [selectedAreaKeys, setSelectedAreaKeys] = useState<
     MarketConditionsAreaKey[]
   >(() => savedDraft?.selectedAreaKeys?.length
-    ? [...savedDraft.selectedAreaKeys]
-    : AREA_OPTIONS
-      .filter((option) => option.key !== 'custom' || resolvedInitialGeometry !== null)
-      .map((option) => option.key));
+    ? savedDraft.selectedAreaKeys.filter(key => key !== 'custom')
+    : embedded ? ['exploration'] : AREA_OPTIONS.filter(option => option.key !== 'exploration').map(option => option.key));
   const [asOfDate, setAsOfDate] = useState(
     savedDraft?.asOfDate || initialAsOfDate || todayInputValue(),
   );
   const [periodMonths, setPeriodMonths] = useState<12 | 24 | 36>(
     savedDraft?.periodMonths || 24,
   );
-  const [customGeometry, setCustomGeometry] = useState<GeoJsonPolygon | null>(
-    resolvedInitialGeometry,
-  );
-  const [customGeometryOrigin, setCustomGeometryOrigin] = useState<MarketAreaOrigin>(
-    resolvedInitialOrigin,
-  );
-  const [availableSuggestedGeometry, setAvailableSuggestedGeometry] =
-    useState<GeoJsonPolygon | null>(
-      suggestedCustomGeometry || resolvedInitialGeometry,
-    );
-  const [draftBoundaryPointCount, setDraftBoundaryPointCount] = useState(0);
   const [analysisResult, setAnalysisResult] =
     useState<MarketConditionsResponse | null>(savedDraft?.response || null);
+  const [studyComplexity, setStudyComplexity] = useState<MarketStudyComplexity | null>(savedDraft?.propertyComplexity ?? null);
+  const [studyRevision, setStudyRevision] = useState(0);
+  const draftHydrated = useRef(Boolean(savedDraft));
+  const studyEdited = useRef(false);
   const [reconciliation, setReconciliation] =
     useState<MarketConditionsReconciliation>(
       savedDraft?.reconciliation || {
@@ -1038,9 +698,7 @@ export default function MarketConditionsAnalysis({
           savedDraft.selectedAreaKeys,
           savedDraft.asOfDate,
           savedDraft.periodMonths,
-          savedDraft.response.analyses.find(
-            (analysis) => analysis.market.key === 'custom',
-          )?.market.custom_geometry || null,
+          marketExplorationIdentity(savedDraft.response),
           savedDraft.contextOverride || null,
         )
       : '',
@@ -1048,283 +706,51 @@ export default function MarketConditionsAnalysis({
   const [chartInterval, setChartInterval] =
     useState<TrendInterval>('monthly');
   const [studyResultsExpanded, setStudyResultsExpanded] = useState(false);
-  const [geographyReviewExpanded, setGeographyReviewExpanded] = useState(
-    !embedded,
-  );
   const [loadingContext, setLoadingContext] = useState(!subject);
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [savingNarrative, setSavingNarrative] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [mapError, setMapError] = useState<string | null>(null);
-  const [mapReady, setMapReady] = useState(false);
-  const [isBoundaryDrawing, setIsBoundaryDrawing] = useState(false);
-  const [pocketInteractionMessage, setPocketInteractionMessage] = useState<string | null>(null);
-  const mapContainerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<MapInstance | null>(null);
-  const draftBoundaryRef = useRef<BoundaryCoordinate[]>([]);
-  const boundaryDrawingRef = useRef(false);
-  const initialCustomGeometryRef = useRef(customGeometry);
-  const initialMarketOriginRef = useRef(resolvedInitialOrigin);
-  const initialRelevanceVisualizationRef = useRef(relevanceVisualization);
-  const onCustomGeometryChangeRef = useRef(onCustomGeometryChange);
-  const onRelevancePocketToggleRef = useRef(onRelevancePocketToggle);
-  const onRelevancePocketInspectRef = useRef(onRelevancePocketInspect);
-  const onCompletionChangeRef = useRef(onCompletionChange);
-  onCustomGeometryChangeRef.current = onCustomGeometryChange;
-  onRelevancePocketToggleRef.current = onRelevancePocketToggle;
-  onRelevancePocketInspectRef.current = onRelevancePocketInspect;
-  onCompletionChangeRef.current = onCompletionChange;
-  const appraiserModifiedRef = useRef(
-    resolvedInitialOrigin === 'appraiser' || resolvedInitialOrigin === 'cleared',
-  );
-  const geometryBeforeDrawingRef = useRef<{
-    geometry: GeoJsonPolygon | null;
-    origin: MarketAreaOrigin;
-  } | null>(null);
-  const customSelected = selectedAreaKeys.includes('custom');
-
-  const activeContextOverride = contextOverrideEnabled
-    ? contextOverride
-    : null;
-  const studyContext = useMemo<MarketConditionsSubject | null>(() => {
-    if (!subject || !activeContextOverride) return subject;
-    const hasCoordinates =
-      activeContextOverride.latitude !== null &&
-      activeContextOverride.latitude !== undefined &&
-      activeContextOverride.longitude !== null &&
-      activeContextOverride.longitude !== undefined;
-    return {
-      ...subject,
-      address: activeContextOverride.address?.trim() || subject.address,
-      city: activeContextOverride.city?.trim() || subject.city,
-      county: activeContextOverride.county?.trim() || subject.county,
-      postal_code:
-        activeContextOverride.postal_code?.trim() || subject.postal_code,
-      latitude: hasCoordinates
-        ? Number(activeContextOverride.latitude)
-        : subject.latitude,
-      longitude: hasCoordinates
-        ? Number(activeContextOverride.longitude)
-        : subject.longitude,
-      location_status: hasCoordinates ? 'matched' : subject.location_status,
-      location_source: hasCoordinates
-        ? activeContextOverride.source === 'dcad_related_parcel'
-          ? 'dcad_related_parcel_override'
-          : 'manual_market_context'
-        : subject.location_source,
-      location_precision: hasCoordinates
-        ? 'study_origin'
-        : subject.location_precision,
-      location_confidence: hasCoordinates
-        ? 'medium'
-        : subject.location_confidence,
-      location_review_required: true,
-      location_review_reason: 'market_context_override_active',
-      context_override_active: true,
-      context_override_source: activeContextOverride.source,
-      context_overridden_fields: [],
-      context_source_account_id:
-        activeContextOverride.source_account_id || null,
-      context_review_note: activeContextOverride.review_note || null,
-    };
-  }, [activeContextOverride, subject]);
-  const studyLatitude = studyContext?.latitude ?? null;
-  const studyLongitude = studyContext?.longitude ?? null;
-
+  const activeContextOverride = null;
   const currentSignature = useMemo(
     () =>
       resultFingerprint(
         selectedAreaKeys,
         asOfDate,
         periodMonths,
-        customGeometry,
+        explorationIdentity,
         activeContextOverride,
       ),
     [
       activeContextOverride,
       asOfDate,
-      customGeometry,
+      explorationIdentity,
       periodMonths,
       selectedAreaKeys,
     ],
   );
   const studyIsCurrent =
     Boolean(analysisResult?.analyses.length) &&
-    runSignature === currentSignature;
-
-  const resetDraftBoundary = useCallback(() => {
-    draftBoundaryRef.current = [];
-    setDraftBoundaryPointCount(0);
-  }, []);
-
-  const setBoundaryDrawingMode = useCallback((active: boolean) => {
-    boundaryDrawingRef.current = active;
-    setIsBoundaryDrawing(active);
-    const map = mapRef.current;
-    if (map) {
-      map.getCanvas().style.cursor = active ? 'crosshair' : '';
-    }
-  }, []);
-
-  const beginCustomBoundary = useCallback(() => {
-    const map = mapRef.current;
-    if (!map) {
-      setError('The drawing map is still loading. Please try again.');
-      return;
-    }
-    geometryBeforeDrawingRef.current = {
-      geometry: customGeometry,
-      origin: customGeometryOrigin,
-    };
-    appraiserModifiedRef.current = true;
-    setCustomGeometryOrigin('appraiser');
-    resetDraftBoundary();
-    updateBoundaryMap(map, null);
-    initialCustomGeometryRef.current = null;
-    setCustomGeometry(null);
-    setBoundaryDrawingMode(true);
-    setError(null);
-    setNotice(
-      'Boundary drawing started. Click around the area in order, then click the first point or use Close Area.',
-    );
-  }, [
-    customGeometry,
-    customGeometryOrigin,
-    resetDraftBoundary,
-    setBoundaryDrawingMode,
-  ]);
-
-  const completeCustomBoundary = useCallback(
-    (method: 'button' | 'starting_point') => {
-      const polygon = boundaryToPolygon(draftBoundaryRef.current);
-      if (!polygon) {
-        setError('Add at least three boundary points before closing the area.');
-        return;
-      }
-      initialCustomGeometryRef.current = polygon;
-      setCustomGeometry(polygon);
-      setCustomGeometryOrigin('appraiser');
-      appraiserModifiedRef.current = true;
-      geometryBeforeDrawingRef.current = null;
-      updateBoundaryMap(mapRef.current, polygon);
-      fitMapToBoundary(mapRef.current, polygon);
-      resetDraftBoundary();
-      setBoundaryDrawingMode(false);
-      setSelectedAreaKeys((current) => includeCustomMarketArea(current, polygon));
-      onCustomGeometryChangeRef.current?.(polygon, 'appraiser');
-      setError(null);
-      setNotice(
-        method === 'starting_point'
-          ? 'Custom market area closed at the starting point.'
-          : 'Custom market area closed and ready for analysis.',
-      );
-    },
-    [resetDraftBoundary, setBoundaryDrawingMode],
-  );
-
-  const cancelCustomBoundary = useCallback(() => {
-    const previous = geometryBeforeDrawingRef.current;
-    const geometry = previous?.geometry || null;
-    const origin = previous?.origin || 'cleared';
-    setBoundaryDrawingMode(false);
-    resetDraftBoundary();
-    initialCustomGeometryRef.current = geometry;
-    setCustomGeometry(geometry);
-    setCustomGeometryOrigin(origin);
-    appraiserModifiedRef.current = origin === 'appraiser' || origin === 'cleared';
-    geometryBeforeDrawingRef.current = null;
-    updateBoundaryMap(mapRef.current, geometry);
-    fitMapToBoundary(mapRef.current, geometry);
-    setError(null);
-    setNotice('Boundary edit cancelled. The prior area was restored.');
-  }, [resetDraftBoundary, setBoundaryDrawingMode]);
-
-  const clearCustomBoundary = useCallback(() => {
-    setBoundaryDrawingMode(false);
-    resetDraftBoundary();
-    updateBoundaryMap(mapRef.current, null);
-    initialCustomGeometryRef.current = null;
-    setCustomGeometry(null);
-    setCustomGeometryOrigin('cleared');
-    appraiserModifiedRef.current = true;
-    geometryBeforeDrawingRef.current = null;
-    if (customGeometry) {
-      setAvailableSuggestedGeometry((current) => current || customGeometry);
-    }
-    onCustomGeometryChangeRef.current?.(null, 'cleared');
-    setError(null);
-    setNotice('Appraiser-defined market area cleared. It will not be regenerated automatically.');
-  }, [customGeometry, resetDraftBoundary, setBoundaryDrawingMode]);
-
-  const resetToSuggestedBoundary = useCallback(() => {
-    if (!availableSuggestedGeometry) return;
-    setBoundaryDrawingMode(false);
-    resetDraftBoundary();
-    initialCustomGeometryRef.current = availableSuggestedGeometry;
-    setCustomGeometry(availableSuggestedGeometry);
-    setCustomGeometryOrigin('automatic');
-    appraiserModifiedRef.current = false;
-    geometryBeforeDrawingRef.current = null;
-    setSelectedAreaKeys((current) => includeCustomMarketArea(current, availableSuggestedGeometry));
-    updateBoundaryMap(mapRef.current, availableSuggestedGeometry);
-    fitMapToBoundary(mapRef.current, availableSuggestedGeometry);
-    onCustomGeometryChangeRef.current?.(availableSuggestedGeometry, 'automatic');
-    setError(null);
-    setNotice('The automatically suggested neighborhood area was restored.');
-  }, [
-    availableSuggestedGeometry,
-    resetDraftBoundary,
-    setBoundaryDrawingMode,
-  ]);
-  useEffect(() => {
-    initialCustomGeometryRef.current = customGeometry;
-  }, [customGeometry]);
+    runSignature === currentSignature &&
+    (!selectedAreaKeys.includes('exploration') || Boolean(selectedExploration
+      && analysisResult && marketExplorationIdentity(analysisResult) === explorationIdentity));
 
   useEffect(() => {
-    if (!initialCustomGeometry) return;
-    const incomingOrigin = marketAreaOriginFromSource(
-      initialCustomGeometrySource,
-      initialCustomGeometry,
-    );
-    if (!shouldAdoptIncomingMarketArea({
-      currentGeometry: customGeometry,
-      currentOrigin: customGeometryOrigin,
-      incomingGeometry: initialCustomGeometry,
-    })) return;
-    initialCustomGeometryRef.current = initialCustomGeometry;
-    setCustomGeometry(initialCustomGeometry);
-    setAvailableSuggestedGeometry((current) => current || initialCustomGeometry);
-    setCustomGeometryOrigin(incomingOrigin);
-    appraiserModifiedRef.current = incomingOrigin === 'appraiser';
-    setSelectedAreaKeys((current) => includeCustomMarketArea(current, initialCustomGeometry));
-  }, [
-    customGeometry,
-    customGeometryOrigin,
-    initialCustomGeometry,
-    initialCustomGeometrySource,
-  ]);
-  useEffect(() => {
-    if (!suggestedCustomGeometry || appraiserModifiedRef.current) return;
-    if (!shouldAdoptIncomingMarketArea({
-      currentGeometry: customGeometry,
-      currentOrigin: customGeometryOrigin,
-      incomingGeometry: suggestedCustomGeometry,
-    })) return;
-    initialCustomGeometryRef.current = suggestedCustomGeometry;
-    setCustomGeometry(suggestedCustomGeometry);
-    setCustomGeometryOrigin('automatic');
-    setSelectedAreaKeys((current) => includeCustomMarketArea(current, suggestedCustomGeometry));
-  }, [customGeometry, customGeometryOrigin, suggestedCustomGeometry]);
-
-  useEffect(() => {
-    if (suggestedCustomGeometry) {
-      setAvailableSuggestedGeometry(suggestedCustomGeometry);
-    }
-  }, [suggestedCustomGeometry]);
-
-  const completeCustomBoundaryRef = useRef(completeCustomBoundary);
-  completeCustomBoundaryRef.current = completeCustomBoundary;
+    // The lazy editor can mount before its database workfile arrives. Adopt
+    // that exact-file draft once, but never overwrite edits or rehydrate our
+    // own save callbacks. Map identity still decides whether it is current.
+    if (draftHydrated.current || studyEdited.current || !savedDraft) return;
+    draftHydrated.current = true;
+    setSubject(savedDraft.response.subject);
+    setSelectedAreaKeys(savedDraft.selectedAreaKeys.filter(key => key !== 'custom'));
+    setAsOfDate(savedDraft.asOfDate);
+    setPeriodMonths(savedDraft.periodMonths);
+    setAnalysisResult(savedDraft.response);
+    setReconciliation(savedDraft.reconciliation);
+    setStudyComplexity(savedDraft.propertyComplexity ?? null);
+    setRunSignature(resultFingerprint(savedDraft.selectedAreaKeys, savedDraft.asOfDate,
+      savedDraft.periodMonths, marketExplorationIdentity(savedDraft.response), savedDraft.contextOverride || null));
+  }, [savedDraft]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1335,9 +761,6 @@ export default function MarketConditionsAnalysis({
       .then((response) => {
         if (!cancelled) {
           setSubject(response.subject);
-          setParcelSearchAddress((current) =>
-            current || response.subject.address || '',
-          );
         }
       })
       .catch((loadError: unknown) => {
@@ -1370,6 +793,7 @@ export default function MarketConditionsAnalysis({
         contextOverride: activeContextOverride,
         response: analysisResult,
         reconciliation,
+        propertyComplexity: studyComplexity,
       };
       onCompletionChangeRef.current?.(draft);
     } else {
@@ -1384,415 +808,12 @@ export default function MarketConditionsAnalysis({
     reconciliation,
     selectedAreaKeys,
     studyIsCurrent,
+    studyComplexity,
     subjectAccountId,
   ]);
 
-  useEffect(() => {
-    if (
-      !customSelected ||
-      !mapContainerRef.current ||
-      studyLatitude === null ||
-      studyLongitude === null ||
-      mapRef.current
-    ) {
-      return () => undefined;
-    }
-    let cancelled = false;
-    let map: MapInstance | null = null;
-    void loadMapLibreRuntime()
-      .then((loaded) => {
-        const maplibre = loaded as unknown as MapLibreGlobal;
-        if (
-          cancelled ||
-          !mapContainerRef.current ||
-          studyLatitude === null ||
-          studyLongitude === null
-        ) {
-          return;
-        }
-        map = new maplibre.Map({
-          container: mapContainerRef.current,
-          style: MAP_STYLE_URL,
-          center: [studyLongitude, studyLatitude],
-          zoom: 12,
-          attributionControl: true,
-        });
-        mapRef.current = map;
-        map.on('load', () => {
-          if (!map || cancelled) return;
-          new maplibre.Marker({ color: '#dc2626' })
-            .setLngLat([
-              studyLongitude,
-              studyLatitude,
-            ])
-            .addTo(map);
-          map.addSource(CUSTOM_BOUNDARY_SOURCE_ID, {
-            type: 'geojson',
-            data: makeBoundaryFeatureCollection(
-              initialCustomGeometryRef.current,
-            ),
-          });
-          map.addLayer({
-            id: 'custom-market-boundary-fill',
-            type: 'fill',
-            source: CUSTOM_BOUNDARY_SOURCE_ID,
-            filter: ['==', ['geometry-type'], 'Polygon'],
-            paint: {
-              'fill-color': '#2563eb',
-              'fill-opacity': 0.2,
-            },
-          });
-          map.addLayer({
-            id: 'custom-market-boundary-line',
-            type: 'line',
-            source: CUSTOM_BOUNDARY_SOURCE_ID,
-            paint: {
-              'line-color': '#0284c7',
-              'line-width': 4,
-            },
-          });
-          map.addLayer({
-            id: 'custom-market-boundary-start',
-            type: 'circle',
-            source: CUSTOM_BOUNDARY_SOURCE_ID,
-            filter: ['==', ['geometry-type'], 'Point'],
-            paint: {
-              'circle-color': '#0284c7',
-              'circle-radius': 6,
-              'circle-stroke-color': '#ffffff',
-              'circle-stroke-width': 2,
-            },
-          });
-          updateBoundaryAppearance(map, initialMarketOriginRef.current);
-          map.addSource(RELEVANCE_SOURCE_ID, {
-            type: 'geojson',
-            data: makeRelevanceFeatureCollection(initialRelevanceVisualizationRef.current),
-          });
-          map.addSource(RELEVANCE_POCKET_SOURCE_ID, {
-            type: 'geojson',
-            data: makeNeighborhoodPocketFeatureCollection(
-              initialRelevanceVisualizationRef.current,
-            ),
-          });
-          map.addLayer({
-            id: RELEVANCE_POCKET_FILL_LAYER_ID,
-            type: 'fill',
-            source: RELEVANCE_POCKET_SOURCE_ID,
-            paint: {
-              'fill-color': [
-                'match', ['get', 'status'],
-                'included', '#10b981',
-                'removed', '#ef4444',
-                '#64748b',
-              ],
-              'fill-opacity': [
-                'match', ['get', 'status'],
-                'included', 0.1,
-                'removed', 0.08,
-                0.05,
-              ],
-            },
-          });
-          map.addLayer({
-            id: 'neighborhood-relevance-pocket-outline',
-            type: 'line',
-            source: RELEVANCE_POCKET_SOURCE_ID,
-            paint: {
-              'line-color': [
-                'match', ['get', 'status'],
-                'included', '#047857',
-                'removed', '#dc2626',
-                '#64748b',
-              ],
-              'line-width': [
-                'case',
-                ['==', ['get', 'recommended'], true], 2,
-                1.25,
-              ],
-              'line-opacity': 0.82,
-            },
-          });
-          RECOMMENDED_PROPERTY_IMAGES.forEach(({ id, color }) => {
-            map?.addImage(id, makeRecommendedPropertySquare(color), { pixelRatio: 2 });
-          });
-          map.addLayer({
-            id: 'neighborhood-relevance-pockets-halo',
-            type: 'circle',
-            source: RELEVANCE_SOURCE_ID,
-            paint: {
-              'circle-radius': 7,
-              'circle-blur': 0.55,
-              'circle-opacity': 0.34,
-              'circle-color': [
-                'match', ['get', 'relevance_band'],
-                'highest', '#14532d',
-                'high', '#16a34a',
-                'relevant', '#86efac',
-                'marginal', '#facc15',
-                'low', '#f97316',
-                'insufficient_data', '#a78bfa',
-                '#94a3b8',
-                ],
-            },
-          });
-          map.addLayer({
-            id: 'neighborhood-relevance-pockets-core',
-            type: 'circle',
-            source: RELEVANCE_SOURCE_ID,
-            paint: {
-              'circle-radius': 3.25,
-              'circle-opacity': 0.84,
-              'circle-color': [
-                'match', ['get', 'relevance_band'],
-                'highest', '#052e16',
-                'high', '#15803d',
-                'relevant', '#22c55e',
-                'marginal', '#eab308',
-                'low', '#ea580c',
-                'insufficient_data', '#7c3aed',
-                '#64748b',
-                ],
-              'circle-stroke-width': [
-                'case',
-                ['!=', ['get', 'appraiser_override'], ''], 2.25,
-                ['get', 'primary_population'], 0.8,
-                0,
-              ],
-              'circle-stroke-color': [
-                'match', ['get', 'appraiser_override'],
-                'included', '#e32ff7',
-                'removed', '#dc2626',
-                '#ffffff',
-              ],
-              'circle-stroke-opacity': 0.8,
-            },
-          });
-          map.addLayer({
-            id: 'neighborhood-relevance-recommended-area',
-            type: 'symbol',
-            source: RELEVANCE_SOURCE_ID,
-            filter: ['==', ['get', 'recommended_population'], true],
-            layout: {
-              'icon-image': [
-                'match', ['get', 'relevance_band'],
-                ...RECOMMENDED_PROPERTY_IMAGES.flatMap(({ band, id }) => [band, id]),
-                RECOMMENDED_PROPERTY_FALLBACK_IMAGE_ID,
-              ],
-              'icon-size': [
-                'interpolate', ['linear'], ['zoom'],
-                10, 0.65,
-                12, 0.8,
-                16, 1.05,
-              ],
-              'icon-allow-overlap': true,
-              'icon-ignore-placement': true,
-            },
-            paint: {
-              'icon-opacity': 0.94,
-            },
-          });
-          map.on('click', RELEVANCE_POCKET_FILL_LAYER_ID, (event) => {
-            if (boundaryDrawingRef.current) return;
-            const properties = event.features?.[0]?.properties;
-            const pocketId = String(properties?.pocket_id || '');
-            if (!pocketId) return;
-            // Inspect first; opening a pocket must not mutate saved membership.
-            if (onRelevancePocketInspectRef.current) {
-              onRelevancePocketInspectRef.current(pocketId);
-              return;
-            }
-            if (!onRelevancePocketToggleRef.current) return;
-            const currentlyIncluded = properties?.included === true ||
-              properties?.included === 'true';
-            const systemSelected = properties?.system_selected === true ||
-              properties?.system_selected === 'true';
-            const include = !currentlyIncluded;
-            onRelevancePocketToggleRef.current(pocketId, include, systemSelected);
-            setPocketInteractionMessage(
-              `${include ? 'Included' : 'Removed'} the selected pocket. Live metrics updated.`,
-            );
-          });
-          map.on('mouseenter', RELEVANCE_POCKET_FILL_LAYER_ID, () => {
-            if (!boundaryDrawingRef.current && map) map.getCanvas().style.cursor = 'pointer';
-          });
-          map.on('mouseleave', RELEVANCE_POCKET_FILL_LAYER_ID, () => {
-            if (map) map.getCanvas().style.cursor = boundaryDrawingRef.current ? 'crosshair' : '';
-          });
-          map.on('click', (event) => {
-            if (!boundaryDrawingRef.current) return;
-            const coordinate: BoundaryCoordinate = [
-              event.lngLat.lng,
-              event.lngLat.lat,
-            ];
-            const current = draftBoundaryRef.current;
-            if (current.length >= 3) {
-              const startPoint = map?.project(current[0]);
-              if (startPoint) {
-                const pixelDistance = Math.hypot(
-                  event.point.x - startPoint.x,
-                  event.point.y - startPoint.y,
-                );
-                if (pixelDistance <= CLOSE_BOUNDARY_PIXEL_TOLERANCE) {
-                  completeCustomBoundaryRef.current('starting_point');
-                  return;
-                }
-              }
-            }
-            if (
-              current.length === 0 ||
-              !coordinatesMatch(
-                current.at(-1) as BoundaryCoordinate,
-                coordinate,
-              )
-            ) {
-              const next = [...current, coordinate];
-              draftBoundaryRef.current = next;
-              setDraftBoundaryPointCount(next.length);
-              updateBoundaryMap(map, null, next);
-            }
-          });
-          setMapReady(true);
-          fitMapToBoundary(map, initialCustomGeometryRef.current);
-        });
-      })
-      .catch((loadError: unknown) => {
-        if (!cancelled) {
-          setMapError(
-            loadError instanceof Error
-              ? loadError.message
-              : 'The drawing map could not be loaded.',
-          );
-        }
-      });
-    return () => {
-      cancelled = true;
-      setMapReady(false);
-      boundaryDrawingRef.current = false;
-      setIsBoundaryDrawing(false);
-      resetDraftBoundary();
-      mapRef.current = null;
-      map?.remove();
-    };
-  }, [
-    customSelected,
-    resetDraftBoundary,
-    studyLatitude,
-    studyLongitude,
-  ]);
-
-  useEffect(() => {
-    if (!mapReady) return;
-    const map = mapRef.current;
-    if (!map) return;
-    map.resize();
-    updateBoundaryMap(map, customGeometry);
-    fitMapToBoundary(map, customGeometry);
-  }, [customGeometry, mapReady]);
-
-  useEffect(() => {
-    if (!mapReady) return;
-    updateBoundaryAppearance(mapRef.current, customGeometryOrigin);
-  }, [customGeometryOrigin, mapReady]);
-
-  useEffect(() => {
-    if (!mapReady) return;
-    mapRef.current?.getSource(RELEVANCE_SOURCE_ID)?.setData(
-      makeRelevanceFeatureCollection(relevanceVisualization),
-    );
-    mapRef.current?.getSource(RELEVANCE_POCKET_SOURCE_ID)?.setData(
-      makeNeighborhoodPocketFeatureCollection(relevanceVisualization),
-    );
-  }, [mapReady, relevanceVisualization]);
-
-  useEffect(() => {
-    const container = mapContainerRef.current;
-    const map = mapRef.current;
-    if (!container || !map || !mapReady) return () => undefined;
-
-    let animationFrame = 0;
-    const synchronizeVisibleMap = () => {
-      window.cancelAnimationFrame(animationFrame);
-      animationFrame = window.requestAnimationFrame(() => {
-        if (!mapRef.current || container.offsetWidth === 0 || container.offsetHeight === 0) {
-          return;
-        }
-        mapRef.current.resize();
-        updateBoundaryMap(mapRef.current, initialCustomGeometryRef.current);
-        fitMapToBoundary(mapRef.current, initialCustomGeometryRef.current);
-      });
-    };
-
-    synchronizeVisibleMap();
-    const observer = new ResizeObserver(synchronizeVisibleMap);
-    observer.observe(container);
-    window.addEventListener('resize', synchronizeVisibleMap);
-
-    return () => {
-      window.cancelAnimationFrame(animationFrame);
-      observer.disconnect();
-      window.removeEventListener('resize', synchronizeVisibleMap);
-    };
-  }, [mapReady]);
-
-  const customMapSales = useMemo(
-    () =>
-      analysisResult?.analyses.find(
-        (analysis) => analysis.market.key === 'custom',
-      )?.map_sales || [],
-    [analysisResult],
-  );
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapReady) return;
-    const data = makeSalesFeatureCollection(customMapSales);
-    const existing = map.getSource('market-sales');
-    if (existing) {
-      existing.setData(data);
-      return;
-    }
-    map.addSource('market-sales', {
-      type: 'geojson',
-      data,
-      cluster: true,
-      clusterMaxZoom: 14,
-      clusterRadius: 42,
-    });
-    map.addLayer({
-      id: 'market-sales-clusters',
-      type: 'circle',
-      source: 'market-sales',
-      filter: ['has', 'point_count'],
-      paint: {
-        'circle-color': '#047857',
-        'circle-radius': [
-          'step',
-          ['get', 'point_count'],
-          15,
-          30,
-          20,
-          100,
-          26,
-        ],
-        'circle-stroke-color': '#ffffff',
-        'circle-stroke-width': 2,
-      },
-    });
-    map.addLayer({
-      id: 'market-sales-points',
-      type: 'circle',
-      source: 'market-sales',
-      filter: ['!', ['has', 'point_count']],
-      paint: {
-        'circle-color': '#10b981',
-        'circle-radius': 5,
-        'circle-stroke-color': '#064e3b',
-        'circle-stroke-width': 1,
-      },
-    });
-  }, [customMapSales, mapReady]);
-
   function toggleArea(key: MarketConditionsAreaKey): void {
+    studyEdited.current = true;
     setSelectedAreaKeys((current) =>
       current.includes(key)
         ? current.filter((item) => item !== key)
@@ -1801,104 +822,36 @@ export default function MarketConditionsAnalysis({
     setNotice(null);
   }
 
-  function toggleContextOverride(): void {
-    setContextOverrideEnabled((current) => {
-      if (!current && subject) {
-        setContextOverride((existing) => ({
-          source: existing.source || 'manual',
-          address: existing.address || subject.address,
-          city: existing.city || subject.city,
-          county: existing.county || subject.county,
-          postal_code: existing.postal_code || subject.postal_code,
-          latitude: existing.latitude ?? subject.latitude,
-          longitude: existing.longitude ?? subject.longitude,
-          source_account_id: existing.source_account_id || null,
-          review_note: existing.review_note || null,
-        }));
-      }
-      return !current;
-    });
-    setNotice(null);
-  }
-
-  async function checkRelatedParcels(): Promise<void> {
-    if (!parcelSearchAddress.trim()) {
-      setError('Enter a complete numbered situs address for the CAD parcel check.');
-      return;
-    }
-    setLoadingRelatedParcels(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const response = await api.getRelatedParcels(
-        subjectAccountId,
-        parcelSearchAddress,
-        assignmentFileId,
-      );
-      setRelatedParcels(response);
-      setNotice(
-        response.parcels.length > 1
-          ? `${response.parcels.length} same-address CAD parcels were found. Review them separately; no parcels were merged.`
-          : `${response.parcels.length} same-address CAD parcel was found.`,
-      );
-    } catch (lookupError: unknown) {
-      setError(
-        lookupError instanceof Error
-          ? lookupError.message
-          : 'The related CAD parcel check could not be completed.',
-      );
-    } finally {
-      setLoadingRelatedParcels(false);
-    }
-  }
-
-  function selectParcelAsStudyContext(parcel: RelatedParcel): void {
-    setContextOverrideEnabled(true);
-    setContextOverride({
-      source: 'dcad_related_parcel',
-      address: parcel.site_address || parcel.address,
-      city: parcel.city || subject?.city || null,
-      county: parcel.county || subject?.county || null,
-      postal_code: parcel.postal_code || subject?.postal_code || null,
-      latitude: parcel.latitude,
-      longitude: parcel.longitude,
-      source_account_id: parcel.account_id,
-      review_note:
-        'Appraiser selected a same-address official CAD parcel as the market-study context.',
-    });
-    setNotice(
-      `Parcel ${parcel.account_id} is now the flagged study context. The subject account and CAD records were not changed.`,
-    );
-  }
 
   async function runAnalysis(): Promise<void> {
+    studyEdited.current = true;
     if (!selectedAreaKeys.length) {
       setError('Select at least one market area before running the study.');
       return;
     }
-    if (selectedAreaKeys.includes('custom') && !customGeometry) {
-      setError('Generate, restore, or draw an appraiser-defined area before running that study.');
+    if (selectedAreaKeys.length === 1 && selectedAreaKeys.includes('exploration') && !selectedExploration) {
+      setError('Select subdivisions on the exploration map and wait for their statistics to finish updating.');
       return;
     }
     setLoadingAnalysis(true);
     setError(null);
     setNotice(null);
     try {
-      const response = await api.runMarketConditionsAnalysis({
+      const request = {
         subjectAccountId,
         assignmentFileId,
         areaKeys: selectedAreaKeys,
         asOf: asOfDate,
         periodMonths,
-        customGeometry,
         contextOverride: activeContextOverride,
-      });
+      };
+      const response = await runMarketStudies(request, selectedExploration);
       const nextReconciliation = defaultReconciliation(response);
       const signature = resultFingerprint(
         selectedAreaKeys,
         asOfDate,
         periodMonths,
-        customGeometry,
+        explorationIdentity,
         activeContextOverride,
       );
       const draft: MarketConditionsDraft = {
@@ -1912,12 +865,16 @@ export default function MarketConditionsAnalysis({
         contextOverride: activeContextOverride,
         response,
         reconciliation: nextReconciliation,
+        propertyComplexity: null,
       };
       setAnalysisResult(response);
       setReconciliation(nextReconciliation);
       setRunSignature(signature);
-      if (onCompletionChange) onCompletionChange(draft);
-      else saveMarketConditionsDraft(draft, applicationSession);
+      setStudyComplexity(null);
+      setStudyRevision(revision => revision + 1);
+      // The coherence effect above is the only report callback owner. A late
+      // response after a map click must never publish a superseded selection.
+      if (!onCompletionChange) saveMarketConditionsDraft(draft, applicationSession);
       setNotice(
         `${response.analyses.length} independent market ${
           response.analyses.length === 1 ? 'study is' : 'studies are'
@@ -1952,6 +909,7 @@ export default function MarketConditionsAnalysis({
       contextOverride: activeContextOverride,
       response: analysisResult,
       reconciliation,
+      propertyComplexity: studyComplexity,
     };
     if (onCompletionChange) onCompletionChange(draft);
     else saveMarketConditionsDraft(draft, applicationSession);
@@ -2017,13 +975,13 @@ export default function MarketConditionsAnalysis({
       </div>
 
       <div className={embedded ? 'space-y-2 p-2.5' : 'space-y-5 p-5'}>
-        <div className={embedded ? 'grid grid-cols-1 gap-1.5 lg:grid-cols-4' : 'grid grid-cols-1 gap-4 lg:grid-cols-[180px_180px_1fr]'}>
+        <div className={embedded ? 'grid grid-cols-1 gap-1.5 sm:grid-cols-2' : 'grid grid-cols-1 gap-4 sm:grid-cols-2'}>
           <label className="grid gap-1 text-sm text-slate-700">
             <span className="font-medium">Analysis as of</span>
             <input
               type="date"
               value={asOfDate}
-              onChange={(event) => setAsOfDate(event.target.value)}
+              onChange={(event) => { studyEdited.current = true; setAsOfDate(event.target.value); }}
               className={`rounded-lg border border-slate-300 px-3 ${embedded ? 'py-1.5' : 'py-2'}`}
             />
           </label>
@@ -2031,9 +989,10 @@ export default function MarketConditionsAnalysis({
             <span className="font-medium">Historical period</span>
             <select
               value={periodMonths}
-              onChange={(event) =>
-                setPeriodMonths(Number(event.target.value) as 12 | 24 | 36)
-              }
+              onChange={(event) => {
+                studyEdited.current = true;
+                setPeriodMonths(Number(event.target.value) as 12 | 24 | 36);
+              }}
               className={`rounded-lg border border-slate-300 bg-white px-3 ${embedded ? 'py-1.5' : 'py-2'}`}
             >
               <option value={12}>12 months</option>
@@ -2045,260 +1004,14 @@ export default function MarketConditionsAnalysis({
               completed month.
             </span>
           </label>
-          <div className={`rounded-xl border border-slate-200 bg-slate-50 text-slate-600 ${embedded ? 'px-3 py-2 text-xs lg:col-span-2' : 'px-4 py-3 text-sm'}`}>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-semibold text-slate-900">Study geography:</span>
-              {contextOverrideEnabled && (
-                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-900">
-                  Flagged override
-                </span>
-              )}
-            </div>
-            <div className={embedded ? 'mt-0.5' : 'mt-1'}>
-            {loadingContext
-              ? 'Loading parcel location...'
-              : studyContext
-                ? `${studyContext.address || studyContext.account_id} · ${
-                    studyContext.city || 'City unavailable'
-                  } · ${studyContext.postal_code || 'ZIP unavailable'}`
-                : 'Unavailable'}
-            </div>
-          </div>
         </div>
 
-        <div className={`rounded-xl border border-amber-200 bg-amber-50/40 ${embedded ? 'p-2.5' : 'p-4'}`}>
-          <div className={`flex flex-wrap items-start justify-between ${embedded ? 'gap-2' : 'gap-3'}`}>
-            <div>
-              <h3 className="font-semibold text-slate-950">
-                Study geography and related CAD parcels
-              </h3>
-              <p className={`${embedded ? 'mt-0.5 text-xs' : 'mt-1 text-sm'} max-w-4xl text-slate-600`}>
-                Location troubleshooting: check CAD accounts sharing the subject address,
-                or correct the city, ZIP, and map center used by the market studies.
-                This does not select neighborhood pockets, change ownership, or merge
-                property records. Leave it unchanged when the subject location is correct.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => setGeographyReviewExpanded((current) => !current)}
-                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
-              >
-                {geographyReviewExpanded ? 'Collapse review' : 'Review geography'}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setGeographyReviewExpanded(true);
-                  toggleContextOverride();
-                }}
-                className="rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-50"
-              >
-                {contextOverrideEnabled ? 'Disable override' : 'Edit study geography'}
-              </button>
-            </div>
-          </div>
-
-          {geographyReviewExpanded && (
-            <>
-          <div className={`${embedded ? 'mt-2 gap-2' : 'mt-4 gap-3'} grid md:grid-cols-[1fr_auto]`}>
-            <label className="grid gap-1 text-sm text-slate-700">
-              <span className="font-medium">Exact CAD situs address</span>
-              <input
-                type="text"
-                value={parcelSearchAddress}
-                onChange={(event) => setParcelSearchAddress(event.target.value)}
-                placeholder="10010 Strait Ln"
-                className={`rounded-lg border border-slate-300 bg-white px-3 ${embedded ? 'py-1.5' : 'py-2'}`}
-              />
-            </label>
-            <button
-              type="button"
-              onClick={() => void checkRelatedParcels()}
-              disabled={loadingRelatedParcels || loadingContext || !subject}
-              className={`self-end rounded-lg bg-slate-900 px-4 text-sm font-semibold text-white hover:bg-slate-800 disabled:bg-slate-300 ${embedded ? 'py-2' : 'py-2.5'}`}
-            >
-              {loadingRelatedParcels ? 'Checking CAD...' : 'Check related CAD parcels'}
-            </button>
-          </div>
-
-          {relatedParcels && (
-            <div className="mt-4 space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
-                <span>
-                  {relatedParcels.parcels.length} exact same-address parcel
-                  {relatedParcels.parcels.length === 1 ? '' : 's'} found
-                </span>
-                <span>
-                  Live DCAD: {relatedParcels.live_query_status.replace(/_/g, ' ')} · No automatic merge
-                </span>
-              </div>
-              {relatedParcels.parcels.map((parcel) => (
-                <div
-                  key={parcel.account_id}
-                  className="grid gap-3 rounded-lg border border-amber-200 bg-white p-3 md:grid-cols-[1fr_auto]"
-                >
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-semibold text-slate-950">
-                        {parcel.account_id}
-                      </span>
-                      {parcel.is_subject && (
-                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-900">
-                          Current subject parcel
-                        </span>
-                      )}
-                      {!parcel.in_database && (
-                        <span className="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-800">
-                          Not yet in database
-                        </span>
-                      )}
-                    </div>
-                    <div className="mt-1 text-sm text-slate-700">
-                      {parcel.site_address || parcel.address || 'Address unavailable'}
-                    </div>
-                    <div className="mt-1 text-xs text-slate-500">
-                      {parcel.legal_description || parcel.property_description || 'Legal description unavailable'}
-                      {' · '}
-                      {parcel.living_area_sqft
-                        ? `${parcel.living_area_sqft.toLocaleString()} SF`
-                        : 'No residential area'}
-                      {' · '}
-                      {parcel.total_value !== null
-                        ? money(parcel.total_value)
-                        : 'CAD value unavailable'}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => selectParcelAsStudyContext(parcel)}
-                    disabled={parcel.latitude === null || parcel.longitude === null}
-                    className="self-center rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-900 hover:bg-emerald-100 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
-                  >
-                    Use as study center
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {contextOverrideEnabled && (
-            <div className="mt-4 rounded-lg border border-amber-300 bg-white p-4">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm font-semibold text-slate-950">
-                  Reviewable market-context override
-                </div>
-                <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-900">
-                  Saved with appraisal workfile
-                </span>
-              </div>
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <label className="grid gap-1 text-sm text-slate-700 md:col-span-2">
-                  <span className="font-medium">Study-center address</span>
-                  <input
-                    type="text"
-                    value={contextOverride.address || ''}
-                    onChange={(event) =>
-                      setContextOverride((current) => ({
-                        ...current,
-                        source: 'manual',
-                        address: event.target.value,
-                      }))
-                    }
-                    className="rounded-lg border border-slate-300 px-3 py-2"
-                  />
-                </label>
-                <label className="grid gap-1 text-sm text-slate-700">
-                  <span className="font-medium">City</span>
-                  <input
-                    type="text"
-                    value={contextOverride.city || ''}
-                    onChange={(event) =>
-                      setContextOverride((current) => ({
-                        ...current,
-                        source: 'manual',
-                        city: event.target.value,
-                      }))
-                    }
-                    className="rounded-lg border border-slate-300 px-3 py-2"
-                  />
-                </label>
-                <label className="grid gap-1 text-sm text-slate-700">
-                  <span className="font-medium">ZIP code</span>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={10}
-                    value={contextOverride.postal_code || ''}
-                    onChange={(event) =>
-                      setContextOverride((current) => ({
-                        ...current,
-                        source: 'manual',
-                        postal_code: event.target.value,
-                      }))
-                    }
-                    className="rounded-lg border border-slate-300 px-3 py-2"
-                  />
-                </label>
-                <label className="grid gap-1 text-sm text-slate-700">
-                  <span className="font-medium">Latitude</span>
-                  <input
-                    type="number"
-                    step="any"
-                    value={contextOverride.latitude ?? ''}
-                    onChange={(event) =>
-                      setContextOverride((current) => ({
-                        ...current,
-                        source: 'manual',
-                        latitude: event.target.value ? Number(event.target.value) : null,
-                      }))
-                    }
-                    className="rounded-lg border border-slate-300 px-3 py-2"
-                  />
-                </label>
-                <label className="grid gap-1 text-sm text-slate-700">
-                  <span className="font-medium">Longitude</span>
-                  <input
-                    type="number"
-                    step="any"
-                    value={contextOverride.longitude ?? ''}
-                    onChange={(event) =>
-                      setContextOverride((current) => ({
-                        ...current,
-                        source: 'manual',
-                        longitude: event.target.value ? Number(event.target.value) : null,
-                      }))
-                    }
-                    className="rounded-lg border border-slate-300 px-3 py-2"
-                  />
-                </label>
-                <label className="grid gap-1 text-sm text-slate-700 md:col-span-2">
-                  <span className="font-medium">Override/review note</span>
-                  <input
-                    type="text"
-                    value={contextOverride.review_note || ''}
-                    onChange={(event) =>
-                      setContextOverride((current) => ({
-                        ...current,
-                        review_note: event.target.value,
-                      }))
-                    }
-                    placeholder="Explain why this geography is being used."
-                    className="rounded-lg border border-slate-300 px-3 py-2"
-                  />
-                </label>
-              </div>
-              <p className="mt-3 text-xs text-amber-900">
-                City controls the city study, ZIP controls the ZIP study, and
-                the coordinates control every radius and custom-map center.
-                Override use remains visibly flagged.
-              </p>
-            </div>
-          )}
-            </>
-          )}
-        </div>
+        <MarketStudyPropertyContext key={`${runSignature}:${studyRevision}`} accountId={subjectAccountId} assignmentFileId={assignmentFileId}
+          // Retain the completed run identity while its map selection restores.
+          // current still prevents stale assessment display and saving.
+          response={analysisResult} current={studyIsCurrent} studySignature={runSignature} studyRevision={studyRevision}
+          geography={geography} reliedUpon={reconciliation.reliedUponAreaKeys} initialScreening={savedDraft?.propertyComplexity}
+          onChange={setStudyComplexity} />
 
         <fieldset className={`rounded-xl border border-slate-200 bg-slate-50 ${embedded ? 'p-2.5' : 'p-4'}`}>
           <div className={`flex flex-wrap items-center justify-between ${embedded ? 'gap-2' : 'gap-3'}`}>
@@ -2308,16 +1021,17 @@ export default function MarketConditionsAnalysis({
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() =>
-                  setSelectedAreaKeys(AREA_OPTIONS.map((option) => option.key))
-                }
+                onClick={() => {
+                  studyEdited.current = true;
+                  setSelectedAreaKeys(AREA_OPTIONS.filter(option => option.key !== 'exploration' || selectedExploration).map((option) => option.key));
+                }}
                 className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
               >
                 Select all
               </button>
               <button
                 type="button"
-                onClick={() => setSelectedAreaKeys([])}
+                onClick={() => { studyEdited.current = true; setSelectedAreaKeys([]); }}
                 className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
               >
                 Clear
@@ -2339,6 +1053,7 @@ export default function MarketConditionsAnalysis({
                   <input
                     type="checkbox"
                     checked={selected}
+                    disabled={option.key === 'exploration' && !selectedExploration}
                     onChange={() => toggleArea(option.key)}
                     className="mt-1 h-4 w-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-500"
                   />
@@ -2356,205 +1071,9 @@ export default function MarketConditionsAnalysis({
           </div>
         </fieldset>
 
-        {selectedAreaKeys.includes('custom') && (
-          <div className="rounded-xl border border-indigo-200 bg-indigo-50/30 p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h3 className="font-semibold text-slate-950">
-                  Appraiser-Defined Market Area
-                </h3>
-                <p className="mt-1 text-sm text-slate-600">
-                  HomeNode loads the suggested neighborhood automatically. Redraw it only
-                  when appraisal judgment requires a different study area; appraiser edits
-                  remain authoritative until Reset to Suggested Area is selected.
-                </p>
-              </div>
-              <span
-                className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                  customGeometry
-                    ? 'bg-emerald-100 text-emerald-900'
-                    : draftBoundaryPointCount > 0 || isBoundaryDrawing
-                      ? 'bg-indigo-100 text-indigo-900'
-                    : 'bg-amber-100 text-amber-900'
-                }`}
-              >
-                {customGeometry
-                  ? customGeometryOrigin === 'automatic'
-                    ? 'Automatically suggested'
-                    : 'Appraiser edited'
-                  : draftBoundaryPointCount > 0
-                    ? `${draftBoundaryPointCount} boundary points`
-                    : isBoundaryDrawing
-                      ? 'Drawing active'
-                    : customGeometryOrigin === 'cleared'
-                      ? 'Cleared by appraiser'
-                      : 'Area required'}
-              </span>
-            </div>
-            {studyContext &&
-            studyContext.latitude !== null &&
-            studyContext.longitude !== null ? (
-              <div className="relative mt-4">
-                <div
-                  ref={mapContainerRef}
-                  className="h-[340px] w-full overflow-hidden rounded-xl border border-slate-300 bg-slate-100"
-                  aria-label="Custom market area drawing map"
-                />
-                {relevanceSummary ? (
-                  <div
-                    className="pointer-events-none absolute left-3 top-3 z-10 max-w-[calc(100%-1.5rem)] rounded-lg border border-emerald-200 bg-white/95 px-3 py-2 text-[11px] shadow-md backdrop-blur-sm"
-                    aria-live="polite"
-                  >
-                    <div className="font-semibold uppercase tracking-wide text-emerald-900">
-                      Live analytical result
-                    </div>
-                    <div className="mt-0.5 text-base font-bold text-slate-950">
-                      {relevanceSummary.reliabilityScore}/100 reliability
-                    </div>
-                    <div className="mt-0.5 text-slate-700">
-                      {relevanceSummary.pocketCount.toLocaleString()} pockets ·{' '}
-                      {relevanceSummary.propertyCount.toLocaleString()} properties ·{' '}
-                      {relevanceSummary.saleCount.toLocaleString()} sales · COD{' '}
-                      {relevanceSummary.compositeCod ?? 'Pending'}
-                    </div>
-                    <div className="mt-1 text-slate-600">
-                      {onRelevancePocketInspect
-                        ? 'Click a shaded pocket to view its data, then add or remove it.'
-                        : 'Click a shaded pocket to include or remove it.'}
-                    </div>
-                    {pocketInteractionMessage ? (
-                      <div className="mt-1 font-medium text-emerald-800">
-                        {pocketInteractionMessage}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-            ) : (
-              <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
-                The study-center location is unavailable. Select a related CAD
-                parcel or enter verified coordinates to draw a custom area.
-              </div>
-            )}
-            {relevanceVisualization.length > 0 ? (
-              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-600">
-                <span className="font-semibold text-slate-700">Property similarity:</span>
-                <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-green-800" />Highest relevance</span>
-                <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-green-600" />High relevance</span>
-                <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-green-300" />Relevant</span>
-                <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-yellow-400" />Marginal</span>
-                <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-orange-500" />Low relevance</span>
-                <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-slate-400" />Excluded</span>
-                <span className="basis-full text-slate-600">
-                  <span className="mr-0.5 inline-block h-2.5 w-2.5 bg-green-800 align-middle" />
-                  <span className="mr-0.5 inline-block h-2.5 w-2.5 bg-yellow-400 align-middle" />
-                  <span className="mr-1 inline-block h-2.5 w-2.5 bg-orange-500 align-middle" />
-                  Squares identify properties in the HomeNode-recommended analytical area and retain each property's relevance color.
-                </span>
-                <span className="basis-full text-slate-500">
-                  Shaded pocket areas are clickable: green is included, gray is available, and red is removed.
-                </span>
-                <span className="basis-full text-slate-500">White-outlined points form the primary statistical population used for neighborhood medians and predominant values.</span>
-                <span className="basis-full text-slate-500">Magenta outlines are appraiser-added pockets; red outlines are appraiser-removed pockets.</span>
-                {customGeometryOrigin === 'automatic' ? (
-                  <span className="basis-full text-slate-500">
-                    The dashed outline is a discovery envelope, not an appraiser-confirmed neighborhood boundary. Draw or edit the final narrative boundary as needed.
-                  </span>
-                ) : null}
-              </div>
-            ) : null}
-            {mapError && (
-              <div className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                {mapError}
-              </div>
-            )}
-            {studyContext &&
-              studyContext.latitude !== null &&
-              studyContext.longitude !== null && (
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={beginCustomBoundary}
-                    disabled={!mapReady}
-                    className="rounded-md border border-indigo-300 bg-white px-3 py-2 text-xs font-semibold text-indigo-800 hover:bg-indigo-50 disabled:border-slate-200 disabled:text-slate-400"
-                  >
-                    {isBoundaryDrawing
-                      ? 'Restart edit'
-                      : customGeometry || draftBoundaryPointCount > 0
-                        ? 'Edit / redraw area'
-                        : 'Draw area'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => completeCustomBoundary('button')}
-                    disabled={
-                      !mapReady ||
-                      !isBoundaryDrawing ||
-                      Boolean(customGeometry) ||
-                      draftBoundaryPointCount < 3
-                    }
-                    className="rounded-md bg-indigo-700 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-                  >
-                    Close Area
-                  </button>
-                  {isBoundaryDrawing ? (
-                    <button
-                      type="button"
-                      onClick={cancelCustomBoundary}
-                      className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                    >
-                      Cancel edit
-                    </button>
-                  ) : null}
-                  {availableSuggestedGeometry && (
-                    customGeometryOrigin !== 'automatic' ||
-                    !polygonsMatch(customGeometry, availableSuggestedGeometry)
-                  ) ? (
-                    <button
-                      type="button"
-                      onClick={resetToSuggestedBoundary}
-                      className="rounded-md border border-blue-300 bg-white px-3 py-2 text-xs font-semibold text-blue-800 hover:bg-blue-50"
-                    >
-                      Reset to Suggested Area
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={clearCustomBoundary}
-                    disabled={
-                      !customGeometry &&
-                      draftBoundaryPointCount === 0 &&
-                      !isBoundaryDrawing
-                    }
-                    className="rounded-md border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
-                  >
-                    Clear appraiser-defined area
-                  </button>
-                  {!customGeometry && draftBoundaryPointCount > 0 && (
-                    <span className="text-xs text-slate-600">
-                      {draftBoundaryPointCount < 3
-                        ? `Add ${3 - draftBoundaryPointCount} more point${
-                            3 - draftBoundaryPointCount === 1 ? '' : 's'
-                          } before closing.`
-                        : 'Ready to close. Click the first point or use the button.'}
-                    </span>
-                  )}
-                </div>
-              )}
-            {customGeometry && (
-              <div className="mt-3 flex flex-wrap items-center gap-3">
-                <span className="text-sm font-medium text-emerald-800">
-                  {Math.max(
-                    (customGeometry.coordinates[0]?.length || 1) - 1,
-                    0,
-                  )}{' '}
-                  boundary points
-                  recorded.
-                </span>
-              </div>
-            )}
-          </div>
-        )}
+        {selectedAreaKeys.includes('exploration') && <p role="status" className="text-sm font-medium text-violet-950">
+          {selectedExploration ? 'Using the selected subdivisions on the exploration map.' : 'Waiting for the exploration map selection.'}
+        </p>}
 
         <div className={`flex flex-wrap items-center ${embedded ? 'gap-2' : 'gap-3'}`}>
           <button
@@ -2564,7 +1083,8 @@ export default function MarketConditionsAnalysis({
               loadingAnalysis ||
               loadingContext ||
               !subject ||
-              !selectedAreaKeys.length
+              !selectedAreaKeys.length ||
+              (selectedAreaKeys.length === 1 && selectedAreaKeys.includes('exploration') && !selectedExploration)
             }
             className={`rounded-lg bg-emerald-700 px-5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300 ${embedded ? 'py-2' : 'py-2.5'}`}
           >
@@ -2582,8 +1102,9 @@ export default function MarketConditionsAnalysis({
 
         {analysisResult && !studyIsCurrent && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-            The area, date, period, or polygon changed after the last calculation.
-            Rerun the market studies before selecting comparables.
+            {runSignature === currentSignature && analysisResult.unavailable_areas.length
+              ? 'Some selected areas could not be calculated. Completed studies are shown below.'
+              : 'The area or observation dates changed. Rerun the market studies to update the results.'}
           </div>
         )}
         {error && (

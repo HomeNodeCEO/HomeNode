@@ -12,7 +12,6 @@ import type { CheckedPocketCatalog } from '../customCohortPocketCatalog';
 import type { CustomNeighborhoodWorkspaceControls } from './CustomNeighborhoodWorkspaceHost';
 import CustomCohortWorkspace from './CustomCohortWorkspace';
 import type { CustomCohortExactWorkspace } from './CustomCohortWorkspace';
-import CustomReportedObservationAdoption from './CustomReportedObservationAdoption';
 import cityCatalog from '../../../data/neighborhoodCityBoundaries.json';
 
 interface Props {
@@ -42,7 +41,8 @@ const fault = (reason: string) => new Error(`custom_workspace_${reason}`);
 /** Opt-in V7 host. No production mounting or legacy checkpoint migration here.
  * A fresh authenticated workfile read precedes every initial owner. One keyed
  * finite lane owns commands, coherent opening, exact detail, independent subset
- * inspections and report operations; no cache or browser reference grants access. */
+ * inspections; no cache or browser reference grants access. Report adoption is
+ * not mounted here, matching the appraiser's cleaned-up production workspace. */
 export default function CustomCohortGroupWorkspaceHost(props: Props) {
   if (!props.enabled) return null;
   if (props.workfileStatus !== 'draft') return <p className="print:hidden" role="status">
@@ -64,20 +64,16 @@ function HostSession(props: Props) {
   const [locked, setLocked] = useState(false), lockedRef = useRef(false);
   const [actionPending, setActionPending] = useState(false), actionFailed = useRef(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [reportEpoch, setReportEpoch] = useState(0);
-  const [reportUncertain, setReportUncertain] = useState(false), reportUncertainRef = useRef(false);
-  const [reportRecovery, setReportRecovery] = useState(false), reportRecoveryRef = useRef(false);
   const owner = useRef<ReturnType<typeof createCustomCohortGroupWorkspaceLifecycle> | null>(null);
   const lane = useRef<ReturnType<typeof createCustomWorkspaceRequestLane> | null>(null);
   const currentAction = useRef<Promise<boolean> | null>(null);
   const live = useRef(false), generation = useRef(0);
-  const freshAbort = useRef<AbortController | null>(null), reportAbort = useRef<AbortController | null>(null);
+  const freshAbort = useRef<AbortController | null>(null);
   const period = useRef({ start_date: start, end_date: end }); period.current = { start_date: start, end_date: end };
   const validPeriod = hasValidCustomWorkspaceObservationPeriod(period.current);
 
-  function act(action: () => Promise<unknown>, report = false) {
-    if (!live.current || readonlyRef.current || lockedRef.current || currentAction.current
-      || (!report && (reportUncertainRef.current || reportRecoveryRef.current))) return Promise.resolve(false);
+  function act(action: () => Promise<unknown>) {
+    if (!live.current || readonlyRef.current || lockedRef.current || currentAction.current) return Promise.resolve(false);
     const epoch = generation.current; actionFailed.current = false; setMessage(null); setActionPending(true);
     const task = Promise.resolve().then(async () => {
       // A retained callback or signing transition cannot enter after admission.
@@ -85,8 +81,7 @@ function HostSession(props: Props) {
       await action(); return true;
     }).catch(() => {
       if (live.current && generation.current === epoch) {
-        if (report) { reportRecoveryRef.current = true; setReportRecovery(true); }
-        else { actionFailed.current = true; setMessage('The neighborhood could not be updated. Try again.'); }
+        actionFailed.current = true; setMessage('The neighborhood could not be updated. Try again.');
       }
       return false;
     }).finally(() => {
@@ -110,7 +105,7 @@ function HostSession(props: Props) {
   function admitDisplay(display: CustomCohortGroupDisplay) {
     const current = owner.current?.getState();
     if (!live.current || readonlyRef.current || lockedRef.current || currentAction.current || actionFailed.current
-      || reportUncertainRef.current || reportRecoveryRef.current || current?.status !== 'ready' || current.operation_pending
+      || current?.status !== 'ready' || current.operation_pending
       || current.recovery || current.checkpoint?.pending_capture || current.display_freshness !== 'current'
       || current.display !== display || display.target.accountId !== initial.target.accountId
       || display.target.assignmentFileId !== initial.target.assignmentFileId || display.target.sessionKey !== initial.target.sessionKey)
@@ -146,9 +141,12 @@ function HostSession(props: Props) {
   });
   function inspectedDisplay(input: { accountId: string; assignmentFileId: string; contextRef: object; selection: { revision: number } }) {
     const display = owner.current?.getState().display;
+    // An independently inspected original subset has its own revision (the
+    // workspace uses 1), not the saved main population's selection revision.
+    // read() still binds the current display at click and actual lane admission.
     if (!display || input.accountId !== initial.target.accountId || input.assignmentFileId !== initial.target.assignmentFileId
       || JSON.stringify(input.contextRef) !== JSON.stringify(display.active.context_ref)
-      || input.selection.revision !== display.active.selection_ref.selection_revision) throw fault('context_changed');
+      || !Number.isSafeInteger(input.selection.revision) || input.selection.revision < 1) throw fault('context_changed');
     admitDisplay(display); return display;
   }
   const [inspectionPreview] = useState<CustomCohortExactWorkspace['inspectionPreview']>(() => (...[input, options]: Parameters<CustomCohortExactWorkspace['inspectionPreview']>) => {
@@ -197,7 +195,6 @@ function HostSession(props: Props) {
         else if (bootstrap && current.status === 'idle' && !current.checkpoint?.pending_capture
           && hasValidCustomWorkspaceObservationPeriod(initial.initialPeriod)) await lifecycle.start(initial.initialPeriod!, undefined, discovery());
       }
-      if (live.current && generation.current === epoch) setReportEpoch(value => value + 1);
     } finally { if (freshAbort.current === abort) freshAbort.current = null; }
   });
   useEffect(() => {
@@ -209,7 +206,7 @@ function HostSession(props: Props) {
       flush: async () => {
         try { await currentAction.current; await requests.flush(); const current = owner.current?.getState();
           return live.current && generation.current === epoch && !currentAction.current && !lockedRef.current && !actionFailed.current
-            && !reportUncertainRef.current && !reportRecoveryRef.current && Boolean(owner.current?.isSettled()) && requests.isIdle()
+            && Boolean(owner.current?.isSettled()) && requests.isIdle()
             && Boolean(current && !current.recovery && !current.checkpoint?.pending_capture && ['idle', 'ready'].includes(current.status)
               && (current.status !== 'ready' || current.display_freshness === 'current'));
         } catch { return false; }
@@ -217,7 +214,7 @@ function HostSession(props: Props) {
     void act(() => reload(true));
     return () => {
       live.current = false; generation.current = epoch + 1; currentAction.current = null;
-      freshAbort.current?.abort(); reportAbort.current?.abort(); owner.current?.dispose(); requests.dispose();
+      freshAbort.current?.abort(); owner.current?.dispose(); requests.dispose();
       owner.current = null; lane.current = null; initial.registerControls?.(null);
     };
   }, [initial, reload]);
@@ -233,29 +230,12 @@ function HostSession(props: Props) {
     const lifecycle = owner.current, current = lifecycle?.getState();
     if (current?.checkpoint?.pending_capture && (!current.recovery || current.recovery === 'resume_pending')) await lifecycle!.setAsidePending();
   }
-  function runReportTask(task: (io: CustomWorkspaceOperationOptions) => Promise<void>) {
-    const current = owner.current?.getState();
-    if (actionFailed.current || current?.status !== 'ready' || current.recovery || current.checkpoint?.pending_capture
-      || current.display_freshness !== 'current' || current.display !== state?.display || (reportRecoveryRef.current && !lane.current?.isIdle())) return Promise.resolve(false);
-    return act(async () => {
-      const requests = lane.current, lifecycle = owner.current, current = lifecycle?.getState();
-      if (!requests || !lifecycle?.isSettled() || current?.status !== 'ready' || current.recovery
-        || current.checkpoint?.pending_capture || current.display_freshness !== 'current' || current.display !== state?.display) throw fault('busy');
-      if (reportRecoveryRef.current) { if (!requests.isIdle()) throw fault('busy'); requests.recover(); }
-      await requests.flush(); const abort = new AbortController(); reportAbort.current = abort;
-      const epoch = generation.current, deadline = performance.now() + 65_000;
-      try {
-        await requests.run(({ signal }) => task({ signal, deadline }), { signal: abort.signal });
-        if (live.current && generation.current === epoch) { reportRecoveryRef.current = false; setReportRecovery(false); }
-      } finally { if (reportAbort.current === abort) reportAbort.current = null; }
-    }, true);
-  }
   const saving = actionPending || Boolean(state?.operation_pending) || state?.status === 'busy';
   const busy = saving || readOnly || locked;
   const blockedReason = readOnly || locked ? 'read_only' : actionFailed.current || message
     || state?.recovery || state?.status === 'invalid' || state?.status === 'error' ? 'reload_required'
     : state?.checkpoint?.pending_capture ? 'pending_capture' : state?.status === 'ready' || state?.status === 'idle' ? null : 'reload_required';
-  const explorationBlocked = blockedReason ?? (reportUncertain || reportRecovery ? 'reload_required' : null);
+  const explorationBlocked = blockedReason;
   const display = state?.display, installed = scope?.profile_id !== 'custom-city-polygon-v1' || cities.some(c => scopeKey(c.discovery) === scopeKey(scope));
   const recoveryNeeded = Boolean(actionFailed.current || message || state?.recovery || state?.status === 'error' || state?.checkpoint?.pending_capture || (!state && !actionPending));
   return <section className="space-y-3 print:hidden" aria-label="Saved neighborhood workspace">
@@ -275,8 +255,8 @@ function HostSession(props: Props) {
       <button type="button" className={button} disabled={busy || !validPeriod || !installed || Boolean(explorationBlocked)} onClick={() => {
         if (!explorationBlocked && owner.current && hasValidCustomWorkspaceObservationPeriod(period.current)) void act(() => owner.current!.start({ ...period.current }, undefined, discovery()));
       }}>{scope?.profile_id === 'custom-city-polygon-v1' ? `Explore ${scopeLabel(scope)}` : `Explore ${scopeKey(scope)}-mile area`}</button>
-      {recoveryNeeded && <button type="button" className={button} disabled={busy || reportUncertain || reportRecovery} onClick={() => { void act(recover); }}>Try again</button>}
-      {state?.checkpoint?.pending_capture && <button type="button" className={button} disabled={busy || reportUncertain || reportRecovery}
+      {recoveryNeeded && <button type="button" className={button} disabled={busy} onClick={() => { void act(recover); }}>Try again</button>}
+      {state?.checkpoint?.pending_capture && <button type="button" className={button} disabled={busy}
         onClick={() => { void act(setAside); }}>Choose a different area</button>}
     </div>
     {(start || end) && !validPeriod && <p role="alert" className="text-sm">Choose valid observation start and end dates, with the start on or before the end. No study has been requested for these dates.</p>}
@@ -284,16 +264,10 @@ function HostSession(props: Props) {
       : readOnly ? 'Neighborhood analysis is read-only while the report is being finalized.' : state?.status === 'ready' && !blockedReason
         ? 'Neighborhood ready. Statistics update with the selected subdivisions.' : 'Choose an area to begin.'}</p>
     {(message || state?.status === 'invalid' || state?.status === 'error') && <p role="alert" className="text-sm">{message ?? 'The neighborhood could not be loaded. Try again.'}</p>}
-    {reportRecovery && <p role="alert" className="text-sm">The report did not finish updating. Try again.</p>}
     {display && !locked && <CustomCohortWorkspace accountId={initial.target.accountId} assignmentFileId={initial.target.assignmentFileId}
       sessionKey={initial.target.sessionKey} contextRef={display.active.context_ref} subjectLabel={initial.subjectLabel} enabled exact={{ display,
         freshness: state?.display_freshness === 'current' ? 'current' : 'stale', saving, blockedReason: explorationBlocked, readViewport, readMembers, inspectionPreview, inspectionMembers,
         onSelectionIntent: ids => { try { admitDisplay(display); const included = Object.freeze([...ids]); void act(() => owner.current!.setGroups(included)); }
           catch { /* Retained/stale callbacks cannot enqueue a command. */ } } }} />}
-    {display && state?.status === 'ready' && state.section_revision !== null && !locked && <CustomReportedObservationAdoption
-      key={JSON.stringify([display.active.context_ref, state.section_revision, reportEpoch])} target={initial.target} contextRef={display.active.context_ref}
-      workspaceRevision={state.section_revision} api={initial.api} disabled={busy || Boolean(blockedReason)} run={runReportTask}
-      onOutcomeUncertain={value => { if (live.current && owner.current?.getState().display === display) {
-        reportUncertainRef.current = value; setReportUncertain(value); } }} onAccepted={initial.onAccepted} />}
   </section>;
 }

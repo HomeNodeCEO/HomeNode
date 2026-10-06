@@ -21,6 +21,7 @@ const AREA_BY_KEY = new Map([
   ["radius_3", { key: "radius_3", scope: "radius", radiusMiles: 3 }],
   ["radius_4", { key: "radius_4", scope: "radius", radiusMiles: 4 }],
   ["radius_5", { key: "radius_5", scope: "radius", radiusMiles: 5 }],
+  ["exploration", { key: "exploration", scope: "exploration", radiusMiles: null }],
   ["custom", { key: "custom", scope: "custom", radiusMiles: null }],
 ]);
 
@@ -113,6 +114,7 @@ function normalizedCounty(value) {
 }
 
 function areaLabel(area, subject) {
+  if (area.scope === "exploration") return "Exploration Map Area";
   if (area.scope === "city") {
     return [subject.city, subject.county].filter(Boolean).join(", ");
   }
@@ -198,22 +200,23 @@ export function validateCustomMarketGeometry(value) {
   };
 }
 
-export function parseMarketAreaKeys(value) {
+export function parseMarketAreaKeys(value, { allowExploration = false } = {}) {
+  const maximum = MARKET_AREA_KEYS.length + (allowExploration ? 1 : 0);
   const values = Array.isArray(value)
     ? value
-    : String(value || "").split(",", MARKET_AREA_KEYS.length + 2);
+    : String(value || "").split(",", maximum + 2);
   // A conventional single trailing delimiter does not represent another area.
   // Retain all other raw segments until after the bound check so repeated
   // delimiters or duplicate inputs cannot inflate parsing work without limit.
   if (!Array.isArray(value) && values.at(-1)?.trim() === "") values.pop();
-  if (values.length > MARKET_AREA_KEYS.length) {
+  if (values.length > maximum) {
     throw new Error("market_area_limit_exceeded");
   }
   const raw = values.map((item) => String(item || "").trim()).filter(Boolean);
   const keys = [...new Set(raw)];
   if (!keys.length) throw new Error("market_areas_required");
   const areas = keys.map((key) => AREA_BY_KEY.get(key));
-  if (areas.some((area) => !area)) {
+  if (areas.some((area) => !area || (!allowExploration && area.scope === 'exploration'))) {
     throw new Error("invalid_market_area");
   }
   return areas;
@@ -233,7 +236,7 @@ export function normalizeMarketAnalysisRequest({
   }
   return {
     subjectAccountId: String(subjectAccountId || "").trim(),
-    areaKeys: parseMarketAreaKeys(areaKeys).map((area) => area.key),
+    areaKeys: parseMarketAreaKeys(areaKeys, { allowExploration: true }).map((area) => area.key),
     asOfDate: String(asOfDate || "").trim(),
     periodMonths: normalizedPeriodMonths,
     customGeometry: customGeometry || null,
@@ -355,6 +358,7 @@ async function loadSubject(pool, subjectAccountId) {
 
 export async function getMarketContext(pool, subjectAccountId, {
   accountIdAllowed = (value) => /^[0-9A-Za-z]{17}$/.test(value),
+  refreshLocation = true,
 } = {}) {
   if (typeof accountIdAllowed !== "function" || !accountIdAllowed(subjectAccountId)) {
     throw new Error("invalid_subject_account_id");
@@ -363,9 +367,9 @@ export async function getMarketContext(pool, subjectAccountId, {
   let subject = await loadSubject(pool, subjectAccountId);
   if (!subject) throw new Error("subject_not_found");
   if (
-    subject.location_status !== "matched" ||
+    refreshLocation && (subject.location_status !== "matched" ||
     subject.latitude == null ||
-    subject.longitude == null
+    subject.longitude == null)
   ) {
     try {
       await refreshAccountLocations(pool, [subject], { batchSize: 1 });
@@ -548,8 +552,13 @@ async function validateCustomAreaInDatabase(pool, geometry, subject) {
   };
 }
 
+// This deterministic, single-row parameter CTE must be inlined. Materializing
+// it hides the chosen date/area constants from PostgreSQL, delaying geographic
+// filtering until after the broad enriched-sale joins and preventing hashed
+// membership checks for large exploration unions. All statistics remain over
+// the same complete eligible population; this is not a sampling or cache change.
 const MARKET_ANALYSIS_SQL = `
-  WITH parameters AS (
+  WITH parameters AS NOT MATERIALIZED (
     SELECT
       NULLIF($1, '')::date AS period_end,
       (
@@ -564,6 +573,7 @@ const MARKET_ANALYSIS_SQL = `
       $7::double precision AS subject_longitude,
       $8::text AS area_scope,
       $9::double precision AS radius_miles,
+      $11::text[] AS exploration_accounts,
       CASE
         WHEN NULLIF($10, '') IS NULL THEN NULL
         ELSE ST_SetSRID(ST_GeomFromGeoJSON($10), 4326)
@@ -640,12 +650,19 @@ const MARKET_ANALYSIS_SQL = `
     WHERE sale.record_type = 'closed_sale'
       AND sale.closing_date >= parameters.period_start
       AND sale.closing_date <= parameters.period_end
+      AND (parameters.area_scope <> 'exploration'
+        OR sale.primary_account_id = ANY(parameters.exploration_accounts)
+        OR EXISTS (SELECT 1 FROM core.sale_parcels link
+          WHERE link.source_record_id = sale.source_record_id AND link.is_resolved
+            AND link.account_id = ANY(parameters.exploration_accounts)))
   ),
   eligible AS (
     SELECT base.*
     FROM base
     CROSS JOIN parameters
     WHERE
+      parameters.area_scope = 'exploration'
+      OR
       (
         parameters.area_scope = 'city'
         AND LOWER(BTRIM(base.account_city)) =
@@ -992,7 +1009,7 @@ export function weightedCompositeDispersion(factors, measure) {
     const rawValue =
       key === "housing_type" ? factor?.dispersion : factor?.[measure];
     const value = numberOrNull(rawValue);
-    if (value === null || Number(factor?.count || 0) <= 0) continue;
+    if (value === null || value < 0 || Number(factor?.count || 0) <= 0) continue;
     weightedTotal += value * weight;
     availableWeight += weight;
   }
@@ -1039,7 +1056,6 @@ function calendarMonthIndex(value) {
 export function calculateMarketStudyStatistics({
   monthlySeries,
   eligibleSaleCount,
-  periodMonths,
   congruencyFactors,
 }) {
   const validMonthly = [...(monthlySeries || [])]
@@ -1081,23 +1097,15 @@ export function calculateMarketStudyStatistics({
     compositeCod.available_weight,
     compositeCv.available_weight,
   );
-  const sampleScore = Math.min(Number(eligibleSaleCount || 0) / 100, 1);
-  const coverageScore = Math.min(
-    validMonthly.length / Math.max(Number(periodMonths || 0), 1),
-    1,
-  );
-  const meanDispersion =
-    compositeCod.value !== null && compositeCv.value !== null
-      ? (compositeCod.value + compositeCv.value) / 2
-      : compositeCod.value ?? compositeCv.value;
-  const congruencyScore =
-    meanDispersion === null ? 0 : 1 / (1 + Math.max(meanDispersion, 0) / 100);
-  const reliabilityScore =
-    (sampleScore * 0.35 +
-      coverageScore * 0.2 +
-      congruencyScore * 0.35 +
-      availableWeight * 0.1) *
-    100;
+  const meanDispersion = compositeMeanDispersion({
+    composite_cod: compositeCod.value,
+    composite_cv: compositeCv.value,
+  });
+  // This is a population-consistency index, not a confidence probability or
+  // similarity to the subject. Counts and coverage remain separate evidence.
+  // Missing COD/CV must not masquerade as a perfectly consistent population.
+  const reliabilityScore = meanDispersion === null
+    ? null : 100 / (1 + meanDispersion / 100);
   return {
     annualized_change_percent: rounded(annualizedChange, 2),
     trend_start_period: first?.period_start || null,
@@ -1113,6 +1121,13 @@ export function calculateMarketStudyStatistics({
   };
 }
 
+function compositeMeanDispersion(statistics) {
+  const cod = numberOrNull(statistics?.composite_cod);
+  const cv = numberOrNull(statistics?.composite_cv);
+  return cod !== null && cv !== null && cod >= 0 && cv >= 0
+    ? (cod + cv) / 2 : null;
+}
+
 export function buildMarketTrendRecommendation(analyses) {
   const rankedStudies = (analyses || [])
     .filter(
@@ -1120,15 +1135,11 @@ export function buildMarketTrendRecommendation(analyses) {
         numberOrNull(analysis?.statistics?.annualized_change_percent) !== null,
     )
     .sort((left, right) => {
-      if (
-        left.statistics.sample_sufficient !==
-        right.statistics.sample_sufficient
-      ) {
-        return left.statistics.sample_sufficient ? -1 : 1;
-      }
       return (
         Number(right.statistics.reliability_score || 0) -
           Number(left.statistics.reliability_score || 0) ||
+        (compositeMeanDispersion(left.statistics) ?? Infinity) -
+          (compositeMeanDispersion(right.statistics) ?? Infinity) ||
         Number(right.population?.eligible_sale_count || 0) -
           Number(left.population?.eligible_sale_count || 0)
       );
@@ -1183,7 +1194,7 @@ export function buildMarketTrendRecommendation(analyses) {
           ? "increasing"
           : "decreasing";
   return {
-    methodology_version: 2,
+    methodology_version: 3,
     weighting_method: rankedStudies.some(
       (analysis) => analysis.market.key === "custom",
     )
@@ -1353,6 +1364,14 @@ export async function buildMarketConditionsAnalyses(
     marketContextOverride,
   } = normalizeMarketAnalysisRequest(input || {});
   const areas = areaKeys.map((key) => AREA_BY_KEY.get(key));
+  // Only the authenticated cohort owner supplies these IDs after validating
+  // membership. No hull/bounds approximation can add neighboring parcels.
+  const explorationAccounts = input?.explorationAccountIds ?? null;
+  if (areas.some(area => area.scope === 'exploration') && (!Array.isArray(explorationAccounts)
+    || explorationAccounts.length > 50000 || new Set(explorationAccounts).size !== explorationAccounts.length
+    || explorationAccounts.some(id => typeof id !== 'string' || !id || id.length > 100))) {
+    throw new Error('invalid_exploration_selection');
+  }
   const calendarWindow = completeCalendarMonthWindow(
     asOfDate,
     parsedPeriodMonths,
@@ -1360,6 +1379,10 @@ export async function buildMarketConditionsAnalyses(
 
   const storedSubject = await getMarketContext(pool, subjectAccountId, {
     accountIdAllowed,
+    // Numeric studies consume the stored geography and selected date window.
+    // Do not fetch CAD or repair locations during a calculation. ZIP/city can
+    // still run without coordinates; unavailable radii remain explicit.
+    refreshLocation: false,
   });
   const subject = applyMarketContextOverride(
     storedSubject,
@@ -1428,6 +1451,7 @@ export async function buildMarketConditionsAnalyses(
       area.scope === "custom"
         ? JSON.stringify(normalizedCustomGeometry)
         : "",
+      area.scope === 'exploration' ? explorationAccounts : null,
     ]);
     analyses.push({
       market: {
@@ -1447,7 +1471,7 @@ export async function buildMarketConditionsAnalyses(
         includes_subject:
           area.scope === "custom"
             ? customValidation?.includesSubject ?? null
-            : true,
+            : area.scope === 'exploration' ? explorationAccounts.includes(subjectAccountId) : true,
       },
       ...normalizeAnalysisRow(rows[0], parsedPeriodMonths),
       filters: {

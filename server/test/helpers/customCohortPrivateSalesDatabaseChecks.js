@@ -26,6 +26,7 @@ import { canonicalAssessmentJson as json } from '../../src/services/neighborhood
 import { prepareAssignmentSalesMatchCandidatesFixture }
   from './assignmentSalesMatchCandidatesDatabaseChecks.js';
 import { NEIGHBORHOOD_CI_IDENTITY_SQL, verifyNeighborhoodCiConnection } from './neighborhoodCiDatabase.js';
+import { runCustomCohortPrivateCheckpointDatabaseChecks } from './customCohortPrivateCheckpointDatabaseChecks.js';
 
 const sha = value => createHash('sha256').update(value).digest('hex');
 const errorCode = code => error => { assert.equal(error.code, code); return true; };
@@ -512,6 +513,10 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
   await assert.rejects(owner.capture({ ...unknown, privateSalesImport: { ...unknown.privateSalesImport,
     expected_review_revision: unknown.privateSalesImport.expected_review_revision - 1 } }), reason('operation_conflict'));
   assert.equal(await countContext(unknown.operationId), 1);
+  const checkpointChecks = await runCustomCohortPrivateCheckpointDatabaseChecks({ pool, target, auth,
+    makeOwner, captureInput, appendReview: () => append(null, [decision(original[0], 'exclude')]),
+    revokeRights: () => writeRights({ ...rights, revoked_at: times.past }), restoreRights: () => writeRights(rights) });
+  checks.push(...checkpointChecks.checks);
   assert.deepEqual(await protectedState(), afterCheckpoint);
   assert.equal(pool.waitingCount, 0);
   checks.push('actual durable context COMMIT with lost acknowledgment recovers once by exact batch/review operation; original CSV/shared sales/report/accepted/signing rows remain unchanged');

@@ -219,3 +219,54 @@ test('cancellation safely replays a terminal result under the exact scope', asyn
   assert.match(calls[1].sql, /organization_id=\$2::uuid/);
   assert.deepEqual(calls[0].values, calls[1].values);
 });
+
+test('checkpoint reads and writes use the exact live scope, original actor and claim fence', async () => {
+  const calls = [], claim = { operation_id: operation, claim_token: token, attempts: 2 };
+  const options = { scope, actorUserId: actor };
+  const checkpoint = { phase: 'subject', evidence_refs: [
+    { content_sha256: 'a'.repeat(64), canonical_utf8_bytes: '123' }] };
+  let stored = null;
+  const repository = createCustomCohortCaptureJobRepository({ async query(sql, values) {
+    calls.push({ sql, values });
+    if (sql.includes('checkpoint-save')) stored = JSON.parse(values[8]);
+    return { rowCount: 1, rows: [{ checkpoint: stored }] };
+  } });
+  assert.equal(await repository.readCheckpoint(claim, options), null);
+  assert.deepEqual(await repository.saveCheckpoint(claim, options, checkpoint), checkpoint);
+  const reopened = await repository.readCheckpoint(claim, options);
+  assert.deepEqual(reopened, checkpoint);
+  assert.equal(Object.isFrozen(reopened.evidence_refs[0]), true);
+  for (const { sql, values } of calls) {
+    assert.deepEqual(values.slice(0, 8), [operation, token, 2, organization, report,
+      scope.assignment_file_id, scope.account_id, actor]);
+    for (const fragment of ["status='running'", 'lease_expires_at>clock_timestamp()',
+      'organization_id=$4::uuid', 'report_file_id=$5::uuid', 'assignment_file_id=$6::bigint',
+      'account_id=$7', 'actor_user_id=$8::uuid', 'cancellation_requested_at IS NULL']) {
+      assert.ok(sql.includes(fragment), fragment);
+    }
+    assert.ok(!sql.includes('SET lease_expires_at'), 'checkpointing does not renew a lease');
+  }
+});
+
+test('checkpoint access refuses stale claims, corrupt readback and unadmitted options', async () => {
+  const claim = { operation_id: operation, claim_token: token, attempts: 1 };
+  const options = { scope, actorUserId: actor };
+  const checkpoint = { phase: 'subject', evidence_refs: [] };
+  let calls = 0, answer = { rowCount: 0, rows: [] };
+  const repository = createCustomCohortCaptureJobRepository({ async query() { calls++; return answer; } });
+  await assert.rejects(repository.readCheckpoint(claim, options), /claim_lost/);
+  await assert.rejects(repository.saveCheckpoint(claim, options, checkpoint), /claim_lost/);
+  answer = { rowCount: 1, rows: [{ checkpoint: { phase: 'source', evidence_refs: [] } }] };
+  await assert.rejects(repository.saveCheckpoint(claim, options, checkpoint), /job_corrupt/);
+  answer.rows[0].checkpoint.phase = 'invalid';
+  await assert.rejects(repository.readCheckpoint(claim, options), /invalid_checkpoint/);
+  const before = calls;
+  for (const invalid of [{ ...options, token: 'not admitted' }, { scope },
+    { ...options, actorUserId: 'bad' }, { ...options, scope: { ...scope, account_id: '' } }]) {
+    await assert.rejects(repository.readCheckpoint(claim, invalid), /invalid_/);
+    await assert.rejects(repository.saveCheckpoint(claim, invalid, checkpoint), /invalid_/);
+  }
+  await assert.rejects(repository.saveCheckpoint(claim, options,
+    { phase: 'subject', evidence_refs: [{ content_sha256: 'bad', canonical_utf8_bytes: '1' }] }), /invalid_checkpoint/);
+  assert.equal(calls, before, 'unadmitted checkpoint input never reaches SQL');
+});

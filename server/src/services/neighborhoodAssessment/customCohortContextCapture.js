@@ -17,9 +17,11 @@ import { assessmentDate, assessmentEvidenceDigest, canonicalAssessmentJson } fro
 import { createNeighborhoodCohortBlobRepository } from './cohortEvidenceBlobRepository.js';
 import { createCustomCohortSubjectRepository } from './customCohortSubjectRepository.js';
 import { createCustomCohortContextRepository } from './customCohortContextRepository.js';
-import { createCustomCohortCaptureJobRepository } from './customCohortCaptureJobRepository.js';
+import { createCustomCohortCaptureJobRepository, prepareCustomCohortCaptureJobClaim } from './customCohortCaptureJobRepository.js';
 import { loadCurrentCustomCohortJobActor } from './customCohortJobActor.js';
-import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
+import { resumeCustomCohortSubjectCheckpoint } from './customCohortCaptureSubjectCheckpoint.js';
+import { resumeCustomCohortPreparationCheckpoint } from './customCohortCapturePreparationCheckpoint.js';
+import { prepareCustomCohortContextReference, prepareCustomCohortContextHeader } from './customCohortContextContract.js';
 import { captureNeighborhoodSpatialMembershipCompact } from './cachedSpatialMembership.js';
 import { readCustomCohortPreparedSecondaryFacts } from './customCohortPreparedSecondaryMap.js';
 import { resolveNeighborhoodCachedTransactionClosure } from './cachedTransactionClosureReader.js';
@@ -512,9 +514,14 @@ function captured(value, stage) {
 }
 
 async function authorizedRetainedInputs(client, { scopeJson, reference, input, authorizeMarketData, authorizePrivateSales, budget, study = null,
-  exposure = 'none', additionalExposures = [], loadInputs = true, privateSummary = false, beforeLoad = null }) {
-  const previous = await createCustomCohortContextRepository(client, scopeJson).get(canonicalAssessmentJson(reference));
+  exposure = 'none', additionalExposures = [], loadInputs = true, privateSummary = false, beforeLoad = null,
+  stagedHeader = null, expectedIntent = null }) {
+  // Only the private worker checkpoint path supplies a parsed original staged
+  // header. It conveys no registered-context or source authority. Both paths
+  // must authorize today's original source purpose before opening row pages.
+  const previous = stagedHeader ?? await createCustomCohortContextRepository(client, scopeJson).get(canonicalAssessmentJson(reference));
   if (!previous) fail('context_unavailable');
+  if (!same(previous.context_ref, reference)) fail('operation_conflict');
   const refs = Object.fromEntries(DEPENDENCIES.map(key => [key, previous.body[key]]));
   const context = { target: {
     report_file_id: previous.body.target.report_file_id, workflow_type: 'custom_appraisal',
@@ -530,6 +537,8 @@ async function authorizedRetainedInputs(client, { scopeJson, reference, input, a
   // Only the bounded request directory is opened before current licensing.
   // Never read full source rows simply because this operation was allowed before.
   const directory = await readMetadata(refs.selection_input);
+  if (expectedIntent && (!same(directory.acquisition_intent, expectedIntent)
+    || !same(directory.subject_inputs, (await readMetadata(expectedIntent)).subject_inputs))) fail('checkpoint_conflict');
   const requestMetadata = await readMetadata(directory.request?.metadata);
   const compact = await readMetadata(directory.compact_metadata);
   if (!same(requestMetadata.target, context.target) || !same(requestMetadata.scope, context.scope)
@@ -1200,8 +1209,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     async capture(value, options = {}) {
     if (!options || Object.getPrototypeOf(options) !== Object.prototype)
       fail('invalid_options');
-    const { captureJobClaim, ...budgetOptions } = options;
+    const { captureJobClaim: providedClaim, ...budgetOptions } = options;
     let input = inputOf(value);
+    const captureJobClaim = providedClaim ? prepareCustomCohortCaptureJobClaim(providedClaim) : null;
+    if (captureJobClaim && captureJobClaim.operation_id !== input.operationId.toLowerCase()) fail('operation_conflict');
+    if (captureJobClaim) input = freeze({ ...input, operationId: captureJobClaim.operation_id });
     const budget = operationBudget(budgetOptions, LIMITS.capture_duration_ms);
     async function refreshJobActor(client, organizationId) {
       if (!captureJobClaim) return;
@@ -1226,6 +1238,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       const scope = Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]]));
       const scopeJson = canonicalAssessmentJson(scope);
       const repository = createCustomCohortSubjectRepository(client, scopeJson);
+      const jobs = captureJobClaim ? createCustomCohortCaptureJobRepository(client) : null;
+      const jobScope = { scope, actorUserId: input.auth.userId };
+      const checkpoint = jobs ? await jobs.readCheckpoint(captureJobClaim, jobScope) : null;
       const existing = await client.query(`/* custom-cohort-capture:existing-context */
         SELECT context_sha256 FROM app.neighborhood_custom_cohort_contexts
         WHERE organization_id=$1 AND context_id=$2`, [scope.organization_id, input.operationId]);
@@ -1252,6 +1267,26 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           ...(input.privateSalesImport ? { private_sales_import: input.privateSalesImport } : {}) }) };
       }
       if (privateWorkfile) privateDraft(privateWorkfile);
+      if (checkpoint) {
+        const resume = checkpoint.phase === 'preparation'
+          ? resumeCustomCohortPreparationCheckpoint : resumeCustomCohortSubjectCheckpoint;
+        const resumed = await resume({ checkpoint,
+          blobs: createNeighborhoodCohortBlobRepository(client, scope.organization_id),
+          subjects: repository, input, study, reportedProfile, housingProfile });
+        if (resumed.stagedHeader) {
+          authorizePublicCadastralCatalogRead(input.auth, input.accountId, { workflows: ['custom_appraisal'],
+            permissionChecker: (auth, workflow, permission) => hasApplicationPermission(auth, workflow, permission, scope.organization_id) });
+          const stagedCapture = await authorizedRetainedInputs(client, { scopeJson,
+            reference: resumed.stagedHeader.context_ref, input, authorizeMarketData, authorizePrivateSales,
+            budget, study, stagedHeader: resumed.stagedHeader, expectedIntent: resumed.intent.reference });
+          if (!same(stagedCapture.retained.subject_reference, resumed.subjectReference)
+            || !same(stagedCapture.retained.acquisition_intent, resumed.intent)) fail('checkpoint_conflict');
+          budget.check();
+          return { scope, scopeJson, ...resumed, stagedCapture, checkpoint };
+        }
+        budget.check();
+        return { scope, scopeJson, ...resumed };
+      }
       const subjectReference = await repository.capture();
       const subject = await repository.load(subjectReference);
       if (study.observation_period.end_date > subject.effective_date) fail('period_after_effective_date');
@@ -1264,18 +1299,25 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         recorded_housing_interpretation: housingProfile,
         ...(input.privateSalesImport ? { private_sales_import: input.privateSalesImport } : {}) });
       const reference = await createNeighborhoodCohortBlobRepository(client, scope.organization_id).put(canonicalAssessmentJson(body));
+      if (jobs) await jobs.saveCheckpoint(captureJobClaim, jobScope,
+        { phase: 'subject', evidence_refs: [reference] });
       return { scope, scopeJson, subject, subjectReference, point, intent: { reference, body } };
     }));
     if (phaseOne.replay) return phaseOne.replay;
     const { scope, scopeJson, subject, subjectReference, point, intent } = phaseOne;
     // A saved operation replays its retained original before consulting today's
     // registry. A NEW city study accepts only an installed, dated local asset.
-    const city = input.discovery?.profile_id === NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY
+    const city = !phaseOne.stagedCapture && input.discovery?.profile_id === NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY
       ? await loadInstalledCustomCityDiscovery(input.discovery) : null;
     budget.check();
     const context = contextOf(subject);
-    let purpose, decision;
-    const read = await transaction(pool, 'REPEATABLE READ READ ONLY', budget, async client => {
+    let purpose = phaseOne.stagedCapture?.purpose, decision = phaseOne.stagedCapture?.decision;
+    const originals = phaseOne.stagedCapture?.retained.retained_inputs;
+    // Completed acquisition/preparation retries use the exact complete original
+    // snapshot. A later database sweep must not get mixed into that operation.
+    const read = originals ? { spatial: originals.spatial, selector: originals.selector,
+      result: originals.acquisition.capture_result, privateSales: originals.private_sales ?? null }
+      : await transaction(pool, 'REPEATABLE READ READ ONLY', budget, async client => {
       await refreshJobActor(client, scope.organization_id);
       assertTarget(await resolveTarget(client, input, false), subject.target);
       authorizePublicCadastralCatalogRead(input.auth, input.accountId, { workflows: ['custom_appraisal'],
@@ -1335,7 +1377,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     // any prepared evidence/context is persisted. Never hold an idle write
     // transaction while encoding a dense area's evidence graph.
     budget.check();
-    const prepared = await phase('preparation', () => {
+    const prepared = originals ? null : await phase('preparation', () => {
       const acquisition = consumeNeighborhoodCachedAcquisition(read.reader, read.result);
       return prepareCustomCohortCaptureInputsBatched({ acquisition, spatial: read.spatial, subject,
         subject_reference: subjectReference, selector: read.selector, study, acquisition_intent: intent,
@@ -1344,7 +1386,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         recorded_housing_interpretation: housingProfile,
         ...(read.privateSales ? { private_sales: read.privateSales } : {}) }, { check: budget.check });
     });
-    return transaction(pool, 'READ COMMITTED', budget, async client => {
+    const recheckCapture = async client => {
       await refreshJobActor(client, scope.organization_id);
       if (read.privateSales) privateDraft(await privateCaptureWorkfile(client, input));
       assertTarget(await resolveTarget(client, input, true), subject.target);
@@ -1359,18 +1401,47 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         await recheckAssignmentSalesCsvCapture(client.query.bind(client), read.privateSales.capture);
       }
       budget.check();
-      const refs = await phase('retention', () => persistCustomCohortCaptureInputs(client, scopeJson, prepared));
+    };
+    const headerFor = refs => ({ context_version: 1, context_id: input.operationId, context_revision: '1',
+      target: { ...context.target, ...context.scope, snapshot_version: subject.target.snapshot_version },
+      effective_date: subject.effective_date, ...refs });
+    let stagedHeader = phaseOne.stagedHeader, preparedCheckpoint = phaseOne.checkpoint;
+    if (captureJobClaim && !stagedHeader) {
+      // Stage only a WHOLE validated acquisition. Immutable originals, their
+      // header and the fenced checkpoint commit together; no context/report is
+      // published here. Partial source pages cannot become a completed study.
+      await transaction(pool, 'READ COMMITTED', budget, async client => {
+        await recheckCapture(client);
+        const refs = await phase('retention', () => persistCustomCohortCaptureInputs(client, scopeJson, prepared));
+        const canonicalHeader = canonicalAssessmentJson(headerFor(refs));
+        const representedHeader = prepareCustomCohortContextHeader(canonicalHeader);
+        const headerRef = await createNeighborhoodCohortBlobRepository(client, scope.organization_id).put(canonicalHeader);
+        preparedCheckpoint = { phase: 'preparation', evidence_refs: [intent.reference, headerRef] };
+        await createCustomCohortCaptureJobRepository(client).saveCheckpoint(captureJobClaim,
+          { scope, actorUserId: input.auth.userId }, preparedCheckpoint);
+        stagedHeader = representedHeader;
+      });
+    }
+    return transaction(pool, 'READ COMMITTED', budget, async client => {
+      await recheckCapture(client);
+      let header;
+      if (captureJobClaim) {
+        const current = await createCustomCohortCaptureJobRepository(client).readCheckpoint(captureJobClaim,
+          { scope, actorUserId: input.auth.userId });
+        if (!same(current, preparedCheckpoint)) fail('checkpoint_conflict');
+        header = stagedHeader.body;
+      } else {
+        const refs = await phase('retention', () => persistCustomCohortCaptureInputs(client, scopeJson, prepared));
+        header = headerFor(refs);
+      }
       budget.check();
-      const header = { context_version: 1, context_id: input.operationId, context_revision: '1',
-        target: { ...context.target, ...context.scope, snapshot_version: subject.target.snapshot_version },
-        effective_date: subject.effective_date, ...refs };
       const stored = await phase('registration', () => createCustomCohortContextRepository(client, scopeJson).put(canonicalAssessmentJson(header)));
       // The job and context become visible together. A lost/cancelled claim
       // aborts this transaction rather than publishing an orphaned context.
       if (captureJobClaim) await createCustomCohortCaptureJobRepository(client)
         .complete(captureJobClaim, stored.context_ref.context_sha256);
       return freeze({ status: 'registered', reused: stored.status === 'reused', context_ref: stored.context_ref,
-        discovery: { ...(city ? city.choice : { radius_metres: read.spatial.radius_metres }),
+        discovery: { ...(phaseOne.stagedCapture?.retained.summary.discovery ?? (city ? city.choice : { radius_metres: read.spatial.radius_metres })),
           parcel_count: read.spatial.parcels.length, account_count: read.spatial.account_ids.length },
         source_query_complete: true, provider_coverage: 'not_established',
         unsupported_capabilities: read.result.unsupported_capabilities,

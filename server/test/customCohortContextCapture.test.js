@@ -33,6 +33,43 @@ test('Custom capture requires an explicit server market policy, without default 
   assert.throws(() => createCustomCohortContextCapture({ pool: { connect() {} } }), /dependencies_required/);
 });
 
+test('a worker claim must bind the capture operation and is detached before any database wait', async () => {
+  const base = input(), claim = { operation_id: base.operationId,
+    claim_token: '33333333-3333-4333-8333-333333333333', attempts: 1 };
+  await assert.rejects(setup().capture(base, { captureJobClaim: { ...claim,
+    operation_id: '44444444-4444-4444-8444-444444444444' } }), /operation_conflict/);
+  for (const bad of [{ ...claim, auth: {} }, { ...claim, attempts: 0 },
+    { ...claim, claim_token: 'bad' }, {}]) {
+    await assert.rejects(setup().capture(base, { captureJobClaim: bad }), /invalid_/);
+  }
+  const queries = [], organization = '11111111-1111-4111-8111-111111111111';
+  const report = '22222222-2222-4222-8222-222222222222';
+  const original = structuredClone(claim);
+  const service = setup(async () => {
+    claim.operation_id = report; claim.claim_token = organization; claim.attempts = 5;
+    return { release() {}, async query({ text, values }) {
+      queries.push(text);
+      if (text.includes('custom-cohort-capture:assignment')) return { rowCount: 1, rows: [{
+        assignment_file_id: base.assignmentFileId, account_id: base.accountId,
+        organization_id: organization, assigned_appraiser_user_id: base.auth.userId,
+        supervisory_appraiser_user_id: null }] };
+      if (text.includes('custom-cohort-capture:report')) return { rowCount: 1, rows: [{
+        report_file_id: report, appraisal_case_id: null, subject_snapshot_id: null }] };
+      if (text.includes('custom-cohort-job:current-actor')) return { rowCount: 1, rows: [{
+        user_id: base.auth.userId, organization_id: organization, roles: ['appraiser'] }] };
+      if (text.includes('checkpoint-read')) {
+        assert.deepEqual(values.slice(0, 3), Object.values(original));
+        throw new Error('synthetic checkpoint read reached');
+      }
+      return { rowCount: 0, rows: [] };
+    } };
+  });
+  await assert.rejects(service.capture({ ...base, auth: { ...base.auth,
+    organizations: [{ organizationId: organization, roles: ['appraiser'] }] } },
+  { captureJobClaim: claim }), /synthetic checkpoint read reached/);
+  assert.ok(!queries.some(text => text.includes('subject:transaction') || text.includes('existing-context')));
+});
+
 test('worker capture refreshes current roles before subject evidence or replay lookup', async () => {
   const base = input(), organization = '11111111-1111-4111-8111-111111111111';
   const report = '22222222-2222-4222-8222-222222222222';

@@ -55,8 +55,13 @@ test('Custom capture jobs fence retries, cancellation and atomic context complet
     assert.equal(claimed.checkpoint, null, 'new jobs have no resumable checkpoint');
     const claim = { operation_id: claimed.operation_id, claim_token: claimed.claim_token,
       attempts: claimed.attempts };
+    const checkpointScope = { scope, actorUserId: actor };
+    assert.equal(await repository.readCheckpoint(claim, checkpointScope), null);
     assert.deepEqual(await repository.heartbeat(claim), { cancellation_requested: false });
     assert.equal((await repository.cancel(scope, firstOperation)).status, 'running');
+    await assert.rejects(repository.readCheckpoint(claim, checkpointScope), /claim_lost/);
+    await assert.rejects(repository.saveCheckpoint(claim, checkpointScope,
+      { phase: 'subject', evidence_refs: [] }), /claim_lost/);
     assert.deepEqual(await repository.heartbeat(claim), { cancellation_requested: true });
     assert.equal((await repository.failClaim(claim, 'cancelled')).status, 'cancelled');
     await assert.rejects(repository.heartbeat(claim), /claim_lost/);
@@ -93,11 +98,39 @@ test('Custom capture jobs fence retries, cancellation and atomic context complet
     await repository.enqueue({ scope, actorUserId: actor, request: makeRequest(retryOperation) });
     const [initial] = await repository.claimDue();
     assert.equal(initial.operation_id, retryOperation);
+    const initialClaim = { operation_id: retryOperation, claim_token: initial.claim_token, attempts: 1 };
+    await client.query('BEGIN');
+    const rolledBackOriginal = await createNeighborhoodCohortBlobRepository(client, organization)
+      .put(JSON.stringify({ synthetic_subject_checkpoint: retryOperation }));
+    await repository.saveCheckpoint(initialClaim, checkpointScope,
+      { phase: 'subject', evidence_refs: [rolledBackOriginal] });
+    await client.query('ROLLBACK');
+    assert.equal(await repository.readCheckpoint(initialClaim, checkpointScope), null,
+      'the checkpoint shares the original-evidence transaction rollback');
+    assert.equal(await createNeighborhoodCohortBlobRepository(client, organization)
+      .get(rolledBackOriginal.content_sha256, rolledBackOriginal.canonical_utf8_bytes), null);
+    const original = await createNeighborhoodCohortBlobRepository(client, organization)
+      .put(JSON.stringify({ synthetic_subject_checkpoint: retryOperation }));
+    const checkpoint = { phase: 'subject', evidence_refs: [original] };
+    assert.deepEqual(await repository.saveCheckpoint(initialClaim, checkpointScope, checkpoint), checkpoint);
+    for (const wrong of [{ ...checkpointScope, actorUserId: randomUUID() },
+      { ...checkpointScope, scope: { ...scope, account_id: 'FOREIGN-SYNTHETIC' } },
+      { ...checkpointScope, scope: { ...scope, report_file_id: randomUUID() } },
+      { ...checkpointScope, scope: { ...scope, organization_id: randomUUID() } },
+      { ...checkpointScope, scope: { ...scope, assignment_file_id: String(BigInt(assignment) + 1n) } }]) {
+      await assert.rejects(repository.readCheckpoint(initialClaim, wrong), /claim_lost/);
+      await assert.rejects(repository.saveCheckpoint(initialClaim, wrong, checkpoint), /claim_lost/);
+    }
     await client.query(`UPDATE app.neighborhood_custom_cohort_capture_jobs
       SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1`, [retryOperation]);
     const [reclaimed] = await repository.claimDue();
     assert.equal(reclaimed.operation_id, retryOperation);
     assert.equal(reclaimed.attempts, 2);
+    assert.deepEqual(reclaimed.checkpoint, checkpoint);
+    assert.deepEqual(await repository.readCheckpoint({ operation_id: retryOperation,
+      claim_token: reclaimed.claim_token, attempts: 2 }, checkpointScope), checkpoint);
+    await assert.rejects(repository.readCheckpoint(initialClaim, checkpointScope), /claim_lost/);
+    await assert.rejects(repository.saveCheckpoint(initialClaim, checkpointScope, checkpoint), /claim_lost/);
     await assert.rejects(repository.heartbeat({ operation_id: retryOperation,
       claim_token: initial.claim_token, attempts: 1 }), /claim_lost/,
     'a stale worker cannot extend the replacement claim');

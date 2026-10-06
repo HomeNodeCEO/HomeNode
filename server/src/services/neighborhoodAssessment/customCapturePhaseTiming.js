@@ -4,7 +4,7 @@ const PHASES = new Set(['subject', 'spatial', 'source', 'source_authorization', 
   'preparation', 'retention', 'registration']);
 const REPORT_PHASES = new Set(['load', 'assembly', 'publication', 'repository']);
 const PREVIEW_PHASES = new Set(['load', 'assembly', 'map', 'projection', 'authorization']);
-const CATALOG_PHASES = new Set(['catalog', 'proximity', 'prepared_secondary', 'recommendation', 'opening', 'fallback_opening']);
+const CATALOG_PHASES = new Set(['catalog', 'proximity', 'prepared_secondary', 'recommendation', 'retained_map_scores', 'opening', 'fallback_opening']);
 const PREPARED_CATALOG_PHASES = new Set(['target', 'authorization', 'catalog_read', 'map_opening_read', 'preview_read', 'projection', 'recheck']);
 const PREPARED_CATALOG_PROJECTION_PHASES = new Set(['binding', 'membership', 'opening_selection', 'observation_reselect',
   'map_select', 'map_manifest', 'summary_projection', 'transport_guard']);

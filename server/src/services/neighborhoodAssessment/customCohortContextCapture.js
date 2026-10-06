@@ -913,7 +913,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     }));
   }
   async function runPreview(value, options, { includeMap = true, exposure = 'none', additionalExposures = [], outputLimit = null,
-    recommendedAreaOpening = false, preparedFast = false, preparedCatalog = false, mapViewport = null, project } = {}) {
+    recommendedAreaOpening = false, preparedFast = false, preparedCatalog = false, manifestOpening = false, mapViewport = null, project } = {}) {
     const input = previewInputOf(value), budget = operationBudget(options);
     if (preparedFast) {
       const cached = await transaction(pool, 'READ COMMITTED', budget, async client => {
@@ -1079,6 +1079,14 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if (Object.hasOwn(content, 'initial_preview')) {
         const { initial_preview: _opening, ...catalogOnly } = response;
         if (Buffer.byteLength(JSON.stringify(catalogOnly)) > CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes) fail('catalog_transport_limit');
+      }
+      if (manifestOpening && response.initial_preview?.parcel_map?.status === 'available') {
+        // A first authorized replay must honor the same geometry-free opening
+        // as its prepared-cache reopens. Keep the original map internally for
+        // write-through and viewport tiles; only its wire projection changes.
+        response = { ...response, initial_preview: { ...response.initial_preview,
+          map_manifest: buildCustomCohortMapManifest(response.catalog, response.initial_preview.parcel_map),
+          parcel_map: { status: 'omitted', reason: 'viewport_required' } } };
       }
       if (outputLimit !== null && Object.hasOwn(response, 'prepared_secondary_map')
         && Buffer.byteLength(JSON.stringify(response)) > outputLimit) {
@@ -1576,6 +1584,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     return runPreview(input, options, { includeMap: false, exposure: 'report_observation_catalog',
       additionalExposures: include || opening ? ['report_observation_summary'] : [],
       preparedCatalog: include && catalogVersion === 3,
+      manifestOpening,
       outputLimit: opening ? CUSTOM_COHORT_OPENING_RESPONSE_BYTES : include ? CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes : null,
       recommendedAreaOpening: modeRequested && value.initialPreviewMode === 'recommended_area',
       project: async (preview, expected, _parcelMap, retained_inputs, deriveProximity, presentOpening, checkBudget, deriveSecondary, setCatalogPhaseTiming) => {

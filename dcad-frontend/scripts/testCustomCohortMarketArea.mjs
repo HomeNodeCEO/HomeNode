@@ -108,6 +108,7 @@ function marketComponent(overrides = {}) {
       runMarketConditionsAnalysis: () => { throw new Error('Exploration must not use the legacy market request.'); } };
     if (dependency === '@/lib/marketConditionsDraft') return { readMarketConditionsDraft: () => null, saveMarketConditionsDraft: () => assert.fail('Unexpected local save') };
     if (dependency === '@/features/neighborhood/customCohortMarketArea') return { ...helper, runMarketStudies: (...args) => { queries.push(args); return operation.promise; } };
+    if (dependency === './MarketStudyPropertyContext') return { default: 'MarketStudyPropertyContext' };
     assert.fail(`Unexpected component import: ${dependency}`);
   }).default;
   function render() { let passes = 0; do { dirty = false; cursor = 0; tree = Component(props); while (pending.length) pending.shift()();
@@ -131,6 +132,24 @@ test('actual market UI offers the exploration selection, not another drawing map
   assert.match(h.text, /Study complete/);
   h.update({ explorationArea: { ...group, binding: { ...group.binding, selectionRevision: 8 } } });
   assert.equal(h.published.at(-1), null); assert.match(h.text, /Study required/);
+});
+
+test('all four areas remain visible in conclusion weighting, including fourth-ranked exploration', async t => {
+  const value = completeResult(), keys = ['zip', 'radius_1', 'radius_2', 'exploration'];
+  value.analyses = keys.map(key => ({ ...value.analyses[0], market: { key, label: key === 'exploration' ? 'Exploration Map Area' : key } }));
+  value.recommendation.ranked_studies = value.analyses.map((a, index) => ({ key: a.market.key, label: a.market.label,
+    rank: index + 1, reliability_score: 80, sale_count: 50, reconciliation_weight_percent: 25 }));
+  const initialDraft = { ...draft(value), selectedAreaKeys: keys };
+  const h = marketComponent({ initialDraft }); t.after(h.dispose); await h.settle();
+  assert.doesNotMatch(h.text, /Study geography and related CAD parcels|Use as a study center|Exact CAD situs address|Reviewable market context override/);
+  const tree = h.render(), nodes = walk(tree);
+  const recommendation = nodes.find(n => typeof n.type === 'function' && n.type.name === 'RecommendedDetermination');
+  assert.ok(recommendation);
+  assert.match(text(recommendation.type(recommendation.props)), /#4 Exploration Map Area/);
+  assert.ok(nodes.find(n => n.type === 'MarketStudyPropertyContext'));
+  const weight = nodes.find(n => n.type === 'fieldset' && text(n).includes('Studies given greatest weight'));
+  assert.equal(walk(weight).filter(n => n.type === 'input' && n.props.type === 'checkbox').length, 4);
+  assert.match(text(weight), /Exploration Map Area/);
 });
 
 test('ZIP and radius studies bypass retained exploration when it is not selected', async () => {

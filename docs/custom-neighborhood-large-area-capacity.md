@@ -269,9 +269,39 @@ empty selections are distinct. Only selected IDs and their bounded reference
 leave these methods; membership arrays, source rows and raw failure details do
 not. Existing report/workspace/accepted sections and Apply remain unchanged.
 
-These methods are not exposed by HTTP or installed in browser/statistics/map
-consumers. Their guarded database tests require the disposable migrated CI
+This owner slice alone does not expose HTTP or install browser/statistics/map
+consumers. Its guarded database tests require the disposable migrated CI
 database; local unit/SQL-double passes are not a substitute for that run or live
 load acceptance. Server-owned public commands, exact statistics/publication
 consumers, partial acquisition-page recovery and greater-than-50k capture/load
 acceptance remain outstanding. Existing installed source limits stay unchanged.
+
+### ID-only HTTP and browser transport (not installed in the workspace UI)
+
+The additive `select-groups` and `group-selection` POST commands are mounted
+only when the coordinator supplies both fresh-authorized selection-owner
+methods. Their bodies contain assignment/context identity and, for writes,
+only the operation, exact predecessor and recorded-group IDs. They accept no
+actor stamp, source row, catalog, parcel/member list or statistical input.
+Both decoded request and response are capped at 262,144 UTF-8 bytes. The
+existing authentication/CSRF composition, execution gate, cancellation and
+one-minute operation budget remain in place. Compact output is independently
+checked against the exact context/operation/revision/IDs; accidental extra
+source fields or report-authority claims are not sent to the browser.
+
+The matching browser transport uses the established authenticated request
+helper, copies choices before awaiting, checks the returned receipt, and never
+automatically retries a write or expands explicit empty choices. An absent
+saved selection is distinct from a saved empty selection. Lost commit
+acknowledgments preserve the original operation; stale choices return a conflict
+instead of rewinding the current head. The disposable PostgreSQL fixture also
+exercises these HTTP commands against the real owner, not only a mock service.
+
+The workspace UI, preview/viewport/member consumers and report Apply still use
+their existing protocol. This transport does not activate a second selection
+owner in that UI or certify statistics. The next consumers must use the exact
+server-owned selection reference, compute the whole selected population and
+publish boundary/statistics/provenance coherently. Partial acquisition-page
+recovery, greater-than-50k installed capture and live large-area acceptance
+remain outstanding; production limits and genuine appraisal choices are not
+changed by local transport tests.

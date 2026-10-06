@@ -265,7 +265,7 @@ test('capacity refusal preserves stale map and stats, and narrowing stays an exp
   assert.equal(h.child('CustomCohortStatistics').freshness, 'stale'); assert.equal(h.child('CustomCohortParcelMap').freshness, 'stale');
   assert.ok(h.nodes().filter(n => n.props?.type === 'checkbox').every(n => n.props.disabled === false));
   h.render(h.props([groupId(1), groupId(2)], 8)); await h.tick(); assert.equal(h.calls.length, 2); assert.equal(h.intents.length, 0);
-  h.click('Exclude all'); assert.deepEqual(h.intents, [[]]); assert.equal(h.calls.length, 2);
+  h.click('Deselect all'); assert.deepEqual(h.intents, [[]]); assert.equal(h.calls.length, 2);
   const saving = h.props([groupId(1), groupId(2)], 8); saving.workspace.saving = true; h.render(saving);
   h.click('Preview subject’s recorded group'); await h.tick(); assert.deepEqual(h.intents, [[]]); assert.equal(h.calls.length, 2);
   assert.equal(h.child('CustomCohortStatistics').group, old);
@@ -326,7 +326,7 @@ test('saving retains the exact old map/statistics group as stale and disables al
   assert.equal(h.child('CustomCohortStatistics').freshness, 'stale'); assert.equal(h.child('CustomCohortParcelMap').freshness, 'stale');
   assert.match(h.text(), /Saving the group selection/); assert.doesNotMatch(h.text(), /match the current preview selection/);
   assert.ok(h.nodes().filter(n => n.props?.type === 'checkbox').every(n => n.props.disabled));
-  h.click('Include all observations'); h.click('Exclude all'); h.check('Include Alpha'); assert.equal(h.intents.length, 0);
+  h.click('Include all observations'); h.click('Deselect all'); h.check('Include Alpha'); assert.equal(h.intents.length, 0);
   h.render({ ...next, workspace: { ...next.workspace, saving: false } }); await h.tick(); assert.equal(h.calls.length, 2);
   await h.complete(); assert.equal(h.child('CustomCohortStatistics').freshness, 'current'); h.unmount();
 });
@@ -350,7 +350,7 @@ for (const [reason, message] of Object.entries(blockedMessages)) {
     assert.ok(h.text().includes(message));
     assert.doesNotMatch(h.text(), /Saving the group selection|Updating the map and statistics|match the current preview selection/);
     assert.ok(h.nodes().filter(n => n.props?.type === 'checkbox').every(n => n.props.disabled));
-    h.click('Include all observations'); h.click('Exclude all'); h.check('Include Alpha');
+    h.click('Include all observations'); h.click('Deselect all'); h.check('Include Alpha');
     assert.equal(h.intents.length, 0); assert.equal(h.calls.length, 1);
     // Only the owner removes the block. The exact newly acknowledged [] must survive.
     h.render(h.props([], 8)); await h.tick(); assert.equal(h.calls.length, 2);
@@ -415,7 +415,7 @@ test('standalone mode retains broad catalog loading and all-observations initial
   const h = harness(), p = h.props(); delete p.workspace; h.render(p); await h.drain(); await h.tick();
   assert.equal(h.catalogCalls.length, 1); assert.deepEqual(h.calls[0].request.selection.pockets[0].account_ids, ['A', 'B', 'C']);
   assert.equal(h.catalogCalls[0][2].include_recommendation, true);
-  h.click('Exclude all'); await h.tick(); assert.deepEqual(h.calls[1].request.selection.pockets, []); assert.equal(h.intents.length, 0); h.unmount();
+  h.click('Deselect all'); await h.tick(); assert.deepEqual(h.calls[1].request.selection.pockets, []); assert.equal(h.intents.length, 0); h.unmount();
 });
 
 test('recommendation display preserves restored [] and does not auto-select or create extra preview requests', async t => {
@@ -515,14 +515,14 @@ for (const state of ['saving', 'read_only', 'reload_required', 'pending_capture'
   assert.equal(h.intents.length, 0); assert.equal(h.calls.length, 0);
 });
 
-test('empty/insufficient suggestion cannot implicitly clear a saved selection; manual Exclude all remains explicit', async t => {
+test('empty/insufficient suggestion cannot implicitly clear a saved selection; manual Deselect all remains explicit', async t => {
   const h = harness(); t.after(() => h.unmount());
   for (const value of [{ suggested: [] }, { status: 'insufficient_observations' }]) {
     h.render(withRecommendation(h.props([groupId(1)]), value));
     assert.equal(h.nodes().find(n => n.type === 'button' && text(n) === 'Use recommended area').props.disabled, true);
     h.click('Use recommended area'); assert.equal(h.intents.length, 0);
   }
-  h.click('Exclude all'); assert.deepEqual(h.intents, [[]]);
+  h.click('Deselect all'); assert.deepEqual(h.intents, [[]]);
 });
 
 test('an already active suggestion does not increment selection revision or write again', async t => {

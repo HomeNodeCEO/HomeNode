@@ -12,6 +12,10 @@ interface Options {
 // Each authenticated response still has the independent 4 MB transport guard.
 const LIMITS = { leaves: 32, requests: 63, depth: 8, features: 100_000,
   coordinates: 1_000_000, geojsonBytes: 32_000_000 };
+// Render currently runs two web instances. Keep dense-map fetches to two
+// independent tiles at a time so one overview does not monopolize either
+// instance or amplify its fixed per-request authorization work.
+const MAX_CONCURRENT_TILES = 2;
 const utf8 = new TextEncoder();
 const capacity = () => { throw Object.assign(new Error('viewport_detail_capacity_exceeded'),
   { code: 'viewport_detail_capacity_exceeded' }); };
@@ -104,34 +108,61 @@ export async function loadCustomCohortViewportMap(group: CustomCohortPreviewGrou
     const [first, second] = split(tile.bounds);
     pending.push({ bounds: second, depth: tile.depth + 1 }, { bounds: first, depth: tile.depth + 1 });
   };
+  // A broad, dense retained map cannot fit the four-MB response ceiling.
+  // Start with exact spatial tiles rather than paying for several doomed
+  // whole-view projections before the normal density-split path takes over.
+  // This is display-only: every leaf must still be checked and merged before
+  // any parcel detail is published as complete.
+  const manifest = group.map_manifest;
+  if (manifest?.status === 'available' && manifest.counts.captured_parcels >= 30_000
+    && Array.isArray(manifest.bounds) && manifest.bounds.length === 2) {
+    const [[west, south], [east, north]] = manifest.bounds;
+    const capturedArea = (east - west) * (north - south);
+    const requestedArea = (viewport.east - viewport.west) * (viewport.north - viewport.south);
+    if (capturedArea > 0 && requestedArea >= capturedArea / 2) {
+      for (let level = 0; level < 3; level++) {
+        const current = pending.splice(0);
+        for (const tile of current) subdivide(tile);
+      }
+    }
+  }
   while (pending.length) {
     active(options.signal);
-    const tile = pending.pop()!;
-    if (tile.bounds.east - tile.bounds.west > 1 || tile.bounds.north - tile.bounds.south > 1) {
-      subdivide(tile); continue;
+    const batch: typeof pending = [];
+    while (pending.length && batch.length < MAX_CONCURRENT_TILES) {
+      const tile = pending.pop()!;
+      if (tile.bounds.east - tile.bounds.west > 1 || tile.bounds.north - tile.bounds.south > 1) {
+        subdivide(tile); continue;
+      }
+      if (++requests > LIMITS.requests) capacity();
+      batch.push(tile);
     }
-    if (++requests > LIMITS.requests) capacity();
-    let response: unknown;
-    try { response = await requestTile(tile.bounds, options); }
-    catch (error) {
+    // Await the bounded batch, then validate and merge in deterministic tile
+    // order. A failed sibling cannot publish a partial map or schedule work
+    // after its failure is known; the owner's abort settles both requests.
+    const results = await Promise.all(batch.map(tile => requestTile(tile.bounds, options)
+      .then(response => ({ response }), error => ({ error }))));
+    for (let index = 0; index < batch.length; index++) {
       active(options.signal);
-      if (!denseResponse(error)) throw error;
-      subdivide(tile); continue;
-    }
-    active(options.signal);
-    const checked = checkCustomCohortViewportResponse(response, group, catalog, tile.bounds);
-    if (checked.status === 'unavailable') return checked;
-    // Normal pans stay on the existing one-pass checker/4 MB transport path.
-    if (leaves === 1) return checked;
-    for (const feature of checked.features) {
-      const previous = features.get(feature.id);
-      if (previous) { if (!sameFeature(previous, feature)) invalid(); continue; }
-      if (features.size >= LIMITS.features) capacity();
-      const captured = group.map_manifest?.status === 'available' ? group.map_manifest.counts.captured_parcels : 0;
-      if (features.size >= captured) invalid();
-      bytes += featureBytes(feature, budget) + Number(features.size > 0);
-      if (bytes > LIMITS.geojsonBytes) capacity();
-      features.set(feature.id, feature);
+      const tile = batch[index], result = results[index];
+      if ('error' in result) {
+        if (!denseResponse(result.error)) throw result.error;
+        subdivide(tile); continue;
+      }
+      const checked = checkCustomCohortViewportResponse(result.response, group, catalog, tile.bounds);
+      if (checked.status === 'unavailable') return checked;
+      // Normal pans stay on the existing one-pass checker/4 MB transport path.
+      if (leaves === 1) return checked;
+      for (const feature of checked.features) {
+        const previous = features.get(feature.id);
+        if (previous) { if (!sameFeature(previous, feature)) invalid(); continue; }
+        if (features.size >= LIMITS.features) capacity();
+        const captured = group.map_manifest?.status === 'available' ? group.map_manifest.counts.captured_parcels : 0;
+        if (features.size >= captured) invalid();
+        bytes += featureBytes(feature, budget) + Number(features.size > 0);
+        if (bytes > LIMITS.geojsonBytes) capacity();
+        features.set(feature.id, feature);
+      }
     }
   }
   active(options.signal);

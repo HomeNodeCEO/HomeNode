@@ -41,20 +41,21 @@ test('normal successful viewport stays on the one-response path without copying 
   assert.equal(Object.isFrozen(checked.features[0].geometry.coordinates), false, 'no extra freeze/count pass for a normal pan');
 });
 
-test('exact public 422 density response triggers sequential complete tiles, without publishing a prefix', async () => {
-  const last = deferred(); const calls = []; let pending = 0, maximumPending = 0, settled = false;
+test('exact public 422 density response loads at most two complete tiles without publishing a prefix', async () => {
+  const firstChild = deferred(), last = deferred(); const calls = []; let pending = 0, maximumPending = 0, settled = false;
   const work = load(async (bounds, signal) => {
     assert.equal(signal.aborted, false); calls.push(bounds); pending++; maximumPending = Math.max(maximumPending, pending);
     try {
       if (calls.length === 1) throw dense();
-      if (calls.length === 2) return response(bounds, [feature('1')]);
+      if (calls.length === 2) { await firstChild.promise; return response(bounds, [feature('1')]); }
       await last.promise; return response(bounds, [feature('2')]);
     } finally { pending--; }
   }).then(result => { settled = true; return result; });
   await flush();
-  assert.equal(calls.length, 3); assert.equal(settled, false); assert.equal(maximumPending, 1);
+  assert.equal(calls.length, 3); assert.equal(settled, false); assert.equal(maximumPending, 2);
   assert.deepEqual(calls[1], { ...viewport, east: -96.9375 });
   assert.deepEqual(calls[2], { ...viewport, west: -96.9375 });
+  firstChild.resolve(); await flush(); assert.equal(settled, false);
   last.resolve();
   const checked = await work;
   assert.equal(checked.status, 'available'); assert.deepEqual(checked.features.map(f => f.id), ['gis.dcad_parcels:1', 'gis.dcad_parcels:2']);
@@ -85,6 +86,46 @@ test('larger valid camera spans are exactly partitioned before calling the 1-deg
     { west: -98, south: 31, east: -97, north: 32 }, { west: -98, south: 32, east: -97, north: 33 },
     { west: -97, south: 31, east: -96, north: 32 }, { west: -97, south: 32, east: -96, north: 33 },
   ]);
+});
+
+test('a dense broad retained map starts with exact tiles instead of repeated oversized parent requests', async () => {
+  const broad = structuredClone(group);
+  broad.map_manifest.bounds = [[viewport.west, viewport.south], [viewport.east, viewport.north]];
+  broad.map_manifest.counts.captured_parcels = 38_000;
+  const calls = [];
+  const checked = await loadCustomCohortViewportMap(broad, catalog, viewport, {
+    signal: new AbortController().signal,
+    request: async bounds => { calls.push(bounds); return response(bounds, [], 38_000); },
+  });
+  assert.equal(checked.status, 'available');
+  assert.equal(calls.length, 8);
+  assert.ok(calls.every(bounds => (bounds.east - bounds.west) * (bounds.north - bounds.south)
+    === (viewport.east - viewport.west) * (viewport.north - viewport.south) / 8));
+  assert.equal(calls.some(bounds => JSON.stringify(bounds) === JSON.stringify(viewport)), false);
+  calls.length = 0;
+  await loadCustomCohortViewportMap(broad, catalog, { ...viewport, east: viewport.west + 0.01 }, {
+    signal: new AbortController().signal,
+    request: async bounds => { calls.push(bounds); return response(bounds, [], 38_000); },
+  });
+  assert.equal(calls.length, 1, 'small camera requests remain on the one-response path');
+});
+
+test('a broad map schedules only two tile requests at once', async () => {
+  const broad = structuredClone(group);
+  broad.map_manifest.bounds = [[viewport.west, viewport.south], [viewport.east, viewport.north]];
+  broad.map_manifest.counts.captured_parcels = 38_000;
+  const gate = deferred(); let active = 0, maximum = 0, started = 0;
+  const work = loadCustomCohortViewportMap(broad, catalog, viewport, {
+    signal: new AbortController().signal,
+    request: async bounds => {
+      started++; active++; maximum = Math.max(maximum, active);
+      try { await gate.promise; return response(bounds, [], 38_000); }
+      finally { active--; }
+    },
+  });
+  await flush(); assert.equal(started, 2); assert.equal(maximum, 2);
+  gate.resolve();
+  assert.equal((await work).status, 'available'); assert.equal(started, 8);
 });
 
 test('invalid or wrapped camera bounds never reach the transport', async () => {
@@ -128,7 +169,7 @@ test('duplicate parcel IDs with different account, type, ring structure or exact
   }
 });
 
-test('an unavailable child discards all earlier detail and prevents later requests', async () => {
+test('an unavailable child discards all detail and prevents another request batch', async () => {
   let calls = 0;
   const checked = await load(async bounds => {
     if (++calls <= 2) throw dense();
@@ -136,7 +177,8 @@ test('an unavailable child discards all earlier detail and prevents later reques
     if (calls === 4) { body.status = 'unavailable'; body.geojson = null; delete body.counts; body.reason = 'geometry_missing'; }
     return body;
   });
-  assert.equal(calls, 4); assert.deepEqual(checked, { status: 'unavailable', features: [], reason: 'geometry_missing' });
+  assert.equal(calls, 5, 'the second tile in the bounded batch may already be in flight');
+  assert.deepEqual(checked, { status: 'unavailable', features: [], reason: 'geometry_missing' });
 });
 
 test('a malformed or mismatched child cannot publish an otherwise successful prefix', async () => {
@@ -168,8 +210,8 @@ test('cancellation settles promptly even if a child ignores its signal; late det
   const controller = new AbortController(), late = deferred(); let calls = 0;
   const work = load(async () => { if (++calls === 1) throw dense(); return late.promise; }, viewport, { signal: controller.signal });
   const rejected = assert.rejects(work, error => error?.name === 'AbortError');
-  await flush(); assert.equal(calls, 2); controller.abort(); await rejected;
-  late.reject(dense()); await flush(); assert.equal(calls, 2);
+  await flush(); assert.equal(calls, 3); controller.abort(); await rejected;
+  late.reject(dense()); await flush(); assert.equal(calls, 3);
 });
 
 test('already aborted and synchronously aborted requests cannot publish or schedule children', async () => {
@@ -185,7 +227,7 @@ test('already aborted and synchronously aborted requests cannot publish or sched
 test('a persistently dense tiny viewport stops at the fixed subdivision depth', async () => {
   let calls = 0;
   await assert.rejects(load(async () => { calls++; throw dense(); }), capacity);
-  assert.equal(calls, 9);
+  assert.equal(calls, 17, 'both branches remain bounded by the existing depth and request limits');
 });
 
 test('dense branching and whole-world spans cannot create unbounded tiles or requests', async () => {
@@ -227,5 +269,5 @@ test('tiled compact GeoJSON bytes enforce 32 MB even before reaching the coordin
     assert.ok(Buffer.byteLength(JSON.stringify(response(bounds, [f]))) < 4_000_000, 'each fixture fits the unchanged transport guard');
     return response(bounds, [f]);
   }), capacity);
-  assert.equal(leaf, 9, '810,000 coordinates exceed the exact 32 MB aggregate before the 1m coordinate ceiling');
+  assert.equal(leaf, 10, 'the already-started sibling cannot bypass the 32 MB aggregate limit');
 });

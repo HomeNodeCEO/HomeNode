@@ -42,6 +42,7 @@ import {
 } from "@/lib/marketConditionsDraft";
 import { useNeighborhoodProfile } from "@/hooks/useNeighborhoodProfile";
 import { useAssignmentConflictKeys } from "@/hooks/useAssignmentConflictKeys";
+import { useSellerCadOwnerSelection } from "@/hooks/useSellerCadOwnerSelection";
 import { usePropertyContext } from "@/hooks/usePropertyContext";
 import PropertyContextSection from "@/components/PropertyContextSection";
 import { useRelatedParcels } from "@/hooks/useRelatedParcels";
@@ -119,7 +120,6 @@ import {
   listingTimelineRows,
   parseNumber,
   recordedExemptionRows,
-  sellerComparisonSummary,
 } from "@/lib/propertyReportPresentation";
 import {
   ASSIGNMENT_TYPE_OPTIONS,
@@ -180,6 +180,7 @@ function AddressHero({
   const [lastAssignmentSavedAt, setLastAssignmentSavedAt] = useState<string | null>(null);
   const [assignmentConflictKeys, setAssignmentConflictKeys, assignmentConflictKeysRef] = useAssignmentConflictKeys();
   const [assignmentChooserOpen, setAssignmentChooserOpen] = useState(false);
+  const [sfrepExportRequestId, setSfrepExportRequestId] = useState(0);
   const assignmentDraftRef = useRef<AssignmentDetails>(assignmentDraft);
   const assignmentRenderedDraftRef = useRef(assignmentDraft);
   const assignmentSavedDraftRef = useRef<AssignmentDetails>(assignmentDraftFromDetail());
@@ -1571,10 +1572,14 @@ function AddressHero({
     return ["closed_sale", "cad_transfer"].includes(recordType) ||
       (!recordType && (hasValue(event.sale_price) || hasValue(event.closing_date) || hasValue(event.activity_date)));
   });
-  const contractSellerComparison = sellerComparisonSummary(
-    assignmentDraft.contract_seller_names,
-    ownerName,
-  );
+  const cadOwnerNames = ownerParties.length
+    ? ownerParties.map((party) => party.owner_name || "").filter(Boolean)
+    : [reportedOwnerName || ""];
+  const contractSellerComparison = useSellerCadOwnerSelection({
+    file: activeAssignmentFile, filesLoaded: assignmentFilesLoaded,
+    seller: assignmentDraft.contract_seller_names || "", cadOwnerNames,
+    draftRef: assignmentDraftRef, setDraft: setAssignmentDraft,
+  });
   const assignmentSaveDisabled = Boolean(
     assignmentFilesLoading || savingAssignmentFile || !assignmentDirty ||
       assignmentAutosaveState === "conflict" ||
@@ -1712,6 +1717,15 @@ function AddressHero({
             disabled={saveEverythingDisabled}
           >
             {savingAssignmentFile ? "Saving Everything…" : "Save Everything"}
+          </button>
+          <button
+            type="button"
+            className="hn-action-gold btn btn-sm normal-case rounded-lg shadow-sm"
+            onClick={() => setSfrepExportRequestId((requestId) => requestId + 1)}
+            disabled={!activeAssignmentFile?.id}
+            title={activeAssignmentFile?.id ? "Choose a report form and prepare its SFREP import file" : "Choose or start an assignment file first"}
+          >
+            Export to SFREP
           </button>
           <Workfile accountId={accountId || ""} assignmentFile={activeAssignmentFile} getEditorKey={editorKeyForSave} onAssignmentApplied={applyConfirmedDocumentApplication} subjectAddress={documentReviewSubjectAddress} />
           <button
@@ -2262,6 +2276,7 @@ function AddressHero({
             <AssignmentDocumentCenter
               accountId={accountId || ""}
               assignmentFileId={activeAssignmentFile?.id || null}
+              exportRequestId={sfrepExportRequestId}
               subjectAddress={documentReviewSubjectAddress}
               getEditorKey={editorKeyForSave}
               onCustomAssignmentApplied={applyConfirmedDocumentApplication}

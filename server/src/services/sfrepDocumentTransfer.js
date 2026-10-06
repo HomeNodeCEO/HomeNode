@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
 import { loadAssignmentDocumentContent } from './assignmentDocuments.js';
 import { buildDeterministicZip } from '../modules/uad/uadDeliveryPackage.js';
-import { buildSfrepReportExport, SFREP_PRIMARY_FORM_ID } from './sfrepReportExport.js';
-import { sfrepDocumentPropertyRole, sfrepSubjectContext } from './sfrepSubjectContext.js';
+import { buildSfrepReportExport, SFREP_SUPPORTED_FORM_IDS } from './sfrepReportExport.js';
+import { sfrepSubjectContext, sfrepWorkfileDocumentRoles } from './sfrepSubjectContext.js';
 import { savedSfrepSubjectFields } from './sfrepSavedReport.js';
+import { filterSubjectEvidenceDocuments } from './customSubjectApplication.js';
 import { customSubjectCensusSql } from './customSubjectCensus.js';
 
 export const SFREP_TRANSFER_LIMITS = Object.freeze({ documents: 10, bytes: 50 * 1024 * 1024, candidatesPerDocument: 200 });
@@ -17,10 +18,10 @@ export function sfrepTransferInput(body, { exporting = false } = {}) {
   const allowed = ['assignment_file_id', 'document_ids', 'include_documents', 'form_id', ...(exporting ? ['preview_digest'] : [])];
   if (Object.keys(body).some(key => !allowed.includes(key))) fail('invalid_sfrep_request');
   if (!Number.isSafeInteger(body.assignment_file_id) || body.assignment_file_id < 1) fail('assignment_file_required');
-  if (!Array.isArray(body.document_ids) || !body.document_ids.length || body.document_ids.length > SFREP_TRANSFER_LIMITS.documents
+  if (!Array.isArray(body.document_ids) || body.document_ids.length > SFREP_TRANSFER_LIMITS.documents
     || body.document_ids.some(id => !Number.isSafeInteger(id) || id < 1)
     || new Set(body.document_ids).size !== body.document_ids.length) fail('invalid_sfrep_document_selection');
-  if (typeof body.include_documents !== 'boolean' || body.form_id !== SFREP_PRIMARY_FORM_ID) fail('invalid_sfrep_request');
+  if (typeof body.include_documents !== 'boolean' || !SFREP_SUPPORTED_FORM_IDS.includes(body.form_id)) fail('invalid_sfrep_request');
   if (exporting && (typeof body.preview_digest !== 'string' || !/^[a-f0-9]{64}$/.test(body.preview_digest))) fail('sfrep_preview_required');
   return { assignmentFileId: body.assignment_file_id, documentIds: [...body.document_ids].sort((a, b) => a - b),
     includeDocuments: body.include_documents, formId: body.form_id, previewDigest: body.preview_digest };
@@ -89,7 +90,8 @@ export async function readSfrepDocuments(pool, { accountId, assignmentFileId, do
         'subject_context', scope.subject_context,
         'saved_report', scope.saved_report || jsonb_build_object('documents', COALESCE((
           SELECT jsonb_agg(jsonb_build_object('id', id, 'account_id', account_id, 'assignment_file_id', assignment_file_id,
-            'document_type', document_type, 'processing_status', processing_status,
+            'document_type', document_type, 'title', title, 'file_name', file_name,
+            'processing_status', processing_status,
             'extraction_summary', extraction_summary, 'checksum_sha256', checksum_sha256,
             'upload_date', upload_date, 'candidates', candidates) ORDER BY id)
           FROM source_rows), '[]'::jsonb))) AS snapshot,
@@ -117,8 +119,8 @@ export async function readSfrepDocuments(pool, { accountId, assignmentFileId, do
     if (!Array.isArray(document.candidates) || document.candidates.length > SFREP_TRANSFER_LIMITS.candidatesPerDocument) fail('sfrep_evidence_limit');
     if (!Number.isSafeInteger(document.file_size_bytes) || document.file_size_bytes < 1
       || document.content_type !== 'application/pdf' || !/^[a-f0-9]{64}$/.test(document.checksum_sha256)) fail('sfrep_document_integrity_failed');
-    document.property_role = sfrepDocumentPropertyRole(document);
   }
+  sfrepWorkfileDocumentRoles(documents).forEach((source, index) => { documents[index].property_role = source.property_role; });
   // One statement binds canonical report revisions, current evidence, dates and
   // selected PDF metadata. Keep its shared report snapshot once, not per PDF.
   const saved = snapshot.saved_report;
@@ -131,10 +133,14 @@ export async function readSfrepDocuments(pool, { accountId, assignmentFileId, do
       if (source.account_id !== accountId || source.assignment_file_id !== assignmentFileId
         || !Number.isSafeInteger(source.id) || source.id < 1) fail('sfrep_document_not_found');
       if (!Array.isArray(source.candidates) || source.candidates.length > SFREP_TRANSFER_LIMITS.candidatesPerDocument) fail('sfrep_evidence_limit');
-      source.subject_context = documents[0].subject_context;
-      source.property_role = sfrepDocumentPropertyRole(source);
+      source.subject_context = snapshot.subject_context;
     }
-    documents[0].saved_report = saved;
+    sfrepWorkfileDocumentRoles(saved.documents).forEach((source, index) => {
+      saved.documents[index].property_role = source.property_role;
+    });
+    if (documents[0]) documents[0].saved_report = saved;
+    // An empty attachment selection still exports the saved, reviewed workfile.
+    documents.saved_report = saved;
   }
   if (Buffer.byteLength(JSON.stringify(documents)) > MAX_EVIDENCE_BYTES) fail('sfrep_evidence_limit');
   return documents;
@@ -146,10 +152,13 @@ export function previewSfrepDocuments(documents, input) {
   const pdfAddenda = input.includeDocuments ? documents.map(document => ({
     documentId: document.id, fileName: `document-${document.id}.pdf`, title: document.title || document.file_name,
   })) : [];
-  const saved = documents[0]?.saved_report;
+  const saved = documents.saved_report || documents[0]?.saved_report;
   const subjectContext = sfrepSubjectContext(saved?.documents || documents);
   const canonical = saved ? savedSfrepSubjectFields(saved, input) : null;
-  const mapped = buildSfrepReportExport({ documents, pdfAddenda, formId: input.formId, subjectContext, subjectOnly: true,
+  const mapped = buildSfrepReportExport({ documents: filterSubjectEvidenceDocuments(saved?.documents || documents), pdfAddenda, formId: input.formId, subjectContext, subjectOnly: true,
+    contractSection: true, savedAssignmentDetails: saved?.assignmentDetails,
+    savedAssignmentFileId: saved?.assignmentFileId, savedAssignmentRevision: saved?.assignmentRevision,
+    contractEvidenceDocuments: saved?.documents,
     ...(canonical ? { savedReportFields: canonical.fields } : {}) });
   if (canonical) {
     mapped.warnings.push(...canonical.warnings);
@@ -157,8 +166,9 @@ export function previewSfrepDocuments(documents, input) {
   }
   // A re-read during download must match the review the user actually saw.
   const previewDigest = digest(JSON.stringify({ accountId: input.accountId, assignmentFileId: input.assignmentFileId,
-    documents, subjectContext, includeDocuments: input.includeDocuments, formId: input.formId, reportXml: mapped.reportXml }));
-  return { ...mapped, preview_digest: previewDigest, filename: `HomeNode-SFREP-file-${input.assignmentFileId}.rpti`,
+    documents, saved, subjectContext, includeDocuments: input.includeDocuments, formId: input.formId, reportXml: mapped.reportXml }));
+  return { ...mapped, preview_digest: previewDigest,
+    filename: `HomeNode-SFREP-${input.formId === 'FNMA-2055-0911' ? '2055-' : ''}file-${input.assignmentFileId}.rpti`,
     ...(saved ? { savedReport: { assignmentFileId: saved.assignmentFileId, assignmentRevision: saved.assignmentRevision,
       subjectRevision: Number(saved.subject?.revision || 0), sourceDocumentIds: saved.documents.map(document => document.id) } } : {}),
     documents: documents.map(({ id, title, file_name, file_size_bytes, processing_status }) =>

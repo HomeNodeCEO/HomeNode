@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  AppState,
   Image,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -14,10 +16,12 @@ import type { WorkflowType } from "../domain/workflows";
 import { OfflineStore, type LocalPhotoDraft } from "../offline/store";
 import {
   captureCameraPhoto,
+  clearStagedPhotoManifest,
   deletePreparedPhotoFiles,
   importLibraryPhotos,
   preparePickedPhoto,
   recoverInterruptedPickerPhotos,
+  recoverStagedPhotos,
 } from "./capture";
 import {
   CUSTOM_PHOTO_CATEGORIES,
@@ -25,6 +29,7 @@ import {
   photoSyncErrorMessage,
   remainingPhotoCapacity,
   UAD_PHOTO_CATEGORIES,
+  type PreparedPhoto,
 } from "./model";
 import { usePhotoSync } from "./sync";
 import type { SelectedSketchRoom } from "../sketch/SketchEditorPanel";
@@ -32,11 +37,53 @@ import { isUnreadableSqliteDatabaseError } from "../offline/databaseRecovery";
 import { COLORS } from "../theme";
 
 function photoError(reason: unknown) {
+  if (reason instanceof Error && reason.message === "mobile_offline_database_key_unavailable") {
+    return "HomeNode cannot access the offline encryption key. Keep the app installed; your local files were not deleted.";
+  }
   if (isUnreadableSqliteDatabaseError(reason)) {
-    return "HomeNode could not repair encrypted offline storage. Close and reopen HomeNode, and do not delete the app.";
+    return "HomeNode cannot open its encrypted photo queue right now. Photos already saved inside HomeNode are still on this device. Keep the app installed.";
   }
   const code = reason instanceof Error ? reason.message : "mobile_photo_failed";
   return photoSyncErrorMessage(code);
+}
+
+async function ensurePhotoDatabaseReady(store: OfflineStore) {
+  for (const delayMs of [0, 300, 900, 1800]) {
+    if (delayMs) await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+    try {
+      await store.ensureReady();
+      return;
+    } catch (reason) {
+      if (!isUnreadableSqliteDatabaseError(reason) || delayMs === 1800) throw reason;
+    }
+  }
+}
+
+async function waitForPhotoForeground() {
+  if (Platform.OS !== "ios") return;
+  if (AppState.currentState !== "active") {
+    await new Promise<void>((resolve, reject) => {
+      let subscription: { remove: () => void } | null = null;
+      let timeout: ReturnType<typeof setTimeout> | null = null;
+      let settled = false;
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        if (timeout) clearTimeout(timeout);
+        subscription?.remove();
+        if (error) reject(error);
+        else resolve();
+      };
+      subscription = AppState.addEventListener("change", (state) => {
+        if (state === "active") finish();
+      });
+      timeout = setTimeout(() => finish(new Error("mobile_photo_foreground_timeout")), 10_000);
+      if (AppState.currentState === "active") finish();
+    });
+  }
+  // ImagePicker can resolve during the iOS inactive-to-active transition.
+  // Let the native file and SQLCipher handles settle before probing the queue.
+  await new Promise<void>((resolve) => setTimeout(resolve, 500));
 }
 
 function Action({ title, onPress, disabled = false, secondary = false }: {
@@ -157,6 +204,7 @@ export function PhotoCapturePanel({
   selectedSketchRoom: SelectedSketchRoom | null;
 }) {
   const [photos, setPhotos] = useState<LocalPhotoDraft[]>([]);
+  const [stagedPhotos, setStagedPhotos] = useState<PreparedPhoto[]>([]);
   const [category, setCategory] = useState<string>(CUSTOM_PHOTO_CATEGORIES[0]);
   const [useSketchRoom, setUseSketchRoom] = useState(Boolean(selectedSketchRoom));
   const [captions, setCaptions] = useState<Record<string, string>>({});
@@ -167,10 +215,10 @@ export function PhotoCapturePanel({
   const photoSync = usePhotoSync(store, api, ownerUserId, sessionId, online);
   const { refresh: refreshPhotoSummary, syncNow: syncPhotosNow } = photoSync;
   const activePhotos = photos.filter((photo) => isPhotoVisible(photo.state, photo.removeOperationId));
-  const remaining = remainingPhotoCapacity(activePhotos.length);
+  const remaining = remainingPhotoCapacity(activePhotos.length + stagedPhotos.length);
 
   const load = useCallback(async () => {
-    const next = await store.photoDrafts(ownerUserId, sessionId);
+    const next = await store.withDatabaseActivity(() => store.photoDrafts(ownerUserId, sessionId));
     setPhotos(next);
     setCaptions((current) => Object.fromEntries(next.map((photo) => [
       photo.clientPhotoId,
@@ -180,7 +228,7 @@ export function PhotoCapturePanel({
   }, [ownerUserId, refreshPhotoSummary, sessionId, store]);
 
   useEffect(() => {
-    void load().catch((reason) => setError(photoError(reason)));
+    void load().catch((reason) => setError(`${photoError(reason)} Stage: photo list refresh.`));
   }, [load, photoSync.summary.failed, photoSync.summary.pending, photoSync.summary.synchronized]);
 
   useEffect(() => {
@@ -207,54 +255,93 @@ export function PhotoCapturePanel({
     roomLabel: null,
   }, [category, selectedSketchRoom, useSketchRoom, workflowType]);
 
-  const prepare = useCallback(async (
+  const prepareAssets = useCallback(async (
     assets: Awaited<ReturnType<typeof captureCameraPhoto>>,
     source: "camera" | "library",
   ) => {
-    if (!assets.length) return;
-    setBusy(true);
-    setError(null);
     const prepared: Awaited<ReturnType<typeof preparePickedPhoto>>[] = [];
-    let cached = false;
-    try {
-      const bounded = assets.slice(0, remaining);
-      for (const asset of bounded) {
-        prepared.push(await preparePickedPhoto(asset, { ownerUserId, sessionId, source, label }));
-      }
-      await store.cachePreparedPhotos(ownerUserId, sessionId, prepared);
-      cached = true;
-      await load();
-      if (online) await syncPhotosNow();
-      await load();
-    } catch (reason) {
-      if (!cached) {
-        for (const photo of prepared) await deletePreparedPhotoFiles(photo);
-      }
-      setError(photoError(reason));
-    } finally {
-      setBusy(false);
+    for (const asset of assets.slice(0, remaining)) {
+      prepared.push(await preparePickedPhoto(asset, { ownerUserId, sessionId, source, label }));
     }
-  }, [label, load, online, ownerUserId, remaining, sessionId, store, syncPhotosNow]);
+    return prepared;
+  }, [label, ownerUserId, remaining, sessionId]);
+
+  const cachePrepared = useCallback(async (
+    prepared: Awaited<ReturnType<typeof preparePickedPhoto>>[],
+  ) => {
+    if (!prepared.length) return;
+    setError(null);
+    let stage = "photo queue write";
+    try {
+      await store.withDatabaseActivity(() => store.cachePreparedPhotos(ownerUserId, sessionId, prepared));
+      stage = "photo list refresh";
+      await load();
+      for (const photo of prepared) {
+        try { clearStagedPhotoManifest(ownerUserId, sessionId, photo.clientPhotoId); } catch { /* already queued */ }
+      }
+      setStagedPhotos((current) => current.filter((item) => !prepared.some((photo) => photo.clientPhotoId === item.clientPhotoId)));
+      // The durable local copy is ready for the next shot. Cloud sync runs
+      // separately and may still be uploading an earlier full-size original.
+      if (online) void syncPhotosNow();
+    } catch (reason) {
+      // The manifest and original remain on-device if SQLite cannot accept the
+      // queue row. A later launch can register the same client photo ID once.
+      setError(`${photoError(reason)} Stage: ${stage}. The photo remains saved on this device; do not delete the app.`);
+    }
+  }, [load, online, ownerUserId, sessionId, store, syncPhotosNow]);
+
+  const prepare = useCallback(async (
+    assets: Awaited<ReturnType<typeof captureCameraPhoto>>,
+    source: "camera" | "library",
+  ) => cachePrepared(await prepareAssets(assets, source)), [cachePrepared, prepareAssets]);
 
   useEffect(() => {
     let active = true;
-    void recoverInterruptedPickerPhotos().then((assets) => {
-      if (active && assets.length) void prepare(assets, "library");
-    }).catch((reason) => { if (active) setError(photoError(reason)); });
+    void (async () => {
+      const staged = await recoverStagedPhotos(ownerUserId, sessionId);
+      if (active && staged.length) {
+        setStagedPhotos(staged);
+        await cachePrepared(staged);
+      }
+      const assets = await recoverInterruptedPickerPhotos();
+      if (active && assets.length) await prepare(assets, "library");
+    })().catch((reason) => { if (active) setError(photoError(reason)); });
     return () => { active = false; };
   }, []);
+
+  const pickWithDatabasePaused = async (
+    picker: () => Promise<Awaited<ReturnType<typeof captureCameraPhoto>>>,
+    source: "camera" | "library",
+    onPrepared: (count: number) => void,
+  ) => {
+    // A photo upload may continue over the network while the picker is open,
+    // but its SQLite transitions must wait until camera activity finishes.
+    // Keep the keyed connection open: repeatedly closing it for every photo
+    // makes iOS camera return depend on a fragile SQLCipher re-open.
+    const resumeDatabaseActivity = await store.pauseDatabaseActivity();
+    try {
+      const assets = await picker();
+      // Make the camera result durable before checking encrypted storage.
+      const prepared = await prepareAssets(assets, source);
+      onPrepared(prepared.length);
+      if (prepared.length) setStagedPhotos((current) => [...current, ...prepared]);
+      await waitForPhotoForeground();
+      if (prepared.length) await ensurePhotoDatabaseReady(store);
+      return prepared;
+    } finally {
+      resumeDatabaseActivity();
+    }
+  };
 
   const takePhoto = async () => {
     if (busy) return;
     setBusy(true);
+    let stagedCount = 0;
     try {
-      await store.prepareForExternalActivity();
-      const assets = await captureCameraPhoto();
-      await store.ensureReady();
-      await prepare(assets, "camera");
+      const prepared = await pickWithDatabasePaused(captureCameraPhoto, "camera", (count) => { stagedCount = count; });
+      void cachePrepared(prepared);
     } catch (reason) {
-      await store.ensureReady().catch(() => undefined);
-      setError(photoError(reason));
+      setError(`${photoError(reason)}${stagedCount ? " Stage: camera return. The photo remains saved on this device; do not delete the app." : ""}`);
     } finally {
       setBusy(false);
     }
@@ -263,21 +350,19 @@ export function PhotoCapturePanel({
   const importPhotos = async () => {
     if (busy) return;
     setBusy(true);
+    let stagedCount = 0;
     try {
-      await store.prepareForExternalActivity();
-      const assets = await importLibraryPhotos(remaining);
-      await store.ensureReady();
-      await prepare(assets, "library");
+      const prepared = await pickWithDatabasePaused(() => importLibraryPhotos(remaining), "library", (count) => { stagedCount = count; });
+      void cachePrepared(prepared);
     } catch (reason) {
-      await store.ensureReady().catch(() => undefined);
-      setError(photoError(reason));
+      setError(`${photoError(reason)}${stagedCount ? " Stage: library return. The photos remain saved on this device; do not delete the app." : ""}`);
     } finally {
       setBusy(false);
     }
   };
 
   const saveCaption = async (photo: LocalPhotoDraft) => {
-    await store.queuePhotoCaption(ownerUserId, photo.clientPhotoId, captions[photo.clientPhotoId] || "");
+    await store.withDatabaseActivity(() => store.queuePhotoCaption(ownerUserId, photo.clientPhotoId, captions[photo.clientPhotoId] || ""));
     await load();
     if (online) await syncPhotosNow();
     await load();
@@ -286,7 +371,7 @@ export function PhotoCapturePanel({
   const remove = async (photo: LocalPhotoDraft) => {
     try {
       setError(null);
-      const result = await store.queuePhotoRemoval(ownerUserId, photo.clientPhotoId);
+      const result = await store.withDatabaseActivity(() => store.queuePhotoRemoval(ownerUserId, photo.clientPhotoId));
       if (result.localOnly) await deletePreparedPhotoFiles(result.photo);
       await load();
       if (online && !result.localOnly) await syncPhotosNow();
@@ -297,7 +382,7 @@ export function PhotoCapturePanel({
   };
 
   const cleanEmpty = async () => {
-    const removed = await store.pruneEmptyPhotoPlaceholders(ownerUserId, sessionId);
+    const removed = await store.withDatabaseActivity(() => store.pruneEmptyPhotoPlaceholders(ownerUserId, sessionId));
     for (const photo of removed) await deletePreparedPhotoFiles(photo);
     await load();
   };
@@ -307,11 +392,33 @@ export function PhotoCapturePanel({
     setRetrying(true);
     try {
       setError(null);
-      await store.makeFailedPhotosImmediatelyRetryable(ownerUserId, sessionId);
+      await store.withDatabaseActivity(() => store.makeFailedPhotosImmediatelyRetryable(ownerUserId, sessionId));
       await syncPhotosNow();
       await load();
     } catch (reason) {
       setError(photoError(reason));
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  const recoverSavedPhotos = async () => {
+    if (busy || retrying) return;
+    setRetrying(true);
+    setError(null);
+    try {
+      const resume = await store.pauseDatabaseActivity();
+      try {
+        await ensurePhotoDatabaseReady(store);
+      } finally {
+        resume();
+      }
+      const staged = await recoverStagedPhotos(ownerUserId, sessionId);
+      setStagedPhotos(staged);
+      if (staged.length) await cachePrepared(staged);
+      else await load();
+    } catch (reason) {
+      setError(`${photoError(reason)} Stage: manual recovery.`);
     } finally {
       setRetrying(false);
     }
@@ -324,7 +431,7 @@ export function PhotoCapturePanel({
           <Text style={styles.eyebrow}>VERIFIED FIELD EVIDENCE</Text>
           <Text style={styles.title}>Photos</Text>
         </View>
-        <Text style={styles.count}>{activePhotos.length}/100</Text>
+        <Text style={styles.count}>{activePhotos.length + stagedPhotos.length}/100</Text>
       </View>
       <Text style={styles.help}>Select a sketch room or category before capture. The room becomes the automatic label and can still be captioned manually.</Text>
 
@@ -344,19 +451,28 @@ export function PhotoCapturePanel({
       </> : null}
 
       <View style={styles.actions}>
-        <Action title="Take photo" disabled={busy || remaining < 1} onPress={() => void takePhoto()} />
-        <Action title={`Import photos (${remaining} available)`} secondary disabled={busy || remaining < 1} onPress={() => void importPhotos()} />
+        <Action title="Take photo" disabled={busy || retrying || remaining < 1} onPress={() => void takePhoto()} />
+        <Action title={`Import photos (${remaining} available)`} secondary disabled={busy || retrying || remaining < 1} onPress={() => void importPhotos()} />
       </View>
-      {busy || photoSync.syncing || retrying ? <View style={styles.progress}><ActivityIndicator color={COLORS.violet} /><Text style={styles.help}>{busy ? "Preparing originals and display copies…" : "Uploading and verifying…"}</Text></View> : null}
+      {busy || photoSync.syncing || retrying ? <View style={styles.progress}><ActivityIndicator color={COLORS.violet} /><Text style={styles.help}>{busy ? "Saving photo on this device…" : "Uploading saved photos… You can take another photo."}</Text></View> : null}
       <Text style={styles.syncLine}>
         {online ? "Online" : "Offline"} · {photoSync.summary.pending} pending · {photoSync.summary.failed} failed · {photoSync.summary.synchronized} verified
       </Text>
-      {error || photoSync.error ? <Text style={styles.error}>{error || photoError(new Error(photoSync.error || ""))}</Text> : null}
+      {error || photoSync.error ? <Text style={styles.error}>{error || `Background sync: ${photoError(new Error(photoSync.error || ""))}`}</Text> : null}
+      {stagedPhotos.length ? <View style={styles.stagedSection}>
+        <Text style={styles.label}>{stagedPhotos.length} photo{stagedPhotos.length === 1 ? "" : "s"} saved inside HomeNode, waiting to be listed</Text>
+        <Text style={styles.help}>These are in HomeNode's private device storage, not the iPhone Photos library. Keep the app installed.</Text>
+        {stagedPhotos.map((photo) => <View key={photo.clientPhotoId} style={styles.photoCard}>
+          <Image accessibilityLabel={photo.caption} source={{ uri: photo.objects.find((object) => object.variant === "display")?.uri || photo.objects[0]?.uri }} style={styles.preview} />
+          <Text style={styles.stagedCaption}>{photo.caption}</Text>
+        </View>)}
+        <Action title="Recover saved photos" secondary disabled={busy || retrying} onPress={() => void recoverSavedPhotos()} />
+      </View> : null}
       {online && (photoSync.summary.pending || photoSync.summary.failed) ? (
         <Action
           title={photoSync.summary.failed
             ? `Retry ${photoSync.summary.failed} failed photo${photoSync.summary.failed === 1 ? "" : "s"}`
-            : `Sync ${photoSync.summary.pending} pending photo${photoSync.summary.pending === 1 ? "" : "s"}`}
+            : `Upload ${photoSync.summary.pending} saved photo${photoSync.summary.pending === 1 ? "" : "s"}`}
           secondary
           disabled={photoSync.syncing || retrying}
           onPress={() => void retryFailed()}
@@ -401,6 +517,8 @@ const styles = StyleSheet.create({
   progress: { alignItems: "center", flexDirection: "row", gap: 8 },
   syncLine: { color: COLORS.success, fontSize: 12, fontWeight: "700" },
   error: { backgroundColor: COLORS.dangerSoft, borderRadius: 8, color: COLORS.danger, padding: 10 },
+  stagedSection: { backgroundColor: COLORS.goldSoft, borderColor: COLORS.gold, borderRadius: 12, borderWidth: 1, gap: 10, padding: 12 },
+  stagedCaption: { color: COLORS.deepPurple, fontSize: 13, fontWeight: "700", padding: 10 },
   list: { gap: 12 },
   photoCard: { backgroundColor: COLORS.surface, borderColor: COLORS.border, borderRadius: 13, borderWidth: 1, overflow: "hidden" },
   preview: { aspectRatio: 4 / 3, backgroundColor: COLORS.surfaceMuted, width: "100%" },

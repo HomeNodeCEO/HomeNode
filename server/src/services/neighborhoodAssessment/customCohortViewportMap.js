@@ -3,10 +3,16 @@
 // statistics bound to that selection.
 const MAX_VIEWPORT_SPAN = 1;
 const MAX_RESPONSE_BYTES = 4_000_000;
+const GRID_DEGREES = 0.01;
+const MAX_INDEX_REFERENCES = 300_000;
+const MAX_FEATURE_CELLS = 64;
+const MAX_QUERY_CELLS = 20_000;
 // Prepared maps are deeply frozen and retained briefly by the verified preview
 // cache. Keep their parcel bounds for repeated pans without retaining a second
 // copy of coordinates or trusting mutable fallback geometry.
 const frozenBounds = new WeakMap();
+const preparedSources = new WeakMap();
+const preparedIndexes = new WeakMap();
 
 function invalid() { throw Object.assign(new TypeError('invalid_input'), { reason: 'invalid_input' }); }
 
@@ -35,6 +41,8 @@ function boundsOf(geometry) {
   if (Object.isFrozen(geometry)) frozenBounds.set(geometry, bounds);
   return bounds;
 }
+
+export function customCohortGeometryBounds(geometry) { return boundsOf(geometry); }
 
 function inViewport([x, y], box) {
   return x >= box.west && x <= box.east && y >= box.south && y <= box.north;
@@ -100,6 +108,84 @@ function intersects(geometry, viewport) {
   return polygons.some(polygon => polygonTouchesViewport(polygon, viewport));
 }
 
+const cell = value => Math.floor(value / GRID_DEGREES);
+const key = (x, y) => `${x}:${y}`;
+function buildIndex(features) {
+  const cells = new Map(), broad = [];
+  let references = 0;
+  for (let index = 0; index < features.length; index++) {
+    const bounds = boundsOf(features[index].geometry);
+    if (![bounds.west, bounds.south, bounds.east, bounds.north].every(Number.isFinite)) return null;
+    const left = cell(bounds.west), right = cell(bounds.east), bottom = cell(bounds.south), top = cell(bounds.north);
+    const count = (right - left + 1) * (top - bottom + 1);
+    if (!Number.isSafeInteger(count) || count < 1) return null;
+    if (count > MAX_FEATURE_CELLS) { broad.push(index); continue; }
+    if ((references += count) > MAX_INDEX_REFERENCES) return null;
+    for (let x = left; x <= right; x++) for (let y = bottom; y <= top; y++) {
+      const id = key(x, y);
+      if (!cells.has(id)) cells.set(id, []);
+      cells.get(id).push(index);
+    }
+  }
+  return { cells, broad };
+}
+
+/** Associate a freshly selected, deeply frozen map with its verified neutral
+ * geometry. The source and selection remain scoped to the existing hot read
+ * model; only integer positions are indexed and WeakMaps retain no authority. */
+export function registerCustomCohortPreparedViewportMap(selectedMap, neutralMap) {
+  const selected = selectedMap?.geojson?.features, source = neutralMap?.geojson?.features;
+  if (!Array.isArray(selected) || !Array.isArray(source) || selected.length !== source.length
+    || !Object.isFrozen(selected) || !Object.isFrozen(source)) return false;
+  for (let index = 0; index < source.length; index++) {
+    if (selected[index]?.id !== source[index]?.id || selected[index]?.geometry !== source[index]?.geometry
+      || !Object.isFrozen(source[index].geometry)) return false;
+  }
+  preparedSources.set(selected, source);
+  return true;
+}
+
+function candidates(features, viewport) {
+  const source = preparedSources.get(features);
+  if (!source) return features;
+  return candidatePositions(source, viewport).map(position => features[position]);
+}
+
+function candidatePositions(source, viewport) {
+  if (source.length < 1000) return source.map((_feature, position) => position);
+  let index = preparedIndexes.get(source);
+  if (index === undefined) {
+    index = buildIndex(source);
+    preparedIndexes.set(source, index);
+  }
+  if (!index) return source.map((_feature, position) => position);
+  const left = cell(viewport.west), right = cell(viewport.east);
+  const bottom = cell(viewport.south), top = cell(viewport.north);
+  if ((right - left + 1) * (top - bottom + 1) > MAX_QUERY_CELLS)
+    return source.map((_feature, position) => position);
+  const found = new Set(index.broad);
+  for (let x = left; x <= right; x++) for (let y = bottom; y <= top; y++) {
+    for (const position of index.cells.get(key(x, y)) ?? []) found.add(position);
+  }
+  return [...found].sort((a, b) => a - b);
+}
+
+/** Return only exact visible features from a verified, frozen prepared map.
+ * The repository checks its stored digests and complete selected membership
+ * before this display-only slice can be sent to the authorized caller. */
+export function visibleCustomCohortPreparedFeatures(map, requestedViewport, selectedAccountIds) {
+  const viewport = prepareCustomCohortViewport(requestedViewport);
+  const source = map?.geojson?.features;
+  if (map?.status !== 'available' || !Array.isArray(source) || !Object.isFrozen(source)
+    || !Array.isArray(selectedAccountIds)) invalid();
+  const selected = new Set(selectedAccountIds);
+  return candidatePositions(source, viewport)
+    .map(position => source[position])
+    .filter(feature => intersects(feature.geometry, viewport))
+    .map(feature => ({ ...feature, properties: { ...feature.properties,
+      selected: selected.has(feature.properties.account_id) } }));
+}
+
 export function projectCustomCohortViewportMap(preview, requestedViewport) {
   const viewport = prepareCustomCohortViewport(requestedViewport);
   if (!preview || preview.status !== 'preview' || !preview.context_ref
@@ -110,7 +196,7 @@ export function projectCustomCohortViewportMap(preview, requestedViewport) {
     || !preview.parcel_map || !['available', 'unavailable'].includes(preview.parcel_map.status)) invalid();
   const map = preview.parcel_map;
   const features = map.status === 'available'
-    ? map.geojson.features.filter(feature => intersects(feature.geometry, viewport)) : [];
+    ? candidates(map.geojson.features, viewport).filter(feature => intersects(feature.geometry, viewport)) : [];
   const result = { status: map.status, display_only: true,
     target: preview.target, context_ref: preview.context_ref, selection_revision: preview.selection_revision,
     selection_sha256: preview.summary.binding.selection_sha256,

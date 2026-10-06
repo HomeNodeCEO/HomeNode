@@ -21,7 +21,7 @@ const { createCustomWorkspaceLifecycle: createLifecycle } = compile('customWorks
 const { createCustomWorkspaceApi: createApi } = compile('customWorkspaceApi', {
   './customWorkspaceCheckpoint': checkpoint, './customCohortPreviewTransport': compile('customCohortPreviewTransport', {}),
 });
-const RADII = ['4828.032', '8046.72', '16093.44'];
+const RADII = ['1609.344', '3218.688', '4828.032', '8046.72', '16093.44'];
 const choice = radius => ({ profile_id: 'custom-suburban-radius-v2', radius_metres: radius });
 const TARGET = { accountId: 'SUBJECT', assignmentFileId: '37', sessionKey: 'discovery-test' };
 const PERIOD = { start_date: '2026-01-01', end_date: '2026-09-10' };

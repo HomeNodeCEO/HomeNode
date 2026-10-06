@@ -53,7 +53,9 @@ function harness(api = {}) {
   };
   const button = label => walk(tree).find(node => node.type === 'button' && text(node) === label);
   const link = label => walk(tree).find(node => node.type === 'a' && text(node) === label);
-  const checkbox = label => walk(tree).filter(node => node.type === 'label').find(node => text(node).includes(label))?.props.children.flat(Infinity).find(node => node?.type === 'input');
+  const checkbox = label => walk(tree).filter(node => node.type === 'label').find(node => text(node).includes(label)
+    && node?.props.children.flat(Infinity).some(child => child?.type === 'input' && child.props.type === 'checkbox'))
+    ?.props.children.flat(Infinity).find(node => node?.type === 'input' && node.props.type === 'checkbox');
   return { props, calls, revoked, anchors, timers, render, get tree() { return tree; }, get text() { return text(tree); }, get urlCount() { return urlCount; },
     get opens() { return opens; }, get closes() { return closes; }, get restores() { return restores; }, get clicks() { return clicks; }, get closeRequests() { return closeRequests; },
     button, link, checkbox,
@@ -67,7 +69,14 @@ test('opens accessible native modal with explicit empty selection; Escape and un
   const h = harness(); h.render(); h.render();
   assert.equal(h.opens, 1); assert.equal(h.calls.length, 0);
   assert.equal(h.checkbox('Contract').props.checked, false); assert.equal(h.checkbox('Include original').props.checked, true);
-  assert.equal(h.button('Preview SFREP export').props.disabled, true); assert.equal(h.button('Download SFREP .rpti'), undefined);
+  assert.equal(h.button('Preview SFREP export').props.disabled, false); assert.equal(h.button('Download SFREP .rpti'), undefined);
+  assert.match(h.text, /Report form.*1004 URAR.*2055 Exterior-Only/);
+  assert.match(h.text, /1004 URAR and 2055 Exterior-Only exports map the Subject and Contract sections/);
+  assert.match(h.text, /These checkboxes only choose which original PDFs/);
+  const formChoices = walk(h.tree).filter(node => node.type === 'input' && node.props.type === 'radio');
+  assert.equal(formChoices.length, 2);
+  assert.equal(formChoices[0].props.checked, true);
+  assert.equal(formChoices[1].props.disabled, undefined);
   assert.match(h.text, /does not support UAD 3.6/); assert.match(h.text, /Other Appraisal Document/);
   assert.match(h.tree.props.className, /border-amber-300/);
   let prevented = false; h.tree.props.onCancel({ preventDefault() { prevented = true; } });
@@ -75,10 +84,53 @@ test('opens accessible native modal with explicit empty selection; Escape and un
   h.close(); assert.equal(h.closes, 1); assert.equal(h.restores, 1);
 });
 
+test('2055 selection changes the requested form and invalidates an earlier 1004 preview', async () => {
+  const h = harness({ preview: async selection => ({ ...response(), formId: selection.formId }) });
+  h.render(); h.click('Preview SFREP export'); await h.drain();
+  assert.ok(h.button('Download SFREP .rpti'));
+  const forms = walk(h.tree).filter(node => node.type === 'input' && node.props.type === 'radio');
+  forms[1].props.onChange(); h.render();
+  assert.equal(h.button('Download SFREP .rpti'), undefined);
+  assert.match(h.text, /Legacy FNMA 2055 Exterior-Only · FNMA-2055-0911/);
+  h.click('Preview SFREP export'); await h.drain();
+  assert.equal(h.calls.at(-1)[1].formId, helpers.SFREP_2055_FORM_ID);
+  assert.ok(walk(h.tree).find(node => node.props?.['aria-label'] === '2055 Subject export checklist'));
+  assert.ok(walk(h.tree).find(node => node.props?.['aria-label'] === '2055 Contract export checklist'));
+  h.close();
+});
+
+test('preview can run without attaching any source PDFs', async () => {
+  const h = harness(); h.render(); h.click('Preview SFREP export'); await h.drain();
+  assert.deepEqual(h.calls[0][1].documentIds, []);
+  assert.match(h.text, /Supported, reviewed evidence from this HomeNode workfile fills the form/);
+  h.close();
+});
+
+test('report export waits for the active file document list', () => {
+  const h = harness(); h.props.documentsLoading = true; h.render();
+  assert.match(h.text, /Loading this file’s documents/);
+  assert.equal(h.button('Preview SFREP export').props.disabled, true);
+  h.close();
+});
+
+test('document load failure is actionable and is not presented as an empty workfile', () => {
+  const h = harness(); let retries = 0;
+  h.props.documents = []; h.props.documentLoadError = 'Temporary document service failure';
+  h.props.onRetryDocuments = () => { retries++; };
+  h.render();
+  assert.match(h.text, /Documents could not be loaded: Temporary document service failure/);
+  assert.doesNotMatch(h.text, /No source documents are available/);
+  assert.equal(h.button('Preview SFREP export').props.disabled, true);
+  h.click('Retry loading documents'); assert.equal(retries, 1);
+  h.close();
+});
+
 test('preview shows fields and exclusions; only explicit download sends the reviewed digest', async () => {
   const h = harness(); h.render(); h.check('Contract', true); h.click('Preview SFREP export'); await h.drain();
+  assert.match(h.text, /Attaching its PDF is optional/);
   assert.equal(h.calls.length, 1); assert.equal(h.calls[0][0], 'preview');
-  assert.deepEqual(h.calls[0][1], { accountId: 'R1', assignmentFileId: 12, documentIds: [21], includeDocuments: true });
+  assert.deepEqual(h.calls[0][1], { accountId: 'R1', assignmentFileId: 12, documentIds: [21], includeDocuments: true,
+    formId: helpers.SFREP_FORM_ID });
   assert.equal(h.calls[0][2].editorKey, 'editor');
   for (const expected of ['SalePriceAmount', '200000', 'No verified mapping', 'First bank / Second bank', 'Review imported fields.']) assert.ok(h.text.includes(expected));
   const diagnostics = walk(h.tree).filter(node => node.type === 'details');

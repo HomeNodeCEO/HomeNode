@@ -340,7 +340,7 @@ function WorkspaceSession(props: Props) {
       </details>}
       <div className="flex flex-wrap gap-2">
         <button type="button" className={button} disabled={selectionDisabled} onClick={() => choose(customCohortCatalogGroupIds(catalog))}>Include all observations</button>
-        <button type="button" className={button} disabled={selectionDisabled} onClick={() => choose([])}>Exclude all</button>
+        <button type="button" className={button} disabled={selectionDisabled} onClick={() => choose([])}>Deselect all</button>
         <button type="button" className={button} disabled={selectionDisabled || !catalog.subject_membership.assigned_pocket_id}
           onClick={() => { const id = catalog.subject_membership.assigned_pocket_id; if (id) choose([id]); }}>
           Preview subject’s recorded group</button>
@@ -353,7 +353,7 @@ function WorkspaceSession(props: Props) {
           : blockedReason === 'pending_capture' ? 'Resume the saved capture before changing groups. Any displayed map and statistics still match the preceding selection.'
           : blockedReason === 'read_only' ? 'Neighborhood selection is read-only. Any displayed map and statistics reflect the saved selection.'
           : pending ? 'Updating the map and statistics together…' : preview.error === 'capacity_exceeded'
-          ? 'This selection exceeds the preview capacity. Choose fewer recorded groups, use “Exclude all” and include groups individually, or try the subject’s recorded group. Any displayed map and statistics still represent the preceding selection, not these choices. No groups were automatically removed.' : preview.status === 'failed'
+          ? 'This selection exceeds the preview capacity. Choose fewer recorded groups, use “Deselect all” and include groups individually, or try the subject’s recorded group. Any displayed map and statistics still represent the preceding selection, not these choices. No groups were automatically removed.' : preview.status === 'failed'
           ? 'The preview could not update. Any displayed map and statistics are from the preceding selection.'
           : current ? 'Map and statistics match the current preview selection.' : 'Preparing observations…'}
       </p>

@@ -69,7 +69,7 @@ for (const privateImport of [false, true]) test(`legacy active survives explicit
   assert.deepEqual(restored, { status: 'restored', section_revision: 23, checkpoint: result }); frozen(restored);
 });
 
-for (const metres of ['4828.032', '8046.72', '16093.44']) test(`v4 city active may transition to explicit ${metres} radius`, () => {
+for (const metres of ['1609.344', '3218.688', '4828.032', '8046.72', '16093.44']) test(`v4 city active may transition to explicit ${metres} radius`, () => {
   const value = fixture(); value.active.discovery = city(); value.pending_capture.discovery = radius(metres);
   assert.deepEqual(prepare(value), value);
   assert.deepEqual(prepare(value).active.context_ref, CONTEXT);

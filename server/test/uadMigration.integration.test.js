@@ -73,7 +73,6 @@ test("reviewed Custom Subject and server-only receipts persist with migrated con
     for (const [field, value] of Object.entries({
       subject_property_address: "100 Example Dr, Garland, TX 75041",
       borrower_name: "Synthetic Borrower",
-      tax_amount: "4321.50",
       lender_client_name: "Synthetic QA Bank",
     })) {
       const inserted = await client.query(
@@ -107,7 +106,9 @@ test("reviewed Custom Subject and server-only receipts persist with migrated con
     assert.equal(subject.revision, 1);
     assert.equal(subject.section_value.property_location.address, "100 Example Dr");
     assert.equal(subject.section_value.urar_subject.borrower_name, "Synthetic Borrower");
-    assert.equal(subject.section_value.urar_subject.tax_amount, "4321.50");
+    // This fixture is an engagement letter. Tax amounts require a separately
+    // reviewed Realist source and must not be fabricated from this document.
+    assert.equal(subject.section_value.urar_subject.tax_amount, undefined);
     assert.equal(evidence.revision, 1);
     assert.equal(evidence.section_value.fields.borrower_name.status, "current");
     assert.equal(evidence.section_value.fields.borrower_name.kind, "reviewed_document");

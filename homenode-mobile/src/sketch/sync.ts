@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiError, type MobileApi } from "../api/client";
 import { type LocalSketchDraft, OfflineStore } from "../offline/store";
-import { toSketchApiDocument } from "./model";
+import { preserveSketchAreaLabelOffsets, toSketchApiDocument } from "./model";
 
 export async function synchronizeDueSketches(
   store: OfflineStore,
@@ -10,9 +10,10 @@ export async function synchronizeDueSketches(
   ownerUserId: string,
   sessionId?: string,
 ) {
-  const drafts = await store.dueSketchDrafts(ownerUserId, sessionId);
+  const database = <T>(operation: () => Promise<T>) => store.withDatabaseActivity(operation);
+  const drafts = await database(() => store.dueSketchDrafts(ownerUserId, sessionId));
   for (const draft of drafts) {
-    await store.markSketchSynchronizing(ownerUserId, draft.sessionId);
+    await database(() => store.markSketchSynchronizing(ownerUserId, draft.sessionId));
     try {
       const response = await api.saveInspectionSketch(draft.sessionId, {
         clientOperationId: draft.clientOperationId,
@@ -20,7 +21,10 @@ export async function synchronizeDueSketches(
         baseRevision: draft.baseRevision,
         sketch: toSketchApiDocument(draft.draft),
       });
-      await store.applyServerSketch(ownerUserId, draft.sessionId, response.sketch);
+      await database(() => store.applyServerSketch(ownerUserId, draft.sessionId, {
+        ...response.sketch,
+        document: preserveSketchAreaLabelOffsets(response.sketch.document, draft.draft),
+      }));
     } catch (reason) {
       const code = reason instanceof ApiError
         ? reason.code
@@ -28,15 +32,16 @@ export async function synchronizeDueSketches(
       if (code === "sketch_revision_conflict") {
         try {
           const current = await api.inspectionSketch(draft.sessionId);
-          if (current.sketch) {
-            await store.markSketchConflict(ownerUserId, draft.sessionId, current.sketch);
+          const currentSketch = current.sketch;
+          if (currentSketch) {
+            await database(() => store.markSketchConflict(ownerUserId, draft.sessionId, currentSketch));
             continue;
           }
         } catch {
           // Preserve the original conflict when the follow-up read is unavailable.
         }
       }
-      await store.recordSketchFailure(ownerUserId, draft, code);
+      await database(() => store.recordSketchFailure(ownerUserId, draft, code));
     }
   }
 }
@@ -53,7 +58,7 @@ export function useSketchSync(
   const active = useRef<Promise<void> | null>(null);
 
   const refresh = useCallback(async () => {
-    setDraft(await store.sketchDraft(ownerUserId, sessionId));
+    setDraft(await store.withDatabaseActivity(() => store.sketchDraft(ownerUserId, sessionId)));
   }, [ownerUserId, sessionId, store]);
 
   const syncNow = useCallback(async () => {

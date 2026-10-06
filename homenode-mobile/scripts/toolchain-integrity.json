@@ -1,0 +1,19 @@
+{
+  "node-forge": {
+    "version": "1.4.0",
+    "files": {
+      "lib/rsa.js": "f866e9c2426b2946c51edd42a1b7b7fd2dbd89628b9be01d5e2015f6758850c2"
+    }
+  },
+  "braces": {
+    "version": "3.0.3",
+    "files": {
+      "lib/compile.js": "138368cafdeb1c147acb487145aa7d023ee03badd4f1b7abb74c86fe9f916ab8",
+      "lib/constants.js": "7beb8c9270b0d1dfa2237e1da29915c6d0ca7f7cdc3c14250bb31167b4b8bb63",
+      "lib/expand.js": "7a626395cc90bd0df253aba08111be90ad1a3f3b62abeeac867cd2f2e0eaa9bc",
+      "lib/parse.js": "ba101d8228011d184c6b4d4286941e1b969d8e1ae753e03e5725e76ef9a4647e",
+      "lib/stringify.js": "236891491179e60a090f0190b2770c87d254629e82428b30d3f255fa24769bf3",
+      "lib/utils.js": "d06110f7832128b561ba9916cdedd1dee5eef1a51f10ca385941cc2a527c186e"
+    }
+  }
+}

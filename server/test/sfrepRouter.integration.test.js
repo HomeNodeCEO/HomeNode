@@ -58,6 +58,20 @@ test('preview scopes to the assignment and omits package-only internals', async 
   assert.equal((await fixture.request('preview', { ...body, document_ids: [2, 2] })).status, 400);
 });
 
+test('2055 selection reaches the preview builder under the same assignment authorization', async context => {
+  let requestedForm;
+  const fixture = await start(context, { buildPreview: (_documents, input) => {
+    requestedForm = input.formId;
+    return { formId: input.formId, preview_digest: 'a'.repeat(64), filename: 'HomeNode-SFREP-2055-file-14.rpti',
+      reportXml: '<Report/>', pdfAddenda: [] };
+  } });
+  const response = await fixture.request('preview', { ...body, form_id: 'FNMA-2055-0911' });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).formId, 'FNMA-2055-0911');
+  assert.equal(requestedForm, 'FNMA-2055-0911');
+  assert.deepEqual(fixture.calls, [['account-1', 14, 'read'], 'read']);
+});
+
 test('download has an attachment filename and stale preview is a retryable review conflict', async context => {
   const fixture = await start(context);
   const response = await fixture.request('export', { ...body, preview_digest: 'a'.repeat(64) });

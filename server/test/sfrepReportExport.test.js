@@ -4,6 +4,7 @@ import {
   buildSfrepReportExport,
   SFREP_MAX_DOCUMENTS,
   SFREP_PRIMARY_FORM_ID,
+  SFREP_2055_FORM_ID,
   SFREP_SUPPORTED_FORM_IDS,
 } from "../src/services/sfrepReportExport.js";
 import { sfrepDocumentPropertyRole } from "../src/services/sfrepSubjectContext.js";
@@ -157,7 +158,23 @@ test("verified FNMA1004 mappings preserve roles, format amounts and contract dat
   assert.ok(result.reportXml.includes('<Form Id="FNMA-1004-0911">'));
   assert.ok(result.reportXml.includes('AixmlVersion="1.5"'));
   assert.equal(result.formId, SFREP_PRIMARY_FORM_ID);
-  assert.deepEqual(SFREP_SUPPORTED_FORM_IDS, ["FNMA-1004-0911"]);
+  assert.deepEqual(SFREP_SUPPORTED_FORM_IDS, ["FNMA-1004-0911", "FNMA-2055-0911"]);
+});
+
+test("2055 exterior-only uses the same reviewed Subject destinations without changing 1004", () => {
+  const documents = [doc(1, [candidate("subject_street_address", "513 HARDY DR"),
+    candidate("subject_city", "GARLAND"), candidate("borrower_name", "MORGAN EXAMPLE"),
+    candidate("owner_name", "PUBLIC RECORD OWNER"), candidate("contract_date", "2026-08-25"),
+    candidate("contract_price", "282500")])];
+  const urar = buildSfrepReportExport({ documents });
+  const exterior = buildSfrepReportExport({ documents, formId: SFREP_2055_FORM_ID });
+  assert.deepEqual(exterior.fields, urar.fields);
+  assert.match(exterior.reportXml, /<Form Id="FNMA-2055-0911">/);
+  assert.doesNotMatch(exterior.reportXml, /<Form Id="FNMA-1004-0911">/);
+  assert.match(exterior.reportXml, /<TextField Id="StreetAddress" Data="513 Hardy Dr" \/>/);
+  assert.match(exterior.reportXml, /<TextField Id="ContractDate" Data="08\/25\/2026" \/>/);
+  assert.match(exterior.warnings[0], /2055 exterior-only/);
+  assert.match(urar.reportXml, /<Form Id="FNMA-1004-0911">/);
 });
 
 test("explicit blank confirmation never falls back to extracted text; unknowns cannot erase fields", () => {

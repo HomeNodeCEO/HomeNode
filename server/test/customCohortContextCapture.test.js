@@ -106,7 +106,7 @@ test('Custom capture admits only exact installed discovery choices before connec
     { ...discovery, account_ids: [] }, { ...discovery, geometry: {} }]) {
     await assert.rejects(setup().capture({ ...input(), discovery: value }), /invalid_discovery/);
   }
-  for (const radius_metres of ['4828.032', '8046.72', '16093.44']) {
+  for (const radius_metres of ['1609.344', '3218.688', '4828.032', '8046.72', '16093.44']) {
     const controller = new AbortController(); controller.abort();
     await assert.rejects(setup().capture({ ...input(), discovery: { ...discovery, radius_metres } }, { signal: controller.signal }), /cancelled/);
   }

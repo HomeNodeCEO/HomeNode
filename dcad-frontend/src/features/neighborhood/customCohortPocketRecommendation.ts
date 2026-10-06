@@ -33,7 +33,7 @@ export interface CheckedRecordedProximity {
   readonly authority: 'not_established';
   readonly status: 'available' | 'unavailable';
   readonly reason: typeof PROXIMITY_REASONS[number] | null;
-  readonly radius_metres: '4828.032' | '8046.72' | '16093.44';
+  readonly radius_metres: '1609.344' | '3218.688' | '4828.032' | '8046.72' | '16093.44';
   readonly counts: { readonly accounts: number; readonly parcels: number; readonly observed_accounts: number; readonly unknown_accounts: number };
 }
 export interface CheckedPocketRecommendation {
@@ -144,7 +144,8 @@ function recordedProximity(value: unknown, all: Population, pockets: readonly Po
   ensure(r.proximity_version === 1 && r.basis === 'recorded_subject_centroid_to_retained_parcel_point_on_surface'
     && r.authority === 'not_established' && (r.status === 'available' || r.status === 'unavailable')
     && (r.status === 'available' ? r.reason === null : PROXIMITY_REASONS.some(reason => reason === r.reason))
-    && (r.radius_metres === '4828.032' || r.radius_metres === '8046.72' || r.radius_metres === '16093.44'));
+    && (r.radius_metres === '1609.344' || r.radius_metres === '3218.688'
+      || r.radius_metres === '4828.032' || r.radius_metres === '8046.72' || r.radius_metres === '16093.44'));
   const rawCounts = object(r.counts, ['accounts', 'parcels', 'observed_accounts', 'unknown_accounts']);
   const accounts = count(rawCounts.accounts), observed_accounts = count(rawCounts.observed_accounts), unknown_accounts = count(rawCounts.unknown_accounts);
   ensure(Number.isSafeInteger(rawCounts.parcels) && Number(rawCounts.parcels) >= 0 && Number(rawCounts.parcels) <= 100_000);

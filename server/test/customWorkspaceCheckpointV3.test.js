@@ -14,7 +14,7 @@ const OPERATION = '20000000-0000-4000-8000-000000000002';
 const BATCH = { batch_id: '30000000-0000-4000-8000-000000000003', expected_review_revision: 9 };
 const PERIOD = { start_date: '2024-01-01', end_date: '2024-12-31' };
 const NEXT_PERIOD = { start_date: '2024-02-29', end_date: '2024-12-31' };
-const RADII = ['4828.032', '8046.72', '16093.44'];
+const RADII = ['1609.344', '3218.688', '4828.032', '8046.72', '16093.44'];
 const choice = radius => ({ profile_id: 'custom-suburban-radius-v2', radius_metres: radius });
 const copy = value => structuredClone(value);
 const legacy = () => ({ workspace_version: 1, active: { context_ref: copy(CONTEXT), observation_period: copy(PERIOD),

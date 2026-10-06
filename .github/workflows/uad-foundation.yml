@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/uad-foundation.yml"
+      - "docs/manual-product-release-approval.md"
       - "server/**"
       - "dcad-frontend/**"
       - "dcad-scraper-with-api/**"
@@ -14,6 +15,7 @@ on:
       - phase-0/uad-foundation
     paths:
       - ".github/workflows/uad-foundation.yml"
+      - "docs/manual-product-release-approval.md"
       - "server/**"
       - "dcad-frontend/**"
       - "dcad-scraper-with-api/**"

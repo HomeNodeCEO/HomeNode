@@ -20,6 +20,47 @@ export type PhotoLabelSelection = Readonly<{
   roomLabel?: string | null;
 }>;
 
+const STAGED_PHOTO_MANIFEST = "pending-photo.json";
+
+function photoDirectory(ownerUserId: string, sessionId: string, clientPhotoId: string) {
+  return new Directory(Paths.document, "homenode-appraisal-photos", ownerUserId, sessionId, clientPhotoId);
+}
+
+export async function recoverStagedPhotos(ownerUserId: string, sessionId: string): Promise<PreparedPhoto[]> {
+  const sessionDirectory = new Directory(Paths.document, "homenode-appraisal-photos", ownerUserId, sessionId);
+  if (!sessionDirectory.exists) return [];
+  const recovered: PreparedPhoto[] = [];
+  for (const entry of sessionDirectory.list()) {
+    if (!(entry instanceof Directory)) continue;
+    const manifest = new File(entry, STAGED_PHOTO_MANIFEST);
+    if (!manifest.exists) continue;
+    try {
+      const photo = JSON.parse(await manifest.text()) as PreparedPhoto;
+      if (photo.clientPhotoId !== entry.name || !photo.category || photo.objects?.length !== 2) continue;
+      const objects = photo.objects.map((object) => {
+        const fileName = object.uri?.split("/").pop() || "";
+        if (object.variant === "original" ? !/^original\.[A-Za-z0-9]{2,5}$/.test(fileName) : fileName !== "display.jpg") {
+          throw new Error("invalid_staged_photo_path");
+        }
+        // Rebuild the URI under the current app container. iOS may change the
+        // absolute container prefix while preserving its Documents contents.
+        const file = new File(entry, fileName);
+        if (!file.exists || !file.size) throw new Error("missing_staged_photo_file");
+        return { ...object, uri: file.uri, byteSize: Number(file.size) };
+      });
+      recovered.push({ ...photo, objects });
+    } catch {
+      // Leave an incomplete manifest and its originals untouched for support recovery.
+    }
+  }
+  return recovered.slice(0, 100);
+}
+
+export function clearStagedPhotoManifest(ownerUserId: string, sessionId: string, clientPhotoId: string) {
+  const manifest = new File(photoDirectory(ownerUserId, sessionId, clientPhotoId), STAGED_PHOTO_MANIFEST);
+  if (manifest.exists) manifest.delete();
+}
+
 async function ensurePermission(kind: "camera" | "library") {
   const response = kind === "camera"
     ? await ImagePicker.requestCameraPermissionsAsync()
@@ -106,13 +147,7 @@ export async function preparePickedPhoto(
 ): Promise<PreparedPhoto> {
   if (asset.type && asset.type !== "image") throw new Error("invalid_mobile_photo_type");
   const clientPhotoId = Crypto.randomUUID();
-  const directory = new Directory(
-    Paths.document,
-    "homenode-appraisal-photos",
-    options.ownerUserId,
-    options.sessionId,
-    clientPhotoId,
-  );
+  const directory = photoDirectory(options.ownerUserId, options.sessionId, clientPhotoId);
   await directory.create({ idempotent: true, intermediates: true });
   const contentType = inferredImageContentType(asset.fileName, asset.mimeType);
   const originalName = safePhotoFileName(
@@ -143,7 +178,7 @@ export async function preparePickedPhoto(
       height: display.height,
     },
   ];
-  return {
+  const prepared: PreparedPhoto = {
     clientPhotoId,
     category: options.label.category,
     categorySource: options.label.categorySource,
@@ -163,13 +198,21 @@ export async function preparePickedPhoto(
     },
     objects,
   };
+  new File(directory, STAGED_PHOTO_MANIFEST).write(JSON.stringify(prepared));
+  return prepared;
 }
 
 export async function deletePreparedPhotoFiles(photo: PreparedPhoto) {
+  const first = photo.objects[0];
+  if (first) {
+    try {
+      const manifest = new File(new File(first.uri).parentDirectory, STAGED_PHOTO_MANIFEST);
+      if (manifest.exists) manifest.delete();
+    } catch { /* already removed */ }
+  }
   for (const object of photo.objects) {
     try { new File(object.uri).delete(); } catch { /* already removed */ }
   }
-  const first = photo.objects[0];
   if (first) {
     try { new File(first.uri).parentDirectory.delete(); } catch { /* already removed */ }
   }

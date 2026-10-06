@@ -157,6 +157,7 @@ export function photoSyncErrorMessage(value: string | null | undefined) {
   }
   const messages: Record<string, string> = {
     mobile_camera_permission_required: "Camera access is required to take appraisal photos.",
+    mobile_photo_foreground_timeout: "The photo is saved locally, but HomeNode is waiting for iOS to return it to the foreground. Try Recover saved photos when the app is active.",
     mobile_library_permission_required: "Photo-library access is required to import photos.",
     empty_mobile_photo_file: "An empty photo was skipped.",
     mobile_photo_limit_conflict: "This inspection already has 100 active photos.",

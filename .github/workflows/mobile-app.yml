@@ -34,6 +34,8 @@ jobs:
           cache: pnpm
           cache-dependency-path: homenode-mobile/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      - name: Verify the EAS post-install toolchain hook
+        run: pnpm run eas-build-post-install
       - run: pnpm run typecheck
       - run: pnpm test
       - run: pnpm run doctor

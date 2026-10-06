@@ -1,23 +1,27 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AssignmentDocument } from '@/lib/api';
 import { sfrepApi } from './sfrepApi';
-import { SFREP_FORM_ID, sfrepDownloadFilename, sfrepNoticeText, sfrepProvenanceText, sfrepSubjectChecklist, type SfrepPreview } from './sfrepTransport';
+import { SFREP_FORM_ID, SFREP_2055_FORM_ID, sfrepContractChecklist, sfrepDownloadFilename, sfrepNoticeText, sfrepProvenanceText, sfrepSubjectChecklist, type SfrepFormId, type SfrepPreview } from './sfrepTransport';
 
 interface Props {
   accountId: string;
   assignmentFileId: number;
   documents: AssignmentDocument[];
+  documentsLoading?: boolean;
+  documentLoadError?: string;
+  onRetryDocuments?: () => void;
   getEditorKey: () => string;
   onClose: () => void;
 }
 const secondary = 'hn-action-secondary btn btn-sm rounded-lg normal-case';
 
-export default function SfrepExportDialog({ accountId, assignmentFileId, documents, getEditorKey, onClose }: Props) {
+export default function SfrepExportDialog({ accountId, assignmentFileId, documents, documentsLoading = false, documentLoadError = '', onRetryDocuments, getEditorKey, onClose }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const requestRef = useRef<AbortController | null>(null);
   const downloadUrlRef = useRef<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [includeDocuments, setIncludeDocuments] = useState(true);
+  const [formId, setFormId] = useState<SfrepFormId>(SFREP_FORM_ID);
   const [preview, setPreview] = useState<SfrepPreview | null>(null);
   const [busy, setBusy] = useState<'preview' | 'export' | null>(null);
   const [error, setError] = useState('');
@@ -46,14 +50,14 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
     invalidate(); setSelectedIds(current => checked ? [...current, id] : current.filter(value => value !== id));
   };
   const run = async (operation: 'preview' | 'export') => {
-    if (requestRef.current || !selectedIds.length || (operation === 'export' && (!preview
+    if (requestRef.current || (operation === 'export' && (!preview
       || (!preview.fields.length && (!includeDocuments || !preview.documents.length))))) return;
     const controller = new AbortController(); requestRef.current = controller;
     const timer = window.setTimeout(() => controller.abort(), 120_000);
     clearDownload(); setBusy(operation); setError('');
     if (operation === 'preview') setPreview(null);
     try {
-      const selection = { accountId, assignmentFileId, documentIds: [...selectedIds], includeDocuments };
+      const selection = { accountId, assignmentFileId, documentIds: [...selectedIds], includeDocuments, formId };
       const io = { signal: controller.signal, editorKey: getEditorKey() };
       if (operation === 'preview') {
         const result = await sfrepApi.preview(selection, io);
@@ -88,19 +92,29 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
   const documentTitle = (id: number | null) => id === null ? 'No source document (user default)'
     : documents.find(doc => doc.id === id)?.title || `Document ${id}`;
   const subjectChecklist = preview ? sfrepSubjectChecklist(preview) : [];
+  const contractChecklist = preview ? sfrepContractChecklist(preview) : [];
+  const formLabel = formId === SFREP_2055_FORM_ID ? '2055 Exterior-Only' : '1004 URAR';
+  const checklistForm = formId === SFREP_2055_FORM_ID ? '2055' : '1004';
   const reviewAssumptions = preview?.assumptions.filter(assumption => assumption.rule !== 'user_requested_fee_simple_default') || [];
 
-  return <dialog ref={dialogRef} onCancel={event => { event.preventDefault(); onClose(); }} aria-label="Export documents to SFREP"
+  return <dialog ref={dialogRef} onCancel={event => { event.preventDefault(); onClose(); }} aria-label="Export report to SFREP"
     className="m-auto max-h-[90vh] w-[min(1000px,95vw)] overflow-y-auto rounded-xl border border-amber-300 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-slate-950/50 print:hidden">
     <header className="flex items-start justify-between gap-3 border-b border-amber-200 bg-gradient-to-r from-violet-100 to-amber-50 px-5 py-4">
       <div><h3 className="text-lg font-semibold text-violet-950">Export to SFREP</h3>
-        <p className="mt-1 text-xs text-slate-700">Legacy FNMA 1004 · {SFREP_FORM_ID} · RPTI import file</p></div>
+        <p className="mt-1 text-xs text-slate-700">Legacy FNMA {formLabel} · {formId} · RPTI import file</p></div>
       <button type="button" autoFocus className={secondary} onClick={onClose}>Close</button>
     </header>
     <div className="space-y-4 p-5 text-sm" aria-busy={Boolean(busy)}>
-      <p>Save and review the HomeNode Subject and Assignment fields, then preview the export. Selected documents supply supporting PDF addenda. Unsaved edits are not exported. This export does not support UAD 3.6.</p>
+      <p>Choose a report form, then preview the saved HomeNode data and supporting documents. The 1004 URAR and 2055 Exterior-Only exports map the Subject and Contract sections; other report sections will be added as their mappings are completed. Unsaved edits are not exported. This export does not support UAD 3.6.</p>
+      <fieldset disabled={Boolean(busy)} className="space-y-2 rounded-lg border border-violet-200 bg-violet-50/50 p-3">
+        <legend className="px-1 font-semibold text-violet-950">Report form</legend>
+        <label className="flex items-center gap-2"><input type="radio" name="sfrep-report-form" checked={formId === SFREP_FORM_ID}
+          onChange={() => { if (!requestRef.current) { invalidate(); setFormId(SFREP_FORM_ID); } }} />1004 URAR — Subject and Contract sections available</label>
+        <label className="flex items-center gap-2"><input type="radio" name="sfrep-report-form" checked={formId === SFREP_2055_FORM_ID}
+          onChange={() => { if (!requestRef.current) { invalidate(); setFormId(SFREP_2055_FORM_ID); } }} />2055 Exterior-Only — Subject and Contract sections available</label>
+      </fieldset>
       <fieldset disabled={Boolean(busy)} className="space-y-2">
-        <legend className="mb-2 font-semibold text-violet-950">1. Select documents ({selectedIds.length}/10)</legend>
+        <legend className="mb-2 font-semibold text-violet-950">1. Select PDF attachments ({selectedIds.length}/10)</legend>
         <div className="max-h-56 space-y-2 overflow-y-auto rounded-lg border border-violet-200 p-3">
           {documents.map(doc => <label key={doc.id} className="flex items-start gap-3 rounded p-1">
             <input type="checkbox" className="checkbox checkbox-sm mt-0.5" checked={selectedIds.includes(doc.id)}
@@ -109,14 +123,19 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
             <span className="min-w-0"><span className="block break-words font-medium">{doc.title || doc.file_name}</span>
               <span className="text-xs text-slate-600">{doc.document_type.replace(/_/g, ' ')} · {doc.processing_status.replace(/_/g, ' ')}</span></span>
           </label>)}
-          {!documents.length && <p>No source documents are available. Upload a PDF in the Document Evidence Center first.</p>}
+          {documentsLoading ? <p role="status">Loading this file’s documents…</p> : documentLoadError ? (
+            <div role="alert" className="space-y-2 text-rose-900">
+              <p>Documents could not be loaded: {documentLoadError}</p>
+              {onRetryDocuments && <button type="button" className={secondary} onClick={onRetryDocuments}>Retry loading documents</button>}
+            </div>
+          ) : !documents.length && <p>No source PDFs are available for attachment. Saved HomeNode report fields can still be previewed and exported.</p>}
         </div>
         <label className="flex items-start gap-3 pt-2"><input type="checkbox" className="checkbox checkbox-sm" checked={includeDocuments}
           onChange={event => { if (!requestRef.current) { invalidate(); setIncludeDocuments(event.target.checked); } }} />
           <span>Include original PDFs as report addenda</span></label>
-        <p className="text-xs text-slate-600">Included PDFs become visible report pages in SFREP. Upload CAD and Realist reference PDFs using “Other Appraisal Document.” Fields without a supported mapping remain in their source documents. Maximum: 10 documents and 50 MiB of original PDFs per export.</p>
+        <p className="text-xs text-slate-600">Supported, reviewed evidence from this HomeNode workfile fills the form whether or not its PDF is attached. These checkboxes only choose which original PDFs become visible report pages in SFREP. Upload CAD and Realist reference PDFs using “Other Appraisal Document.” Fields without a supported mapping remain in their source documents. Maximum: 10 documents and 50 MiB of original PDFs per export.</p>
       </fieldset>
-      <button type="button" className={secondary} disabled={Boolean(busy) || !selectedIds.length} onClick={() => void run('preview')}>
+      <button type="button" className={secondary} disabled={Boolean(busy) || documentsLoading || Boolean(documentLoadError)} onClick={() => void run('preview')}>
         {busy === 'preview' ? 'Preparing preview…' : 'Preview SFREP export'}
       </button>
       {error && <p role="alert" className="rounded-lg border border-rose-300 bg-rose-50 p-3 text-rose-900">{error}</p>}
@@ -138,14 +157,28 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
           <h5 className="font-semibold">Assumptions requiring confirmation</h5>
           <ul className="mt-1 list-disc space-y-1 pl-5">{reviewAssumptions.map((assumption, index) => <li key={`${assumption.fieldId}:${index}`}>{assumption.reason}</li>)}</ul>
         </section>}
-        <section aria-label="1004 Subject export checklist" className="space-y-2">
-          <h5 className="font-semibold text-violet-950">1004 Subject export checklist</h5>
+        <section aria-label={`${checklistForm} Subject export checklist`} className="space-y-2">
+          <h5 className="font-semibold text-violet-950">{checklistForm} Subject export checklist</h5>
           <p className="text-xs text-slate-600">{subjectChecklist.filter(item => item.status !== 'included').length} of {subjectChecklist.length} items need review or are missing. This checklist shows export coverage, not a completed appraisal. Missing and omitted items are not exported; existing SFREP values may remain. Review the destination report and alternative checkbox selections.</p>
           {subjectChecklist.some(item => item.status === 'missing' || !item.values.length) && <p className="text-xs text-amber-900">For documents uploaded before this update, use Re-run extraction and review the new suggestions.</p>}
           <div className="overflow-x-auto"><table className="w-full text-left text-xs">
             <caption className="sr-only">Subject-section export coverage and items requiring review</caption>
             <thead><tr className="border-b border-violet-200"><th scope="col" className="p-2">Subject item</th><th scope="col" className="p-2">Export status / value</th><th scope="col" className="p-2">Review notes</th></tr></thead>
             <tbody>{subjectChecklist.map(item => <tr key={item.key} className="border-b border-slate-100 align-top">
+              <th scope="row" className="p-2 font-medium">{item.label}</th>
+              <td className="max-w-sm break-words p-2"><span className={item.status === 'included' ? 'font-medium text-emerald-800' : 'font-medium text-amber-900'}>{item.statusLabel}</span>
+                {item.values.map((value, index) => <span key={index} className="mt-1 block whitespace-pre-wrap">{value}</span>)}</td>
+              <td className="max-w-sm break-words p-2 text-slate-600">{item.notes.map((note, index) => <p key={index}>{note}</p>)}</td>
+            </tr>)}</tbody>
+          </table></div>
+        </section>
+        <section aria-label={`${checklistForm} Contract export checklist`} className="space-y-2">
+          <h5 className="font-semibold text-violet-950">{checklistForm} Contract export checklist</h5>
+          <p className="text-xs text-slate-600">Keep one subject purchase contract in this workfile and confirm its extracted terms in the Document Evidence Center. Attaching its PDF is optional. Uploading alone does not certify that the appraiser analyzed the contract. Missing terms are left blank for review.</p>
+          <div className="overflow-x-auto"><table className="w-full text-left text-xs">
+            <caption className="sr-only">Contract-section export coverage and items requiring review</caption>
+            <thead><tr className="border-b border-violet-200"><th scope="col" className="p-2">Contract item</th><th scope="col" className="p-2">Export status / value</th><th scope="col" className="p-2">Review notes</th></tr></thead>
+            <tbody>{contractChecklist.map(item => <tr key={item.key} className="border-b border-slate-100 align-top">
               <th scope="row" className="p-2 font-medium">{item.label}</th>
               <td className="max-w-sm break-words p-2"><span className={item.status === 'included' ? 'font-medium text-emerald-800' : 'font-medium text-amber-900'}>{item.statusLabel}</span>
                 {item.values.map((value, index) => <span key={index} className="mt-1 block whitespace-pre-wrap">{value}</span>)}</td>

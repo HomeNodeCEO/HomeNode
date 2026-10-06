@@ -49,7 +49,7 @@ const radiusOf = input => {
   if (choice === undefined) check(input.study.profile_id === 'custom-simple-suburban-radius-v1' && radius === '4828.032'
     && input.spatial.discovery === undefined, 'retained_binding_mismatch');
   else { data(choice); check(choice.profile_id === 'custom-suburban-radius-v2' && input.study.profile_id === choice.profile_id
-    && ['4828.032', '8046.72', '16093.44'].includes(radius) && choice.radius_metres === radius
+    && ['1609.344', '3218.688', '4828.032', '8046.72', '16093.44'].includes(radius) && choice.radius_metres === radius
     && same(choice, input.spatial.discovery), 'retained_binding_mismatch'); }
   return radius;
 };

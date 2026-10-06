@@ -11,7 +11,8 @@ const mobileRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const repositoryRoot = path.resolve(mobileRoot, '..');
 const expoRequire = createRequire(require.resolve('expo/package.json'));
 const expoCliRequire = createRequire(expoRequire.resolve('@expo/cli/package.json'));
-const metroRoot = path.dirname(expoCliRequire.resolve('metro/package.json'));
+const expoMetroRequire = createRequire(expoCliRequire.resolve('@expo/metro/package.json'));
+const metroRoot = path.dirname(expoMetroRequire.resolve('metro/package.json'));
 const imageSizeModule = require.resolve('image-size', { paths: [metroRoot] });
 const metroAssets = require(path.join(metroRoot, 'src/Assets.js')) as {
   getAssetSize: (type: string, content: Uint8Array, filePath: string) => { width: number; height: number } | null;
@@ -208,9 +209,24 @@ test('dependency security gates reject moderate or higher findings', () => {
     (workflow.match(/npm audit --package-lock-only --audit-level=moderate/g) ?? []).length,
     1,
   );
+  assert.equal((workflow.match(/run: node scripts\/temporary-audit-exception\.mjs/g) ?? []).length, 1);
   assert.equal(
-    (workflow.match(/^\s*run:\s+pnpm audit --fetch-timeout=300000 --audit-level=moderate\s*$/gm) ?? []).length,
+    (workflow.match(/run: pnpm run verify:toolchain/g) ?? []).length,
     1,
   );
+  assert.ok(workflow.indexOf('run: pnpm run verify:toolchain') <
+    workflow.indexOf('run: node scripts/temporary-audit-exception.mjs'));
+  assert.match(workflow, /fetch-depth: 0/);
+  const exception = readFileSync(
+    path.join(repositoryRoot, 'homenode-mobile/scripts/temporary-audit-exception.mjs'),
+    'utf8',
+  );
+  assert.match(exception, /2026-10-19/);
+  assert.match(exception, /'--audit-level=moderate'/);
+  assert.match(exception, /\['GHSA-86w9-cpqp-85rv', 'node-forge'\]/);
+  assert.match(exception, /\['GHSA-vfj7-8cjw-p6xm', 'braces'\]/);
+  assert.match(exception, /'--json'/);
+  assert.doesNotMatch(exception, /'--ignore'/);
+  assert.doesNotMatch(workflow, /--ignore-unfixable|--ignore-registry-errors/);
   assert.doesNotMatch(workflow, /audit-level=high|fail-on-severity:\s*high/);
 });

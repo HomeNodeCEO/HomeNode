@@ -1,4 +1,4 @@
-export const CUSTOM_WORKSPACE_DISCOVERY_RADII_METRES = Object.freeze(['4828.032', '8046.72', '16093.44'] as const);
+export const CUSTOM_WORKSPACE_DISCOVERY_RADII_METRES = Object.freeze(['1609.344', '3218.688', '4828.032', '8046.72', '16093.44'] as const);
 export interface CustomWorkspaceRadiusDiscovery {
   readonly profile_id: 'custom-suburban-radius-v2';
   readonly radius_metres: typeof CUSTOM_WORKSPACE_DISCOVERY_RADII_METRES[number];

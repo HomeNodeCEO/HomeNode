@@ -6,7 +6,7 @@ import { buildSfrepReportExport } from '../src/services/sfrepReportExport.js';
 import { previewSfrepDocuments } from '../src/services/sfrepDocumentTransfer.js';
 
 const input = { accountId: '000123', assignmentFileId: 4, documentIds: [1], formId: 'FNMA-1004-0911', includeDocuments: false };
-const candidate = (field_key, confirmed_value, index = 1) => ({ id: index, document_id: 1, field_key, confirmed_value, review_status: 'confirmed' });
+const candidate = (field_key, confirmed_value, index = 1, documentId = 1) => ({ id: index, document_id: documentId, field_key, confirmed_value, review_status: 'confirmed' });
 function fixture() {
   const documents = [{ id: 1, account_id: '000123', assignment_file_id: 4, document_type: 'engagement_letter',
     processing_status: 'reviewed', upload_date: '2026-10-02', file_size_bytes: 100, title: 'Synthetic Subject', file_name: 'subject.pdf',
@@ -17,6 +17,15 @@ function fixture() {
       assignment_type: 'purchase_transaction', lender_client_name: 'Example Bank', lender_client_address: '20 Example Ave, Austin TX 78701',
       hoa_dues_amount: '120.49', hoa_frequency: 'per_year', pud: 'false',
     }).map(([key, value], index) => candidate(key, value, index + 1)) }];
+  const copy = (id, type, values, sourceKind) => ({ ...documents[0], id, document_type: type,
+    extraction_summary: sourceKind ? { urar_subject_evidence: { source_kind: sourceKind } } : undefined,
+    candidates: Object.entries(values).map(([key, value], index) => candidate(key, value, id * 100 + index, id)) });
+  documents.push(copy(2, 'other', { subject_property_address: '100 Example Dr, Garland, TX 75041',
+    assessor_parcel_number: '000123', owner_name: 'Example Owner', county: 'Dallas',
+    neighborhood_name: 'Example Park', legal_description: 'EXAMPLE PARK\nBLK 1 LOT 2' }, 'cad'));
+  documents.push(copy(3, 'other', { assessor_parcel_number: '000123', tax_year: '2025', tax_amount: '4321.50' }, 'realist'));
+  documents.push(copy(4, 'mls_sheet', { subject_property_address: '100 Example Dr, Garland, TX 75041',
+    hoa_dues_amount: '120.49', hoa_frequency: 'per_year', pud: 'false' }));
   const projection = projectCustomSubjectDocuments(documents);
   const applied = mergeCustomSubjectApplication({ projection });
   const saved = { accountId: '000123', assignmentFileId: 4, assignmentRevision: 2,
@@ -95,7 +104,9 @@ test('saved street text never refills or conflicts with independently saved loca
     const result = buildSfrepReportExport({ documents, savedReportFields: savedSfrepSubjectFields(saved, input).fields });
     assert.equal(result.fields.find(field => field.fieldId === 'StreetAddress').value, '100 Example Dr, Garland, TX 75041');
     assert.equal(result.fields.find(field => field.fieldId === 'City')?.value, city || undefined);
-    assert.equal(result.fields.some(field => ['State', 'ZipCode'].includes(field.fieldId)), false);
+    assert.equal(result.fields.find(field => field.fieldId === 'State')?.value, 'TX');
+    assert.equal(result.fields.find(field => field.fieldId === 'State')?.provenance.origin, 'user_default');
+    assert.equal(result.fields.some(field => field.fieldId === 'ZipCode'), false);
     assert.deepEqual(result.conflicts, []);
     assert.equal(result.omitted.some(field => field.documentId === null), false);
   }
@@ -152,7 +163,7 @@ test('multiple assignment choices and unsupported HOA frequency are not guessed'
 
 test('presentation-only normalization preserves an exact older source receipt without concealing source changes', () => {
   const { saved } = fixture();
-  const owner = saved.documents[0].candidates.find(candidate => candidate.field_key === 'owner_name');
+  const owner = saved.documents[1].candidates.find(candidate => candidate.field_key === 'owner_name');
   owner.confirmed_value = 'EXAMPLE OWNER';
   const proposal = projectCustomSubjectDocuments(saved.documents).fields.find(field => field.key === 'owner_name');
   saved.subject.value.owner.owner_name = 'EXAMPLE OWNER';
@@ -162,6 +173,168 @@ test('presentation-only normalization preserves an exact older source receipt wi
   assert.equal(exported.provenance.origin, 'reviewed_document');
   owner.confirmed_value = 'DIFFERENT OWNER';
   assert.equal(exportSaved(saved).fields.some(field => field.fieldId === 'OwnerName'), false);
+});
+
+test('a stale identity receipt revalidates only when the current reviewed CAD still supports the saved value', () => {
+  const { saved } = fixture();
+  for (const key of ['subject_street_address', 'subject_city', 'subject_zip', 'county', 'assessor_parcel_number']) {
+    saved.evidence.value.fields[key].status = 'needs_review';
+  }
+  const result = exportSaved(saved);
+  for (const id of ['StreetAddress', 'City', 'ZipCode', 'County', 'AssessorsParcelNumber']) {
+    assert.ok(result.fields.some(field => field.fieldId === id), id);
+  }
+  const cadAddress = saved.documents[1].candidates.find(item => item.field_key === 'subject_property_address');
+  cadAddress.confirmed_value = '101 Different Dr, Garland, TX 75041';
+  assert.equal(exportSaved(saved).fields.some(field => field.fieldId === 'StreetAddress'), false);
+  cadAddress.confirmed_value = '100 Example Dr, Garland, TX 75041';
+  cadAddress.review_status = 'rejected';
+  assert.equal(exportSaved(saved).fields.some(field => field.fieldId === 'StreetAddress'), false);
+});
+
+test('a changed presentation of the same canonical account row does not strand saved locality', () => {
+  const { saved } = fixture();
+  for (const document of saved.documents) {
+    document.subject_context.canonicalIdentity = { accountId: '000123', address: '100 Example Dr', city: 'Garland',
+      postalCode: '75041', county: 'Dallas', assessorParcelNumber: '000123', state: 'TX' };
+  }
+  // CAD supplies the street and parcel; the account is the locality fallback.
+  saved.documents[1].candidates = saved.documents[1].candidates.filter(item => item.field_key !== 'county');
+  const applied = mergeCustomSubjectApplication({ projection: projectCustomSubjectDocuments(saved.documents) });
+  saved.subject.value = applied.subject;
+  saved.assignmentDetails = applied.assignmentDetails;
+  saved.evidence.value = applied.evidence;
+  const county = saved.evidence.value.fields.county;
+  assert.equal(county.kind, 'account_reference');
+  county.status = 'needs_review';
+  county.reviewedSourceValue = 'DALLAS COUNTY';
+  county.sourceEvidence[0].value = 'DALLAS COUNTY';
+  assert.equal(exportSaved(saved).fields.find(field => field.fieldId === 'County')?.value, 'Dallas');
+  saved.documents[0].subject_context.canonicalIdentity.county = 'Collin';
+  assert.equal(exportSaved(saved).fields.some(field => field.fieldId === 'County'), false);
+});
+
+test('older reviewed MLS and Realist locality receipts migrate only to matching canonical identity on both forms', () => {
+  const { saved } = fixture();
+  for (const document of saved.documents) {
+    document.subject_context.canonicalIdentity = { accountId: '000123', address: '100 Example Dr', city: 'Garland',
+      postalCode: '75041', county: 'Dallas', assessorParcelNumber: '000123', state: 'TX' };
+  }
+  // CAD still verifies the property/APN but did not print every locality part.
+  saved.documents[1].candidates = saved.documents[1].candidates.filter(item =>
+    !['subject_property_address', 'county'].includes(item.field_key));
+  const mls = saved.documents[3], realist = saved.documents[2];
+  mls.candidates.push(candidate('subject_city', 'Garland', 450, mls.id));
+  realist.candidates.push(candidate('subject_property_address', '100 Example Dr, Garland, TX 75041-1234', 350, realist.id),
+    candidate('county', 'Dallas', 351, realist.id));
+  const applied = mergeCustomSubjectApplication({ projection: projectCustomSubjectDocuments(saved.documents) });
+  saved.subject.value = applied.subject;
+  saved.assignmentDetails = applied.assignmentDetails;
+  saved.evidence.value = applied.evidence;
+  const legacy = {
+    subject_city: [mls, 'subject_city', 'Garland'],
+    subject_state: [mls, 'subject_property_address', '100 Example Dr, Garland, TX 75041'],
+    subject_zip: [realist, 'subject_property_address', '100 Example Dr, Garland, TX 75041-1234'],
+    county: [realist, 'county', 'Dallas'],
+  };
+  for (const [key, [document, sourceField, raw]] of Object.entries(legacy)) {
+    const source = document.candidates.find(item => item.field_key === sourceField && item.confirmed_value === raw);
+    assert.ok(source, key);
+    assert.equal(saved.evidence.value.fields[key].kind, 'account_reference');
+    saved.evidence.value.fields[key] = { kind: 'reviewed_document', sourceField, documentId: document.id,
+      candidateId: source.id, documentType: document.document_type, reviewedSourceValue: raw,
+      value: saved.evidence.value.fields[key].value, status: 'current' };
+  }
+  const ids = ['City', 'State', 'ZipCode', 'County'];
+  for (const formId of ['FNMA-1004-0911', 'FNMA-2055-0911']) {
+    const result = buildSfrepReportExport({ formId, savedReportFields: savedSfrepSubjectFields(saved, input).fields });
+    for (const id of ids) {
+      const field = result.fields.find(item => item.fieldId === id);
+      assert.ok(field, `${formId}: ${id}`);
+      assert.equal(field.provenance.origin, 'account_reference');
+    }
+  }
+  for (const change of ['rejected', 'reprocessing', 'removed', 'changed_raw', 'different_account', 'not_current']) {
+    const altered = structuredClone(saved);
+    const city = altered.documents[3].candidates.find(item => item.id === 450);
+    if (change === 'rejected') city.review_status = 'rejected';
+    if (change === 'reprocessing') altered.documents[3].processing_status = 'processing';
+    if (change === 'removed') altered.documents[3].candidates = altered.documents[3].candidates.filter(item => item.id !== 450);
+    if (change === 'changed_raw') city.confirmed_value = 'Other City';
+    if (change === 'different_account') altered.documents[0].subject_context.canonicalIdentity.city = 'Other City';
+    if (change === 'not_current') altered.evidence.value.fields.subject_city.status = 'needs_review';
+    assert.equal(exportSaved(altered).fields.some(item => item.fieldId === 'City'), false, change);
+  }
+});
+
+test('reviewed subject-address state survives a missing canonical state without inventing one', () => {
+  const { saved } = fixture();
+  for (const document of saved.documents) {
+    document.subject_context.canonicalIdentity = { accountId: '000123', address: '100 Example Dr', city: 'Garland',
+      postalCode: '75041', county: 'Dallas', assessorParcelNumber: '000123', state: null };
+  }
+  // No CAD or account state is available; the reviewed MLS full address says TX.
+  saved.documents[1].candidates = saved.documents[1].candidates.filter(item => item.field_key !== 'subject_property_address');
+  const mls = saved.documents[3];
+  const address = mls.candidates.find(item => item.field_key === 'subject_property_address');
+  const receipt = { kind: 'reviewed_document', sourceField: 'subject_property_address', documentId: mls.id,
+    candidateId: address.id, documentType: mls.document_type, reviewedSourceValue: address.confirmed_value,
+    value: 'TX', status: 'current' };
+  saved.evidence.value.fields.subject_state = receipt;
+  for (const formId of ['FNMA-1004-0911', 'FNMA-2055-0911']) {
+    const fields = savedSfrepSubjectFields(saved, input).fields;
+    const state = buildSfrepReportExport({ formId, savedReportFields: fields }).fields.find(item => item.fieldId === 'State');
+    assert.equal(state?.value, 'TX');
+    assert.equal(state?.provenance.origin, 'reviewed_document');
+    assert.equal(state?.provenance.sourceDocumentId, mls.id);
+  }
+  for (const change of ['rejected', 'changed_raw', 'not_current', 'wrong_state', 'different_account_state',
+    'edited_street', 'edited_city', 'edited_zip']) {
+    const altered = structuredClone(saved);
+    const old = altered.documents[3].candidates.find(item => item.id === address.id);
+    if (change === 'rejected') old.review_status = 'rejected';
+    if (change === 'changed_raw') old.confirmed_value = '100 Example Dr, Garland, OK 75041';
+    if (change === 'not_current') altered.evidence.value.fields.subject_state.status = 'needs_review';
+    if (change === 'wrong_state') {
+      altered.subject.value.property_location.state = 'OK';
+      altered.evidence.value.fields.subject_state.value = 'OK';
+    }
+    if (change === 'different_account_state') {
+      for (const document of altered.documents) document.subject_context.canonicalIdentity.state = 'OK';
+    }
+    if (change === 'edited_street') altered.subject.value.property_location.address = '101 Different Dr';
+    if (change === 'edited_city') altered.subject.value.property_location.city = 'Plano';
+    if (change === 'edited_zip') altered.subject.value.property_location.postal_code = '75042';
+    const state = exportSaved(altered).fields.find(item => item.fieldId === 'State');
+    if (['wrong_state', 'different_account_state'].includes(change)) assert.equal(state, undefined, change);
+    else {
+      assert.equal(state?.value, 'TX', change);
+      assert.equal(state?.provenance.origin, 'user_default', change);
+    }
+  }
+});
+
+test('Texas-only state default survives a stale receipt on both legacy forms without changing the saved report', () => {
+  const { saved } = fixture();
+  saved.documents[1].candidates = saved.documents[1].candidates.filter(item => item.field_key !== 'subject_property_address');
+  saved.evidence.value.fields.subject_state.status = 'needs_review';
+  const before = structuredClone(saved.subject.value);
+  for (const formId of ['FNMA-1004-0911', 'FNMA-2055-0911']) {
+    const canonical = savedSfrepSubjectFields(saved, input);
+    const result = buildSfrepReportExport({ formId, savedReportFields: canonical.fields });
+    const state = result.fields.find(field => field.fieldId === 'State');
+    assert.equal(state?.value, 'TX');
+    assert.equal(state?.provenance.origin, 'user_default');
+    assert.equal(state?.provenance.rule, 'user_requested_texas_state_default_v1');
+    assert.match(result.reportXml, /<TextField Id="State" Data="TX" \/>/);
+    assert.ok(result.assumptions.some(item => item.fieldId === 'State' && item.value === 'TX'));
+    assert.ok(canonical.warnings.some(message => /stale document receipt/.test(message)));
+    assert.equal(canonical.knownMissing.some(item => item.fieldId === 'State'), false);
+  }
+  assert.deepEqual(saved.subject.value, before);
+  saved.subject.value.property_location.state = 'OK';
+  assert.equal(exportSaved(saved).fields.find(field => field.fieldId === 'State')?.value, 'OK');
+  assert.equal(exportSaved(saved).fields.find(field => field.fieldId === 'State')?.provenance.origin, 'appraiser_edit');
 });
 
 test('account Census provenance revalidates every source revision and never refills an explicit saved blank', () => {
@@ -184,8 +357,7 @@ test('account Census provenance revalidates every source revision and never refi
 
 test('saved HOA workflow defaults remain identified as assumptions, not eligibility proof', () => {
   const { saved } = fixture();
-  const pud = saved.documents[0].candidates.find(candidate => candidate.field_key === 'pud');
-  saved.documents[0].document_type = 'mls_sheet';
+  const pud = saved.documents[3].candidates.find(candidate => candidate.field_key === 'pud');
   Object.assign(pud, { raw_value: 'Yes', normalized_value: 'true', confirmed_value: 'true',
     extraction_method: 'urar_subject_mls_sheet_hoa_workflow_proxy' });
   const proposal = projectCustomSubjectDocuments(saved.documents).fields.find(field => field.key === 'pud');
@@ -202,9 +374,9 @@ test('phase and ZIP suffix presentation cannot hide a changed raw reviewed sourc
     ['subject_zip', '75041-1234', '75041-5678', 'ZipCode'],
   ]) {
     const { saved } = fixture();
-    saved.documents[0].candidates = saved.documents[0].candidates.filter(item => item.field_key !== key);
-    const source = candidate(key, original, 199);
-    saved.documents[0].candidates.push(source);
+    saved.documents[1].candidates = saved.documents[1].candidates.filter(item => item.field_key !== key);
+    const source = candidate(key, original, 199, 2);
+    saved.documents[1].candidates.push(source);
     const applied = mergeCustomSubjectApplication({ projection: projectCustomSubjectDocuments(saved.documents) });
     saved.subject.value = applied.subject;
     saved.assignmentDetails = applied.assignmentDetails;

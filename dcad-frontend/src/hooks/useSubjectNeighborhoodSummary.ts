@@ -18,7 +18,7 @@ export function useSubjectSummary(
 ) {
   const initialized = useRef<string | null>(null);
   useEffect(() => {
-    if (!accountId || !file || !location || file.workfile?.status === 'signed') return;
+    if (!accountId || !file || !location || file.workfile?.status !== 'draft') return;
     const key = `${accountId}:${file.id}`;
     if (initialized.current === key) return;
     initialized.current = key;

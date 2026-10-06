@@ -87,3 +87,20 @@ test('captured townhomes are included only when the current selected composition
   const h = harness(); h.select(group, true); assert.match(h.props().neighborhoodSummary, /homes and townhomes/);
   h.select(group, false); assert.doesNotMatch(h.props().neighborhoodSummary, /and townhomes/);
 });
+
+test('summary seeding never writes signed, archived, or unestablished workfile state', () => {
+  const hook = loadTrustedRepositoryCommonJs(new URL('../src/hooks/useSubjectNeighborhoodSummary.ts', import.meta.url), key => {
+    if (key === 'react') return { useRef: () => ({ current: null }), useEffect: fn => fn() };
+    if (key === '@/lib/subjectNeighborhoodSummary') return builder;
+    if (key === '@/lib/neighborhoodSummaryTemplate') return helpers;
+    throw new Error(`Unexpected import ${key}`);
+  }).useSubjectSummary;
+  for (const status of ['signed', 'archived', undefined, 'draft']) {
+    let writes = 0, dirty = 0;
+    hook('synthetic-account', { id: 1, effective_date: '2026-08-31', workfile: { status } },
+      { subdivision: 'EXAMPLE PARK', city: 'Example' }, 1960, 'single_family',
+      () => { writes++; }, {}, () => { dirty++; });
+    assert.equal(writes, status === 'draft' ? 1 : 0);
+    assert.equal(dirty, status === 'draft' ? 1 : 0);
+  }
+});

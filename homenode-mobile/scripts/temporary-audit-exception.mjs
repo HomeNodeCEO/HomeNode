@@ -82,14 +82,19 @@ export function runAudits(contextProvider, auditRunner) {
   } catch {
     throw new Error('Unparseable raw audit response or registry failure');
   }
+  if (result.signal || ![0, 1].includes(result.status)) {
+    throw new Error('Raw audit ended abnormally');
+  }
   if (!report || typeof report.advisories !== 'object' || report.advisories === null ||
-      Array.isArray(report.advisories) || typeof report.metadata?.vulnerabilities !== 'object') {
+      Array.isArray(report.advisories) || typeof report.metadata?.vulnerabilities !== 'object' ||
+      Object.hasOwn(report, 'error') || Object.hasOwn(report, 'error_code') || Object.hasOwn(report, 'code')) {
     throw new Error('Incomplete raw audit response or registry failure');
   }
   const advisories = Object.values(report.advisories);
   const counts = report.metadata.vulnerabilities;
-  const total = ['moderate', 'high', 'critical'].reduce((sum, severity) => sum + counts[severity], 0);
-  if (!Number.isInteger(total) || total !== advisories.length ||
+  const severities = ['info', 'low', 'moderate', 'high', 'critical'];
+  if (severities.some((severity) => !Number.isSafeInteger(counts[severity]) || counts[severity] < 0 ||
+      counts[severity] !== advisories.filter((item) => item?.severity === severity).length) ||
       advisories.some((item) => !item || !['moderate', 'high', 'critical'].includes(item.severity) ||
         !Array.isArray(item.findings) || item.findings.length === 0)) {
     throw new Error('Raw audit counts or findings are inconsistent');
@@ -98,7 +103,7 @@ export function runAudits(contextProvider, auditRunner) {
     if (result.status !== 0) throw new Error('Raw audit failed without findings');
     return;
   }
-  if (result.status === 0) throw new Error('Raw audit reported findings but exited successfully');
+  if (result.status !== 1) throw new Error('Raw audit reported findings but did not exit with findings status');
   const unknown = advisories.filter((item) => reviewedAdvisories.get(item.github_advisory_id) !== item.module_name);
   if (unknown.length) {
     throw new Error(`Unreviewed advisories remain: ${unknown.map((item) => item.github_advisory_id || item.module_name).join(', ')}`);
@@ -140,7 +145,7 @@ function main() {
     if (result.error) throw result.error;
     if (result.stdout) process.stdout.write(result.stdout);
     if (result.stderr) process.stderr.write(result.stderr);
-    return { status: result.status ?? 1, stdout: result.stdout || '' };
+    return { status: result.status, signal: result.signal, stdout: result.stdout || '' };
   });
 }
 

@@ -28,7 +28,7 @@ test('Expo and Expo CLI resolve the patched source-map-js release', () => {
 });
 
 function auditResult(items, status = items.length ? 1 : 0) {
-  const vulnerabilities = { moderate: 0, high: 0, critical: 0 };
+  const vulnerabilities = { info: 0, low: 0, moderate: 0, high: 0, critical: 0 };
   for (const item of items) vulnerabilities[item.severity] += 1;
   return { status, stdout: JSON.stringify({
     advisories: Object.fromEntries(items.map((item, index) => [index, item])),
@@ -102,8 +102,20 @@ test('malformed, incomplete, inconsistent, or failed raw audits never pass', () 
   const parsed = JSON.parse(inconsistent.stdout);
   parsed.metadata.vulnerabilities.high = 2;
   assert.throws(() => runAudits(reviewed, () => ({ ...inconsistent, stdout: JSON.stringify(parsed) })), /inconsistent/);
+  parsed.metadata.vulnerabilities.high = 0;
+  parsed.metadata.vulnerabilities.moderate = 1;
+  assert.throws(() => runAudits(reviewed, () => ({ ...inconsistent, stdout: JSON.stringify(parsed) })), /inconsistent/);
+  parsed.metadata.vulnerabilities.high = 2;
+  parsed.metadata.vulnerabilities.moderate = -1;
+  assert.throws(() => runAudits(reviewed, () => ({ ...inconsistent, stdout: JSON.stringify(parsed) })), /inconsistent/);
+  const errorReport = JSON.parse(auditResult([forge]).stdout);
+  errorReport.error = 'registry unavailable';
+  assert.throws(() => runAudits(reviewed, () => ({ ...inconsistent, stdout: JSON.stringify(errorReport) })), /Incomplete/);
+  assert.throws(() => runAudits(reviewed, () => auditResult([forge], 2)), /abnormally/);
+  assert.throws(() => runAudits(reviewed, () => auditResult([forge], null)), /abnormally/);
+  assert.throws(() => runAudits(reviewed, () => ({ ...auditResult([forge]), signal: 'SIGKILL' })), /abnormally/);
   assert.throws(() => runAudits(reviewed, () => auditResult([], 1)), /failed without findings/);
-  assert.throws(() => runAudits(reviewed, () => auditResult([forge], 0)), /exited successfully/);
+  assert.throws(() => runAudits(reviewed, () => auditResult([forge], 0)), /findings status/);
 });
 
 test('unapproved scope is rejected and clean raw audit needs no exception', () => {

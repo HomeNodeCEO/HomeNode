@@ -4,6 +4,7 @@ import express from 'express';
 import { createCustomCohortContextCapture } from '../../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { createCustomNeighborhoodCohortRouter } from '../../src/modules/accounts/customNeighborhoodCohortRouter.js';
 import { runCustomCohortPreparedViewportTileJob } from '../../src/services/neighborhoodAssessment/customCohortPreparedViewportTileJob.js';
+import { customCohortOpeningSelection } from '../../src/services/neighborhoodAssessment/customCohortOpeningPreview.js';
 
 /** Invoked only by the verified disposable PostgreSQL fixture. No live accounts,
  * source provider, user report choices, accepted sections or shared database.
@@ -12,7 +13,9 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
   const calls = [], checks = [];
   let loseCommitAck = false, cancelAtHead = null, revokeAtHead = false, revokeAtRead = false;
   let denyPolicy = false, denyFinalPolicy = false, denySummary = false, denyFinalSummary = false;
-  let policyCalls = 0, summaryPolicyCalls = 0, pauseAtWorkfile = null, missPreparedCatalog = false;
+  let denyMembers = false, denyFinalMembers = false;
+  let policyCalls = 0, summaryPolicyCalls = 0, memberPolicyCalls = 0,
+    pauseAtWorkfile = null, missPreparedCatalog = false;
   const suspend = status => pool.query(`UPDATE app_auth.organization_memberships SET status=$3
     WHERE organization_id=$1 AND user_id=$2`, [scope.organization_id, auth.userId, status]);
   const observed = { async connect() {
@@ -47,8 +50,10 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
   const policy = async (_client, _auth, _context, _purpose, { exposure }) => {
     policyCalls++;
     if (exposure === 'report_observation_summary') summaryPolicyCalls++;
+    if (exposure === 'report_observation_members') memberPolicyCalls++;
     return denyPolicy || (denyFinalPolicy && policyCalls > 1)
       || (exposure === 'report_observation_summary' && (denySummary || (denyFinalSummary && summaryPolicyCalls > 1)))
+      || (exposure === 'report_observation_members' && (denyMembers || (denyFinalMembers && memberPolicyCalls > 1)))
       ? { allowed: false } : grant;
   };
   const owner = createCustomCohortContextCapture({ pool: observed, authorizeMarketData: policy });
@@ -227,6 +232,12 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
     assert.equal(emptyView.viewport_map.status, 'available');
     assert.ok(emptyView.viewport_map.geojson.features.length > 0, 'empty selection still displays actual captured parcels');
     assert.ok(emptyView.viewport_map.geojson.features.every(f => !f.properties.selected));
+    const emptyMembers = await request('selection-members', { ...readBody, selection_ref: empty.selection_ref,
+      population: { group: 'selected', kind: 'stock' }, page: { limit: 1, after_member_id: null } });
+    assert.equal(emptyMembers.status, 200);
+    const emptyPage = await emptyMembers.json();
+    assert.equal(emptyPage.page.total_count, 0); assert.deepEqual(emptyPage.page.members, []);
+    assert.equal(emptyPage.page.is_full_population, true);
     loseCommitAck = true;
     const uncertain = await request('select-groups', writeBody);
     assert.equal(uncertain.status, 409);
@@ -242,6 +253,27 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
     const numeric = await request('selection-preview', numericBody);
     assert.equal(numeric.status, 200);
     assert.deepEqual(await numeric.json(), await owner.previewRecordedGroupSelection({ ...read, selectionRef: receipt.selection_ref }));
+    const memberBody = { ...numericBody, population: { group: 'selected', kind: 'stock' }, page: { limit: 1, after_member_id: null } };
+    assert.ok(summary.summary.selected.stock.member_count > 1, 'native paging witness includes more than one real captured account');
+    for (const group of ['all', 'selected']) for (const kind of ['stock', 'transactions', 'omitted_transactions', 'source_reported']) {
+      const population = { group, kind }, body = { ...memberBody, population }, start = calls.length;
+      const inspected = await request('selection-members', body);
+      assert.equal(inspected.status, 200); assert.equal(inspected.headers.get('cache-control'), 'no-store');
+      const actual = await inspected.json();
+      const legacy = await owner.inspect({ ...read, selection: customCohortOpeningSelection(catalog.catalog, ids, 3) },
+      { population, page: body.page });
+      assert.deepEqual(actual.page, legacy.page);
+      assert.deepEqual(actual.selection_ref, receipt.selection_ref);
+      assert.ok(!calls.slice(start).some(sql => sql.includes('compressed_map')), 'member inspection does not load geometry');
+      if (group === 'selected' && kind === 'stock') {
+        assert.equal(actual.page.returned_count, 1); assert.equal(actual.page.has_more, true);
+        const nextBody = { ...body, page: { limit: 50, after_member_id: actual.page.next_after_member_id } };
+        const continued = await request('selection-members', nextBody); assert.equal(continued.status, 200);
+        const nextPage = await continued.json(); assert.equal(nextPage.page.start_index, 1);
+        assert.equal(nextPage.page.has_more, false);
+        assert.notEqual(nextPage.page.members[0].member_id, actual.page.members[0].member_id);
+      }
+    }
     const mapBody = { ...numericBody, viewport };
     const map = await request('selection-viewport', mapBody);
     assert.equal(map.status, 200); assert.equal(map.headers.get('cache-control'), 'no-store');
@@ -269,6 +301,8 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
     assert.equal(staleNumeric.status, 409); assert.deepEqual(await staleNumeric.json(), { error: 'neighborhood_selection_changed' });
     const staleMap = await request('selection-viewport', { ...mapBody, selection_ref: empty.selection_ref });
     assert.equal(staleMap.status, 409); assert.deepEqual(await staleMap.json(), { error: 'neighborhood_selection_changed' });
+    const staleMembers = await request('selection-members', { ...memberBody, selection_ref: empty.selection_ref });
+    assert.equal(staleMembers.status, 409); assert.deepEqual(await staleMembers.json(), { error: 'neighborhood_selection_changed' });
     const stale = await request('select-groups', { ...writeBody, operation_id: randomUUID() });
     assert.equal(stale.status, 409); assert.deepEqual(await stale.json(), { error: 'neighborhood_selection_changed' });
     const invalidFrom = calls.length;
@@ -278,12 +312,31 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
     assert.equal(injectedNumeric.status, 400); assert.equal(calls.length, invalidFrom);
     const injectedMap = await request('selection-viewport', { ...mapBody, account_ids: [] });
     assert.equal(injectedMap.status, 400); assert.equal(calls.length, invalidFrom);
+    const injectedMembers = await request('selection-members', { ...memberBody, account_ids: [] });
+    assert.equal(injectedMembers.status, 400); assert.equal(calls.length, invalidFrom);
+    const unknownCursor = await request('selection-members', { ...memberBody, page: { limit: 1, after_member_id: `member:${'f'.repeat(64)}` } });
+    assert.equal(unknownCursor.status, 400);
+    denyMembers = true;
+    const memberDeniedFrom = calls.length;
+    try {
+      const deniedMembers = await request('selection-members', memberBody);
+      assert.equal(deniedMembers.status, 403); assert.deepEqual(await deniedMembers.json(), { error: 'neighborhood_access_denied' });
+    } finally { denyMembers = false; }
+    assert.ok(!calls.slice(memberDeniedFrom).some(sql => sql.includes('prepared-catalog:read')
+      || sql.includes('custom-cohort-group-selection:head')), 'catalog rights alone never open member facts');
+    memberPolicyCalls = 0; denyFinalMembers = true;
+    try {
+      const deniedFinalMembers = await request('selection-members', memberBody);
+      assert.equal(deniedFinalMembers.status, 403);
+    } finally { denyFinalMembers = false; }
+    assert.ok(memberPolicyCalls >= 2, 'member exposure is independently repeated before delivery');
     denySummary = true;
     try {
       const denied = await request('selection-preview', numericBody);
       assert.equal(denied.status, 403); assert.deepEqual(await denied.json(), { error: 'neighborhood_access_denied' });
       const deniedMap = await request('selection-viewport', mapBody);
       assert.equal(deniedMap.status, 403); assert.deepEqual(await deniedMap.json(), { error: 'neighborhood_access_denied' });
+      assert.equal((await request('selection-members', memberBody)).status, 200, 'member and summary purposes remain separate grants');
     } finally { denySummary = false; }
     summaryPolicyCalls = 0; denyFinalSummary = true;
     try {
@@ -299,6 +352,8 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
       assert.equal(revokedNumeric.status, 403); assert.deepEqual(await revokedNumeric.json(), { error: 'neighborhood_access_denied' });
       const revokedMap = await request('selection-viewport', mapBody);
       assert.equal(revokedMap.status, 403); assert.deepEqual(await revokedMap.json(), { error: 'neighborhood_access_denied' });
+      const revokedMembers = await request('selection-members', memberBody);
+      assert.equal(revokedMembers.status, 403); assert.deepEqual(await revokedMembers.json(), { error: 'neighborhood_access_denied' });
     } finally { await suspend('active'); }
     denyPolicy = true;
     try {
@@ -309,6 +364,7 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
     checks.push('native authenticated ID-only HTTP save/reopen preserves exact lost-ACK operation, stale/current-role/source fences and unchanged report state');
     checks.push('native exact-reference HTTP numeric summaries preserve complete and empty populations, refuse stale/injected/summary-denied/current-role requests and disclose no geometry or raw member pages');
     checks.push('native exact-reference HTTP viewport has non-vacuous selected/empty geometry and actual offline prepared-tile parity without full source/map replay; stale, injected members and current actor/source refusals leave report state unchanged');
+    checks.push('native exact-reference member pages preserve actual legacy all/selected stock/transaction/source/omitted projections, exact cursors, empty population and independent initial/final member rights with unchanged report state and no geometry transfer');
   } finally {
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   }

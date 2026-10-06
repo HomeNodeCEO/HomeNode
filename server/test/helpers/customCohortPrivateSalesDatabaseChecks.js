@@ -550,6 +550,21 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
     const result = await response.json(); assert.deepEqual(result, groupSummary);
     assert.ok(result.private_sales); assert.equal(Object.hasOwn(result.private_sales, 'rows'), false);
     checks.push('native exact-reference HTTP summary keeps independently authorized private CSV aggregates with the same dates/digest and no raw row disclosure');
+    const population = { group: 'selected', kind: 'stock' }, page = { limit: 1, after_member_id: null };
+    const memberResponse = await fetch(`http://127.0.0.1:${server.address().port}/api/accounts/${encodeURIComponent(account)}/neighborhood-cohort/selection-members`,
+      { method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(15_000),
+        body: JSON.stringify({ assignment_file_id: assignment, context_ref: groupRead.contextRef,
+          selection_ref: groupSaved.selection_ref, population, page }) });
+    assert.equal(memberResponse.status, 200); assert.equal(memberResponse.headers.get('cache-control'), 'no-store');
+    const memberResult = await memberResponse.json();
+    const legacyMembers = await owner.inspect({ ...groupRead, selection: customCohortOpeningSelection(groupCatalog.catalog, groupIds, 1) },
+      { population, page });
+    assert.ok(memberResult.page.members.length > 0, 'private member parity must not be vacuous');
+    assert.deepEqual(memberResult.page, legacyMembers.page);
+    assert.deepEqual(memberResult.private_sales, legacyMembers.private_sales);
+    assert.deepEqual(memberResult.selection_ref, groupSaved.selection_ref);
+    assert.ok(memberResult.private_sales); assert.equal(Object.hasOwn(memberResult.private_sales, 'rows'), false);
+    checks.push('native private-source exact-reference member page preserves actual whole-selected stock and independently authorized CSV summary parity with no raw private rows');
     const viewport = { west: -97.2, south: 32.3, east: -96.4, north: 33.1 };
     const mapResponse = await fetch(`http://127.0.0.1:${server.address().port}/api/accounts/${encodeURIComponent(account)}/neighborhood-cohort/selection-viewport`,
       { method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(15_000),
@@ -575,6 +590,9 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
     selectionRef: groupSaved.selection_ref }), reason('market_data_access_denied'));
   await assert.rejects(deniedSummary.owner.viewportRecordedGroupSelection({ ...groupRead,
     selectionRef: groupSaved.selection_ref, viewport: { west: -97.2, south: 32.3, east: -96.4, north: 33.1 } }), reason('market_data_access_denied'));
+  await assert.rejects(deniedSummary.owner.inspectRecordedGroupSelection({ ...groupRead,
+    selectionRef: groupSaved.selection_ref, population: { group: 'selected', kind: 'stock' },
+    page: { limit: 1, after_member_id: null } }), reason('market_data_access_denied'));
   assert.ok(!deniedSummary.calls.some(sql => sql.includes('neighborhood-cohort-blob:read-batch')
     || sql.includes('custom-cohort-group-selection:head')), 'private catalog grant is not permission to expose numeric facts');
   let selectionSummaryCalls = 0;
@@ -587,6 +605,28 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
     selectionRef: groupSaved.selection_ref }), reason('market_data_access_denied'));
   assert.equal(selectionSummaryCalls, 2, 'private summary exposure is repeated at the final delivery fence');
   checks.push('native exact-reference numeric summary preserves the full private CSV period/statistics and independently refuses initial/final private summary rights without changing saved intent or report sections');
+  const inspection = { ...groupRead, selectionRef: groupSaved.selection_ref,
+    population: { group: 'selected', kind: 'stock' }, page: { limit: 1, after_member_id: null } };
+  const deniedMembers = makeOwner({ privatePolicy: (...args) => args[4].exposure === 'report_observation_members'
+    ? { allowed: false } : authorizeCustomNeighborhoodPrivateSales(...args) });
+  await assert.rejects(deniedMembers.owner.inspectRecordedGroupSelection(inspection), reason('market_data_access_denied'));
+  assert.ok(!deniedMembers.calls.some(sql => sql.includes('neighborhood-cohort-blob:read-batch')
+    || sql.includes('custom-cohort-group-selection:head')), 'private catalog purpose cannot authorize member inspection');
+  let memberCalls = 0;
+  const revokedMembers = makeOwner({ privatePolicy: async (...args) => {
+    if (args[4].exposure === 'report_observation_members' && ++memberCalls === 2) return { allowed: false };
+    return authorizeCustomNeighborhoodPrivateSales(...args);
+  } });
+  await assert.rejects(revokedMembers.owner.inspectRecordedGroupSelection(inspection), reason('market_data_access_denied'));
+  assert.equal(memberCalls, 2, 'private member purpose is repeated at final delivery');
+  let privateSummaryMemberCalls = 0;
+  const revokedMemberSummary = makeOwner({ privatePolicy: async (...args) => {
+    if (args[4].exposure === 'report_observation_summary' && ++privateSummaryMemberCalls === 2) return { allowed: false };
+    return authorizeCustomNeighborhoodPrivateSales(...args);
+  } });
+  await assert.rejects(revokedMemberSummary.owner.inspectRecordedGroupSelection(inspection), reason('market_data_access_denied'));
+  assert.equal(privateSummaryMemberCalls, 2, 'the optional private summary keeps its own initial/final exposure even during member inspection');
+  checks.push('native private-source exact-reference member inspection independently refuses initial/final member rights without replacing report sections or selection intent');
   await writeRights({ ...rights, revoked_at: times.past });
   const groupDeniedFrom = calls.length;
   try { await assert.rejects(owner.readRecordedGroupSelection(groupRead), reason('market_data_access_denied')); }
@@ -598,6 +638,7 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
   await assert.rejects(owner.previewRecordedGroupSelection({ ...groupRead, selectionRef: groupSaved.selection_ref }), /capture_changed/);
   await assert.rejects(owner.viewportRecordedGroupSelection({ ...groupRead, selectionRef: groupSaved.selection_ref,
     viewport: { west: -97.2, south: 32.3, east: -96.4, north: 33.1 } }), /capture_changed/);
+  await assert.rejects(owner.inspectRecordedGroupSelection(inspection), /capture_changed/);
   assert.equal((await pool.query(`SELECT selection_revision FROM app.neighborhood_custom_cohort_group_selection_heads
     WHERE organization_id=$1 AND context_id=$2`, [organization, groupContext.context_ref.context_id])).rows[0].selection_revision, 1);
   checks.push('native recorded-group selection keeps independent private source rights and workfile-before-batch review fences; revoked rights and changed CSV review refuse without replacing the saved selection');

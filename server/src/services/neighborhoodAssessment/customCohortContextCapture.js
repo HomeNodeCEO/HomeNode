@@ -687,10 +687,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
   }
   const recordedGroupSelection = createCustomCohortRecordedGroupSelectionOwner({ identityOf,
     execute: async (originalInput, options, writing, work, projection = 'intent') => {
-      if (!['intent', 'summary', 'viewport'].includes(projection) || (writing && projection !== 'intent')) fail('invalid_input');
+      if (!['intent', 'summary', 'viewport', 'members'].includes(projection) || (writing && projection !== 'intent')) fail('invalid_input');
       // Geometry uses the existing viewport's summary exposure, in addition to
       // catalog rights needed to re-derive the exact server-owned selection.
-      const additionalExposures = projection !== 'intent' ? ['report_observation_summary'] : [];
+      const additionalExposures = projection === 'members' ? ['report_observation_members']
+        : projection !== 'intent' ? ['report_observation_summary'] : [];
       const budget = operationBudget(options), permission = writing ? 'write' : 'read';
       return transaction(pool, 'READ COMMITTED', budget, async client => {
         const initial = await resolveTarget(client, originalInput, false, permission);
@@ -709,7 +710,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const scopeJson = canonicalAssessmentJson(Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])));
         const licensed = await authorizedRetainedInputs(client, { scopeJson, reference: input.contextRef, input,
           authorizeMarketData, authorizePrivateSales, budget, exposure: 'report_observation_catalog',
-          additionalExposures, loadInputs: false });
+          additionalExposures, loadInputs: false, privateSummary: projection === 'members' });
         let catalog, roster, indexedPreview, retained = null;
         if (!licensed.privateAuthorization) {
           const cached = await createCustomCohortPreparedCatalogRepository(client, scopeJson, input.contextRef).read();
@@ -740,7 +741,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           roster = retained.retained_inputs.spatial.account_ids;
           indexedPreview = preview;
         }
-        const presentSelectionSummary = projection === 'summary' ? (accounts, selectionRef) => {
+        const selectionObservation = (accounts, selectionRef) => {
           budget.check();
           const selection = { revision: selectionRef.selection_revision, pockets: accounts.length
             ? [{ id: 'discovery:selected', label: 'Selected observations', account_ids: accounts }] : [] };
@@ -753,9 +754,17 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             context_ref: input.contextRef, effective_date: licensed.context.effective_date,
             observation_period: licensed.observationPeriod,
             selection: { revision: selection.revision, account_ids: accounts } }) : null;
-          const content = { summary: presentCustomCohortPreview({ preview, expected, includeNarrative: true }),
-            ...(observations ? { private_sales: presentCustomCohortPrivateSalesObservations({ observations, binding }) } : {}) };
-          budget.check(); return content;
+          const private_sales = observations ? presentCustomCohortPrivateSalesObservations({ observations, binding }) : null;
+          budget.check(); return { preview, expected, private_sales };
+        };
+        const presentSelectionSummary = projection === 'summary' ? (accounts, selectionRef) => {
+          const { preview, expected, private_sales } = selectionObservation(accounts, selectionRef);
+          return { summary: presentCustomCohortPreview({ preview, expected, includeNarrative: true }), ...(private_sales ? { private_sales } : {}) };
+        } : undefined;
+        const presentSelectionMembers = projection === 'members' ? (accounts, selectionRef, population, page) => {
+          const { preview, expected, private_sales } = selectionObservation(accounts, selectionRef);
+          return { page: inspectCustomCohortPreviewMembers({ preview, expected, population, page }),
+            ...(private_sales ? { private_sales } : {}) };
         } : undefined;
         const presentSelectionViewport = projection === 'viewport' ? async (accounts, selectionRef, viewport) => {
           budget.check();
@@ -787,6 +796,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           rosterJson: JSON.stringify({ account_ids: roster }), budget,
           ...(presentSelectionSummary ? { presentSelectionSummary } : {}),
           ...(presentSelectionViewport ? { presentSelectionViewport } : {}),
+          ...(presentSelectionMembers ? { presentSelectionMembers } : {}),
           blobs: createNeighborhoodCohortBlobRepository(client, target.organization_id) });
         // Refresh request-time role claims again before COMMIT/delivery; original
         // actor receipts, cached facts and integrity hashes establish no grant.
@@ -802,7 +812,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         }
         const privateCapture = retained?.retained_inputs.private_sales?.capture;
         if (privateCapture) await recheckAssignmentSalesCsvCapture(client.query.bind(client), privateCapture);
-        await recheckPrivatePolicy(client, finalInput, licensed, budget, ['report_observation_catalog', ...additionalExposures]);
+        await recheckPrivatePolicy(client, finalInput, licensed, budget,
+          [...new Set(['report_observation_catalog', ...additionalExposures,
+            ...(projection === 'members' ? ['report_observation_summary'] : [])])]);
         budget.check(); return freeze(result);
       });
     } });

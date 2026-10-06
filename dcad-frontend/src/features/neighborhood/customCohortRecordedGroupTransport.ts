@@ -4,6 +4,9 @@ import type { CustomCohortContextRef } from './customCohortPreviewController';
 import { checkCustomCohortBoundViewportResponse } from './customCohortViewportClient.ts';
 import type { CustomCohortViewportBounds } from './customCohortViewportClient';
 import type { CheckedPocketCatalog } from './customCohortPocketCatalog';
+import { checkCustomCohortBoundMemberPage } from './customCohortMemberPage.ts';
+import type { CustomCohortMemberExpectation, CustomCohortMemberPageRequest, CustomCohortMemberPopulation,
+  CheckedCustomCohortMemberPage, CustomCohortMemberContinuation } from './customCohortMemberPage';
 
 export interface CustomCohortGroupSelectionRef {
   readonly selection_version: 1; readonly selection_revision: number; readonly selection_sha256: string;
@@ -21,6 +24,14 @@ export interface CustomCohortRecordedGroupSummary extends CustomCohortRecordedGr
 }
 export interface CustomCohortRecordedGroupViewport extends CustomCohortRecordedGroupSummary {
   readonly viewport: CustomCohortViewportBounds;
+}
+export interface CustomCohortRecordedGroupMembers extends CustomCohortRecordedGroupSummary {
+  readonly population: Exclude<CustomCohortMemberPopulation, { readonly group: 'pocket' }>;
+  readonly page: CustomCohortMemberPageRequest;
+}
+export interface CustomCohortRecordedGroupMemberContinuation {
+  readonly selection_ref: CustomCohortGroupSelectionRef;
+  readonly members: CheckedCustomCohortMemberPage | CustomCohortMemberContinuation;
 }
 export type CustomCohortRecordedGroupReceipt = {
   readonly status: 'stored' | 'reused' | 'selected'; readonly authority: 'not_established';
@@ -126,6 +137,19 @@ function viewportInput(value: CustomCohortRecordedGroupViewport) {
     contextRef: v.contextRef, selectionRef: v.selectionRef }, false, true) as CustomCohortRecordedGroupSummary;
   return Object.freeze({ ...request, viewport: viewportBounds(v.viewport) });
 }
+function membersInput(value: CustomCohortRecordedGroupMembers) {
+  const v = closed(value, ['accountId', 'assignmentFileId', 'contextRef', 'selectionRef', 'population', 'page']);
+  const request = input({ accountId: v.accountId, assignmentFileId: v.assignmentFileId,
+    contextRef: v.contextRef, selectionRef: v.selectionRef }, false, true) as CustomCohortRecordedGroupSummary;
+  const p = closed(v.population, ['group', 'kind']), page = closed(v.page, ['limit', 'after_member_id']);
+  if (!['all', 'selected'].includes(String(p.group))
+    || !['stock', 'transactions', 'omitted_transactions', 'source_reported'].includes(String(p.kind))
+    || typeof page.limit !== 'number' || !Number.isInteger(page.limit) || page.limit < 1 || page.limit > 50
+    || (page.after_member_id !== null && (typeof page.after_member_id !== 'string'
+      || !/^member:[a-f0-9]{64}$/.test(page.after_member_id)))) fail();
+  return Object.freeze({ ...request, population: Object.freeze(p) as unknown as CustomCohortRecordedGroupMembers['population'],
+    page: Object.freeze(page) as unknown as CustomCohortMemberPageRequest });
+}
 function viewportPopulation(request: CustomCohortRecordedGroupSummary, saved: CustomCohortRecordedGroupReceipt,
   catalog: CheckedPocketCatalog) {
   const writing = Object.hasOwn(saved, 'operation_id');
@@ -210,6 +234,38 @@ export function createCustomCohortRecordedGroupTransport(options: Parameters<typ
         accountId: r.accountId, assignmentFileId: r.assignmentFileId, contextRef: r.contextRef,
         selectionRevision: ref.selection_revision, selectionFingerprint: ref.selection_sha256,
       }, capturedParcels, population, r.viewport) });
+    },
+    async members(value: CustomCohortRecordedGroupMembers, saved: CustomCohortRecordedGroupReceipt,
+      catalog: CheckedPocketCatalog, expected: CustomCohortMemberExpectation, io: { signal: AbortSignal },
+      previous?: CustomCohortRecordedGroupMemberContinuation) {
+      const r = membersInput(value), population = viewportPopulation(r, saved, catalog);
+      const e = closed(expected, ['group', 'kind', 'total_count']);
+      if (e.group !== r.population.group || e.kind !== r.population.kind || typeof e.total_count !== 'number'
+        || !Number.isSafeInteger(e.total_count) || e.total_count < 0 || e.total_count > 100000) fail();
+      const expectation = Object.freeze(e) as unknown as CustomCohortMemberExpectation;
+      const accounts = r.population.group === 'all' ? population.members : population.selected;
+      if (r.population.kind === 'stock' && accounts.size !== e.total_count) fail();
+      if ((r.page.after_member_id === null) !== (previous === undefined)) fail();
+      let predecessor: CheckedCustomCohortMemberPage | CustomCohortMemberContinuation | undefined;
+      if (previous !== undefined) {
+        const p = closed(previous, ['selection_ref', 'members']);
+        if (JSON.stringify(selection(p.selection_ref)) !== JSON.stringify(r.selectionRef)) fail();
+        predecessor = p.members as typeof predecessor;
+      }
+      const raw = await post(r.accountId, 'selection-members', { assignment_file_id: r.assignmentFileId,
+        context_ref: r.contextRef, selection_ref: r.selectionRef, population: r.population, page: r.page }, io);
+      const hasPrivate = raw !== null && typeof raw === 'object' && Object.hasOwn(raw, 'private_sales');
+      const v = closed(raw, ['status', 'authority', 'target', 'context_ref', 'selection_ref', 'selection_revision',
+        'subject_freshness', 'page', 'apply', ...(hasPrivate ? ['private_sales'] : [])]);
+      const ref = selection(v.selection_ref);
+      if (v.authority !== 'not_established' || JSON.stringify(ref) !== JSON.stringify(r.selectionRef)) fail();
+      const members = checkCustomCohortBoundMemberPage({ status: v.status, target: v.target, context_ref: v.context_ref,
+        selection_revision: v.selection_revision, subject_freshness: v.subject_freshness, page: v.page, apply: v.apply,
+        ...(hasPrivate ? { private_sales: v.private_sales } : {}) }, {
+        accountId: r.accountId, assignmentFileId: r.assignmentFileId, contextRef: r.contextRef,
+        selectionRevision: ref.selection_revision, selectionFingerprint: ref.selection_sha256,
+      }, expectation, r.page, predecessor, accounts);
+      return Object.freeze({ selection_ref: ref, members });
     },
   });
 }

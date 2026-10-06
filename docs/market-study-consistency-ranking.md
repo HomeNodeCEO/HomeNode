@@ -59,6 +59,14 @@ never republish a stale browser draft over saved weighting, land use, or form
 review fields. Standalone editors retain their exact-file local draft fallback;
 late hydration still cannot overwrite an appraiser's intervening edits.
 
+SFREP's single-statement saved-report snapshot reads `market_conditions` and
+`neighborhood_workspace` from `app.custom_appraisal_workfile_sections`, the
+same store used by the editor and retained-selection checkpoint. Document-applied
+Subject evidence continues to use `app.custom_appraisal_sections`. Native SQL
+coverage seeds the actual workfile store and verifies both 1004/2055 exports,
+including selected reconciliation, marketing time, price/age and acreage values
+without PDF attachments. No workfile data is copied between these stores.
+
 Past six- and three-month changes compare the exact end-month sale-price median
 with the median six or three months earlier. They are not fractions of an annual
 rate, do not infer a missing endpoint, and do not control the annual trend label.

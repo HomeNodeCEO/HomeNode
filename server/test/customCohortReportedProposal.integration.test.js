@@ -18,3 +18,14 @@ test('Custom reported observation owner retains, proposes, atomically applies an
   try { await checkCustomCohortReportedProposalDatabase({ pool, databaseName: target.databaseName }); }
   finally { await pool.end(); }
 });
+
+test('V7 exact-selection report owner verifies original pages/current head, publishes and atomically applies/replays one complete group in native PostgreSQL', {
+  skip: !process.env.DATABASE_URL, timeout: 360000,
+}, async () => {
+  const target = await prepareNeighborhoodCiDatabase();
+  const { Pool } = createRequire(import.meta.url)('pg');
+  const pool = new Pool({ connectionString: target.connectionString, max: 4, connectionTimeoutMillis: 3000,
+    statement_timeout: 8000, application_name: 'exact_selection_report_owner_ci' });
+  try { await checkCustomCohortReportedProposalDatabase({ pool, databaseName: target.databaseName, exactSelectionWorkspace: true }); }
+  finally { await pool.end(); }
+});

@@ -34,6 +34,46 @@ function reference(value, limit) {
   return r;
 }
 
+async function derive(owned, input, commandJson) {
+  const command = prepareCustomCohortGroupSelectionCommandOriginal(commandJson);
+  return prepareCustomCohortRecordedGroupSelection({ scopeJson: owned.scopeJson,
+    contextJson: json(input.contextRef), catalogJson: owned.catalogJson, rosterJson: owned.rosterJson,
+    includedGroupIds: command.included_recorded_group_ids, revision: command.selection_revision,
+    commandJson, signal: owned.budget.signal, checkBudget: owned.budget.check });
+}
+
+/** Internal original reader, not an authorization or transaction capability.
+ * The caller must already own the exact assignment/workfile transaction and
+ * current source/catalog grants. Reports and previews use this same verifier:
+ * every original membership/union page must match before IDs can be consumed.
+ */
+export async function reopenCustomCohortRecordedGroupSelectionOriginal(owned, input, onAccountPage) {
+  const repository = createCustomCohortGroupSelectionRepository(owned.client, owned.scopeJson,
+    json(input.contextRef), { signal: owned.budget.signal, checkBudget: owned.budget.check });
+  const { selection_ref } = await repository.peekCurrent();
+  if (input.selectionRef && json(selection_ref) !== json(input.selectionRef))
+    throw new TypeError('custom_cohort_group_selection_selection_changed');
+  if (selection_ref === null) return null;
+  const read = async ref => {
+    owned.budget.check();
+    const text = await owned.blobs.get(ref.content_sha256, ref.canonical_utf8_bytes);
+    if (text === null) fail('missing_original');
+    owned.budget.check(); return text;
+  };
+  const manifest = JSON.parse(await read(reference(selection_ref.manifest_ref, L.manifest_bytes)));
+  const metadataJson = await read(reference(manifest.metadata_ref, L.metadata_bytes));
+  const metadata = prepareCohortPagedGroupSelectionV1Metadata(metadataJson);
+  const catalogOriginal = await read(reference(metadata.catalog_ref, L.metadata_bytes));
+  const receipt = JSON.parse(catalogOriginal).selection_command;
+  if (!receipt) fail('missing_command_original');
+  // The original actor stamp records intent, not permission for this reader.
+  const derived = await derive(owned, input, json(receipt));
+  if (derived.catalog_original_json !== catalogOriginal || derived.metadata_json !== metadataJson)
+    fail('original_mismatch');
+  await repository.getCurrent({ metadataJson, selectionRef: selection_ref }, { onAccountPage });
+  return Object.freeze({ selection_ref, included_recorded_group_ids: derived.included_recorded_group_ids });
+}
+
 /** Internal methods only. execute owns a single bounded transaction, freshly
  * reloads actor/assignment/source rights before opening catalog or roster facts,
  * and repeats the subject/rights fences before COMMIT/delivery. No public body
@@ -68,39 +108,7 @@ export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, exec
       expectedSelectionRef, includedRecordedGroupIds,
       ...(workspace ? { expectedWorkspaceRevision: v.expectedWorkspaceRevision } : {}) });
   }
-  async function derive(owned, input, commandJson) {
-    const command = prepareCustomCohortGroupSelectionCommandOriginal(commandJson);
-    return prepareCustomCohortRecordedGroupSelection({ scopeJson: owned.scopeJson,
-      contextJson: json(input.contextRef), catalogJson: owned.catalogJson, rosterJson: owned.rosterJson,
-      includedGroupIds: command.included_recorded_group_ids, revision: command.selection_revision,
-      commandJson, signal: owned.budget.signal, checkBudget: owned.budget.check });
-  }
-  async function reopen(owned, input, onAccountPage) {
-    const repository = createCustomCohortGroupSelectionRepository(owned.client, owned.scopeJson,
-      json(input.contextRef), { signal: owned.budget.signal, checkBudget: owned.budget.check });
-    const { selection_ref } = await repository.peekCurrent();
-    if (input.selectionRef && json(selection_ref) !== json(input.selectionRef))
-      throw new TypeError('custom_cohort_group_selection_selection_changed');
-    if (selection_ref === null) return null;
-    const read = async ref => {
-      owned.budget.check();
-      const text = await owned.blobs.get(ref.content_sha256, ref.canonical_utf8_bytes);
-      if (text === null) fail('missing_original');
-      owned.budget.check(); return text;
-    };
-    const manifest = JSON.parse(await read(reference(selection_ref.manifest_ref, L.manifest_bytes)));
-    const metadataJson = await read(reference(manifest.metadata_ref, L.metadata_bytes));
-    const metadata = prepareCohortPagedGroupSelectionV1Metadata(metadataJson);
-    const catalogOriginal = await read(reference(metadata.catalog_ref, L.metadata_bytes));
-    const receipt = JSON.parse(catalogOriginal).selection_command;
-    if (!receipt) fail('missing_command_original');
-    // The original actor stamp records intent, not permission for this reader.
-    const derived = await derive(owned, input, json(receipt));
-    if (derived.catalog_original_json !== catalogOriginal || derived.metadata_json !== metadataJson)
-      fail('original_mismatch');
-    await repository.getCurrent({ metadataJson, selectionRef: selection_ref }, { onAccountPage });
-    return { selection_ref, included_recorded_group_ids: derived.included_recorded_group_ids };
-  }
+  const reopen = reopenCustomCohortRecordedGroupSelectionOriginal;
   async function completeAccounts(owned, input) {
     const accounts = [];
     const opened = await reopen(owned, input, page => {

@@ -9,7 +9,7 @@ const empty = () => one(null);
 const NOW = '2026-09-10T16:00:00.123456Z';
 // Actual acquisition, retained graph, assembler, publication and attachment
 // validators. SQL result doubles below are NOT PostgreSQL/lock/rollback proof.
-async function fixture({ incomplete = false, historical = false, policy, afterCommit, failSql } = {}) {
+async function fixture({ incomplete = false, historical = false, policy, afterCommit, failSql, currentRoles } = {}) {
   const f = await supportedInputsFixture({ assignmentFileId: '41', effectiveDate: historical ? '2024-06-30' : '2026-09-10', saleCount: 1 });
   const subject = f.input.retained_inputs.subject, target = subject.target, actor = f.input.retained_inputs.acquisition_intent.body.actor_user_id;
   const workspace = { revision: 9, value: { workspace_version: 1, pending_capture: null, active: {
@@ -53,6 +53,8 @@ async function fixture({ incomplete = false, historical = false, policy, afterCo
       if (text.includes('private-workfile')) return one(state.workfile);
       if (text.includes('workspace-parent')) return one({ assignment_file_id: '41' });
       if (text.includes('custom-cohort-capture:workspace */')) return one(state.workspace);
+      if (text.includes('custom-cohort-job:current-actor') && currentRoles !== undefined)
+        return one(currentRoles === null ? null : { user_id: actor, organization_id: target.organization_id, roles: currentRoles });
       if (text.includes('report-editor')) return one(state.editor);
       if (text.includes('report-geography */')) return one(state.boundary);
       if (text.includes('report-geography-topology')) return one({ is_valid: true, validation_reason: 'Synthetic oracle',
@@ -224,4 +226,26 @@ test('lost Apply COMMIT acknowledgement recovers exact accepted receipt without 
 for (const field of ['expectedEditorRevision', 'expectedWorkspaceRevision', 'operationId']) test(`malformed ${field} rejects before acquiring a client`, async () => {
   const f = await fixture(); await assert.rejects(f.service.prepareReportedObservations({ ...f.input, [field]: null }), { reason: 'invalid_reported_input' });
   assert.equal(f.state.phases, 0);
+});
+
+test('V7 proposal, Apply and reviewed-input owners refresh database roles before opening any retained original or current head', async () => {
+  for (const method of ['prepareReportedObservations', 'applyReportedObservations', 'prepareReviewedInputs']) {
+    for (const currentRoles of [null, ...(method !== 'prepareReviewedInputs' ? [['read_only']] : [])]) {
+      const f = await fixture({ currentRoles });
+      const active = f.state.workspace.value.active;
+      f.state.workspace.value = { workspace_version: 7, active: { context_ref: active.context_ref,
+        observation_period: active.observation_period, selection_ref: { selection_version: 1, selection_revision: 2,
+          selection_sha256: 'b'.repeat(64), manifest_ref: { content_sha256: 'c'.repeat(64), canonical_utf8_bytes: '1200' } } }, pending_capture: null };
+      const input = method === 'prepareReviewedInputs' ? { auth: f.input.auth, accountId: f.input.accountId,
+        assignmentFileId: f.input.assignmentFileId, contextRef: f.input.contextRef,
+        expectedWorkspaceRevision: 9, expectedReviewGeneration: '0' }
+        : method === 'applyReportedObservations' ? { ...f.input, proposalOperationId: randomUUID(), attachmentId: randomUUID(),
+          attachmentRevision: 1, bindingDigest: 'd'.repeat(64), adopt: true } : f.input;
+      await assert.rejects(f.service[method](input), currentRoles === null ? /job_actor_access_revoked/ : /assignment_access_denied/);
+      assert.ok(f.state.calls.some(call => call.text.includes('custom-cohort-job:current-actor')));
+      assert.ok(!f.state.calls.some(call => /neighborhood-cohort-blob:|custom-cohort-group-selection:|neighborhood:enqueue/.test(call.text)));
+      assert.equal(f.state.reportVisits, 0); assert.equal(f.state.historyCount, 0); assert.equal(f.state.commits, 0);
+      assert.equal(f.state.acceptance, null); assert.equal(f.state.section, null);
+    }
+  }
 });

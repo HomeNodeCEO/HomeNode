@@ -1,6 +1,6 @@
-import { lazy, Suspense, useMemo } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { SummarySection } from '@/components/PropertyReportControls';
-import type { GeoJsonPolygon } from '@/lib/api';
+import type { CustomCohortPreviewGroup } from '../customCohortPreviewController';
 import type { MarketConditionsDraft } from '@/lib/marketConditionsDraft';
 import type { AcceptedNeighborhoodState } from '../customNeighborhoodAcceptedState';
 import type { CustomNeighborhoodReportBridge } from '../useCustomNeighborhoodReportBridge';
@@ -29,16 +29,6 @@ function Loading({ label }: { label: string }) {
   return <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">Loading {label}...</div>;
 }
 
-function acceptedGeometry(state: AcceptedNeighborhoodState | null): GeoJsonPolygon | null {
-  if (state?.status !== 'accepted' || !state.assessment || typeof state.assessment !== 'object' || Array.isArray(state.assessment)) return null;
-  const geography = (state.assessment as Record<string, unknown>).geographic_neighborhood;
-  if (!geography || typeof geography !== 'object' || Array.isArray(geography)) return null;
-  const geometry = (geography as Record<string, unknown>).geometry;
-  if (!geometry || typeof geometry !== 'object' || Array.isArray(geometry)) return null;
-  const candidate = geometry as Record<string, unknown>;
-  return candidate.type === 'Polygon' && Array.isArray(candidate.coordinates) ? geometry as GeoJsonPolygon : null;
-}
-
 function appliedStatus(props: Props): string {
   if (props.acceptedNeighborhood?.status === 'legacy') {
     return 'No reviewed neighborhood group has been applied to this file yet. Complete the exploration above, then apply its boundary and statistics together.';
@@ -53,7 +43,7 @@ function appliedStatus(props: Props): string {
  * of beforeprint preparation; accepted boundary/statistics remain one group,
  * while market trend analysis is an explicit independent calculation. */
 export default function CustomNeighborhoodCharacteristicsSection(props: Props) {
-  const geometry = useMemo(() => acceptedGeometry(props.acceptedNeighborhood), [props.acceptedNeighborhood]);
+  const [explorationArea, setExplorationArea] = useState<CustomCohortPreviewGroup | null>(null);
   return <SummarySection title="Neighborhood Characteristics"
     subtitle="Explore the complete captured area, review exact selected statistics, apply one boundary-and-statistics group, and reconcile market conditions"
     manuallyVerified={props.acceptedNeighborhood?.status === 'accepted'}>
@@ -71,7 +61,7 @@ export default function CustomNeighborhoodCharacteristicsSection(props: Props) {
       {props.workspace.status === 'unavailable' && <button type="button" className="hn-action-secondary btn btn-sm normal-case"
         onClick={props.workspace.retry}>Reload neighborhood workspace</button>}
       {props.workspace.hostProps && <Suspense fallback={<Loading label="saved neighborhood workspace" />}>
-        <CustomNeighborhoodWorkspaceHost {...props.workspace.hostProps} />
+        <CustomNeighborhoodWorkspaceHost {...props.workspace.hostProps} onAnalysisSelection={setExplorationArea} />
       </Suspense>}
     </div>
 
@@ -89,14 +79,11 @@ export default function CustomNeighborhoodCharacteristicsSection(props: Props) {
     </section>
 
     {props.accountId && props.assignmentFileId ? <section className="mt-4 border-t border-violet-200 pt-4" aria-label="Market conditions analysis">
-      <p className="mb-3 text-xs leading-5 text-slate-600">The accepted neighborhood boundary becomes the appraiser-defined study area below. Market trend studies remain a separate, explicit calculation and do not silently change the pocket selection or comparable inventory.</p>
       <Suspense fallback={<Loading label="market conditions analysis" />}>
         <MarketConditionsAnalysis key={`${props.accountId}:${props.assignmentFileId}`} subjectAccountId={props.accountId}
           assignmentFileId={props.assignmentFileId} initialDraft={props.marketConditionsDraft}
           initialAsOfDate={props.effectiveDate}
-          onCompletionChange={props.onMarketConditionsChange} initialCustomGeometry={geometry}
-          initialCustomGeometrySource={geometry ? 'appraiser_defined_area_manual_v1' : null}
-          suggestedCustomGeometry={geometry} embedded />
+          onCompletionChange={props.onMarketConditionsChange} explorationArea={explorationArea} embedded />
       </Suspense>
     </section> : null}
   </SummarySection>;

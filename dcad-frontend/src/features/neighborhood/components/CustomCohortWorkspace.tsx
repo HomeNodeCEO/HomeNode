@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { requestCustomCohortObservationPreview, requestCustomCohortOperation } from '../customCohortPreviewApi';
 import { createCustomCohortPreviewController } from '../customCohortPreviewController';
-import type { CustomCohortContextRef, CustomCohortPreviewInput, CustomCohortPreviewState, CustomCohortInitialResponse } from '../customCohortPreviewController';
+import type { CustomCohortContextRef, CustomCohortPreviewInput, CustomCohortPreviewState, CustomCohortInitialResponse, CustomCohortPreviewGroup } from '../customCohortPreviewController';
 import type { CustomCohortMemberTransport } from '../customCohortPreviewTransport';
 import { isCustomCohortPreviewCapacityError } from '../customCohortPreviewTransport';
 import { checkCustomCohortPocketCatalog, customCohortCatalogGroupIds, selectionFromRecordedGroups,
@@ -11,7 +11,6 @@ import type { CheckedRecordedProximity } from '../customCohortPocketRecommendati
 import { buildCustomCohortSubdivisionFamilies, customCohortSubdivisionFamilyForPocket } from '../customCohortSubdivisionFamilies';
 import CustomCohortParcelMap from './CustomCohortParcelMap';
 import CustomCohortStatistics, { CustomCohortCompactStatistics } from './CustomCohortStatistics';
-import CustomCohortPocketInspector from './CustomCohortPocketInspector';
 import CustomCohortSubdivisionDialog from './CustomCohortSubdivisionDialog';
 import CustomCohortMapSnapshot from './CustomCohortMapSnapshot';
 import CustomCohortScoreBandSelector from './CustomCohortScoreBandSelector';
@@ -32,6 +31,7 @@ interface Props {
   /** Changes on session/organization transition, even for the same file. */
   sessionKey: string; subjectLabel: string; enabled: boolean;
   workspace?: CustomCohortControlledWorkspace;
+  onAnalysisSelection?: (group: CustomCohortPreviewGroup | null) => void;
 }
 const timer = { set: (fn: () => void, ms: number) => setTimeout(fn, ms),
   clear: (handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>) };
@@ -225,6 +225,11 @@ function WorkspaceSession(props: Props) {
     && requestMatches;
   const group = desired ? preview.group : null;
   const freshness = group ? current ? 'current' : 'stale' : 'none';
+  // Analysis never borrows stale figures while a selection save/preview is in
+  // flight. Its identity includes the exact context and selection fingerprint.
+  const onAnalysisSelection = props.onAnalysisSelection;
+  useEffect(() => { onAnalysisSelection?.(current ? group : null); }, [current, group, onAnalysisSelection]);
+  useEffect(() => () => onAnalysisSelection?.(null), [onAnalysisSelection]);
   const selectionDisabled = selectionBlocked || !desired;
   const area = recommendation?.sales_aware_area;
   const suggested = area && area.status !== 'unavailable' && area.selected_recorded_group_ids.length
@@ -245,7 +250,7 @@ function WorkspaceSession(props: Props) {
     onReplace={ids => choose(ids)} onAdd={includeGroups} onRemove={excludeGroups} />;
   const liveStatistics = <aside className="min-w-0 rounded-xl border border-violet-200 bg-violet-50/30 p-3"
     aria-label="Live neighborhood characteristics and market observations">
-    <CustomCohortCompactStatistics group={group} freshness={freshness} includePrivateSales />
+    <CustomCohortCompactStatistics group={group} freshness={freshness} includePrivateSales mapStrip />
     <details className="mt-3 rounded-lg border border-violet-200 bg-white p-2 text-xs">
       <summary className="cursor-pointer font-medium">Full observation breakdown</summary>
       <div className="mt-3"><CustomCohortStatistics group={group} freshness={freshness} selectedOnly /></div>
@@ -452,9 +457,6 @@ function WorkspaceSession(props: Props) {
           setInspectedPhaseId(id); setInspected(id ?? fullReviewFamily.pocket_ids[0]);
         } }}
         onClose={() => { setFullReviewFamilyId(null); setInspectedFamilyId(null); setInspectedPhaseId(null); }} />}
-      {!inspectedFamily && selectedGroup && desired && <CustomCohortPocketInspector input={input} catalog={catalog}
-        pocketId={selectedGroup.id} label={selectedGroup.label} previewTransport={transport} paused={inspectionsPaused}
-        memberTransport={props.workspace?.memberTransport} membersPaused={selectionBlocked} />}
     </>}
   </section>;
 }

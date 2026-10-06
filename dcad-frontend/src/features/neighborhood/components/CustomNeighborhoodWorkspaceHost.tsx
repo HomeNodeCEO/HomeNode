@@ -5,7 +5,7 @@ import type { CustomWorkspaceObservationPeriod, CustomWorkspacePrivateSalesImpor
 import { hasValidCustomWorkspaceObservationPeriod } from '../customWorkspaceCheckpoint';
 import { createCustomWorkspaceRequestLane, CUSTOM_WORKSPACE_CAPTURE_TIMEOUT_MS } from '../customWorkspaceRequestLane';
 import type { createCustomWorkspaceApi } from '../customWorkspaceApi';
-import type { CustomCohortPreviewRequest } from '../customCohortPreviewController';
+import type { CustomCohortPreviewRequest, CustomCohortPreviewGroup } from '../customCohortPreviewController';
 import type { CustomCohortMemberTransport } from '../customCohortPreviewTransport';
 import CustomCohortWorkspace from './CustomCohortWorkspace';
 import CustomReportedObservationAdoption from './CustomReportedObservationAdoption';
@@ -30,6 +30,7 @@ interface Props {
   api: ReturnType<typeof createCustomWorkspaceApi>;
   registerControls?: (controls: CustomNeighborhoodWorkspaceControls | null) => void;
   onAccepted?: () => Promise<boolean>;
+  onAnalysisSelection?: (group: CustomCohortPreviewGroup | null) => void;
 }
 const button = 'hn-action-secondary btn btn-sm normal-case';
 const PERIOD_GUIDANCE = 'Choose valid observation start and end dates, with the start on or before the end. No study has been requested for these dates.';
@@ -377,6 +378,7 @@ function HostSession(props: Props) {
     {reportRecovery && <p role="alert" className="text-sm">The report did not finish updating. Try again.</p>}
     {active && lastReady?.catalog && <CustomCohortWorkspace accountId={initial.target.accountId} assignmentFileId={initial.target.assignmentFileId}
       sessionKey={initial.target.sessionKey} contextRef={active.context_ref} subjectLabel={initial.subjectLabel} enabled={!locked}
+      onAnalysisSelection={props.onAnalysisSelection}
       workspace={{ catalog: lastReady.catalog, selection: active.selection, saving, blockedReason: explorationBlocked, previewTransport, memberTransport,
         initialPreview: lastReady.initial_preview,
         onSelectionIntent: ids => { if (!explorationBlocked) act(() => owner.current!.setGroups(ids)); } }} />}

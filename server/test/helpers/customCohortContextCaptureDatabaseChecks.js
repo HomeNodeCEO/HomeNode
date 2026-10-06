@@ -26,6 +26,7 @@ import { checkedNeighborhoodDatabaseUrl, NEIGHBORHOOD_CI_IDENTITY_SQL, verifyNei
 import { NEIGHBORHOOD_CACHED_SOURCE_SCHEMA } from '../fixtures/neighborhoodCachedSourceSchemaFixture.js';
 import { runCustomCohortPrivateSalesDatabaseChecks } from './customCohortPrivateSalesDatabaseChecks.js';
 import { runCustomCohortWitness2OwnerDatabaseChecks } from './customCohortWitness2OwnerDatabaseChecks.js';
+import { buildMarketConditionsAnalyses } from '../../src/services/marketConditions.js';
 
 /** New disposable migrated test database only; no cleanup of shared tables,
  * fake CI, external provider, live organization, or production credentials. */
@@ -69,6 +70,28 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     await pool.query("INSERT INTO core.sales(id,source_record_id,account_id,closing_date,sale_price,source,loaded_at) VALUES(100,10,$1,'2024-03-01',300000,'Synthetic',now())", [account]);
     await pool.query(`INSERT INTO core.sale_parcels(id,source_record_id,source_position,parcel_sequence,account_id,is_resolved,loaded_at)
       VALUES(11,10,1,1,$1,true,now()),(12,10,1,2,$2,true,now())`, [account, linked]);
+    // Synthetic projection for executing the real market SQL. The retained
+    // membership tests below do not depend on this view or change their rows.
+    await pool.query(`CREATE VIEW core.v_sales_enriched AS SELECT
+      sale.id AS sale_id, source.id AS source_record_id, source.primary_account_id,
+      source.record_type, sale.closing_date, sale.sale_price, sale.days_on_market,
+      NULL::text AS address, NULL::text AS city, NULL::text AS zip,
+      NULL::numeric AS ratio_close_price_by_list_price, source.living_area AS mls_living_area,
+      NULL::numeric AS cad_living_area_sqft, source.year_built AS mls_year_built,
+      NULL::integer AS cad_effective_year_built, NULL::integer AS cad_year_built, source.housing_type
+      FROM core.sales sale JOIN core.sales_source_records source ON source.id=sale.source_record_id`);
+    const marketInput = { subjectAccountId: account, accountIdAllowed: id => [account, other, linked].includes(id),
+      areaKeys: ['exploration'], asOfDate: '2024-06-30', periodMonths: 12 };
+    for (const [selected, expected] of [[[account], 1], [[linked], 1], [[account, linked], 1], [[other], 0], [[], 0]]) {
+      const study = await buildMarketConditionsAnalyses(pool, { ...marketInput, explorationAccountIds: selected });
+      assert.equal(study.analyses[0].market.label, 'Exploration Map Area');
+      assert.equal(study.analyses[0].population.eligible_sale_count, expected);
+      assert.equal(study.analyses[0].market.includes_subject, selected.includes(account));
+    }
+    const historical = await buildMarketConditionsAnalyses(pool, { ...marketInput,
+      asOfDate: '2023-06-30', explorationAccountIds: [account] });
+    assert.equal(historical.analyses[0].population.eligible_sale_count, 0, 'future sales cannot enter a retrospective study');
+    checks.push('exact exploration market roster, linked-sale deduplication, empty selection and retrospective cutoff');
     const auth = { userId: actor, organizations: [{ organizationId: organization, roles: ['appraiser'] }] };
     const makeInput = () => ({ auth, accountId: account, assignmentFileId: assignment, operationId: randomUUID(),
       observationPeriod: { start_date: '2023-07-01', end_date: '2024-06-30' } });

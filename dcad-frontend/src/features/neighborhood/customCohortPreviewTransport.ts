@@ -148,11 +148,11 @@ export type CustomCohortMemberTransport = ReturnType<typeof createCustomCohortMe
 /** Shared bounded transport for the read-only views and idempotent context
  * capture. Operation names are closed; callers cannot supply arbitrary URLs. */
 export function createCustomCohortJsonTransport(options: Options) {
-  return async (accountId: string, operation: 'preview' | 'viewport' | 'catalog' | 'members' | 'capture' | 'reported-proposal' | 'reported-apply',
+  return async (accountId: string, operation: 'preview' | 'viewport' | 'catalog' | 'members' | 'capture' | 'reported-proposal' | 'reported-apply' | 'market-analysis',
     payload: unknown, { signal }: { signal: AbortSignal }): Promise<unknown> => {
     checkSignal(signal);
     if (typeof accountId !== 'string' || !accountId || accountId.length > 64
-      || !['preview', 'viewport', 'catalog', 'members', 'capture', 'reported-proposal', 'reported-apply'].includes(operation)) throw new Error('Invalid neighborhood request');
+      || !['preview', 'viewport', 'catalog', 'members', 'capture', 'reported-proposal', 'reported-apply', 'market-analysis'].includes(operation)) throw new Error('Invalid neighborhood request');
     const openingMode = operation === 'catalog' && payload !== null && typeof payload === 'object'
       && Object.hasOwn(payload, 'initial_preview_mode');
     if (openingMode && (!['all_catalog_groups', 'recommended_area'].includes(String((payload as Record<string, unknown>).initial_preview_mode))

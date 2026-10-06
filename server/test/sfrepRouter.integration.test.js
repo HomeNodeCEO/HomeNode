@@ -58,6 +58,36 @@ test('preview scopes to the assignment and omits package-only internals', async 
   assert.equal((await fixture.request('preview', { ...body, document_ids: [2, 2] })).status, 400);
 });
 
+test('photo preview runs only after assignment authorization and strips private package metadata', async context => {
+  const id = '10000000-0000-4000-8000-000000000001';
+  const fixture = await start(context, {
+    readPhotos: async (_pool, input) => {
+      assert.equal(input.accountId, 'account-1'); assert.equal(input.assignmentFileId, 14);
+      assert.equal(input.includePhotos, true); return [{ id }];
+    },
+    buildPreview: (_documents, _input, photos) => {
+      assert.equal(photos[0].id, id);
+      return { reportXml: '<Report/>', pdfAddenda: [], preview_digest: 'a'.repeat(64),
+        photos: [{ id, label: 'Front', included: true }],
+        imageAddenda: [{ photoId: id, objectKey: 'private-key', checksumSha256: 'private-checksum' }] };
+    },
+    objectStorage: { configured: true, createDownloadUrl({ objectKey, expiresInSeconds }) {
+      assert.equal(objectKey, 'private-key'); assert.equal(expiresInSeconds, 300);
+      return { url: 'https://synthetic.example/preview?signature=short-lived' };
+    } },
+  });
+  const response = await fixture.request('preview', { ...body, include_photos: true });
+  assert.equal(response.status, 200);
+  const value = await response.json();
+  assert.equal(value.imageAddenda, undefined); assert.equal(value.reportXml, undefined);
+  assert.equal(value.photos[0].view_url, 'https://synthetic.example/preview?signature=short-lived');
+  assert.doesNotMatch(JSON.stringify(value), /private-key|private-checksum/);
+  for (const auth of [null, { ...identity, organizations: [{ organizationId: 'org-2', roles: ['organization_admin'] }] }]) {
+    const blocked = await start(context, { readPhotos() { assert.fail('foreign identity must never read photos'); } }, auth);
+    assert.ok([401, 403].includes((await blocked.request('preview', { ...body, include_photos: true })).status));
+  }
+});
+
 test('2055 selection reaches the preview builder under the same assignment authorization', async context => {
   let requestedForm;
   const fixture = await start(context, { buildPreview: (_documents, input) => {

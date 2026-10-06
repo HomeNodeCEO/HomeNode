@@ -8,6 +8,7 @@ import { jsonErrorHandler } from '../security/httpSecurity.js';
 import { createCustomCohortContextCapture } from '../services/neighborhoodAssessment/customCohortContextCapture.js';
 import { createCustomNeighborhoodSubjectEvidenceRecovery } from '../services/neighborhoodAssessment/customSubjectEvidenceRecovery.js';
 import { createCustomNeighborhoodCohortRouter } from '../modules/accounts/customNeighborhoodCohortRouter.js';
+import { createCustomCohortMarketAnalysis } from '../services/neighborhoodAssessment/customCohortMarketAnalysis.js';
 
 export const CUSTOM_NEIGHBORHOOD_SOURCE_PROFILE_MAX_BYTES = 16_384;
 const BASE = '/api/accounts/:id/neighborhood-cohort';
@@ -106,6 +107,7 @@ export function createCustomNeighborhoodApplicationRouter({ pool, configuration 
     }
     return next();
   });
-  if (cohortService) router.use(createCustomNeighborhoodCohortRouter({ cohortService }));
+  if (cohortService) router.use(createCustomNeighborhoodCohortRouter({ cohortService,
+    marketAnalysis: createCustomCohortMarketAnalysis({ pool, cohortService }) }));
   return router;
 }

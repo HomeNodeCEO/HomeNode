@@ -10,6 +10,7 @@ export interface SfrepSelection {
   assignmentFileId: number;
   documentIds: number[];
   includeDocuments: boolean;
+  includePhotos?: boolean;
   formId?: SfrepFormId;
 }
 export interface SfrepField {
@@ -54,6 +55,12 @@ export interface SfrepDocument {
   id: number; title: string; file_name: string; file_size_bytes: number; processing_status: string;
 }
 export type SfrepConflict = { sourceField: string; documentIds: number[]; values: string[] };
+export interface SfrepPhoto {
+  id: string; label: string; category: string; roomLabel: string | null; caption: string | null;
+  position: number; revision: number; status: string; included: boolean;
+  verifiedAt: string | null; variant: 'display' | 'original' | null;
+  byteSize: number | null; fileName: string | null; reason: string | null; view_url?: string | null;
+}
 export type SfrepOmission = { sourceField: string; documentId: number; candidateId: number | null; reason: string };
 export type SfrepNotice = string | SfrepConflict | SfrepOmission;
 export interface SfrepPreview {
@@ -65,6 +72,7 @@ export interface SfrepPreview {
   omitted: SfrepOmission[];
   warnings: string[];
   documents: SfrepDocument[];
+  photos?: SfrepPhoto[];
   filename: string;
   effectiveDateContext: SfrepEffectiveDateContext;
   assumptions: SfrepAssumption[];
@@ -343,6 +351,35 @@ function validField(value: unknown): value is SfrepField {
     && provenance.sourceValue >= provenance.windowStart && provenance.sourceValue <= provenance.windowEnd;
 }
 
+function validPhoto(value: unknown): value is SfrepPhoto {
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const photoText = (text: unknown) => typeof text === 'string' && text.length <= 2000;
+  const nullableText = (text: unknown) => text === null || photoText(text);
+  if (!record(value) || !onlyKeys(value, ['id', 'label', 'category', 'roomLabel', 'caption', 'position', 'revision',
+    'status', 'included', 'verifiedAt', 'variant', 'byteSize', 'fileName', 'reason', 'view_url'])
+    || typeof value.id !== 'string' || !uuid.test(value.id) || !validText(value.label) || !photoText(value.label)
+    || !photoText(value.category) || !nullableText(value.roomLabel) || !nullableText(value.caption)
+    || !positiveId(value.position) || !positiveId(value.revision) || !boundedText(value.status, 64)
+    || typeof value.included !== 'boolean' || !nullableText(value.reason)
+    || (value.verifiedAt !== null && (typeof value.verifiedAt !== 'string' || !Number.isFinite(Date.parse(value.verifiedAt))))) return false;
+  if (value.included ? value.status !== 'verified' || !value.verifiedAt
+    || !['display', 'original'].includes(String(value.variant)) || !positiveId(value.byteSize)
+    || typeof value.fileName !== 'string' || !new RegExp(`^photo-${value.id.toLowerCase()}\\.(jpg|png)$`).test(value.fileName)
+    || value.reason !== null
+    : value.variant !== null || value.byteSize !== null || value.fileName !== null || !validText(value.reason)) return false;
+  if (value.view_url != null) {
+    if (!value.included || typeof value.view_url !== 'string' || value.view_url.length > 12000) return false;
+    try { const url = new URL(value.view_url); if (url.protocol !== 'https:' || url.username || url.password) return false; }
+    catch { return false; }
+  }
+  return true;
+}
+
+export function sfrepCanExport(preview: SfrepPreview, includeDocuments: boolean): boolean {
+  return preview.fields.length > 0 || (includeDocuments && preview.documents.length > 0)
+    || Boolean(preview.photos?.some(photo => photo.included));
+}
+
 export function checkSfrepPreview(value: unknown, selectedDocumentIds?: readonly number[], expectedFormId: SfrepFormId = SFREP_FORM_ID): SfrepPreview {
   if (!record(value) || value.ok !== true || !supportedFormId(expectedFormId) || value.formId !== expectedFormId
     || typeof value.preview_digest !== 'string' || !/^[a-f0-9]{64}$/.test(value.preview_digest)
@@ -369,6 +406,10 @@ export function checkSfrepPreview(value: unknown, selectedDocumentIds?: readonly
     throw new Error('The SFREP preview response is invalid. No export was downloaded.');
   }
   const preview = value as unknown as SfrepPreview;
+  if (preview.photos !== undefined && (!Array.isArray(preview.photos) || preview.photos.length > 100
+    || !preview.photos.every(validPhoto) || new Set(preview.photos.map(photo => photo.id)).size !== preview.photos.length)) {
+    throw new Error('The SFREP photo preview is invalid. Preview again before exporting.');
+  }
   const saved = preview.savedReport;
   if (saved !== undefined && (!record(saved) || !positiveId(saved.assignmentFileId) || !positiveId(saved.assignmentRevision)
     || !Number.isSafeInteger(saved.subjectRevision) || saved.subjectRevision < 0 || !Array.isArray(saved.sourceDocumentIds)
@@ -646,6 +687,7 @@ export function createSfrepTransport(options: TransportOptions) {
     if (!selection.accountId.trim() || !positiveId(selection.assignmentFileId) || selection.documentIds.length > 10
       || !selection.documentIds.every(positiveId) || new Set(selection.documentIds).size !== selection.documentIds.length
       || typeof selection.includeDocuments !== 'boolean' || !supportedFormId(formId)
+      || (selection.includePhotos !== undefined && typeof selection.includePhotos !== 'boolean')
       || (operation === 'export' && (typeof digest !== 'string' || !/^[a-f0-9]{64}$/.test(digest)))) {
       throw new Error('Choose a saved assignment and review a fresh preview before exporting.');
     }
@@ -656,6 +698,7 @@ export function createSfrepTransport(options: TransportOptions) {
         'content-type': 'application/json', 'x-homenode-editor-key': io.editorKey },
       body: JSON.stringify({ assignment_file_id: selection.assignmentFileId, document_ids: selection.documentIds,
         include_documents: selection.includeDocuments, form_id: formId,
+        ...(selection.includePhotos !== undefined ? { include_photos: selection.includePhotos } : {}),
         ...(operation === 'export' ? { preview_digest: digest } : {}) }),
     }, io.signal);
     if (io.signal.aborted) { stop(response); throw cancelled(); }
@@ -668,6 +711,9 @@ export function createSfrepTransport(options: TransportOptions) {
           if (record(error) && validText(error.message ?? error.error)) message = String(error.message ?? error.error).slice(0, 500);
           if (record(error) && error.error === 'sfrep_preview_changed') message = 'The source evidence changed after your preview. Preview again and review the updated export.';
           if (record(error) && error.error === 'sfrep_export_busy') message = 'Another SFREP export is being prepared. Wait briefly, then preview again.';
+          if (record(error) && error.error === 'sfrep_package_too_large') message = 'The selected documents and photos exceed the 50 MiB export limit. Reduce the attachments, then preview again.';
+          if (record(error) && error.error === 'sfrep_photo_integrity_failed') message = 'A photo could not be verified for export. No RPTI was downloaded. Preview again and check its upload status.';
+          if (record(error) && error.error === 'sfrep_photo_storage_unavailable') message = 'Photo storage is temporarily unavailable. Your photos remain saved; preview again later.';
         } catch { checkSignal(io.signal); }
       } else stop(response);
       throw new Error(message);
@@ -682,6 +728,9 @@ export function createSfrepTransport(options: TransportOptions) {
       const value: unknown = JSON.parse(await (await post(selection, 'preview', io)).text());
       checkSignal(io.signal);
       const checked = checkSfrepPreview(value, selection.documentIds, selection.formId ?? SFREP_FORM_ID);
+      if (selection.includePhotos === true && checked.photos === undefined) {
+        throw new Error('Photo export is not available on this server yet. No photos were silently omitted; try again after the update.');
+      }
       if (checked.savedReport && checked.savedReport.assignmentFileId !== selection.assignmentFileId) {
         throw new Error('The SFREP preview does not match the selected HomeNode file.');
       }

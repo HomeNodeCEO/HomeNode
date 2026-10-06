@@ -139,6 +139,33 @@ known rollback. These short transactions do not replace the capture
 coordinator's aggregate-budget, source-acquisition transaction owner. Neither
 helper widens a source grant or makes a queued request eligible for publication.
 
+The first durable stage checkpoint stores the original subject-stage intent
+reference in the same transaction as its immutable subject evidence. A worker
+retry reloads that exact intent, subject and recorded point after checking the
+current actor and assignment. It refuses changed subject inputs, mismatched
+operation/period/profiles, missing originals, cancellation or a lost claim;
+it does not silently capture a replacement subject under the same operation.
+Checkpoint reads/writes bind organization, report, assignment, account, original
+actor, claim token, attempt and unexpired lease. A checkpoint does not renew the
+lease or authorize source access. Source policy is checked again before any
+new source acquisition and publication. Source/spatial/preparation paging and
+their durable checkpoints are still outstanding; this subject-stage slice
+does not remove the 50,000-account ceiling or activate the job HTTP flow.
+
+A second worker checkpoint commits the **complete** validated original source,
+spatial and preparation graph, its unregistered header and the fenced job
+reference in one transaction. Registration is a separate fresh-authorized
+transaction. A retry rechecks current assignment, actor and source rights before
+loading the complete original graph; it does not rerun spatial/source queries or
+mix in a later data sweep. Changed subject inputs or private CSV review, missing
+originals, a changed policy, cancellation or a lost claim refuse publication.
+Lost staging COMMIT acknowledgments are recovered by reading the actual fenced
+checkpoint. A staged header is not a registered context, accepted study or
+permission grant. This checkpoints only a whole bounded acquisition, not an
+unfinished page stream. Source/spatial page-by-page recovery, >50k contracts,
+server-owned selections and the remaining live acceptance still remain pending;
+neither the public route nor installed capacity is changed by this slice.
+
 The worker CLI validates its database URL before constructing the pool and
 requires certificate-verified TLS for every non-loopback host, including internal
 hosts. Only literal localhost/127.0.0.1/::1 development connections may be

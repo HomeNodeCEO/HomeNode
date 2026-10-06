@@ -20,6 +20,7 @@ const invalid = error => error instanceof TypeError
 for (const flag of [undefined, null, '', 'false', '0', 'off', 'not-a-flag']) {
   test(`disabled flag ${String(flag)} ignores unused profile and pool`, () => {
     const environment = { CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED: flag,
+      get CUSTOM_NEIGHBORHOOD_GROUP_WORKSPACE_ENABLED() { throw new Error('must_not_read_unused_group_mode'); },
       get CUSTOM_NEIGHBORHOOD_SOURCE_MODE() { throw new Error('must_not_read_unused_mode'); },
       get CUSTOM_NEIGHBORHOOD_SOURCE_PROFILE_JSON() { throw new Error('must_not_read_unused_profile'); } };
     const configuration = createCustomNeighborhoodConfiguration(environment);
@@ -134,6 +135,36 @@ test('committed environment template documents disabled/empty configuration with
   const template = await readFile(new URL('../.env.example', import.meta.url), 'utf8');
   assert.match(template, /^# CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED=false$/m);
   assert.match(template, /^# CUSTOM_NEIGHBORHOOD_SOURCE_PROFILE_JSON=$/m);
+  assert.match(template, /^# CUSTOM_NEIGHBORHOOD_GROUP_WORKSPACE_ENABLED=false$/m);
   assert.doesNotMatch(template, /^CUSTOM_NEIGHBORHOOD_/m);
   assert.match(template, /this flag\/profile never grants those rights/);
+});
+
+test('V7 composition is separately explicit, frozen and defaults to the exact installed legacy shape', () => {
+  for (const flag of [undefined, '', 'false', '0', 'off', 'not-a-flag']) {
+    const configuration = createCustomNeighborhoodConfiguration({ ...enabled(JSON.stringify(PROFILE)),
+      CUSTOM_NEIGHBORHOOD_GROUP_WORKSPACE_ENABLED: flag });
+    assert.deepEqual(configuration, { enabled: true, sourceProfile: PROFILE });
+  }
+  for (const flag of ['true', ' TRUE ', '1', 'yes', 'on']) {
+    const environment = { ...enabled(JSON.stringify(PROFILE)), CUSTOM_NEIGHBORHOOD_GROUP_WORKSPACE_ENABLED: flag };
+    const configuration = createCustomNeighborhoodConfiguration(environment);
+    assert.deepEqual(configuration, { enabled: true, sourceProfile: PROFILE, recordedGroupWorkspaceTransitions: true });
+    assert.ok(Object.isFrozen(configuration)); environment.CUSTOM_NEIGHBORHOOD_GROUP_WORKSPACE_ENABLED = 'false';
+    assert.equal(configuration.recordedGroupWorkspaceTransitions, true);
+    const pool = { connect() { assert.fail('composition does not connect while mounting'); } };
+    assert.equal(typeof createCustomNeighborhoodApplicationRouter({ pool, configuration }), 'function');
+  }
+});
+
+test('direct composition refuses malformed or disabled V7 activation before owner resources', () => {
+  const pool = { get connect() { assert.fail('invalid composition must not access resources'); } };
+  for (const recordedGroupWorkspaceTransitions of ['true', 1, null, {}, []]) {
+    assert.throws(() => createCustomNeighborhoodApplicationRouter({ pool,
+      configuration: { enabled: true, sourceProfile: PROFILE, recordedGroupWorkspaceTransitions } }), invalid);
+  }
+  assert.throws(() => createCustomNeighborhoodApplicationRouter({ pool,
+    configuration: { enabled: false, sourceProfile: null, recordedGroupWorkspaceTransitions: true } }), invalid);
+  assert.equal(typeof createCustomNeighborhoodApplicationRouter({ pool,
+    configuration: { enabled: false, sourceProfile: null, recordedGroupWorkspaceTransitions: false } }), 'function');
 });

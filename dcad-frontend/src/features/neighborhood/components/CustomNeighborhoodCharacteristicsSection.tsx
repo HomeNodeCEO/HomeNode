@@ -8,6 +8,7 @@ import type { CustomNeighborhoodReportBridge } from '../useCustomNeighborhoodRep
 const CustomNeighborhoodAcceptedSummary = lazy(() => import('./CustomNeighborhoodAcceptedSummary'));
 const CustomNeighborhoodAcceptedOutline = lazy(() => import('./CustomNeighborhoodAcceptedOutline'));
 const CustomNeighborhoodWorkspaceHost = lazy(() => import('./CustomNeighborhoodWorkspaceHost'));
+const CustomCohortGroupWorkspaceHost = lazy(() => import('./CustomCohortGroupWorkspaceHost'));
 const MarketConditionsAnalysis = lazy(() => import('@/components/MarketConditionsAnalysis'));
 
 interface Props {
@@ -70,7 +71,9 @@ export default function CustomNeighborhoodCharacteristicsSection(props: Props) {
       </p>}
       {props.workspace.status === 'unavailable' && <button type="button" className="hn-action-secondary btn btn-sm normal-case"
         onClick={props.workspace.retry}>Reload neighborhood workspace</button>}
-      {props.workspace.hostProps && <Suspense fallback={<Loading label="saved neighborhood workspace" />}>
+      {props.workspace.groupHostProps ? <Suspense fallback={<Loading label="saved neighborhood workspace" />}>
+        <CustomCohortGroupWorkspaceHost {...props.workspace.groupHostProps} />
+      </Suspense> : props.workspace.hostProps && <Suspense fallback={<Loading label="saved neighborhood workspace" />}>
         <CustomNeighborhoodWorkspaceHost {...props.workspace.hostProps} />
       </Suspense>}
     </div>

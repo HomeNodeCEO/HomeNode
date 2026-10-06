@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import * as catalog from '../src/features/neighborhood/customCohortPocketCatalog.ts';
 import * as transport from '../src/features/neighborhood/customCohortPreviewTransport.ts';
 import * as defaultPeriod from '../src/features/neighborhood/customWorkspaceDefaultPeriod.ts';
+import * as groupSelection from '../src/features/neighborhood/customCohortRecordedGroupTransport.ts';
+import { workspace, displayModule, mapView, groupMemberViewFixture } from './customCohortGroupMemberViewFixture.mjs';
 import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
 function compile(name, imports, globals = {}) {
@@ -14,6 +17,10 @@ function compile(name, imports, globals = {}) {
 const checkpoint = compile('customWorkspaceCheckpoint.ts', { './customCohortPocketCatalog': catalog,
   './customWorkspaceDiscovery.ts': compile('customWorkspaceDiscovery.ts', {}) });
 const api = compile('customWorkspaceApi.ts', { './customCohortPreviewTransport': transport, './customWorkspaceCheckpoint': checkpoint });
+const groupApi = compile('customCohortGroupWorkspaceApi.ts', { './customWorkspaceApi.ts': api,
+  './customCohortPreviewTransport.ts': transport, './customCohortGroupWorkspaceTransport.ts': workspace,
+  './customCohortRecordedGroupTransport.ts': groupSelection, './customCohortGroupDisplay.ts': displayModule,
+  './customCohortGroupMapView.ts': mapView });
 const copy = value => structuredClone(value);
 const period = { start_date: '2024-01-01', end_date: '2024-12-31' };
 const context = { context_id: '10000000-0000-4000-8000-000000000001', context_revision: '1', context_sha256: 'a'.repeat(64) };
@@ -58,6 +65,7 @@ function harness(t, options = {}) {
         ...(section === undefined ? {} : { neighborhood_workspace: copy(section) }) } } });
   };
   const exports = compile('useCustomNeighborhoodReportBridge.ts', { react, './customWorkspaceApi': api,
+    './customCohortGroupWorkspaceApi': groupApi,
     './customWorkspaceDefaultPeriod': defaultPeriod,
     '@/lib/mapLibreRuntime': { loadMapLibreRuntime: () => { mapPreloads.push(true); return Promise.resolve({}); } },
     '@/lib/api': { makeUrl: value => value, fetchWithApplicationAuthentication: (url, init) => {
@@ -78,7 +86,7 @@ function harness(t, options = {}) {
     async settle() { for (let i = 0; i < 40; i++) { await Promise.resolve(); flush(); } },
     async expire() { const pendingTimers = [...timers.entries()]; pendingTimers.forEach(([id, item]) => { timers.delete(id); item.fn(); }); await this.settle(); },
     mountControls(flushOperation = async () => true) {
-      assert.ok(output.hostProps); const registrations = [], hostProps = output.hostProps;
+      assert.ok(output.hostProps ?? output.groupHostProps); const registrations = [], hostProps = output.hostProps ?? output.groupHostProps;
       const controls = { target: copy(hostProps.target), flush: flushOperation, setReadOnly: value => registrations.push(value) };
       hostProps.registerControls(controls); return { controls, registrations, unmount: () => hostProps.registerControls(null) };
     },
@@ -299,4 +307,106 @@ test('private capture delegates only to current mounted draft controls and respe
   assert.equal(await h.view.useReviewedSales(reference), false); lease.release();
   const changed = copy(h.props); changed.accountId = 'OTHER'; h.render(changed);
   assert.equal(await old.useReviewedSales(reference), false); assert.equal(calls.length, 1);
+});
+
+const groupProps = (fixture, initialGroups = () => []) => ({ ...props(), accountId: fixture.value.target.accountId,
+  assignmentFileId: Number(fixture.value.target.assignmentFileId), recordedGroupWorkspace: { initialGroups } });
+const groupSection = fixture => ({ revision: fixture.value.workspaceRevision, value: copy(fixture.value.checkpoint) });
+
+test('explicit V7 report composition restores only the checked V7 host and preserves the shared signing barrier', async t => {
+  const f = await groupMemberViewFixture({ empty: true }); let policyCalls = 0;
+  const initialProps = groupProps(f, () => { policyCalls++; return []; });
+  const h = harness(t, { initialProps, section: groupSection(f) }); await h.settle();
+  assert.equal(h.view.status, 'ready'); assert.equal(h.view.hostProps, null); assert.ok(h.view.groupHostProps);
+  assert.equal(h.view.groupHostProps.initialGroups, initialProps.recordedGroupWorkspace.initialGroups);
+  assert.deepEqual(h.view.groupHostProps.initialPeriod, f.value.checkpoint.active.observation_period);
+  assert.equal(h.calls.length, 1); assert.equal(h.calls[0].init.method, 'GET'); assert.equal(h.credentials.length, 0);
+  assert.equal(policyCalls, 0, 'report bridge is not the capture/selection owner');
+  assert.equal(h.view.beginSaveBarrier(), null, 'fresh workfile is not mounted host controls');
+  const held = deferred(), mounted = h.mountControls(() => held.promise), lease = h.view.beginSaveBarrier();
+  assert.ok(lease); assert.deepEqual(mounted.registrations, [true]);
+  const operation = lease.flush(); await h.settle(); assert.equal(h.view.beginSaveBarrier(), null);
+  held.resolve(true); assert.equal(await operation, true); lease.release(); assert.deepEqual(mounted.registrations, [true, false]);
+});
+
+for (const variant of ['legacy', 'null', 'future']) test(`V7 composition refuses ${variant} data rather than converting it or falling back`, async t => {
+  const f = await groupMemberViewFixture();
+  const section = variant === 'legacy' ? active() : variant === 'null' ? null
+    : { ...groupSection(f), value: { ...f.value.checkpoint, workspace_version: 8 } };
+  const h = harness(t, { initialProps: groupProps(f), section }); await h.settle();
+  assert.equal(h.view.status, 'unavailable'); assert.equal(h.view.hostProps, null); assert.equal(h.view.groupHostProps, null);
+  assert.equal(h.view.beginSaveBarrier(), null); assert.equal(h.calls.length, 1); assert.equal(h.credentials.length, 0);
+});
+
+test('omitted V7 policy retains legacy mode; missing policy cannot silently choose a default owner', async t => {
+  const ordinary = harness(t); await ordinary.settle(); assert.ok(ordinary.view.hostProps); assert.equal(ordinary.view.groupHostProps, null);
+  for (const recordedGroupWorkspace of [null, {}, { initialGroups: null }, { initialGroups: [] }]) {
+    const h = harness(t, { initialProps: { ...props(), recordedGroupWorkspace } }); await h.settle();
+    assert.equal(h.view.status, 'unavailable'); assert.equal(h.calls.length, 0);
+    assert.equal(h.view.hostProps, null); assert.equal(h.view.groupHostProps, null); assert.equal(h.view.beginSaveBarrier(), null);
+  }
+});
+
+test('fresh absent V7 draft passes an explicit policy and canonical period without starting capture in the bridge', async t => {
+  const f = await groupMemberViewFixture(), initialProps = { ...groupProps(f), effectiveDate: '2024-12-31' };
+  const h = harness(t, { initialProps, section: undefined }); await h.settle();
+  assert.equal(h.view.status, 'ready'); assert.equal(h.view.hostProps, null); assert.equal(h.view.groupHostProps.initialPeriod, null);
+  assert.deepEqual(h.view.groupHostProps.defaultPeriod, defaultPeriod.customWorkspaceDefaultObservationPeriod('2024-12-31'));
+  assert.equal(h.calls.length, 1); assert.equal(h.credentials.length, 0);
+});
+
+test('V7 mode and policy generation changes invalidate old reads, controls, leases and accepted callbacks before cleanup', async t => {
+  const f = await groupMemberViewFixture(), held = deferred(); let calls = 0;
+  const initialProps = groupProps(f), h = harness(t, { initialProps, section: groupSection(f),
+    request: (call, respond) => ++calls === 1 ? held.promise.then(() => respond(call)) : respond(call) });
+  await h.settle(); const oldSignal = h.calls[0].init.signal;
+  h.render({ ...initialProps, recordedGroupWorkspace: { initialGroups: () => [] } }); await h.settle();
+  assert.equal(oldSignal.aborted, true); const currentTarget = h.view.groupHostProps.target;
+  held.resolve(); await h.settle(); assert.equal(h.view.groupHostProps.target, currentTarget);
+  const oldProps = h.view.groupHostProps, mounted = h.mountControls(), lease = h.view.beginSaveBarrier(); assert.ok(lease);
+  h.render({ ...initialProps, recordedGroupWorkspace: undefined }, () => assert.equal(lease.isCurrent(), false));
+  assert.equal(await oldProps.onAccepted(), false); mounted.unmount(); lease.release(); await h.settle();
+  assert.equal(h.view.status, 'unavailable', 'legacy reader refuses a V7 checkpoint rather than resetting it');
+  assert.equal(h.view.groupHostProps, null); assert.equal(h.view.hostProps, null); assert.equal(h.credentials.length, 0);
+});
+
+for (const status of ['signed', 'archived']) test(`fresh V7 ${status} file remains read-only and cannot acquire a save lease`, async t => {
+  const f = await groupMemberViewFixture(), initialProps = groupProps(f);
+  const h = harness(t, { initialProps, section: groupSection(f), request: (call, respond) => respond(call).json().then(body => json({ ...body,
+    workfile: { ...body.workfile, status } })) }); await h.settle();
+  assert.equal(h.view.status, 'read_only'); assert.equal(h.view.groupHostProps.workfileStatus, status);
+  assert.equal(h.view.hostProps, null); assert.equal(h.view.beginSaveBarrier(), null); assert.equal(h.calls.length, 1);
+});
+
+test('V7 flush deadline preserves actual pending ownership and blocks retry until settlement', async t => {
+  const f = await groupMemberViewFixture(), h = harness(t, { initialProps: groupProps(f), section: groupSection(f) }); await h.settle();
+  const held = deferred(), mounted = h.mountControls(() => held.promise), lease = h.view.beginSaveBarrier();
+  const operation = lease.flush(); await h.settle(); await h.expire(); assert.equal(await operation, false);
+  lease.release(); assert.deepEqual(mounted.registrations, [true]); assert.equal(h.view.status, 'unavailable');
+  h.view.retry(); await h.settle(); assert.equal(h.calls.length, 1); assert.equal(h.view.beginSaveBarrier(), null);
+  held.resolve(true); await h.settle(); h.view.retry(); await h.settle(); assert.equal(h.calls.length, 2);
+  assert.equal(h.view.status, 'ready'); assert.equal(h.view.beginSaveBarrier(), null, 'new exact host must register');
+});
+
+test('characteristics mounts one chosen host inside the existing layout, not both owners', () => {
+  const runtime = createRequire(new URL('../package.json', import.meta.url)), jsx = runtime('react/jsx-runtime');
+  const { renderToStaticMarkup } = runtime('react-dom/server');
+  const Section = compile('components/CustomNeighborhoodCharacteristicsSection.tsx', {
+    react: { useMemo: fn => fn(), Suspense: ({ children }) => children, lazy: loader => {
+      const match = /(?:import|require)\(['"](.+?)['"]\)/.exec(String(loader)); assert.ok(match);
+      const name = match[1].split('/').at(-1);
+      return function Stub() { return jsx.jsx('div', { 'data-host': name }); };
+    } }, 'react/jsx-runtime': jsx,
+    '@/components/PropertyReportControls': { SummarySection: ({ children }) => jsx.jsx('section', { children }) },
+  }).default;
+  const props = { neighborhoodSummary: '', onNeighborhoodSummaryChange() {}, acceptedNeighborhood: null,
+    assignmentFilesLoaded: false, assignmentFilesError: false, hasActiveAssignmentFile: false,
+    workspace: { status: 'ready', message: null, hostProps: {}, groupHostProps: null } };
+  const legacy = renderToStaticMarkup(jsx.jsx(Section, props));
+  assert.match(legacy, /data-host="CustomNeighborhoodWorkspaceHost"/);
+  assert.doesNotMatch(legacy, /data-host="CustomCohortGroupWorkspaceHost"/);
+  const exact = renderToStaticMarkup(jsx.jsx(Section, { ...props, workspace: { ...props.workspace, groupHostProps: {} } }));
+  assert.match(exact, /data-host="CustomCohortGroupWorkspaceHost"/);
+  assert.doesNotMatch(exact, /data-host="CustomNeighborhoodWorkspaceHost"/);
+  assert.match(exact, /Neighborhood summary/); assert.match(exact, /Applied neighborhood characteristics and market observations/);
 });

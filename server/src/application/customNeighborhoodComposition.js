@@ -35,6 +35,7 @@ export function createCustomNeighborhoodConfiguration(environment = process.env)
     }
     const mode = environment.CUSTOM_NEIGHBORHOOD_SOURCE_MODE;
     sourceMode(mode);
+    const recordedGroupWorkspaceTransitions = environmentFlag(environment.CUSTOM_NEIGHBORHOOD_GROUP_WORKSPACE_ENABLED);
     const encoded = environment.CUSTOM_NEIGHBORHOOD_SOURCE_PROFILE_JSON;
     if (typeof encoded !== 'string' || !encoded.trim()
       || Buffer.byteLength(encoded, 'utf8') > CUSTOM_NEIGHBORHOOD_SOURCE_PROFILE_MAX_BYTES) {
@@ -46,7 +47,8 @@ export function createCustomNeighborhoodConfiguration(environment = process.env)
     sourceProfile.providerRevisions.forEach(Object.freeze);
     Object.freeze(sourceProfile.providerRevisions);
     return Object.freeze({ enabled: true, sourceProfile: Object.freeze(sourceProfile),
-      ...(mode === undefined ? {} : { sourceMode: mode }) });
+      ...(mode === undefined ? {} : { sourceMode: mode }),
+      ...(recordedGroupWorkspaceTransitions ? { recordedGroupWorkspaceTransitions: true } : {}) });
   } catch {
     // Never attach parser input, provider identifiers, driver errors or causes.
     throw invalidConfiguration();
@@ -59,7 +61,10 @@ export function createCustomNeighborhoodConfiguration(environment = process.env)
  */
 export function createCustomNeighborhoodCohortService({ pool, configuration } = {}) {
   if (typeof configuration?.enabled !== 'boolean'
-    || (configuration.enabled === false && configuration.sourceProfile !== null)) throw invalidConfiguration();
+    || (configuration.enabled === false && configuration.sourceProfile !== null)
+    || (Object.hasOwn(configuration, 'recordedGroupWorkspaceTransitions')
+      && (typeof configuration.recordedGroupWorkspaceTransitions !== 'boolean'
+        || (!configuration.enabled && configuration.recordedGroupWorkspaceTransitions)))) throw invalidConfiguration();
   const enabled = configuration.enabled;
   let cohortService;
   if (enabled) {
@@ -106,6 +111,7 @@ export function createCustomNeighborhoodApplicationRouter({ pool, configuration 
     }
     return next();
   });
-  if (cohortService) router.use(createCustomNeighborhoodCohortRouter({ cohortService }));
+  if (cohortService) router.use(createCustomNeighborhoodCohortRouter({ cohortService,
+    recordedGroupWorkspaceTransitions: configuration.recordedGroupWorkspaceTransitions === true }));
   return router;
 }

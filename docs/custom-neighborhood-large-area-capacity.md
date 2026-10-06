@@ -151,3 +151,17 @@ lease or authorize source access. Source policy is checked again before any
 new source acquisition and publication. Source/spatial/preparation paging and
 their durable checkpoints are still outstanding; this subject-stage slice
 does not remove the 50,000-account ceiling or activate the job HTTP flow.
+
+A second worker checkpoint commits the **complete** validated original source,
+spatial and preparation graph, its unregistered header and the fenced job
+reference in one transaction. Registration is a separate fresh-authorized
+transaction. A retry rechecks current assignment, actor and source rights before
+loading the complete original graph; it does not rerun spatial/source queries or
+mix in a later data sweep. Changed subject inputs or private CSV review, missing
+originals, a changed policy, cancellation or a lost claim refuse publication.
+Lost staging COMMIT acknowledgments are recovered by reading the actual fenced
+checkpoint. A staged header is not a registered context, accepted study or
+permission grant. This checkpoints only a whole bounded acquisition, not an
+unfinished page stream. Source/spatial page-by-page recovery, >50k contracts,
+server-owned selections and the remaining live acceptance still remain pending;
+neither the public route nor installed capacity is changed by this slice.

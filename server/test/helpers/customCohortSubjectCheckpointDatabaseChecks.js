@@ -6,6 +6,7 @@ import { runCustomCohortCaptureJobOnce }
   from '../../src/services/neighborhoodAssessment/customCohortCaptureJobWorker.js';
 import { canonicalAssessmentJson as json }
   from '../../src/services/neighborhoodAssessment/contract.js';
+import { runCustomCohortPreparationCheckpointDatabaseChecks } from './customCohortPreparationCheckpointDatabaseChecks.js';
 
 /** Called only with the coordinator's verified disposable CI database and
  * synthetic fixture. This exercises actual job, subject, original blob and
@@ -109,12 +110,14 @@ export async function runCustomCohortSubjectCheckpointDatabaseChecks({ pool,
   const completed = await worker();
   assert.equal(completed.status, 'succeeded'); assert.equal(completed.operation_id, first.operation);
   assert.equal((await job(first.operation)).attempts, 2);
-  assert.deepEqual((await job(first.operation)).checkpoint, first.checkpoint);
+  const completedCheckpoint = (await job(first.operation)).checkpoint;
+  assert.equal(completedCheckpoint.phase, 'preparation');
+  assert.deepEqual(completedCheckpoint.evidence_refs[0], first.checkpoint.evidence_refs[0]);
   assert.deepEqual(await original(first.checkpoint), first.intent);
   const resumedCalls = calls.slice(resumedFrom);
   assert.ok(resumedCalls.some(sql => sql.includes('checkpoint-read')));
-  assert.ok(!resumedCalls.some(sql => sql.includes('checkpoint-save')),
-    'retry reads the original intent instead of writing a replacement');
+  assert.equal(resumedCalls.filter(sql => sql.includes('checkpoint-save')).length, 1,
+    'retry advances only the completed preparation checkpoint, without replacing the original intent');
   const sourceBegin = resumedCalls.indexOf('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
   assert.ok(sourceBegin > 0);
   assert.ok(!resumedCalls.slice(0, sourceBegin).some(sql => sql.includes('neighborhood-cohort-blob:insert')),
@@ -164,7 +167,9 @@ export async function runCustomCohortSubjectCheckpointDatabaseChecks({ pool,
   }
   assert.deepEqual(await protectedState(), before,
     'successful or refused job retries never apply/change accepted boundaries or report sections');
+  const preparedChecks = await runCustomCohortPreparationCheckpointDatabaseChecks({ pool, auth, scope, observationPeriod, grant });
+  assert.deepEqual(await protectedState(), before, 'prepared job recovery also preserves accepted report state');
   return { checks: ['real worker/coordinator cancelled checkpoint rolls back its originals; '
     + 'crash retry reuses the committed original subject and intent; '
-    + 'changed subject, revoked actor and revoked source rights refuse without context/report publication'] };
+    + 'changed subject, revoked actor and revoked source rights refuse without context/report publication', ...preparedChecks.checks] };
 }

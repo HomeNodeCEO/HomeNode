@@ -54,6 +54,7 @@ import { createCustomCohortPreparedCatalogRepository, rebindCustomCohortPrepared
 import { buildCustomCohortParcelMapBatched } from './customCohortParcelMap.js';
 import { buildCustomCohortMapManifest } from './customCohortMapManifest.js';
 import { createCustomCohortPreparedMapOpeningRepository } from './customCohortPreparedMapOpeningRepository.js';
+import { presentCustomCohortGroupMapOpening } from './customCohortGroupMapOpening.js';
 import { prepareCustomCohortViewport, projectCustomCohortViewportMap,
   presentCustomCohortSelectionViewportMap } from './customCohortViewportMap.js';
 import { presentCustomCohortPreview, inspectCustomCohortPreviewMembers, customCohortPreviewBinding } from './customCohortPreviewPresentation.js';
@@ -714,13 +715,13 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       });
     },
     execute: async (originalInput, options, writing, work, projection = 'intent') => {
-      if (!['intent', 'workspace', 'complete', 'summary', 'viewport', 'members'].includes(projection)
+      if (!['intent', 'workspace', 'complete', 'summary', 'viewport', 'members', 'opening'].includes(projection)
         || (writing && !['intent', 'workspace', 'complete'].includes(projection))
         || (!writing && ['workspace', 'complete'].includes(projection))) fail('invalid_input');
       // Geometry uses the existing viewport's summary exposure, in addition to
       // catalog rights needed to re-derive the exact server-owned selection.
       const additionalExposures = projection === 'members' ? ['report_observation_members']
-        : ['summary', 'viewport'].includes(projection) ? ['report_observation_summary'] : [];
+        : ['summary', 'viewport', 'opening'].includes(projection) ? ['report_observation_summary'] : [];
       const budget = operationBudget(options), permission = writing ? 'write' : 'read';
       return transaction(pool, 'READ COMMITTED', budget, async client => {
         const initial = await resolveTarget(client, originalInput, false, permission);
@@ -758,7 +759,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             expected_review_revision: licensed.privateAuthorization.purpose.expected_review_revision,
           } : null, checkBudget: budget.check,
         }) : null;
-        let catalog, roster, indexedPreview, retained = null;
+        let catalog, roster, indexedPreview, neutralCatalog = null, retained = null;
         if (!licensed.privateAuthorization) {
           const cached = await createCustomCohortPreparedCatalogRepository(client, scopeJson, input.contextRef).read();
           const prepared = cached ? await createCustomCohortPreparedPreviewRepository(client, scopeJson, input.contextRef)
@@ -767,6 +768,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             if (!same(prepared.preview.observation_period, licensed.observationPeriod)
               || prepared.preview.effective_date !== licensed.context.effective_date) fail('operation_conflict');
             catalog = rebindCustomCohortPreparedCatalog(cached, 1).catalog;
+            neutralCatalog = cached;
             roster = prepared.preview.all.account_ids;
             indexedPreview = prepared.preview;
           }
@@ -813,6 +815,28 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           return { page: inspectCustomCohortPreviewMembers({ preview, expected, population, page }),
             ...(private_sales ? { private_sales } : {}) };
         } : undefined;
+        const presentSelectionMapOpening = projection === 'opening' ? async selectionRef => {
+          budget.check();
+          let manifest = neutralCatalog ? await createCustomCohortPreparedMapOpeningRepository(client, scopeJson, input.contextRef)
+            .read(neutralCatalog) : null;
+          if (!manifest) {
+            let map;
+            if (!licensed.privateAuthorization) {
+              const prepared = await createCustomCohortPreparedPreviewRepository(client, scopeJson, input.contextRef)
+                .read({ includeMap: true, useVerifiedPreviewCache: true });
+              if (prepared) map = prepared.parcel_map;
+            }
+            if (!map) {
+              if (!retained) retained = await loadCustomCohortCaptureInputs(client, scopeJson,
+                Object.fromEntries(DEPENDENCIES.map(key => [key, licensed.header.body[key]])));
+              map = await buildCustomCohortParcelMapBatched({ retained_inputs: retained.retained_inputs,
+                selected_account_ids: [] }, { check: budget.check });
+            }
+            manifest = buildCustomCohortMapManifest(catalog, map);
+          }
+          budget.check();
+          return presentCustomCohortGroupMapOpening({ scopeJson, contextRef: input.contextRef, selectionRef, catalog, manifest });
+        } : undefined;
         const presentSelectionViewport = projection === 'viewport' ? async (accounts, selectionRef, viewport) => {
           budget.check();
           let map;
@@ -845,6 +869,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           ...(presentSelectionSummary ? { presentSelectionSummary } : {}),
           ...(presentSelectionViewport ? { presentSelectionViewport } : {}),
           ...(presentSelectionMembers ? { presentSelectionMembers } : {}),
+          ...(presentSelectionMapOpening ? { presentSelectionMapOpening } : {}),
           blobs: createNeighborhoodCohortBlobRepository(client, target.organization_id) });
         // Refresh request-time role claims again before COMMIT/delivery; original
         // actor receipts, cached facts and integrity hashes establish no grant.

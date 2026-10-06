@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { buildCustomCohortMapManifest } from '../../src/services/neighborhoodAssessment/customCohortMapManifest.js';
 import { createHash, randomUUID } from 'node:crypto';
 import express from 'express';
 import { createCustomNeighborhoodCohortRouter } from '../../src/modules/accounts/customNeighborhoodCohortRouter.js';
@@ -580,6 +581,19 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
     assert.ok(mapResult.viewport_map.geojson.features.length > 0, 'private geometry parity cannot be vacuous');
     assert.ok(mapResult.viewport_map.geojson.features.some(f => f.properties.selected));
     checks.push('native private-source exact-reference viewport preserves original geometry parity and selection identity without disclosing CSV rows or silently replacing private authorization');
+    const privateOpeningFrom = calls.length;
+    const openingResponse = await fetch(`http://127.0.0.1:${server.address().port}/api/accounts/${encodeURIComponent(account)}/neighborhood-cohort/selection-map-opening`,
+      { method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(15_000),
+        body: JSON.stringify({ assignment_file_id: assignment, context_ref: groupRead.contextRef, selection_ref: groupSaved.selection_ref }) });
+    assert.equal(openingResponse.status, 200);
+    const openingResult = await openingResponse.json();
+    assert.ok(!calls.slice(privateOpeningFrom).some(sql => sql.includes('prepared-map-opening:read')),
+      'a shared derivative cannot stand in for independently authorized private capture originals');
+    const privateMap = await owner.present({ ...groupRead, selection: { revision: 1, pockets: [] } }, { includeMap: true });
+    assert.deepEqual(openingResult.map_opening.manifest, buildCustomCohortMapManifest(groupCatalog.catalog, privateMap.parcel_map));
+    assert.deepEqual(openingResult.selection_ref, groupSaved.selection_ref);
+    assert.equal(Object.hasOwn(openingResult, 'private_sales'), false); assert.equal(Object.hasOwn(openingResult, 'summary'), false);
+    checks.push('native private-source exact-reference opening preserves complete original bounds/labels/subject and current selection without shared-derivative fallback, private numeric/row disclosure or report mutation');
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
   // Keep the recorded catalog decision unchanged to reach the INDEPENDENT
   // summary grant. Mutating the rights metadata also changes its fingerprint
@@ -590,6 +604,8 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
     selectionRef: groupSaved.selection_ref }), reason('market_data_access_denied'));
   await assert.rejects(deniedSummary.owner.viewportRecordedGroupSelection({ ...groupRead,
     selectionRef: groupSaved.selection_ref, viewport: { west: -97.2, south: 32.3, east: -96.4, north: 33.1 } }), reason('market_data_access_denied'));
+  await assert.rejects(deniedSummary.owner.openRecordedGroupSelectionMap({ ...groupRead,
+    selectionRef: groupSaved.selection_ref }), reason('market_data_access_denied'));
   await assert.rejects(deniedSummary.owner.inspectRecordedGroupSelection({ ...groupRead,
     selectionRef: groupSaved.selection_ref, population: { group: 'selected', kind: 'stock' },
     page: { limit: 1, after_member_id: null } }), reason('market_data_access_denied'));
@@ -604,6 +620,10 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
   await assert.rejects(revokedSummary.owner.previewRecordedGroupSelection({ ...groupRead,
     selectionRef: groupSaved.selection_ref }), reason('market_data_access_denied'));
   assert.equal(selectionSummaryCalls, 2, 'private summary exposure is repeated at the final delivery fence');
+  selectionSummaryCalls = 0;
+  await assert.rejects(revokedSummary.owner.openRecordedGroupSelectionMap({ ...groupRead,
+    selectionRef: groupSaved.selection_ref }), reason('market_data_access_denied'));
+  assert.equal(selectionSummaryCalls, 2, 'private opening exposure is independently repeated before delivery');
   checks.push('native exact-reference numeric summary preserves the full private CSV period/statistics and independently refuses initial/final private summary rights without changing saved intent or report sections');
   const inspection = { ...groupRead, selectionRef: groupSaved.selection_ref,
     population: { group: 'selected', kind: 'stock' }, page: { limit: 1, after_member_id: null } };

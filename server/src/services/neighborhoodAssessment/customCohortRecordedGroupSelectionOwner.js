@@ -92,7 +92,7 @@ export async function reopenCustomCohortRecordedGroupSelectionOriginal(owned, in
 export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, execute, executeWorkspaceTransition } = {}) {
   if (typeof identityOf !== 'function' || typeof execute !== 'function') fail('dependencies_required');
   function inputOf(value, write, projection = 'intent') {
-    const preview = ['summary', 'viewport', 'members'].includes(projection), completing = projection === 'complete';
+    const preview = ['summary', 'viewport', 'members', 'opening'].includes(projection), completing = projection === 'complete';
     const workspace = projection === 'workspace' || completing;
     const v = admit(value, ['auth', 'accountId', 'assignmentFileId', 'contextRef',
       ...(write ? ['operationId', 'expectedSelectionRef', 'includedRecordedGroupIds'] : []),
@@ -238,6 +238,19 @@ export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, exec
           ...content, parcel_map: { status: 'omitted', reason: 'geometry_not_requested' },
           apply: { status: 'blocked', reasons: ['observation_preview_only'] } });
       }, 'summary');
+    },
+    async openRecordedGroupSelectionMap(value, options = {}) {
+      const input = inputOf(value, false, 'opening');
+      return execute(input, options, false, async owned => {
+        if (typeof owned.presentSelectionMapOpening !== 'function') fail('map_opening_owner_required');
+        // Validate the complete original without materializing a selected
+        // account array. This display manifest does not calculate statistics.
+        const opened = await reopen(owned, input);
+        const map_opening = await owned.presentSelectionMapOpening(opened.selection_ref);
+        owned.budget.check();
+        return Object.freeze({ status: 'opening', authority: 'not_established',
+          selection_ref: opened.selection_ref, map_opening });
+      }, 'opening');
     },
     async viewportRecordedGroupSelection(value, options = {}) {
       const input = inputOf(value, false, 'viewport');

@@ -15,7 +15,7 @@ const actor = randomUUID(), otherActor = randomUUID();
 function fixture(extraAccounts = []) {
   const data = new Map(), revisions = new Map(), operations = new Map(), calls = [];
   const state = { head: null, actor, allowed: true, finalAllowed: true, summaryAllowed: true,
-    missing: null, before: null, summaryInputs: [], viewportInputs: [], memberInputs: [], workspaceInputs: [] };
+    missing: null, before: null, summaryInputs: [], viewportInputs: [], memberInputs: [], workspaceInputs: [], openingInputs: [] };
   const row = value => ({ rowCount: value ? 1 : 0, rows: value ? [{ ...value }] : [] });
   const client = { release() { assert.fail('caller owns release'); }, async query(sql, args = []) {
     const tag = /\/\* ([^*]+) \*\//.exec(sql)?.[1]; calls.push(tag); await state.before?.(tag);
@@ -78,6 +78,10 @@ function fixture(extraAccounts = []) {
           state.viewportInputs.push({ accounts, reference, viewport });
           return { display_only: true, selected_count: accounts.length };
         },
+        presentSelectionMapOpening: reference => {
+          assert.equal(projection, 'opening'); state.openingInputs.push(reference);
+          return { display_only: true, neutral: true };
+        },
         presentSelectionMembers: (accounts, reference, population, page) => {
           assert.equal(projection, 'members'); assert.ok(Object.isFrozen(accounts));
           state.memberInputs.push({ accounts, reference, population, page });
@@ -119,6 +123,34 @@ test('internal owner retains server actor, complete originals and current head; 
   assert.ok(!Object.hasOwn(reopened, 'account_ids')); assert.equal(f.state.head, 1);
   await assert.rejects(f.owner.selectRecordedGroups(f.select), /operation_conflict/);
   assert.equal(f.revisions.size, 1);
+});
+
+test('map opening verifies every original page/current head before projection without a selected account array or numerical recomputation', async () => {
+  const f = fixture(), saved = await f.owner.selectRecordedGroups(f.select), read = { ...f.read, selectionRef: saved.selection_ref };
+  const original = [...f.data.entries()], out = await f.owner.openRecordedGroupSelectionMap(read);
+  assert.deepEqual(out.selection_ref, saved.selection_ref); assert.equal(out.map_opening.display_only, true);
+  assert.deepEqual(f.state.openingInputs, [saved.selection_ref]);
+  assert.equal(f.state.summaryInputs.length, 0); assert.equal(f.state.viewportInputs.length, 0);
+  assert.deepEqual([...f.data.entries()], original);
+  f.state.allowed = false; await assert.rejects(f.owner.openRecordedGroupSelectionMap(read), /rights denied/);
+  f.state.allowed = true; f.state.finalAllowed = false;
+  await assert.rejects(f.owner.openRecordedGroupSelectionMap(read), /revoked before commit/);
+  f.state.finalAllowed = true;
+  const manifest = JSON.parse(f.data.get(saved.selection_ref.manifest_ref.content_sha256).canonical_utf8);
+  f.state.missing = manifest.account_pages[0].page.content_sha256;
+  const count = f.state.openingInputs.length;
+  await assert.rejects(f.owner.openRecordedGroupSelectionMap(read), /page_conflict/);
+  assert.equal(f.state.openingInputs.length, count, 'a missing original never delivers neutral display metadata');
+});
+
+test('empty selection still opens the whole display; stale/missing references and member/viewport injection cannot choose all', async () => {
+  const f = fixture(), first = await f.owner.selectRecordedGroups(f.select);
+  const empty = await f.owner.selectRecordedGroups({ ...f.select, operationId: randomUUID(), expectedSelectionRef: first.selection_ref,
+    includedRecordedGroupIds: [] });
+  assert.deepEqual((await f.owner.openRecordedGroupSelectionMap({ ...f.read, selectionRef: empty.selection_ref })).selection_ref, empty.selection_ref);
+  await assert.rejects(f.owner.openRecordedGroupSelectionMap({ ...f.read, selectionRef: first.selection_ref }), /selection_changed/);
+  for (const change of [{ selectionRef: null }, { account_ids: [] }, { viewport: {} }, { includedRecordedGroupIds: [] }])
+    await assert.rejects(f.owner.openRecordedGroupSelectionMap({ ...f.read, selectionRef: empty.selection_ref, ...change }));
 });
 
 test('v2 saved selections reopen and replay after presentation, key/group order and roster order refreshes', async () => {

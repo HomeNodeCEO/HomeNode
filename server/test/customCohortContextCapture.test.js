@@ -42,8 +42,8 @@ test('recorded-group selection refreshes current roles before retained facts or 
   const checkpoint = { workspace_version: 7, active: null, pending_capture: null };
   const pendingCapture = { operation_id: base.operationId, observation_period: base.observationPeriod };
   for (const method of ['readRecordedGroupSelection', 'selectRecordedGroups', 'selectAndSaveRecordedGroups',
-    'previewRecordedGroupSelection', 'startRecordedGroupCapture', 'cancelRecordedGroupCapture', 'completeRecordedGroupCapture']) {
-    const writing = !['readRecordedGroupSelection', 'previewRecordedGroupSelection'].includes(method);
+    'previewRecordedGroupSelection', 'openRecordedGroupSelectionMap', 'startRecordedGroupCapture', 'cancelRecordedGroupCapture', 'completeRecordedGroupCapture']) {
+    const writing = !['readRecordedGroupSelection', 'previewRecordedGroupSelection', 'openRecordedGroupSelectionMap'].includes(method);
     const transition = ['startRecordedGroupCapture', 'cancelRecordedGroupCapture'].includes(method);
     const value = transition ? { auth: read.auth, accountId: read.accountId, assignmentFileId: read.assignmentFileId,
       expectedWorkspaceRevision: 1, expectedWorkspaceCheckpoint: { ...checkpoint,
@@ -52,7 +52,7 @@ test('recorded-group selection refreshes current roles before retained facts or 
       operationId: report, expectedSelectionRef: null, includedRecordedGroupIds: [],
       ...(['selectAndSaveRecordedGroups', 'completeRecordedGroupCapture'].includes(method) ? { expectedWorkspaceRevision: 1 } : {}),
       ...(method === 'completeRecordedGroupCapture' ? { expectedWorkspaceCheckpoint: { ...checkpoint, pending_capture: pendingCapture } } : {}) }
-      : method === 'previewRecordedGroupSelection' ? { ...read, selectionRef: { selection_version: 1,
+      : ['previewRecordedGroupSelection', 'openRecordedGroupSelectionMap'].includes(method) ? { ...read, selectionRef: { selection_version: 1,
         selection_revision: 1, selection_sha256: 'a'.repeat(64),
         manifest_ref: { content_sha256: 'b'.repeat(64), canonical_utf8_bytes: '100' } } } : read;
     for (const currentRoles of [null, ...(writing ? [['read_only']] : [])]) {

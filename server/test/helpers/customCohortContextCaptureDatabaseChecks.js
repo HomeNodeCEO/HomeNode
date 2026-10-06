@@ -26,6 +26,7 @@ import { checkedNeighborhoodDatabaseUrl, NEIGHBORHOOD_CI_IDENTITY_SQL, verifyNei
 import { NEIGHBORHOOD_CACHED_SOURCE_SCHEMA } from '../fixtures/neighborhoodCachedSourceSchemaFixture.js';
 import { runCustomCohortPrivateSalesDatabaseChecks } from './customCohortPrivateSalesDatabaseChecks.js';
 import { runCustomCohortWitness2OwnerDatabaseChecks } from './customCohortWitness2OwnerDatabaseChecks.js';
+import { runCustomCohortSubjectCheckpointDatabaseChecks } from './customCohortSubjectCheckpointDatabaseChecks.js';
 
 /** New disposable migrated test database only; no cleanup of shared tables,
  * fake CI, external provider, live organization, or production credentials. */
@@ -1046,6 +1047,10 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     await checkCadEvidenceCapture(pool, checks);
     checks.push(...(await runCustomCohortPrivateSalesDatabaseChecks({ pool, databaseName: target.databaseName,
       account, sourceSnapshot: snapshot, observationPeriod: request.observationPeriod })).checks);
+    checks.push(...(await runCustomCohortSubjectCheckpointDatabaseChecks({ pool, auth, grant,
+      scope: { organization_id: organization, report_file_id: report,
+        assignment_file_id: assignment, account_id: account },
+      snapshotId: snapshot, observationPeriod: request.observationPeriod })).checks);
     assert.equal(pool.waitingCount, 0);
     return { checks };
   } finally { await pool.end(); }

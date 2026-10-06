@@ -17,8 +17,9 @@ import { assessmentDate, assessmentEvidenceDigest, canonicalAssessmentJson } fro
 import { createNeighborhoodCohortBlobRepository } from './cohortEvidenceBlobRepository.js';
 import { createCustomCohortSubjectRepository } from './customCohortSubjectRepository.js';
 import { createCustomCohortContextRepository } from './customCohortContextRepository.js';
-import { createCustomCohortCaptureJobRepository } from './customCohortCaptureJobRepository.js';
+import { createCustomCohortCaptureJobRepository, prepareCustomCohortCaptureJobClaim } from './customCohortCaptureJobRepository.js';
 import { loadCurrentCustomCohortJobActor } from './customCohortJobActor.js';
+import { resumeCustomCohortSubjectCheckpoint } from './customCohortCaptureSubjectCheckpoint.js';
 import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
 import { captureNeighborhoodSpatialMembershipCompact } from './cachedSpatialMembership.js';
 import { readCustomCohortPreparedSecondaryFacts } from './customCohortPreparedSecondaryMap.js';
@@ -1186,8 +1187,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     async capture(value, options = {}) {
     if (!options || Object.getPrototypeOf(options) !== Object.prototype)
       fail('invalid_options');
-    const { captureJobClaim, ...budgetOptions } = options;
+    const { captureJobClaim: providedClaim, ...budgetOptions } = options;
     let input = inputOf(value);
+    const captureJobClaim = providedClaim ? prepareCustomCohortCaptureJobClaim(providedClaim) : null;
+    if (captureJobClaim && captureJobClaim.operation_id !== input.operationId.toLowerCase()) fail('operation_conflict');
+    if (captureJobClaim) input = freeze({ ...input, operationId: captureJobClaim.operation_id });
     const budget = operationBudget(budgetOptions, LIMITS.capture_duration_ms);
     async function refreshJobActor(client, organizationId) {
       if (!captureJobClaim) return;
@@ -1212,6 +1216,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       const scope = Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]]));
       const scopeJson = canonicalAssessmentJson(scope);
       const repository = createCustomCohortSubjectRepository(client, scopeJson);
+      const jobs = captureJobClaim ? createCustomCohortCaptureJobRepository(client) : null;
+      const jobScope = { scope, actorUserId: input.auth.userId };
+      const checkpoint = jobs ? await jobs.readCheckpoint(captureJobClaim, jobScope) : null;
       const existing = await client.query(`/* custom-cohort-capture:existing-context */
         SELECT context_sha256 FROM app.neighborhood_custom_cohort_contexts
         WHERE organization_id=$1 AND context_id=$2`, [scope.organization_id, input.operationId]);
@@ -1238,6 +1245,13 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           ...(input.privateSalesImport ? { private_sales_import: input.privateSalesImport } : {}) }) };
       }
       if (privateWorkfile) privateDraft(privateWorkfile);
+      if (checkpoint) {
+        const resumed = await resumeCustomCohortSubjectCheckpoint({ checkpoint,
+          blobs: createNeighborhoodCohortBlobRepository(client, scope.organization_id),
+          subjects: repository, input, study, reportedProfile, housingProfile });
+        budget.check();
+        return { scope, scopeJson, ...resumed };
+      }
       const subjectReference = await repository.capture();
       const subject = await repository.load(subjectReference);
       if (study.observation_period.end_date > subject.effective_date) fail('period_after_effective_date');
@@ -1250,6 +1264,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         recorded_housing_interpretation: housingProfile,
         ...(input.privateSalesImport ? { private_sales_import: input.privateSalesImport } : {}) });
       const reference = await createNeighborhoodCohortBlobRepository(client, scope.organization_id).put(canonicalAssessmentJson(body));
+      if (jobs) await jobs.saveCheckpoint(captureJobClaim, jobScope,
+        { phase: 'subject', evidence_refs: [reference] });
       return { scope, scopeJson, subject, subjectReference, point, intent: { reference, body } };
     }));
     if (phaseOne.replay) return phaseOne.replay;

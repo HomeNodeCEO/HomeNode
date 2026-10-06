@@ -138,3 +138,16 @@ or post-COMMIT release is not described as a successful acknowledgment or a
 known rollback. These short transactions do not replace the capture
 coordinator's aggregate-budget, source-acquisition transaction owner. Neither
 helper widens a source grant or makes a queued request eligible for publication.
+
+The first durable stage checkpoint stores the original subject-stage intent
+reference in the same transaction as its immutable subject evidence. A worker
+retry reloads that exact intent, subject and recorded point after checking the
+current actor and assignment. It refuses changed subject inputs, mismatched
+operation/period/profiles, missing originals, cancellation or a lost claim;
+it does not silently capture a replacement subject under the same operation.
+Checkpoint reads/writes bind organization, report, assignment, account, original
+actor, claim token, attempt and unexpired lease. A checkpoint does not renew the
+lease or authorize source access. Source policy is checked again before any
+new source acquisition and publication. Source/spatial/preparation paging and
+their durable checkpoints are still outstanding; this subject-stage slice
+does not remove the 50,000-account ceiling or activate the job HTTP flow.

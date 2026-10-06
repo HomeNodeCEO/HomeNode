@@ -56,6 +56,16 @@ function claimOf(value) {
   if (!Number.isInteger(value.attempts) || value.attempts < 1 || value.attempts > 5) fail('invalid_claim');
   return [uuid(value.operation_id), uuid(value.claim_token), value.attempts];
 }
+export function prepareCustomCohortCaptureJobClaim(value) {
+  const [operation_id, claim_token, attempts] = claimOf(value);
+  return Object.freeze({ operation_id, claim_token, attempts });
+}
+function scopedClaimOf(claim, options) {
+  exact(options, ['scope', 'actorUserId']);
+  const scope = scopeOf(options.scope);
+  return [...claimOf(claim), scope.organization_id, scope.report_file_id,
+    scope.assignment_file_id, scope.account_id, uuid(options.actorUserId)];
+}
 function lease(value) {
   if (!Number.isInteger(value) || value < CAPTURE_JOB_LEASE_SECONDS.min
     || value > CAPTURE_JOB_LEASE_SECONDS.max) fail('invalid_lease');
@@ -87,6 +97,9 @@ const FENCE = `operation_id=$1::uuid AND claim_token=$2::uuid AND attempts=$3::i
 const JOB_FENCE = `job.operation_id=$1::uuid AND job.claim_token=$2::uuid
   AND job.attempts=$3::integer AND job.status='running'
   AND job.lease_expires_at>clock_timestamp()`;
+const SCOPED_CHECKPOINT_FENCE = `${FENCE} AND organization_id=$4::uuid
+  AND report_file_id=$5::uuid AND assignment_file_id=$6::bigint AND account_id=$7
+  AND actor_user_id=$8::uuid AND cancellation_requested_at IS NULL`;
 
 /** Storage/state transition primitive only. The caller owns the transaction,
  * checks current assignment/source rights, and rolls back on any failure.
@@ -224,6 +237,28 @@ export function createCustomCohortCaptureJobRepository(client) {
           WHERE ${FENCE}
           RETURNING cancellation_requested_at`, [...values, leaseSeconds, checkpointJson]), 'claim_lost');
       return Object.freeze({ cancellation_requested: row.cancellation_requested_at !== null });
+    },
+
+    async readCheckpoint(claim, options) {
+      const row = one(await client.query(`/* custom-cohort-job:checkpoint-read */
+        SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs
+        WHERE ${SCOPED_CHECKPOINT_FENCE}`, scopedClaimOf(claim, options)), 'claim_lost');
+      return row.checkpoint === null ? null : checkpointOf(row.checkpoint);
+    },
+
+    async saveCheckpoint(claim, options, checkpoint) {
+      const values = scopedClaimOf(claim, options);
+      const checkpointJson = canonicalAssessmentJson(checkpointOf(checkpoint));
+      // Share the transaction that retains the original evidence references.
+      // Checkpointing does not renew a lease or grant source/assignment access.
+      const row = one(await client.query(`/* custom-cohort-job:checkpoint-save */
+        UPDATE app.neighborhood_custom_cohort_capture_jobs
+          SET checkpoint=$9::jsonb,updated_at=clock_timestamp()
+          WHERE ${SCOPED_CHECKPOINT_FENCE} RETURNING checkpoint`,
+      [...values, checkpointJson]), 'claim_lost');
+      const stored = checkpointOf(row.checkpoint);
+      if (canonicalAssessmentJson(stored) !== checkpointJson) fail('job_corrupt');
+      return stored;
     },
 
     async cancel(scope, operationId) {

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   applyMarketContextOverride,
   buildMarketTrendRecommendation,
+  buildMarketConditionsAnalyses,
   calculateMarketStudyStatistics,
   completeCalendarMonthWindow,
   ensureSpatialSupport,
@@ -15,6 +16,73 @@ import {
   weightedCompositeDispersion,
 } from "../src/services/marketConditions.js";
 import { MARKET_SPATIAL_MIGRATION_NAME } from "../src/database/marketSpatialMigration.js";
+
+test('exact exploration analysis needs neither parcel coordinates nor a fresh CAD lookup', async t => {
+  const subjectAccountId = '26355500170360000', calls = [], originalFetch = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = async () => { fetches++; throw new Error('Fresh CAD lookup is forbidden in this study.'); };
+  t.after(() => { globalThis.fetch = originalFetch; });
+  const pool = { async query(sql, values) {
+    calls.push({ sql, values });
+    assert.doesNotMatch(sql, /\b(?:INSERT|UPDATE|DELETE|CREATE|ALTER)\b/);
+    if (sql.includes('market_spatial_support_probe')) return { rows: [{ column_present: true, migration_applied: true, index_valid: true }] };
+    if (sql.includes('FROM core.accounts account')) return { rows: [{ account_id: subjectAccountId, city: 'Garland', county: 'Dallas',
+      latitude: null, longitude: null, location_status: 'unavailable' }] };
+    assert.match(sql, /FROM core.v_sales_enriched/);
+    assert.equal(values[7], 'exploration'); assert.deepEqual(values[10], [subjectAccountId]);
+    return { rows: [{}] };
+  } };
+  const result = await buildMarketConditionsAnalyses(pool, { subjectAccountId, areaKeys: ['exploration'],
+    explorationAccountIds: [subjectAccountId], asOfDate: '2026-08-31', periodMonths: 24 });
+  assert.equal(fetches, 0); assert.equal(calls.length, 3);
+  assert.equal(result.analyses[0].market.label, 'Exploration Map Area');
+  assert.equal(result.subject.latitude, null);
+});
+
+test('ZIP/city numeric studies honor the chosen observation dates without waiting for location repair or an appraisal cutoff', async t => {
+  const originalFetch = globalThis.fetch, queries = [];
+  globalThis.fetch = () => assert.fail('Numeric calculations must not request external CAD data');
+  t.after(() => { globalThis.fetch = originalFetch; });
+  const subjectAccountId = '26355500170360000';
+  const pool = { async query(sql, values) {
+    assert.doesNotMatch(sql, /\b(?:INSERT|UPDATE|DELETE|CREATE|ALTER)\b/);
+    if (sql.includes('market_spatial_support_probe')) return { rows: [{ column_present: true, migration_applied: true, index_valid: true }] };
+    if (sql.includes('FROM core.accounts account')) return { rows: [{ account_id: subjectAccountId, city: 'Garland', county: 'Dallas',
+      postal_code: '75041', latitude: null, longitude: null, location_status: 'unavailable' }] };
+    assert.match(sql, /FROM core.v_sales_enriched/); queries.push(values);
+    return { rows: [{}] };
+  } };
+  const result = await buildMarketConditionsAnalyses(pool, { subjectAccountId, areaKeys: ['zip', 'city', 'radius_1', 'radius_2'],
+    asOfDate: '2026-10-31', periodMonths: 12, effectiveDate: '2026-08-31' });
+  assert.deepEqual(result.analyses.map(item => item.market.key), ['zip', 'city']);
+  assert.deepEqual(result.unavailable_areas.map(item => item.key), ['radius_1', 'radius_2']);
+  assert.ok(queries.every(values => values[0] === '2026-10-31' && values[1] === 12));
+});
+
+test('every numeric study exposes its fixed parameters to the planner without trimming sales or exploration membership', async () => {
+  const accounts = Array.from({ length: 50000 }, (_, index) => `A${index}`), queries = [];
+  const pool = { async query(sql, values) {
+    if (sql.includes('market_spatial_support_probe')) return { rows: [{ column_present: true, migration_applied: true, index_valid: true }] };
+    if (sql.includes('FROM core.accounts account')) return { rows: [{ account_id: '26355500170360000', city: 'Garland', county: 'Dallas',
+      postal_code: '75041', latitude: 32.9, longitude: -96.6, location_status: 'matched' }] };
+    queries.push({ sql, values });
+    assert.match(sql, /WITH parameters AS NOT MATERIALIZED \(/);
+    assert.match(sql, /sale\.closing_date >= parameters\.period_start/);
+    assert.match(sql, /sale\.closing_date <= parameters\.period_end/);
+    assert.match(sql, /sale\.primary_account_id = ANY\(parameters\.exploration_accounts\)/);
+    assert.match(sql, /link\.account_id = ANY\(parameters\.exploration_accounts\)/);
+    assert.doesNotMatch(sql.slice(0, sql.indexOf('numeric_medians AS')), /\bLIMIT\b/);
+    assert.doesNotMatch(sql, /\bSET\b|set_config\(/i, 'No global or session planner setting changes');
+    return { rows: [{}] };
+  } };
+  const result = await buildMarketConditionsAnalyses(pool, { subjectAccountId: '26355500170360000',
+    areaKeys: ['zip', 'city', 'radius_1', 'radius_2', 'exploration'], explorationAccountIds: accounts,
+    asOfDate: '2026-09-30', periodMonths: 12 });
+  assert.deepEqual(result.analyses.map(item => item.market.key), ['zip', 'city', 'radius_1', 'radius_2', 'exploration']);
+  assert.deepEqual(queries.map(query => query.values[7]), ['zip', 'city', 'radius', 'radius', 'exploration']);
+  assert.ok(queries.every(query => query.values[0] === '2026-09-30' && query.values[1] === 12));
+  assert.deepEqual(queries.at(-1).values[10], accounts);
+});
 
 test("spatial support is a shared migration-and-index readiness probe, never request-path maintenance", async () => {
   const statements = [];
@@ -414,7 +482,71 @@ test("market statistics annualize first-to-last complete monthly medians", () =>
   assert.equal(statistics.annualized_change_percent, 10);
   assert.equal(statistics.composite_cod, 14.85);
   assert.equal(statistics.composite_cv, 17.5);
+  assert.equal(statistics.reliability_score, 86.1);
   assert.equal(statistics.sample_sufficient, true);
+});
+
+const consistencyStudy = (key, cod, cv, saleCount, monthlyCount = 12, periodMonths = 12) => ({
+  market: { key, label: key },
+  population: { eligible_sale_count: saleCount },
+  statistics: calculateMarketStudyStatistics({
+    monthlySeries: Array.from({ length: monthlyCount }, (_, index) => ({
+      period_start: `2025-${String(index + 1).padStart(2, '0')}-01`, median_sale_price: 100 + index,
+    })),
+    eligibleSaleCount: saleCount, periodMonths,
+    congruencyFactors: { living_area: { count: saleCount, cod, cv } },
+  }),
+});
+
+test('COD/CV consistency outranks larger but more varied study populations', () => {
+  const studies = [
+    consistencyStudy('radius_1', 21, 27, 250),
+    consistencyStudy('radius_2', 24, 30, 1000),
+    consistencyStudy('zip', 18, 24, 400),
+    consistencyStudy('exploration', 10, 14, 80),
+  ];
+  const before = JSON.stringify(studies);
+  const result = buildMarketTrendRecommendation(studies);
+  assert.equal(result.methodology_version, 3);
+  assert.deepEqual(result.ranked_studies.map(study => study.key), ['exploration', 'zip', 'radius_1', 'radius_2']);
+  assert.deepEqual(result.ranked_studies.map(study => study.reliability_score), [89.3, 82.6, 80.6, 78.7]);
+  assert.equal(JSON.stringify(studies), before, 'Ranking does not rewrite evidence');
+});
+
+test('sales count and monthly coverage are independent of the consistency score', () => {
+  const small = consistencyStudy('small', 10, 14, 20, 2, 36);
+  const large = consistencyStudy('large', 10, 14, 1000);
+  assert.equal(small.statistics.reliability_score, large.statistics.reliability_score);
+  assert.equal(small.statistics.sample_sufficient, false);
+  assert.equal(large.statistics.sample_sufficient, true);
+  assert.equal(small.statistics.monthly_observation_count, 2);
+  assert.equal(large.statistics.monthly_observation_count, 12);
+  assert.equal(small.statistics.characteristic_weight_available, 0.4);
+  assert.deepEqual(buildMarketTrendRecommendation([
+    large, consistencyStudy('tighter', 5, 8, 20, 2),
+  ]).ranked_studies.map(study => study.key), ['tighter', 'large']);
+});
+
+test('lower dispersion consistently raises the score, including rounded-score ties', () => {
+  const tight = consistencyStudy('tight', 10, 14, 50);
+  for (const [cod, cv] of [[10.01, 14], [10, 14.01], [100, 140], [1000, 1400]]) {
+    const broader = consistencyStudy('broader', cod, cv, 1000);
+    assert.ok(tight.statistics.reliability_score >= broader.statistics.reliability_score);
+    assert.deepEqual(buildMarketTrendRecommendation([broader, tight]).ranked_studies.map(study => study.key), ['tight', 'broader']);
+  }
+  assert.equal(consistencyStudy('uniform', 0, 0, 50).statistics.reliability_score, 100);
+});
+
+test('unavailable or invalid COD/CV cannot create a perfect score', () => {
+  for (const [cod, cv] of [[null, null], [10, null], [null, 14], [Infinity, 14], [10, NaN], [-1, 14], [10, -1]]) {
+    const unavailable = consistencyStudy('unavailable', cod, cv, 1000);
+    assert.equal(unavailable.statistics.reliability_score, null);
+    assert.equal(unavailable.statistics.sample_sufficient, true, 'Sample warning remains independent');
+    assert.equal(buildMarketTrendRecommendation([
+      unavailable, consistencyStudy('known', 100, 140, 50),
+    ]).ranked_studies[0].key, 'known');
+  }
+  assert.equal(consistencyStudy('empty', 0, 0, 0).statistics.reliability_score, null);
 });
 
 test("market recommendation combines mean and median and applies one-percent threshold", () => {

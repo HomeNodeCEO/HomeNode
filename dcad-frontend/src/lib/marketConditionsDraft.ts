@@ -1,12 +1,13 @@
 import type {
   MarketContextOverride,
-  MarketConditionsAreaKey,
+  MarketConditionsStudyAreaKey,
   MarketConditionsResponse,
 } from './api';
 import {
   browserDraftIdentityKey,
   type BrowserDraftSession,
 } from './browserDraftIdentity.ts';
+import type { MarketStudyComplexity } from './marketStudyComplexity';
 
 export type MarketTrendConclusion =
   | 'increasing'
@@ -17,7 +18,7 @@ export type MarketTrendConclusion =
 
 export type MarketConditionsReconciliation = {
   trendConclusion: MarketTrendConclusion;
-  reliedUponAreaKeys: MarketConditionsAreaKey[];
+  reliedUponAreaKeys: MarketConditionsStudyAreaKey[];
   explanation: string;
 };
 
@@ -28,10 +29,11 @@ export type MarketConditionsDraft = {
   savedAt: string;
   asOfDate: string;
   periodMonths: 12 | 24 | 36;
-  selectedAreaKeys: MarketConditionsAreaKey[];
+  selectedAreaKeys: MarketConditionsStudyAreaKey[];
   contextOverride?: MarketContextOverride | null;
   response: MarketConditionsResponse;
   reconciliation: MarketConditionsReconciliation;
+  propertyComplexity?: MarketStudyComplexity | null;
 };
 
 const STORAGE_PREFIX = 'homenode-market-conditions:';

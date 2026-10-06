@@ -1802,6 +1802,7 @@ export default function NeighborhoodCharacteristicsContent({
             subjectAccountId={accountId}
             assignmentFileId={assignmentFileId}
             initialDraft={marketConditionsDraft}
+            geography={assignmentDraft.neighborhood_location_type}
             onCompletionChange={onMarketConditionsChange}
             initialCustomGeometry={assignmentDraft.neighborhood_boundary_geometry}
             initialCustomGeometrySource={assignmentDraft.neighborhood_boundary_source}

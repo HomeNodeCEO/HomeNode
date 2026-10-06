@@ -40,16 +40,22 @@ export async function runCustomCohortPreparedMapOpeningJob(pool, {
         await client.query("SET LOCAL statement_timeout = '120s'");
         const next = await client.query(`/* custom-cohort-prepared-map-opening:next */
           SELECT p.*, o.report_file_id, o.assignment_file_id::text, o.account_id,
+            c.format_version AS source_catalog_format_version,
             c.payload_sha256 AS catalog_sha256,
             pg_catalog.encode(pg_catalog.sha256(c.compressed_payload), 'hex') AS compressed_catalog_sha256
           FROM app.neighborhood_custom_cohort_prepared_previews p
           JOIN app.neighborhood_custom_cohort_contexts o ON o.organization_id=p.organization_id
             AND o.context_id=p.context_id AND o.context_sha256=p.context_sha256
-          JOIN app.neighborhood_custom_cohort_prepared_catalogs c ON c.organization_id=p.organization_id
-            AND c.context_id=p.context_id AND c.context_sha256=p.context_sha256
-            AND c.format_version=p.format_version AND c.catalog_version=3
+          JOIN LATERAL (
+            SELECT candidate.* FROM app.neighborhood_custom_cohort_prepared_catalogs candidate
+            WHERE candidate.organization_id=p.organization_id AND candidate.context_id=p.context_id
+              AND candidate.context_sha256=p.context_sha256 AND candidate.catalog_version=3
+              AND candidate.format_version IN (1,2)
+            ORDER BY candidate.format_version DESC LIMIT 1
+          ) c ON true
           LEFT JOIN app.neighborhood_custom_cohort_prepared_map_openings m
             ON m.organization_id=p.organization_id AND m.context_id=p.context_id AND m.format_version=1
+            AND m.source_catalog_format_version=c.format_version
           WHERE p.format_version=1 AND m.context_id IS NULL
           ORDER BY c.prepared_at, p.context_id LIMIT 1`);
         check(next && [0, 1].includes(next.rowCount) && Array.isArray(next.rows) && next.rows.length === next.rowCount);
@@ -57,6 +63,7 @@ export async function runCustomCohortPreparedMapOpeningJob(pool, {
         const row = next.rows[0], scope = Object.fromEntries(['organization_id', 'report_file_id', 'assignment_file_id', 'account_id'].map(key => [key, row[key]]));
         let packed = null, reason = null;
         try {
+          check([1, 2].includes(row.source_catalog_format_version));
           const preview = await decode(row, 'preview'), map = await decode(row, 'map');
           const context = preview?.context_ref;
           check(preview?.preview_version === 2 && context?.context_id === row.context_id
@@ -85,12 +92,12 @@ export async function runCustomCohortPreparedMapOpeningJob(pool, {
         // A rejected derivative records no partial labels and retains fallback.
         await client.query(`/* custom-cohort-prepared-map-opening:insert */
           INSERT INTO app.neighborhood_custom_cohort_prepared_map_openings
-            (organization_id,context_id,format_version,catalog_version,context_sha256,
+            (organization_id,context_id,format_version,catalog_version,context_sha256,source_catalog_format_version,
              source_catalog_sha256,source_compressed_catalog_sha256,source_preview_sha256,
              source_compressed_preview_sha256,source_map_sha256,source_compressed_map_sha256,
              status,reason,payload_sha256,payload_utf8_bytes,compressed_payload)
-          VALUES ($1::uuid,$2::uuid,1,3,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-        [row.organization_id, row.context_id, row.context_sha256, row.catalog_sha256,
+          VALUES ($1::uuid,$2::uuid,1,3,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+        [row.organization_id, row.context_id, row.context_sha256, row.source_catalog_format_version, row.catalog_sha256,
           row.compressed_catalog_sha256, row.preview_sha256, digest(row.compressed_preview),
           row.map_sha256, digest(row.compressed_map), packed ? 'available' : 'unavailable', reason,
           packed?.digest ?? null, packed?.bytes ?? null, packed?.compressed ?? null]);

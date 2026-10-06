@@ -42,7 +42,7 @@ jobs:
           npm run --silent verify:redteam:resource-pressure | tee uad-redteam-resource-pressure.json
       - name: Preserve sanitized evidence
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: uad-redteam-resource-pressure-${{ github.run_id }}
           path: server/uad-redteam-resource-pressure.json

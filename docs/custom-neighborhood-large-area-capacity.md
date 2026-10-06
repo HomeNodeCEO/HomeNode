@@ -737,3 +737,33 @@ original parity before merge. No production backfill, schedule, deployment,
 genuine appraisal, source/numerical cap or instant-map SLA changes in this slice.
 Coherent V7 consumers, compact catalogs, partial source-page recovery and complete
 greater-than-50k/5-/10-mile/retrospective live acceptance remain unfinished.
+
+## Coherent V7 display composition (not production UI activation)
+
+The independent V7 API now composes its already-checked numerical and compact
+opening ports into one immutable display. It pins the current file/session,
+workspace revision, active context/reference/period, acknowledged group intent
+and immutable complete catalog before asynchronous I/O. Numerical all/selected
+account counts must match the complete catalog and chosen union, not the visible
+map or a target number of sales. Both projections must finish on that same exact
+head before a result exists. Calls are sequential under the caller's existing
+finite assignment/session request lane; the composition creates no parallel SQL
+owner, independent timer, selection hash, account-list request, retry or write.
+
+The opt-in V7 lifecycle can read this pair after its atomic acknowledgment and
+head/catalog reopen. It retains the previous complete display as stale during
+the operation; partial numeric success cannot replace it before the map opening
+succeeds. A post-acknowledgment display failure recovers by reopening the already
+saved head, never by resending its selection write. Deliberate empty stays empty
+while complete map bounds, subdivision anchors and the subject pointer remain.
+A newer authoritative no-active checkpoint or disposal clears that display. Its
+local composition witness does not authorize source reads, signing or Apply.
+
+The production host and legacy consumers remain unchanged. Before activation,
+the V7 map/viewport, member inspector, subdivision dialog and report consumers
+must use this same display bundle and exact reference under the shared host lane
+and draft/read-only/flush fences. Do not pass its observations to the old map
+alongside a fabricated flat selection or paint fresh numbers over old geometry.
+The catalog still uses its complete installed bounded member representation;
+compact/paged catalogs, partial source/spatial recovery, complete greater-than-
+50k numerical/publication contracts and realistic/live acceptance remain open.

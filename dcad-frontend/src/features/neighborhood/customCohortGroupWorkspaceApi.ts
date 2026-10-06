@@ -3,6 +3,7 @@ import { createCustomWorkspaceSectionTransport } from './customCohortPreviewTran
 import { createCustomCohortGroupWorkspaceTransport, readCustomCohortGroupWorkspaceSection } from './customCohortGroupWorkspaceTransport.ts';
 import type { CustomCohortGroupWorkspaceSection } from './customCohortGroupWorkspaceTransport';
 import { createCustomCohortRecordedGroupTransport } from './customCohortRecordedGroupTransport.ts';
+import { createCustomCohortGroupDisplayReader } from './customCohortGroupDisplay.ts';
 import type { CustomWorkspaceTarget, CustomWorkspaceOperationOptions } from './customWorkspaceLifecycle';
 
 export interface CustomCohortGroupWorkspaceApiRead {
@@ -58,6 +59,7 @@ async function safely<T>(signal: AbortSignal, fn: () => Promise<T>): Promise<T> 
 export function createCustomCohortGroupWorkspaceApi(options: Parameters<typeof createCustomWorkspaceApi>[0]) {
   const legacy = createCustomWorkspaceApi(options), workfile = createCustomWorkspaceSectionTransport(options);
   const atomic = createCustomCohortGroupWorkspaceTransport(options), selected = createCustomCohortRecordedGroupTransport(options);
+  const display = createCustomCohortGroupDisplayReader(selected);
   return Object.freeze({
     read(input: CustomWorkspaceTarget, io: CustomWorkspaceOperationOptions): Promise<CustomCohortGroupWorkspaceApiRead> {
       return safely(io.signal, async () => {
@@ -81,6 +83,7 @@ export function createCustomCohortGroupWorkspaceApi(options: Parameters<typeof c
     complete(input: Parameters<typeof atomic.complete>[0], io: CustomWorkspaceOperationOptions) { return safely(io.signal, () => atomic.complete(input, io)); },
     save(input: Parameters<typeof atomic.save>[0], io: CustomWorkspaceOperationOptions) { return safely(io.signal, () => atomic.save(input, io)); },
     readSelection(input: Parameters<typeof selected.read>[0], io: CustomWorkspaceOperationOptions) { return safely(io.signal, () => selected.read(input, io)); },
+    display(input: Parameters<typeof display>[0], io: CustomWorkspaceOperationOptions) { return safely(io.signal, () => display(input, io)); },
     preview(input: Parameters<typeof selected.preview>[0], io: CustomWorkspaceOperationOptions) { return safely(io.signal, () => selected.preview(input, io)); },
     opening(...args: Parameters<typeof selected.opening>) { return safely(args[3].signal, () => selected.opening(...args)); },
     viewport(...args: Parameters<typeof selected.viewport>) { return safely(args[4].signal, () => selected.viewport(...args)); },

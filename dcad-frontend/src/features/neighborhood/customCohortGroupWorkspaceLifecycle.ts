@@ -11,6 +11,8 @@ import { checkCustomCohortPocketCatalog, customCohortCatalogGroupIds } from './c
 import type { CheckedPocketCatalog } from './customCohortPocketCatalog';
 import type { CustomWorkspaceTarget, CustomWorkspaceOperationOptions, CustomWorkspaceCatalogInput } from './customWorkspaceLifecycle';
 import type { CustomCohortContextRef } from './customCohortPreviewController';
+import { checkCustomCohortGroupDisplayResult } from './customCohortGroupDisplay.ts';
+import type { CustomCohortGroupDisplay, CustomCohortGroupDisplayInput } from './customCohortGroupDisplay';
 
 type Recovery = 'reload' | 'retry_exact' | 'resume_pending' | 'reopen' | null;
 type Selected = Exclude<CustomCohortRecordedGroupReceipt, { readonly status: 'absent' }>;
@@ -20,6 +22,7 @@ export interface CustomCohortGroupWorkspaceLifecycleState {
   readonly operation_pending: boolean; readonly phase: string | null; readonly section_revision: number | null;
   readonly checkpoint: CustomCohortGroupWorkspaceCheckpoint | null;
   readonly catalog: CheckedPocketCatalog | null; readonly selected: Selected | null;
+  readonly display: CustomCohortGroupDisplay | null; readonly display_freshness: 'none' | 'current' | 'stale';
   readonly recovery: Recovery; readonly error: string | null;
 }
 interface Options {
@@ -32,6 +35,7 @@ interface Options {
     discovery?: CustomWorkspaceDiscovery; privateSalesImport?: CustomWorkspacePrivateSalesImport }, io: CustomWorkspaceOperationOptions) => Promise<unknown>;
   catalog: (request: CustomWorkspaceCatalogInput, io: CustomWorkspaceOperationOptions) => Promise<unknown>;
   readSelection: (request: CustomCohortRecordedGroupRead, io: CustomWorkspaceOperationOptions) => Promise<unknown>;
+  display?: (request: CustomCohortGroupDisplayInput, io: CustomWorkspaceOperationOptions) => Promise<unknown>;
   initialGroups: (catalog: CheckedPocketCatalog) => readonly string[];
   onChange: (state: CustomCohortGroupWorkspaceLifecycleState) => void;
   operationId?: () => string; now?: () => number; timeoutMs?: number;
@@ -64,6 +68,7 @@ export function createCustomCohortGroupWorkspaceLifecycle(options: Options) {
     && BigInt(source.assignmentFileId) <= 9223372036854775807n, 'invalid_target');
   for (const fn of [options.start, options.cancel, options.complete, options.save, options.capture, options.catalog,
     options.readSelection, options.initialGroups, options.onChange]) requireThat(typeof fn === 'function', 'dependencies_required');
+  requireThat(options.display === undefined || typeof options.display === 'function', 'dependencies_required');
   const target = Object.freeze({ accountId: source.accountId, assignmentFileId: source.assignmentFileId, sessionKey: source.sessionKey });
   const base = Object.freeze({ accountId: target.accountId, assignmentFileId: target.assignmentFileId });
   const now = options.now ?? (() => performance.now()), timeout = options.timeoutMs ?? 180_000;
@@ -73,7 +78,8 @@ export function createCustomCohortGroupWorkspaceLifecycle(options: Options) {
   let busy = false, disposed = false, unsettled = 0, abort: AbortController | null = null;
   let attempted: { command: Attempt; revision: number; checkpoint: CustomCohortGroupWorkspaceCheckpoint } | null = null;
   let state: CustomCohortGroupWorkspaceLifecycleState = Object.freeze({ target, status: 'idle', operation_pending: false,
-    phase: null, section_revision: 0, checkpoint: null, catalog: null, selected: null, recovery: null, error: null });
+    phase: null, section_revision: 0, checkpoint: null, catalog: null, selected: null,
+    display: null, display_freshness: 'none', recovery: null, error: null });
   function emit(patch: Partial<CustomCohortGroupWorkspaceLifecycleState>) {
     if (disposed) return;
     state = Object.freeze({ ...state, ...patch });
@@ -83,10 +89,13 @@ export function createCustomCohortGroupWorkspaceLifecycle(options: Options) {
     const read = readCustomCohortGroupWorkspaceSection(section);
     if (read.status === 'invalid') {
       emit({ status: 'invalid', section_revision: null, checkpoint: null, catalog: null, selected: null,
-        recovery: 'reload', error: 'invalid_checkpoint' }); return false;
+        display: null, display_freshness: 'none', recovery: 'reload', error: 'invalid_checkpoint' }); return false;
     }
     emit({ status: read.checkpoint?.pending_capture ? 'pending' : 'idle', section_revision: read.section_revision,
-      checkpoint: read.checkpoint, catalog: null, selected: null, phase: null, recovery: null, error: null }); return true;
+      checkpoint: read.checkpoint, catalog: null, selected: null,
+      ...(!read.checkpoint?.active ? { display: null } : {}),
+      display_freshness: read.checkpoint?.active && state.display ? 'stale' : 'none',
+      phase: null, recovery: null, error: null }); return true;
   }
   adopt(options.initialSection);
   async function run(allowed: Recovery, task: (io: IO, stage: Stage) => Promise<void>, reload = false) {
@@ -98,7 +107,8 @@ export function createCustomCohortGroupWorkspaceLifecycle(options: Options) {
     const handle = timer.set(() => owner.abort(), timeout);
     const live = () => requireThat(!disposed && !owner.signal.aborted && now() < deadline, 'cancelled_or_timed_out');
     const stage: Stage = (phase, next) => { live(); staged = true; recovery = next;
-      emit({ status: 'busy', phase, error: null, recovery: null, catalog: null, selected: null }); };
+      emit({ status: 'busy', phase, error: null, recovery: null, catalog: null, selected: null,
+        display_freshness: state.display ? 'stale' : 'none' }); };
     const io: IO = async fn => {
       live(); unsettled++;
       const work = Promise.resolve().then(() => { live(); return fn({ signal: owner.signal, deadline }); });
@@ -169,14 +179,25 @@ export function createCustomCohortGroupWorkspaceLifecycle(options: Options) {
   }
   async function reopen(io: IO, stage: Stage, knownCatalog?: CheckedPocketCatalog) {
     const checkpoint = state.checkpoint, active = checkpoint?.active;
-    if (!active) { emit({ status: checkpoint?.pending_capture ? 'pending' : 'idle', phase: null, recovery: null, error: null }); return; }
+    if (!active) { emit({ status: checkpoint?.pending_capture ? 'pending' : 'idle', phase: null,
+      display: null, display_freshness: 'none', recovery: null, error: null }); return; }
     stage('loading_active', 'reopen');
     const catalog = knownCatalog ?? await loadCatalog(active.context_ref, active.selection_ref.selection_revision, active.discovery, io);
     const request = Object.freeze({ ...base, contextRef: active.context_ref });
     const selected = checkCustomCohortRecordedGroupReadReceipt(await io(signal => options.readSelection(request, signal)), request);
     requireThat(selected.status !== 'absent' && same(selected.selection_ref, active.selection_ref), 'selection_head_changed');
     included(catalog, selected.included_recorded_group_ids, active.context_ref);
-    emit({ status: checkpoint?.pending_capture ? 'pending' : 'ready', phase: null, catalog, selected, recovery: null, error: null });
+    let display: CustomCohortGroupDisplay | null = null;
+    if (options.display) {
+      requireThat(checkpoint && state.section_revision !== null, 'display_checkpoint_required');
+      const input = Object.freeze({ target, workspaceRevision: state.section_revision, checkpoint, catalog, selected });
+      stage('loading_display', 'reopen');
+      display = checkCustomCohortGroupDisplayResult(await io(signal => options.display!(input, signal)), input);
+    }
+    // Only a complete same-reference pair replaces the retained map/numbers.
+    // A post-ACK projection failure is a reopen, never another selection save.
+    emit({ status: checkpoint?.pending_capture ? 'pending' : 'ready', phase: null, catalog, selected, display,
+      display_freshness: display ? checkpoint?.pending_capture ? 'stale' : 'current' : 'none', recovery: null, error: null });
   }
   async function acquire(io: IO, stage: Stage) {
     const pending = state.checkpoint?.pending_capture;
@@ -258,7 +279,8 @@ export function createCustomCohortGroupWorkspaceLifecycle(options: Options) {
     }, true),
     dispose() {
       if (disposed) return; disposed = true; abort?.abort();
-      state = Object.freeze({ ...state, status: 'disposed', phase: null, catalog: null, selected: null });
+      state = Object.freeze({ ...state, status: 'disposed', phase: null, catalog: null, selected: null,
+        display: null, display_freshness: 'none' });
     },
   });
 }

@@ -561,6 +561,9 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
       selection: customCohortOpeningSelection(groupCatalog.catalog, groupIds, 1) }, viewport));
     assert.deepEqual(mapResult.selection_ref, groupSaved.selection_ref);
     assert.equal(Object.hasOwn(mapResult, 'private_sales'), false);
+    assert.equal(mapResult.viewport_map.status, 'available');
+    assert.ok(mapResult.viewport_map.geojson.features.length > 0, 'private geometry parity cannot be vacuous');
+    assert.ok(mapResult.viewport_map.geojson.features.some(f => f.properties.selected));
     checks.push('native private-source exact-reference viewport preserves original geometry parity and selection identity without disclosing CSV rows or silently replacing private authorization');
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
   // Keep the recorded catalog decision unchanged to reach the INDEPENDENT

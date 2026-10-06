@@ -42,3 +42,48 @@ claiming that all their scores use version 3.
 Regression coverage includes tighter versus larger populations, sample and
 monthly-coverage invariance, missing/invalid measurements, rounded-score ties,
 split-response/server parity, and unchanged selection/context bindings.
+
+## Appraiser-selected reconciliation (October 2026)
+
+The ranked cards now select the studies used for the recommended determination.
+Apply selected studies reconciles only those studies' annualized changes as the
+mean of their average and median, with the existing 1% stable threshold. It
+regenerates a reviewable explanation; selecting a checkbox alone never overwrites
+an edited explanation. Completed study results remain unchanged, and applying a
+different combination sends no market, map or capture request. Save market
+reconciliation persists the choices through the existing workfile section/CAS.
+
+Past six- and three-month changes compare the exact end-month sale-price median
+with the median six or three months earlier. They are not fractions of an annual
+rate, do not infer a missing endpoint, and do not control the annual trend label.
+Trailing 12/6/3-month marketing medians are calculated over the existing eligible
+closed-sale observations in one SQL query (calendar months ending at the chosen
+study end). The selected-study mean/median reconciliation is an estimate across
+independent study medians, not a pooled-sale median; overlapping populations are
+not added together. Missing period evidence stays unavailable with contributing
+study counts shown. The study observation dates, not appraisal effective date,
+continue to define these windows.
+
+Trend classification compares the unrounded annual estimate with the existing
+stability threshold; only displayed/saved percentages are rounded. A selected
+study marked `sample_sufficient: false` remains usable but the determination
+and saved explanation identify its estimate as provisional. This warning does
+not alter COD/CV ranking or prevent appraiser-reviewed export.
+
+Present land use is a separate protected retained-selection operation. It uses
+the existing indexed `gis.dcad_parcels` mirror, includes exactly one layer of
+edge-sharing neighbors (rook adjacency: `&&` then DE-9IM `F***1****`), and does
+not include corner-only touches or recursively expand the neighborhood. This
+adds no neighbor sales to any market study. Percentages use dissolved parcel
+acreage, including nonresidential neighbors, not parcel counts. Roads/nonparcel
+gaps are excluded; unknown classifications remain an unclassified remainder,
+never manufactured Other. Missing geometry/provisional classifications are
+flagged. Cross-category overlaps and oversized populations do not produce
+misleading percentages. A read-only 50-second database deadline, existing
+bounded execution gate, five-minute numeric cache and post-work authorization
+recheck preserve existing capacity and access boundaries. No CAD download,
+cron job, new schema, or feature-flag activation is added by this change.
+
+Native adjacency regression runs only against verified loopback `*_test`
+PostGIS, using temporary synthetic rectangles. See
+[PostGIS ST_Relate](https://postgis.net/docs/ST_Relate.html).

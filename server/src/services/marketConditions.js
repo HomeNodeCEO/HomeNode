@@ -812,6 +812,19 @@ const MARKET_ANALYSIS_SQL = `
       *
     FROM eligible
   ),
+  recent_periods AS (
+    SELECT months,
+      (DATE_TRUNC('month', parameters.period_end) - ((months - 1) * INTERVAL '1 month'))::date AS start,
+      parameters.period_end AS end,
+      COUNT(eligible.sale_id)::integer AS sale_count,
+      COUNT(eligible.days_on_market) FILTER (WHERE eligible.days_on_market >= 0)::integer AS marketing_observation_count,
+      PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY eligible.days_on_market)
+        FILTER (WHERE eligible.days_on_market >= 0) AS median_days_on_market
+    FROM parameters CROSS JOIN (VALUES (3), (6), (12)) windows(months)
+    LEFT JOIN eligible ON eligible.closing_date >=
+      (DATE_TRUNC('month', parameters.period_end) - ((months - 1) * INTERVAL '1 month'))::date
+    GROUP BY months, parameters.period_end
+  ),
   series AS (
     SELECT
       interval_key,
@@ -924,6 +937,7 @@ const MARKET_ANALYSIS_SQL = `
         )
       )
     ) AS summary,
+    (SELECT JSONB_AGG(TO_JSONB(recent_periods) ORDER BY months) FROM recent_periods) AS recent_periods,
     COALESCE(
       (
         SELECT JSONB_AGG(
@@ -1324,6 +1338,11 @@ function normalizeAnalysisRow(row, periodMonths) {
       congruencyFactors,
     }),
     series: normalizedSeries,
+    recent_periods: (Array.isArray(row?.recent_periods) ? row.recent_periods : []).map(item => ({
+      months: Number(item.months), start: item.start, end: item.end,
+      sale_count: Number(item.sale_count || 0), marketing_observation_count: Number(item.marketing_observation_count || 0),
+      median_days_on_market: numberOrNull(item.median_days_on_market),
+    })),
     map_sales: Array.isArray(row?.map_sales)
       ? row.map_sales.map((sale) => ({
           ...sale,

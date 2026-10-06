@@ -107,13 +107,13 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
       <button type="button" autoFocus className={secondary} onClick={onClose}>Close</button>
     </header>
     <div className="space-y-4 p-5 text-sm" aria-busy={Boolean(busy)}>
-      <p>Choose a report form, then preview the saved HomeNode data, supporting documents, and inspection photos. The 1004 URAR and 2055 Exterior-Only exports map the Subject and Contract sections; other report sections will be added as their mappings are completed. Unsaved edits are not exported. This export does not support UAD 3.6.</p>
+      <p>Choose a report form, then preview the saved HomeNode data, supporting documents, and inspection photos. The 1004 URAR and 2055 Exterior-Only exports map the Subject, Contract, and Neighborhood sections. Unsaved edits are not exported. This export does not support UAD 3.6.</p>
       <fieldset disabled={Boolean(busy)} className="space-y-2 rounded-lg border border-violet-200 bg-violet-50/50 p-3">
         <legend className="px-1 font-semibold text-violet-950">Report form</legend>
         <label className="flex items-center gap-2"><input type="radio" name="sfrep-report-form" checked={formId === SFREP_FORM_ID}
-          onChange={() => { if (!requestRef.current) { invalidate(); setFormId(SFREP_FORM_ID); } }} />1004 URAR — Subject and Contract sections available</label>
+          onChange={() => { if (!requestRef.current) { invalidate(); setFormId(SFREP_FORM_ID); } }} />1004 URAR — Subject, Contract, and Neighborhood sections available</label>
         <label className="flex items-center gap-2"><input type="radio" name="sfrep-report-form" checked={formId === SFREP_2055_FORM_ID}
-          onChange={() => { if (!requestRef.current) { invalidate(); setFormId(SFREP_2055_FORM_ID); } }} />2055 Exterior-Only — Subject and Contract sections available</label>
+          onChange={() => { if (!requestRef.current) { invalidate(); setFormId(SFREP_2055_FORM_ID); } }} />2055 Exterior-Only — Subject, Contract, and Neighborhood sections available</label>
       </fieldset>
       <fieldset disabled={Boolean(busy)} className="space-y-2">
         <legend className="mb-2 font-semibold text-violet-950">1. Select PDF attachments ({selectedIds.length}/10)</legend>

@@ -71,7 +71,7 @@ test('opens accessible native modal with explicit empty selection; Escape and un
   assert.equal(h.checkbox('Contract').props.checked, false); assert.equal(h.checkbox('Include original').props.checked, true);
   assert.equal(h.button('Preview SFREP export').props.disabled, false); assert.equal(h.button('Download SFREP .rpti'), undefined);
   assert.match(h.text, /Report form.*1004 URAR.*2055 Exterior-Only/);
-  assert.match(h.text, /1004 URAR and 2055 Exterior-Only exports map the Subject and Contract sections/);
+  assert.match(h.text, /1004 URAR and 2055 Exterior-Only exports map the Subject, Contract, and Neighborhood sections/);
   assert.match(h.text, /These checkboxes only choose which original PDFs/);
   const formChoices = walk(h.tree).filter(node => node.type === 'input' && node.props.type === 'radio');
   assert.equal(formChoices.length, 2);

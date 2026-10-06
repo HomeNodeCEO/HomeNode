@@ -89,14 +89,28 @@ jobs:
           cache: pnpm
           cache-dependency-path: homenode-mobile/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      - name: Verify reviewed Expo toolchain patches and behavior
+        run: pnpm run verify:toolchain
       - name: Reject moderate, high, or critical known vulnerabilities
-        # Expo/Metro resolves image-size only in its build toolchain. The two
-        # exact advisories below have no published fixed version as of
-        # 2026-08-24, so pnpm applies the reviewed patch pinned in the lockfile.
-        # Keep this list narrow; all other Moderate/High/Critical findings remain
-        # blocking. The longer request timeout tolerates slow advisory responses
-        # without ignoring registry errors. See docs/UAD_SECURITY_TESTING.md.
-        run: pnpm audit --fetch-timeout=300000 --audit-level=moderate
+        # Keep the unfiltered audit visible. The two exact, locally patched
+        # Expo/Metro toolchain advisories have no published fixed versions.
+        # This temporary exception expires after 2026-10-19; every other
+        # Moderate/High/Critical advisory remains blocking. See
+        # docs/UAD_SECURITY_TESTING.md before changing this scope or deadline.
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$(date -u +%F)" > "2026-10-19" ]]; then
+            echo "::error::Mobile advisory exception expired; review GHSA-86w9-cpqp-85rv and GHSA-vfj7-8cjw-p6xm before release."
+            exit 1
+          fi
+          if pnpm audit --fetch-timeout=300000 --audit-level=moderate; then
+            exit 0
+          fi
+          echo "::warning::Checking only the two reviewed Expo/Metro advisories as temporary exceptions."
+          pnpm audit --fetch-timeout=300000 --audit-level=moderate \
+            --ignore GHSA-86w9-cpqp-85rv \
+            --ignore GHSA-vfj7-8cjw-p6xm
 
   pip-audit:
     runs-on: ubuntu-latest

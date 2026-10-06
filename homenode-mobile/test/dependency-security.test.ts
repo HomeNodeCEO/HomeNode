@@ -210,8 +210,18 @@ test('dependency security gates reject moderate or higher findings', () => {
     1,
   );
   assert.equal(
-    (workflow.match(/^\s*run:\s+pnpm audit --fetch-timeout=300000 --audit-level=moderate\s*$/gm) ?? []).length,
+    (workflow.match(/pnpm audit --fetch-timeout=300000 --audit-level=moderate/g) ?? []).length,
+    2,
+  );
+  assert.equal(
+    (workflow.match(/--ignore GHSA-[a-z0-9-]+/g) ?? []).join(','),
+    '--ignore GHSA-86w9-cpqp-85rv,--ignore GHSA-vfj7-8cjw-p6xm',
+  );
+  assert.equal(
+    (workflow.match(/run: pnpm run verify:toolchain/g) ?? []).length,
     1,
   );
+  assert.match(workflow, /2026-10-19/);
+  assert.doesNotMatch(workflow, /--ignore-unfixable|--ignore-registry-errors/);
   assert.doesNotMatch(workflow, /audit-level=high|fail-on-severity:\s*high/);
 });

@@ -23,7 +23,7 @@ test('prepared catalog is immutable, selection-neutral, and rebinds a later work
   let row = null;
   const client = { async query(sql, parameters) {
     assert.deepEqual(parameters.slice(0, 3), [scope.organization_id, contextRef.context_id, contextRef.context_sha256]);
-    if (sql.includes(':exists')) assert.match(sql, /format_version=2/);
+    if (sql.includes(':exists')) assert.match(sql, /format_version IN \(1,2\)[\s\S]*LIMIT 1/);
     if (sql.includes(':read')) assert.match(sql, /format_version IN \(1,2\)[\s\S]*ORDER BY format_version DESC LIMIT 1/);
     if (sql.includes(':exists')) return { rowCount: Number(Boolean(row)), rows: row ? [{ '?column?': 1 }] : [] };
     if (sql.includes(':insert')) {
@@ -77,4 +77,19 @@ test('only old scoreless catalogs miss the cache; working v1 maps and complete v
   assert.deepEqual(await repository.read(), old);
   assert.deepEqual(rebindCustomCohortPreparedCatalog(await repository.read(), 8).prepared_secondary_map,
     old.prepared_secondary_map, 'color scores remain selection-neutral on rebind');
+});
+
+test('the read-path existence probe admits working v1 while write-through only checks the current format', async () => {
+  const queries = [];
+  const client = { async query(sql, parameters) {
+    queries.push(sql);
+    assert.deepEqual(parameters, [scope.organization_id, contextRef.context_id, contextRef.context_sha256]);
+    assert.match(sql, /LIMIT 1/, 'two immutable format versions must still return one existence row');
+    const found = sql.includes('format_version IN (1,2)');
+    return { rowCount: found ? 1 : 0, rows: found ? [{}] : [] };
+  } };
+  const repository = createCustomCohortPreparedCatalogRepository(client, canonicalAssessmentJson(scope), contextRef);
+  assert.equal(await repository.exists(), true, 'v1 is available for checked read reuse');
+  assert.equal(await repository.exists({ currentOnly: true }), false, 'scoreless v1 can still upgrade into v2');
+  assert.match(queries[1], /format_version=2/);
 });

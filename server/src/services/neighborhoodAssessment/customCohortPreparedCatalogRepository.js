@@ -70,11 +70,12 @@ export function createCustomCohortPreparedCatalogRepository(client, scopeJson, c
     return payload;
   };
   return Object.freeze({
-    async exists() {
+    async exists({ currentOnly = false } = {}) {
       const found = await query(`/* custom-cohort-prepared-catalog:exists */
         SELECT 1 FROM app.neighborhood_custom_cohort_prepared_catalogs
         WHERE organization_id=$1::uuid AND context_id=$2::uuid AND context_sha256=$3
-          AND format_version=2 AND catalog_version=3`, key);
+          AND ${currentOnly ? 'format_version=2' : 'format_version IN (1,2)'} AND catalog_version=3
+        LIMIT 1`, key);
       check(found && [0, 1].includes(found.rowCount) && Array.isArray(found.rows)
         && found.rows.length === found.rowCount, 'storage_conflict');
       return found.rowCount === 1;

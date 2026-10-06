@@ -1139,7 +1139,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       try {
         await transaction(pool, 'READ COMMITTED', budget, async client => {
           const repository = createCustomCohortPreparedCatalogRepository(client, loaded.scopeJson, input.contextRef);
-          if (!await repository.exists()) await repository.put(publicCatalog);
+          if (!await repository.exists({ currentOnly: true })) await repository.put(publicCatalog);
         });
       } catch (error) {
         const reason = /^custom_cohort_prepared_catalog_[a-z_]+$/.test(error?.message)

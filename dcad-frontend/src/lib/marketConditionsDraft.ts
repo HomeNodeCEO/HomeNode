@@ -7,6 +7,7 @@ import {
   browserDraftIdentityKey,
   type BrowserDraftSession,
 } from './browserDraftIdentity.ts';
+import type { MarketStudyComplexity } from './marketStudyComplexity';
 
 export type MarketTrendConclusion =
   | 'increasing'
@@ -32,6 +33,7 @@ export type MarketConditionsDraft = {
   contextOverride?: MarketContextOverride | null;
   response: MarketConditionsResponse;
   reconciliation: MarketConditionsReconciliation;
+  propertyComplexity?: MarketStudyComplexity | null;
 };
 
 const STORAGE_PREFIX = 'homenode-market-conditions:';

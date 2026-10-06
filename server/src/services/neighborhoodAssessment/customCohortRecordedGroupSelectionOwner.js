@@ -31,6 +31,23 @@ function reference(value, limit) {
   if (Number(r.canonical_utf8_bytes) > limit) fail('invalid_reference');
   return r;
 }
+async function headOriginal(owned, selectionRef) {
+  const read = async ref => {
+    owned.budget.check();
+    const text = await owned.blobs.get(ref.content_sha256, ref.canonical_utf8_bytes);
+    if (text === null) fail('missing_original');
+    owned.budget.check(); return text;
+  };
+  const manifest = JSON.parse(await read(reference(selectionRef.manifest_ref, L.manifest_bytes)));
+  const metadataJson = await read(reference(manifest.metadata_ref, L.metadata_bytes));
+  const metadata = prepareCohortPagedGroupSelectionV1Metadata(metadataJson);
+  const catalogOriginal = await read(reference(metadata.catalog_ref, L.metadata_bytes));
+  const original = JSON.parse(catalogOriginal), receipt = original.selection_command;
+  if (!receipt) fail('missing_command_original');
+  const identityVersion = original.selection_catalog_version;
+  if (identityVersion !== 1 && identityVersion !== 2) fail('invalid_catalog_identity_version');
+  return { metadataJson, catalogOriginal, receipt, identityVersion };
+}
 
 /** Internal methods only. execute owns a single bounded transaction, freshly
  * reloads actor/assignment/source rights before opening catalog or roster facts,
@@ -57,12 +74,12 @@ export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, exec
     return Object.freeze({ ...identity, contextRef, operationId: v.operationId,
       expectedSelectionRef, includedRecordedGroupIds });
   }
-  async function derive(owned, input, commandJson) {
+  async function derive(owned, input, commandJson, catalogIdentityVersion) {
     const command = prepareCustomCohortGroupSelectionCommandOriginal(commandJson);
     return prepareCustomCohortRecordedGroupSelection({ scopeJson: owned.scopeJson,
       contextJson: json(input.contextRef), catalogJson: owned.catalogJson, rosterJson: owned.rosterJson,
       includedGroupIds: command.included_recorded_group_ids, revision: command.selection_revision,
-      commandJson, signal: owned.budget.signal, checkBudget: owned.budget.check });
+      commandJson, catalogIdentityVersion, signal: owned.budget.signal, checkBudget: owned.budget.check });
   }
   async function reopen(owned, input, onAccountPage) {
     const repository = createCustomCohortGroupSelectionRepository(owned.client, owned.scopeJson,
@@ -71,20 +88,10 @@ export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, exec
     if (input.selectionRef && json(selection_ref) !== json(input.selectionRef))
       throw new TypeError('custom_cohort_group_selection_selection_changed');
     if (selection_ref === null) return null;
-    const read = async ref => {
-      owned.budget.check();
-      const text = await owned.blobs.get(ref.content_sha256, ref.canonical_utf8_bytes);
-      if (text === null) fail('missing_original');
-      owned.budget.check(); return text;
-    };
-    const manifest = JSON.parse(await read(reference(selection_ref.manifest_ref, L.manifest_bytes)));
-    const metadataJson = await read(reference(manifest.metadata_ref, L.metadata_bytes));
-    const metadata = prepareCohortPagedGroupSelectionV1Metadata(metadataJson);
-    const catalogOriginal = await read(reference(metadata.catalog_ref, L.metadata_bytes));
-    const receipt = JSON.parse(catalogOriginal).selection_command;
-    if (!receipt) fail('missing_command_original');
+    const { metadataJson, catalogOriginal, receipt, identityVersion } = await headOriginal(owned, selection_ref);
     // The original actor stamp records intent, not permission for this reader.
-    const derived = await derive(owned, input, json(receipt));
+    // Reuse its exact producer version; v2 ignores presentation only.
+    const derived = await derive(owned, input, json(receipt), identityVersion);
     if (derived.catalog_original_json !== catalogOriginal || derived.metadata_json !== metadataJson)
       fail('original_mismatch');
     await repository.getCurrent({ metadataJson, selectionRef: selection_ref }, { onAccountPage });
@@ -100,14 +107,24 @@ export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, exec
           operation_id: input.operationId, expected_selection_ref: input.expectedSelectionRef,
           included_recorded_group_ids: input.includedRecordedGroupIds,
           selection_revision: (input.expectedSelectionRef?.selection_revision ?? 0) + 1 });
-        const derived = await derive(owned, input, commandJson);
+        const repository = createCustomCohortGroupSelectionRepository(owned.client, owned.scopeJson,
+          json(input.contextRef), { signal: owned.budget.signal, checkBudget: owned.budget.check });
+        const { selection_ref: current } = await repository.peekCurrent();
+        let identityVersion = 2;
+        if (current !== null && json(current) !== json(input.expectedSelectionRef)) {
+          const original = await headOriginal(owned, current);
+          // An exact lost-ACK replay must use its retained producer version;
+          // never rewrite an older original or silently reinterpret v1 bytes.
+          // The repository still verifies the full request and current head.
+          if (original.receipt.operation_id === input.operationId) identityVersion = original.identityVersion;
+        }
+        const derived = await derive(owned, input, commandJson, identityVersion);
         const stored = await owned.blobs.put(derived.catalog_original_json);
         if (json(stored) !== json(derived.catalog_ref)) fail('storage_conflict');
         const staged = await createCohortPagedGroupSelectionV1Store(owned.blobs).stage({
           metadataJson: derived.metadata_json, membershipPages: derived.membershipPages(),
           signal: owned.budget.signal, checkBudget: owned.budget.check });
-        const result = await createCustomCohortGroupSelectionRepository(owned.client, owned.scopeJson,
-          json(input.contextRef), { signal: owned.budget.signal, checkBudget: owned.budget.check }).put({
+        const result = await repository.put({
           operationId: input.operationId, expectedSelectionRef: input.expectedSelectionRef,
           metadataJson: derived.metadata_json, manifestRef: staged.manifest_ref });
         return Object.freeze({ ...result, context_ref: input.contextRef,

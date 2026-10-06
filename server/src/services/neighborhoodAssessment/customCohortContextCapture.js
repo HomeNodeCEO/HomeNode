@@ -694,7 +694,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         assertTarget(await resolveTarget(client, input, false, permission), initial);
         // Match upload/signing lock order. A saved selection may never mutate a
         // signed workfile or its accepted report. Reads remain current-authorized.
-        const workfile = await privateCaptureWorkfile(client, input, { permission, writeLock: writing });
+        // Subject freshness later locks this parent FOR UPDATE as well. Take
+        // that mode first so concurrent NOWAIT readers cannot both acquire
+        // SHARE and then fail while upgrading; permission still stays read.
+        const workfile = await privateCaptureWorkfile(client, input, { permission, writeLock: true });
         if (writing) privateDraft(workfile);
         const target = await resolveTarget(client, input, true, permission);
         assertTarget(target, initial);

@@ -27,6 +27,7 @@ import { prepareAssignmentSalesMatchCandidatesFixture }
   from './assignmentSalesMatchCandidatesDatabaseChecks.js';
 import { NEIGHBORHOOD_CI_IDENTITY_SQL, verifyNeighborhoodCiConnection } from './neighborhoodCiDatabase.js';
 import { runCustomCohortPrivateCheckpointDatabaseChecks } from './customCohortPrivateCheckpointDatabaseChecks.js';
+import { customCohortOpeningSelection } from '../../src/services/neighborhoodAssessment/customCohortOpeningPreview.js';
 
 const sha = value => createHash('sha256').update(value).digest('hex');
 const errorCode = code => error => { assert.equal(error.code, code); return true; };
@@ -528,6 +529,31 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
   const groupSaved = await owner.selectRecordedGroups({ ...groupRead, operationId: randomUUID(),
     expectedSelectionRef: null, includedRecordedGroupIds: groupIds });
   assert.deepEqual((await owner.readRecordedGroupSelection(groupRead)).selection_ref, groupSaved.selection_ref);
+  const groupSummary = await owner.previewRecordedGroupSelection({ ...groupRead, selectionRef: groupSaved.selection_ref });
+  const groupLegacy = await owner.present({ ...groupRead,
+    selection: customCohortOpeningSelection(groupCatalog.catalog, groupIds, 1) }, { includeMap: false });
+  assert.deepEqual(groupSummary.summary, groupLegacy.summary);
+  assert.deepEqual(groupSummary.private_sales, groupLegacy.private_sales,
+    'exact server-owned union must preserve private CSV statistics and period, not silently fall back to shared-only facts');
+  assert.ok(groupSummary.private_sales, 'private parity must not be vacuous');
+  await writeRights({ ...rights, exposures: { ...rights.exposures, report_observation_summary: false } });
+  const privateSummaryDeniedFrom = calls.length;
+  try { await assert.rejects(owner.previewRecordedGroupSelection({ ...groupRead,
+    selectionRef: groupSaved.selection_ref }), reason('market_data_access_denied')); }
+  finally { await writeRights(rights); }
+  assert.ok(!calls.slice(privateSummaryDeniedFrom).some(sql => sql.includes('neighborhood-cohort-blob:read-batch')
+    || sql.includes('custom-cohort-group-selection:head')), 'private catalog grant is not permission to expose numeric facts');
+  let selectionSummaryCalls = 0;
+  const revokedSummary = makeOwner({ privatePolicy: async (...args) => {
+    if (args[4].exposure === 'report_observation_summary' && ++selectionSummaryCalls === 2)
+      await writeRights({ ...rights, exposures: { ...rights.exposures, report_observation_summary: false } });
+    return authorizeCustomNeighborhoodPrivateSales(...args);
+  } });
+  try { await assert.rejects(revokedSummary.owner.previewRecordedGroupSelection({ ...groupRead,
+    selectionRef: groupSaved.selection_ref }), reason('market_data_access_denied')); }
+  finally { await writeRights(rights); }
+  assert.equal(selectionSummaryCalls, 2, 'private summary exposure is repeated at the final delivery fence');
+  checks.push('native exact-reference numeric summary preserves the full private CSV period/statistics and independently refuses initial/final private summary rights without changing saved intent or report sections');
   await writeRights({ ...rights, revoked_at: times.past });
   const groupDeniedFrom = calls.length;
   try { await assert.rejects(owner.readRecordedGroupSelection(groupRead), reason('market_data_access_denied')); }
@@ -536,6 +562,7 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
     || sql.includes('custom-cohort-group-selection:head')), 'private denial precedes original row pages and saved selection lookup');
   await append(null, [decision(original[0], 'exclude')]);
   await assert.rejects(owner.readRecordedGroupSelection(groupRead), /capture_changed/);
+  await assert.rejects(owner.previewRecordedGroupSelection({ ...groupRead, selectionRef: groupSaved.selection_ref }), /capture_changed/);
   assert.equal((await pool.query(`SELECT selection_revision FROM app.neighborhood_custom_cohort_group_selection_heads
     WHERE organization_id=$1 AND context_id=$2`, [organization, groupContext.context_ref.context_id])).rows[0].selection_revision, 1);
   checks.push('native recorded-group selection keeps independent private source rights and workfile-before-batch review fences; revoked rights and changed CSV review refuse without replacing the saved selection');

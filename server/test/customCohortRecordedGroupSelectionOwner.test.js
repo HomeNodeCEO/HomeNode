@@ -9,9 +9,10 @@ const A = `recorded-cad:${'a'.repeat(64)}`, B = `recorded-cad:${'b'.repeat(64)}`
 const scope = { organization_id: randomUUID(), report_file_id: randomUUID(), assignment_file_id: '8', account_id: 'A' };
 const context = { context_id: randomUUID(), context_revision: '1', context_sha256: 'c'.repeat(64) };
 const actor = randomUUID(), otherActor = randomUUID();
-function fixture() {
+function fixture(extraAccounts = []) {
   const data = new Map(), revisions = new Map(), operations = new Map(), calls = [];
-  const state = { head: null, actor, allowed: true, finalAllowed: true, missing: null, before: null };
+  const state = { head: null, actor, allowed: true, finalAllowed: true, summaryAllowed: true,
+    missing: null, before: null, summaryInputs: [] };
   const row = value => ({ rowCount: value ? 1 : 0, rows: value ? [{ ...value }] : [] });
   const client = { release() { assert.fail('caller owns release'); }, async query(sql, args = []) {
     const tag = /\/\* ([^*]+) \*\//.exec(sql)?.[1]; calls.push(tag); await state.before?.(tag);
@@ -43,19 +44,26 @@ function fixture() {
   const catalog = { catalog_version: 3, status: 'review_only', catalog_complete: true, authority: 'not_established',
     apply: { status: 'blocked' }, binding: { context_ref: context, selection_revision: 1,
       selection_sha256: digest({ pockets: [], revision: 1 }) }, presentation: { membership_complete: true },
-    discovered_group_count: 2, pockets: [{ id: A, member_count: 2, account_ids: ['A', 'C'] },
+    discovered_group_count: 2, pockets: [{ id: A, member_count: 2 + extraAccounts.length, account_ids: ['A', 'C', ...extraAccounts] },
       { id: B, member_count: 1, account_ids: ['B'] }], unassigned: { account_ids: [], member_count: 0 },
-    unresolved_membership: null, coverage: { discovery_member_count: 3, stock_member_count: 3,
-      unassigned_account_count: 0, assigned_account_count: 3 } };
+    unresolved_membership: null, coverage: { discovery_member_count: 3 + extraAccounts.length, stock_member_count: 3 + extraAccounts.length,
+      unassigned_account_count: 0, assigned_account_count: 3 + extraAccounts.length } };
   const identityOf = value => ({ auth: structuredClone(value.auth), accountId: value.accountId, assignmentFileId: value.assignmentFileId });
-  const owner = createOwner({ identityOf, execute: async (input, options, write, work) => {
-    if (!state.allowed) throw new Error('current source rights denied');
+  const owner = createOwner({ identityOf, execute: async (input, options, write, work, projection = 'intent') => {
+    if (!state.allowed || (projection === 'summary' && !state.summaryAllowed)) throw new Error('current source rights denied');
     calls.push('authorized');
     const snapshot = { head: state.head, data: new Map(data), revisions: new Map(revisions), operations: new Map(operations) };
     try {
       const result = await work({ client, auth: { userId: state.actor }, scopeJson: json(scope),
-        catalogJson: JSON.stringify(catalog), rosterJson: JSON.stringify({ account_ids: ['A', 'B', 'C'] }),
+        catalogJson: JSON.stringify(catalog), rosterJson: JSON.stringify({ account_ids: ['A', 'B', 'C', ...extraAccounts] }),
         blobs: createNeighborhoodCohortBlobRepository(client, scope.organization_id),
+        presentSelectionSummary: (accounts, reference) => {
+          assert.equal(projection, 'summary'); assert.ok(Object.isFrozen(accounts));
+          state.summaryInputs.push({ accounts, reference });
+          return { summary: { selected: { account_count: accounts.length }, binding: {
+            context_ref: input.contextRef, selection_sha256: reference.selection_sha256,
+            selection_revision: reference.selection_revision } } };
+        },
         budget: { signal: options.signal, check() { if (options.signal?.aborted) throw new Error('cancelled'); } } });
       if (!state.finalAllowed) throw new Error('current rights revoked before commit');
       calls.push(write ? 'committed' : 'delivered'); return result;
@@ -138,4 +146,70 @@ test('current-rights refusal or final revocation rolls back all originals and he
   const cancel = new AbortController(); cancel.abort();
   await assert.rejects(f.owner.selectRecordedGroups(f.select, { signal: cancel.signal }), /cancelled/);
   assert.equal(f.data.size, 0); assert.equal(f.state.head, null);
+});
+
+test('summary uses only the completely verified exact current union; empty and stale references never broaden', async () => {
+  const f = fixture(), first = await f.owner.selectRecordedGroups(f.select);
+  const summary = await f.owner.previewRecordedGroupSelection({ ...f.read, selectionRef: first.selection_ref });
+  assert.equal(summary.status, 'preview'); assert.equal(summary.authority, 'not_established');
+  assert.deepEqual(summary.selection_ref, first.selection_ref);
+  assert.deepEqual(f.state.summaryInputs[0].accounts, ['A', 'B', 'C']);
+  assert.deepEqual(summary.parcel_map, { status: 'omitted', reason: 'geometry_not_requested' });
+  assert.deepEqual(summary.apply, { status: 'blocked', reasons: ['observation_preview_only'] });
+  assert.equal(Object.hasOwn(summary, 'account_ids'), false);
+  const empty = await f.owner.selectRecordedGroups({ ...f.select, operationId: randomUUID(),
+    expectedSelectionRef: first.selection_ref, includedRecordedGroupIds: [] });
+  const explicitEmpty = await f.owner.previewRecordedGroupSelection({ ...f.read, selectionRef: empty.selection_ref });
+  assert.equal(explicitEmpty.summary.selected.account_count, 0);
+  assert.deepEqual(f.state.summaryInputs[1].accounts, []);
+  await assert.rejects(f.owner.previewRecordedGroupSelection({ ...f.read, selectionRef: first.selection_ref }), /selection_changed/);
+  assert.equal(f.state.summaryInputs.length, 2);
+  assert.equal(f.state.head, 2);
+});
+
+test('summary refuses missing/changed originals and separate summary rights before exposing any numeric result', async () => {
+  const f = fixture(), first = await f.owner.selectRecordedGroups(f.select);
+  const request = { ...f.read, selectionRef: first.selection_ref };
+  f.state.summaryAllowed = false;
+  const from = f.calls.length;
+  await assert.rejects(f.owner.previewRecordedGroupSelection(request), /rights denied/);
+  assert.equal(f.calls.length, from); assert.equal(f.state.summaryInputs.length, 0);
+  f.state.summaryAllowed = true;
+  const manifest = JSON.parse(f.data.get(first.selection_ref.manifest_ref.content_sha256).canonical_utf8);
+  f.state.missing = manifest.account_pages[0].page.content_sha256;
+  await assert.rejects(f.owner.previewRecordedGroupSelection(request), /page_conflict/);
+  assert.equal(f.state.summaryInputs.length, 0);
+  f.state.missing = null; f.state.finalAllowed = false;
+  await assert.rejects(f.owner.previewRecordedGroupSelection(request), /revoked before commit/);
+  assert.equal(f.state.head, 1); assert.equal(f.revisions.size, 1);
+  f.state.finalAllowed = true;
+  for (const key of ['account_ids', 'catalogJson', 'authority', 'includedRecordedGroupIds'])
+    await assert.rejects(f.owner.previewRecordedGroupSelection({ ...request, [key]: [] }), /invalid_input/);
+  await assert.rejects(f.owner.previewRecordedGroupSelection({ ...request, selectionRef: null }), /invalid_input/);
+  const absent = fixture();
+  await assert.rejects(absent.owner.previewRecordedGroupSelection({ ...absent.read, selectionRef: first.selection_ref }), /selection_changed/);
+  assert.equal(absent.state.summaryInputs.length, 0);
+});
+
+test('summary never emits a verified prefix or raises the installed 50k numeric-consumer ceiling', async () => {
+  const extras = n => Array.from({ length: n }, (_, i) => `D-${String(i).padStart(6, '0')}`);
+  const incomplete = fixture(extras(2000)), stored = await incomplete.owner.selectRecordedGroups(incomplete.select);
+  const manifest = JSON.parse(incomplete.data.get(stored.selection_ref.manifest_ref.content_sha256).canonical_utf8);
+  incomplete.state.missing = manifest.account_pages.at(-1).page.content_sha256;
+  await assert.rejects(incomplete.owner.previewRecordedGroupSelection({ ...incomplete.read,
+    selectionRef: stored.selection_ref }), /page_conflict/);
+  assert.equal(incomplete.state.summaryInputs.length, 0, 'numeric projection cannot see the matched first pages');
+  for (const count of [50000, 50001]) {
+    const f = fixture(extras(count - 3)), saved = await f.owner.selectRecordedGroups(f.select);
+    const request = { ...f.read, selectionRef: saved.selection_ref };
+    if (count === 50000) {
+      const result = await f.owner.previewRecordedGroupSelection(request);
+      assert.equal(result.summary.selected.account_count, count);
+      assert.equal(f.state.summaryInputs[0].accounts.length, count);
+    } else {
+      await assert.rejects(f.owner.previewRecordedGroupSelection(request), /summary_account_limit/);
+      assert.equal(f.state.summaryInputs.length, 0);
+    }
+    assert.equal(f.state.head, 1, 'read failure cannot replace intent or report data');
+  }
 });

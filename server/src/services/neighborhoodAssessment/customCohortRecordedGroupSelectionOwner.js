@@ -10,6 +10,7 @@ import { createCohortPagedGroupSelectionV1Store } from './cohortPagedGroupSelect
 import { prepareNeighborhoodCohortBlobReference as blobRef } from './cohortEvidenceBlobRepository.js';
 import { COHORT_PAGED_GROUP_SELECTION_V1_LIMITS as L,
   prepareCohortPagedGroupSelectionV1Metadata } from './cohortPagedGroupSelectionV1.js';
+import { CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS } from './customCohortObservationPreview.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 function fail(reason) { throw new TypeError(`custom_cohort_recorded_group_owner_${reason}`); }
@@ -39,13 +40,15 @@ function reference(value, limit) {
  */
 export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, execute } = {}) {
   if (typeof identityOf !== 'function' || typeof execute !== 'function') fail('dependencies_required');
-  function inputOf(value, write) {
+  function inputOf(value, write, preview = false) {
     const v = admit(value, ['auth', 'accountId', 'assignmentFileId', 'contextRef',
-      ...(write ? ['operationId', 'expectedSelectionRef', 'includedRecordedGroupIds'] : [])]);
+      ...(write ? ['operationId', 'expectedSelectionRef', 'includedRecordedGroupIds'] : []),
+      ...(preview ? ['selectionRef'] : [])]);
     const identity = identityOf(v);
     if (!UUID.test(identity.auth.userId)) fail('invalid_actor');
     const contextRef = prepareCustomCohortContextReference(json(v.contextRef));
-    if (!write) return Object.freeze({ ...identity, contextRef });
+    if (!write) return Object.freeze({ ...identity, contextRef,
+      ...(preview ? { selectionRef: prepareCustomCohortGroupSelectionReference(v.selectionRef) } : {}) });
     if (typeof v.operationId !== 'string' || !UUID.test(v.operationId)) fail('invalid_operation');
     const expectedSelectionRef = v.expectedSelectionRef === null ? null
       : prepareCustomCohortGroupSelectionReference(v.expectedSelectionRef);
@@ -60,6 +63,32 @@ export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, exec
       contextJson: json(input.contextRef), catalogJson: owned.catalogJson, rosterJson: owned.rosterJson,
       includedGroupIds: command.included_recorded_group_ids, revision: command.selection_revision,
       commandJson, signal: owned.budget.signal, checkBudget: owned.budget.check });
+  }
+  async function reopen(owned, input, onAccountPage) {
+    const repository = createCustomCohortGroupSelectionRepository(owned.client, owned.scopeJson,
+      json(input.contextRef), { signal: owned.budget.signal, checkBudget: owned.budget.check });
+    const { selection_ref } = await repository.peekCurrent();
+    if (input.selectionRef && json(selection_ref) !== json(input.selectionRef))
+      throw new TypeError('custom_cohort_group_selection_selection_changed');
+    if (selection_ref === null) return null;
+    const read = async ref => {
+      owned.budget.check();
+      const text = await owned.blobs.get(ref.content_sha256, ref.canonical_utf8_bytes);
+      if (text === null) fail('missing_original');
+      owned.budget.check(); return text;
+    };
+    const manifest = JSON.parse(await read(reference(selection_ref.manifest_ref, L.manifest_bytes)));
+    const metadataJson = await read(reference(manifest.metadata_ref, L.metadata_bytes));
+    const metadata = prepareCohortPagedGroupSelectionV1Metadata(metadataJson);
+    const catalogOriginal = await read(reference(metadata.catalog_ref, L.metadata_bytes));
+    const receipt = JSON.parse(catalogOriginal).selection_command;
+    if (!receipt) fail('missing_command_original');
+    // The original actor stamp records intent, not permission for this reader.
+    const derived = await derive(owned, input, json(receipt));
+    if (derived.catalog_original_json !== catalogOriginal || derived.metadata_json !== metadataJson)
+      fail('original_mismatch');
+    await repository.getCurrent({ metadataJson, selectionRef: selection_ref }, { onAccountPage });
+    return { selection_ref, included_recorded_group_ids: derived.included_recorded_group_ids };
   }
   return Object.freeze({
     async selectRecordedGroups(value, options = {}) {
@@ -88,33 +117,34 @@ export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, exec
     async readRecordedGroupSelection(value, options = {}) {
       const input = inputOf(value, false);
       return execute(input, options, false, async owned => {
-        const repository = createCustomCohortGroupSelectionRepository(owned.client, owned.scopeJson,
-          json(input.contextRef), { signal: owned.budget.signal, checkBudget: owned.budget.check });
-        const { selection_ref } = await repository.peekCurrent();
-        if (selection_ref === null) return Object.freeze({ status: 'absent', authority: 'not_established',
+        const opened = await reopen(owned, input);
+        if (opened === null) return Object.freeze({ status: 'absent', authority: 'not_established',
           context_ref: input.contextRef, selection_ref: null, included_recorded_group_ids: null });
-        const read = async ref => {
-          owned.budget.check();
-          const text = await owned.blobs.get(ref.content_sha256, ref.canonical_utf8_bytes);
-          if (text === null) fail('missing_original');
-          owned.budget.check(); return text;
-        };
-        const manifest = JSON.parse(await read(reference(selection_ref.manifest_ref, L.manifest_bytes)));
-        const metadataJson = await read(reference(manifest.metadata_ref, L.metadata_bytes));
-        const metadata = prepareCohortPagedGroupSelectionV1Metadata(metadataJson);
-        const catalogOriginal = await read(reference(metadata.catalog_ref, L.metadata_bytes));
-        const receipt = JSON.parse(catalogOriginal).selection_command;
-        if (!receipt) fail('missing_command_original');
-        // An older actor stamp is retained intent, not permission for this reader.
-        // Re-derive against today's authorized ORIGINAL catalog/roster, then
-        // verify all paged originals and that this is still the current head.
-        const derived = await derive(owned, input, json(receipt));
-        if (derived.catalog_original_json !== catalogOriginal || derived.metadata_json !== metadataJson)
-          fail('original_mismatch');
-        await repository.getCurrent({ metadataJson, selectionRef: selection_ref });
         return Object.freeze({ status: 'selected', authority: 'not_established', context_ref: input.contextRef,
-          selection_ref, included_recorded_group_ids: derived.included_recorded_group_ids });
+          ...opened });
       });
+    },
+    async previewRecordedGroupSelection(value, options = {}) {
+      const input = inputOf(value, false, true);
+      return execute(input, options, false, async owned => {
+        if (typeof owned.presentSelectionSummary !== 'function') fail('summary_owner_required');
+        const accounts = [];
+        const opened = await reopen(owned, input, page => {
+          if (accounts.length + page.account_ids.length > CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS.accounts)
+            fail('summary_account_limit');
+          accounts.push(...page.account_ids);
+        });
+        // No source-statistics consumer sees a prefix. All original pages and
+        // the exact current head have succeeded before numeric projection.
+        const content = await owned.presentSelectionSummary(Object.freeze(accounts), opened.selection_ref);
+        owned.budget.check();
+        return Object.freeze({ status: 'preview', authority: 'not_established',
+          target: { account_id: input.accountId, assignment_file_id: input.assignmentFileId },
+          context_ref: input.contextRef, selection_ref: opened.selection_ref,
+          selection_revision: opened.selection_ref.selection_revision, subject_freshness: 'matched',
+          ...content, parcel_map: { status: 'omitted', reason: 'geometry_not_requested' },
+          apply: { status: 'blocked', reasons: ['observation_preview_only'] } });
+      }, 'summary');
     },
   });
 }

@@ -9,8 +9,9 @@ import { createCustomNeighborhoodCohortRouter } from '../../src/modules/accounts
  */
 export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, auth, scope, grant, observationPeriod }) {
   const calls = [], checks = [];
-  let loseCommitAck = false, cancelAtHead = null, revokeAtHead = false, denyPolicy = false, denyFinalPolicy = false;
-  let policyCalls = 0;
+  let loseCommitAck = false, cancelAtHead = null, revokeAtHead = false, revokeAtRead = false;
+  let denyPolicy = false, denyFinalPolicy = false, denySummary = false, denyFinalSummary = false;
+  let policyCalls = 0, summaryPolicyCalls = 0;
   const suspend = status => pool.query(`UPDATE app_auth.organization_memberships SET status=$3
     WHERE organization_id=$1 AND user_id=$2`, [scope.organization_id, auth.userId, status]);
   const observed = { async connect() {
@@ -22,13 +23,22 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
         cancelAtHead?.abort(); cancelAtHead = null;
         if (revokeAtHead) { revokeAtHead = false; await suspend('suspended'); }
       }
+      if (revokeAtRead && config.text.includes('/* custom-cohort-group-selection:head */')) {
+        revokeAtRead = false; await suspend('suspended');
+      }
       if (loseCommitAck && config.text === 'COMMIT') {
         loseCommitAck = false; throw new Error('synthetic lost selection COMMIT acknowledgment');
       }
       return result;
     } };
   } };
-  const policy = async () => { policyCalls++; return denyPolicy || (denyFinalPolicy && policyCalls > 1) ? { allowed: false } : grant; };
+  const policy = async (_client, _auth, _context, _purpose, { exposure }) => {
+    policyCalls++;
+    if (exposure === 'report_observation_summary') summaryPolicyCalls++;
+    return denyPolicy || (denyFinalPolicy && policyCalls > 1)
+      || (exposure === 'report_observation_summary' && (denySummary || (denyFinalSummary && summaryPolicyCalls > 1)))
+      ? { allowed: false } : grant;
+  };
   const owner = createCustomCohortContextCapture({ pool: observed, authorizeMarketData: policy });
   const identity = { auth, accountId: scope.account_id, assignmentFileId: scope.assignment_file_id };
   const context = await owner.capture({ ...identity, operationId: randomUUID(), observationPeriod });
@@ -55,6 +65,13 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
   assert.equal(first.status, 'stored'); assert.equal(first.selection_ref.selection_revision, 1);
   assert.deepEqual((await owner.readRecordedGroupSelection(read)).included_recorded_group_ids, [...ids].sort());
   assert.deepEqual(await owner.selectRecordedGroups(select), { ...first, status: 'reused' });
+  const summary = await owner.previewRecordedGroupSelection({ ...read, selectionRef: first.selection_ref });
+  assert.deepEqual(summary.selection_ref, first.selection_ref);
+  assert.deepEqual(summary.summary, catalog.initial_preview.summary,
+    'server-owned exact population must match the original whole-union summary, including medians/CODs and dates');
+  assert.equal(summary.authority, 'not_established'); assert.equal(summary.apply.status, 'blocked');
+  assert.equal(Object.hasOwn(summary, 'account_ids'), false);
+  assert.equal(summary.parcel_map.status, 'omitted');
   assert.ok(!calls.slice(from).some(sql => sql.includes('neighborhood-cohort-blob:read-batch')),
     'prepared selection reads complete catalog/roster without replaying source pages');
   assert.ok(!calls.slice(from).some(sql => sql.includes('compressed_map')),
@@ -67,6 +84,11 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
   const empty = await owner.selectRecordedGroups(emptyInput);
   assert.equal(empty.status, 'reused'); assert.equal(empty.selection_ref.selection_revision, 2);
   assert.deepEqual((await owner.readRecordedGroupSelection(read)).included_recorded_group_ids, []);
+  const emptySummary = await owner.previewRecordedGroupSelection({ ...read, selectionRef: empty.selection_ref });
+  const emptyLegacy = await owner.present({ ...read, selection: { revision: 2, pockets: [] } }, { includeMap: false });
+  assert.deepEqual(emptySummary.summary, emptyLegacy.summary);
+  assert.equal(emptySummary.summary.selected.account_count, 0);
+  await assert.rejects(owner.previewRecordedGroupSelection({ ...read, selectionRef: first.selection_ref }), /selection_changed/);
   await assert.rejects(owner.selectRecordedGroups(select), /selection_changed/);
   await assert.rejects(owner.selectRecordedGroups({ ...emptyInput, includedRecordedGroupIds: ids }), /operation_conflict/);
   checks.push('native lost selection COMMIT acknowledgment reopens exactly once; empty stays empty and stale/changed replay cannot rewind or replace');
@@ -76,6 +98,22 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
   const blobs = async () => (await pool.query(`SELECT count(*)::int AS n FROM app.neighborhood_cohort_evidence_blobs
     WHERE organization_id=$1`, [scope.organization_id])).rows[0].n;
   const originalCount = await blobs();
+  denySummary = true;
+  const summaryDeniedFrom = calls.length;
+  try { await assert.rejects(owner.previewRecordedGroupSelection({ ...read, selectionRef: empty.selection_ref }), /market_data_access_denied/); }
+  finally { denySummary = false; }
+  assert.ok(!calls.slice(summaryDeniedFrom).some(sql => sql.includes('prepared-catalog:read')
+    || sql.includes('prepared-preview:read') || sql.includes('custom-cohort-group-selection:head')),
+  'catalog access alone cannot open prepared numeric facts or selection originals under denied summary rights');
+  summaryPolicyCalls = 0; denyFinalSummary = true;
+  try { await assert.rejects(owner.previewRecordedGroupSelection({ ...read, selectionRef: empty.selection_ref }), /market_data_access_denied/); }
+  finally { denyFinalSummary = false; }
+  assert.ok(summaryPolicyCalls >= 2, 'summary exposure is separately fenced again before delivery');
+  revokeAtRead = true;
+  try { await assert.rejects(owner.previewRecordedGroupSelection({ ...read, selectionRef: empty.selection_ref }), /job_actor_access_revoked/); }
+  finally { await suspend('active'); }
+  assert.equal(await head(), 2); assert.equal(await blobs(), originalCount);
+  checks.push('native exact-reference summary matches complete original medians/CODs/dates, preserves explicit empty, rejects stale references and separately checks initial/final summary rights and current actor before delivery');
   const next = () => ({ ...select, operationId: randomUUID(), expectedSelectionRef: empty.selection_ref });
   const cancelled = new AbortController(); cancelAtHead = cancelled;
   await assert.rejects(owner.selectRecordedGroups(next(), { signal: cancelled.signal }), /cancelled/);

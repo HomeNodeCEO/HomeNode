@@ -305,3 +305,27 @@ publish boundary/statistics/provenance coherently. Partial acquisition-page
 recovery, greater-than-50k installed capture and live large-area acceptance
 remain outstanding; production limits and genuine appraisal choices are not
 changed by local transport tests.
+
+### Exact-reference numeric summary (internal consumer, existing capacity)
+
+`previewRecordedGroupSelection` accepts the exact retained context and current
+server-owned selection reference, not replacement groups or member arrays. It
+re-derives the original catalog/roster binding and verifies every membership and
+deduplicated union original before the numeric projection sees any accounts.
+An immutable account-page visitor is provisional owner-local work; if any later
+original, manifest, budget or rights check fails there is no completed summary.
+Absent, stale and explicitly empty selections keep their distinct meanings.
+
+The summary uses the existing exact individual-observation kernel and selection
+digest, not averages of group medians. Shared prepared tables avoid source/map
+replay; private captures preserve their independently authorized original CSV
+and exact review revision. Catalog **and** summary exposure rights are checked
+before prepared/original facts and again before delivery, alongside current
+database actor, assignment, subject and private-review fences in the same
+bounded transaction. No geometry, accepted report or workfile section is changed.
+
+This additive internal consumer retains the installed 50,000-account numeric
+ceiling. It does not activate an HTTP/UI summary path or claim larger-area
+capacity, reliability, historical truth or report readiness. Complete paged
+statistics beyond that ceiling, exact-reference viewport/member/Apply consumers,
+partial capture-page recovery and live load acceptance remain required.

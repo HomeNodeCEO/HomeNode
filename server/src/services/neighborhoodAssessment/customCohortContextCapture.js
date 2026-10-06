@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { CUSTOM_COHORT_OPERATION_LIMITS } from './customCohortOperationLimits.js';
+import { checkCustomCohortMarketMembership } from './customCohortMarketMembership.js';
 import { createCustomCapturePhaseTiming, createCustomReportPhaseTiming, createCustomPreviewPhaseTiming,
   createCustomCatalogPhaseTiming, createCustomPreparedCatalogPhaseTiming,
   createCustomPreparedCatalogProjectionTiming } from './customCapturePhaseTiming.js';
@@ -636,7 +637,7 @@ async function authorizedRetainedInputs(client, { scopeJson, reference, input, a
   // A checkpoint is editor intent, not authority to relabel a retained study.
   // Check the discovery binding as well as its dates before report preparation.
   if (study && retained && !same(study.discovery ?? null, retained.study.discovery ?? null)) fail('operation_conflict');
-  return { ...metadata, subjectReference: directory.subject_inputs,
+  return { ...metadata, subjectReference: directory.subject_inputs, accountRosterRef: directory.request.account_ids,
     observationPeriod: requestMetadata.observation_period,
     retained, ...(beforeLoad === null ? {} : { beforeLoadResult }) };
 }
@@ -1786,6 +1787,29 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         return { ...response, ...(recommendation ? { recommendation: stableRecommendation } : {}),
           ...(prepared_secondary_map ? { prepared_secondary_map } : {}) };
       },
+    });
+  }, async authorizeMarketSelection(value, options = {}) {
+    const input = previewInputOf(value), budget = operationBudget(options);
+    return transaction(pool, 'READ COMMITTED', budget, async client => {
+      const target = await resolveTarget(client, input, false, 'read');
+      const scopeJson = canonicalAssessmentJson(Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])));
+      const licensed = await authorizedRetainedInputs(client, { scopeJson, reference: input.contextRef, input,
+        authorizeMarketData, authorizePrivateSales, budget, exposure: 'report_observation_summary',
+        privateSummary: true, loadInputs: false });
+      const membership = await checkCustomCohortMarketMembership({
+        store: createNeighborhoodCohortBlobRepository(client, target.organization_id),
+        rosterRef: licensed.accountRosterRef, selection: input.selection, contextRef: input.contextRef, checkBudget: budget.check,
+      });
+      assertTarget(await resolveTarget(client, input, true, 'read'), target);
+      if ((await createCustomCohortSubjectRepository(client, scopeJson)
+        .compareCurrent(licensed.subjectReference)).status !== 'matched') fail('subject_changed');
+      const decision = await boundedPolicy(authorizeMarketData, client, input.auth,
+        licensed.context, licensed.purpose, budget, 'report_observation_summary');
+      if (!same(decision, licensed.decision)) fail('market_policy_changed');
+      await recheckPrivatePolicy(client, input, licensed, budget, ['report_observation_summary']);
+      budget.check();
+      // This is internal authorization, not report Apply or a rewritten capture.
+      return freeze({ target: { account_id: input.accountId, assignment_file_id: input.assignmentFileId }, ...membership });
     });
   }, present(value, presentation = { includeMap: true }, options = {}) {
     exactKeys(presentation, ['includeMap']);

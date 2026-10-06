@@ -9,13 +9,16 @@ const group = { binding: { accountId: 'A', assignmentFileId: '15', contextRef, s
 const request = { subjectAccountId: 'A', assignmentFileId: 15, areaKeys: ['exploration'], asOf: '2026-08-31', periodMonths: 24 };
 const result = () => ({ subject: { account_id: 'A' }, analyses: [{ market: { key: 'exploration' } }], recommendation: {},
   exploration_binding: { context_ref: contextRef, selection_revision: 7, selection_sha256: 'b'.repeat(64) } });
-function fixture(reply = result()) {
-  const calls = [];
+function fixture(reply = result(), ordinary) {
+  const calls = [], ordinaryCalls = [];
   const api = loadTrustedRepositoryCommonJs(new URL('../src/features/neighborhood/customCohortMarketArea.ts', import.meta.url), dependency => {
+    if (dependency === '@/lib/api') return { runMarketConditionsAnalysis: async request => {
+      ordinaryCalls.push(request); return typeof ordinary === 'function' ? ordinary(request) : ordinary;
+    } };
     assert.equal(dependency, './customCohortPreviewApi');
-    return { requestCustomCohortOperation: async (...args) => { calls.push(args); return reply; } };
+    return { requestCustomCohortOperation: async (...args) => { calls.push(args); return typeof reply === 'function' ? reply(...args) : reply; } };
   });
-  return { api, calls };
+  return { api, calls, ordinaryCalls };
 }
 
 test('market request uses retained membership and existing transport, with no map geometry or fresh capture', async () => {
@@ -104,7 +107,7 @@ function marketComponent(overrides = {}) {
     if (dependency === '@/lib/api') return { getMarketConditionsContext: async () => ({ subject: { account_id: 'A' } }),
       runMarketConditionsAnalysis: () => { throw new Error('Exploration must not use the legacy market request.'); } };
     if (dependency === '@/lib/marketConditionsDraft') return { readMarketConditionsDraft: () => null, saveMarketConditionsDraft: () => assert.fail('Unexpected local save') };
-    if (dependency === '@/features/neighborhood/customCohortMarketArea') return { ...helper, runExplorationMarketAnalysis: (...args) => { queries.push(args); return operation.promise; } };
+    if (dependency === '@/features/neighborhood/customCohortMarketArea') return { ...helper, runMarketStudies: (...args) => { queries.push(args); return operation.promise; } };
     assert.fail(`Unexpected component import: ${dependency}`);
   }).default;
   function render() { let passes = 0; do { dirty = false; cursor = 0; tree = Component(props); while (pending.length) pending.shift()();
@@ -128,6 +131,77 @@ test('actual market UI offers the exploration selection, not another drawing map
   assert.match(h.text, /Study complete/);
   h.update({ explorationArea: { ...group, binding: { ...group.binding, selectionRevision: 8 } } });
   assert.equal(h.published.at(-1), null); assert.match(h.text, /Study required/);
+});
+
+test('ZIP and radius studies bypass retained exploration when it is not selected', async () => {
+  const ordinary = { ...completeResult(), analyses: [{ ...completeResult().analyses[0], market: { key: 'zip' } }], exploration_binding: undefined };
+  const f = fixture(() => assert.fail('No neighborhood transport'), ordinary);
+  const input = { ...request, areaKeys: ['zip', 'radius_1', 'radius_2'], asOf: '2026-10-31', periodMonths: 12 };
+  assert.equal(await f.api.runMarketStudies(input, null), ordinary);
+  assert.equal(f.calls.length, 0);
+  assert.deepEqual(f.ordinaryCalls, [input]);
+});
+
+test('combined study separates ordinary areas from exploration and preserves chosen dates beyond the appraisal date', async () => {
+  const standard = { ...completeResult(), analyses: [{ ...completeResult().analyses[0], market: { key: 'zip' } }], exploration_binding: undefined };
+  const f = fixture(completeResult(), standard);
+  const input = { ...request, areaKeys: ['zip', 'radius_1', 'radius_2', 'exploration'], asOf: '2026-10-31', periodMonths: 12 };
+  const response = await f.api.runMarketStudies(input, group);
+  assert.deepEqual(f.ordinaryCalls[0].areaKeys, ['zip', 'radius_1', 'radius_2']);
+  assert.deepEqual(f.calls[0][2].area_keys, ['exploration']);
+  for (const request of [f.ordinaryCalls[0], f.calls[0][2]]) assert.equal(request.asOf ?? request.as_of, '2026-10-31');
+  assert.deepEqual(response.analyses.map(item => item.market.key), ['zip', 'exploration']);
+  assert.equal(f.api.marketExplorationIdentity(response), f.api.explorationAreaIdentity(group.binding));
+});
+
+test('an exploration timeout does not discard successful ZIP/radius studies or leak a preview cancellation', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const standard = { ...completeResult(), analyses: [{ ...completeResult().analyses[0], market: { key: 'zip' } }], exploration_binding: undefined };
+  const f = fixture((_id, _operation, _body, options) => new Promise((_resolve, reject) => {
+    options.signal.addEventListener('abort', () => reject(new DOMException('Neighborhood preview request cancelled', 'AbortError')));
+  }), standard);
+  const operation = f.api.runMarketStudies({ ...request, areaKeys: ['zip', 'exploration'] }, group);
+  t.mock.timers.tick(65000);
+  const response = await operation;
+  assert.deepEqual(response.analyses.map(item => item.market.key), ['zip']);
+  assert.equal(f.api.marketExplorationIdentity(response), null);
+  assert.match(response.unavailable_areas[0].reason, /took too long/);
+  assert.doesNotMatch(response.unavailable_areas[0].reason, /preview request cancelled/);
+});
+
+test('an unavailable map does not block ordinary market studies', async () => {
+  const f = fixture(() => assert.fail('No map selection'), { ...completeResult(), exploration_binding: undefined });
+  const response = await f.api.runMarketStudies({ ...request, areaKeys: ['zip', 'exploration'] }, null);
+  assert.equal(f.calls.length, 0);
+  assert.equal(response.unavailable_areas[0].key, 'exploration');
+});
+
+test('actual mixed-area UI lets ZIP studies run while the exploration map is unavailable', async t => {
+  const initialDraft = { ...draft(completeResult()), selectedAreaKeys: ['zip', 'exploration'] };
+  const h = marketComponent({ initialDraft, explorationArea: null }); t.after(h.dispose); await h.settle();
+  assert.equal(h.button('Run 2 market studies').props.disabled, false);
+  h.button('Run 2 market studies').props.onClick(); await h.settle();
+  assert.deepEqual(h.queries[0][0].areaKeys, ['zip', 'exploration']);
+  assert.equal(h.queries[0][1], null);
+  h.operation.resolve({ ...completeResult(), exploration_binding: undefined,
+    analyses: [{ ...completeResult().analyses[0], market: { key: 'zip', label: 'ZIP', scope: 'zip' } }],
+    unavailable_areas: [{ key: 'exploration', label: 'Exploration Map Area', reason: 'Select subdivisions first.' }] });
+  await h.settle();
+  assert.match(h.text, /Completed studies are shown below/);
+  assert.doesNotMatch(h.text, /changed after the last calculation/);
+  assert.equal(h.published.filter(Boolean).length, 0, 'An incomplete exploration cannot publish a complete report study');
+});
+
+test('split response reconciliation exactly matches the existing server recommendation', async () => {
+  const { buildMarketTrendRecommendation } = await import('../../server/src/services/marketConditions.js');
+  const f = fixture();
+  for (const changes of [[], [0], [-1.25, 2.5], [2, 7, -3], [null, 1.001, -7.112, 4.665]]) {
+    const analyses = changes.map((change, index) => ({ market: { key: ['zip', 'radius_1', 'radius_2', 'exploration'][index], label: String(index) },
+      population: { eligible_sale_count: 25 + index }, statistics: { annualized_change_percent: change, sample_sufficient: index % 2 === 0,
+        reliability_score: 50 + index, composite_cod: 15, composite_cv: 20 } }));
+    const response = f.api.mergeMarketStudyResponses([{ ...completeResult(), analyses: analyses.slice(0, 2) }, { ...completeResult(), analyses: analyses.slice(2) }]);
+    assert.deepEqual(response.recommendation, buildMarketTrendRecommendation(analyses));
+  }
 });
 
 test('an analysis finishing after another map click cannot publish an old selection', async t => {

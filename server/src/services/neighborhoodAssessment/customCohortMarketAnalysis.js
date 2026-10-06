@@ -22,14 +22,14 @@ export function createCustomCohortMarketAnalysis({ pool, cohortService, buildAna
       throw error;
     }
     const input = { ...identity, contextRef: body.context_ref, selection: body.selection };
-    const checked = await cohortService.present(input, { includeMap: false }, options);
-    const binding = checked.summary?.binding;
+    const checked = await cohortService.authorizeMarketSelection(input, options);
+    const binding = checked.binding;
     if (!binding || binding.selection_sha256 !== body.selection_sha256) {
       throw Object.assign(new Error('operation_conflict'), { reason: 'operation_conflict' });
     }
     // The presentation owner has already checked that every requested account
     // belongs to this exact retained context, including overlap/empty semantics.
-    const accounts = [...new Set(body.selection.pockets.flatMap(pocket => pocket.account_ids))].sort();
+    const accounts = checked.accountIds;
     const key = JSON.stringify({ operation: 'exploration_market', target: checked.target,
       binding, request });
     if (options.signal.aborted) throw Object.assign(new Error('cancelled'), { reason: 'cancelled' });
@@ -39,8 +39,8 @@ export function createCustomCohortMarketAnalysis({ pool, cohortService, buildAna
       if (options.signal.aborted) throw Object.assign(new Error('cancelled'), { reason: 'cancelled' });
       // The numeric query runs outside the retained-context read transaction.
       // Recheck access before publishing, using the same geometry-free cache.
-      const latest = await cohortService.present(input, { includeMap: false }, options);
-      if (latest.summary?.binding?.selection_sha256 !== binding.selection_sha256) {
+      const latest = await cohortService.authorizeMarketSelection(input, options);
+      if (latest.binding?.selection_sha256 !== binding.selection_sha256) {
         throw Object.assign(new Error('operation_conflict'), { reason: 'operation_conflict' });
       }
       return { ...response, exploration_binding: binding };

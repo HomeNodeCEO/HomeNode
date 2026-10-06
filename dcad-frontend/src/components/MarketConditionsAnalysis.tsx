@@ -21,7 +21,7 @@ import {
 } from '@/lib/marketConditionsDraft';
 import type { MarketAreaOrigin } from '@/lib/marketAreaGeometry';
 import type { CustomCohortPreviewGroup } from '@/features/neighborhood/customCohortPreviewController';
-import { runExplorationMarketAnalysis, explorationAreaIdentity, marketExplorationIdentity, usableExplorationArea } from '@/features/neighborhood/customCohortMarketArea';
+import { runMarketStudies, explorationAreaIdentity, marketExplorationIdentity, usableExplorationArea } from '@/features/neighborhood/customCohortMarketArea';
 
 type TrendInterval = 'monthly' | 'quarterly' | 'semiannual' | 'yearly';
 
@@ -936,7 +936,7 @@ export default function MarketConditionsAnalysis({
       setError('Select at least one market area before running the study.');
       return;
     }
-    if (selectedAreaKeys.includes('exploration') && !selectedExploration) {
+    if (selectedAreaKeys.length === 1 && selectedAreaKeys.includes('exploration') && !selectedExploration) {
       setError('Select subdivisions on the exploration map and wait for their statistics to finish updating.');
       return;
     }
@@ -952,9 +952,7 @@ export default function MarketConditionsAnalysis({
         periodMonths,
         contextOverride: activeContextOverride,
       };
-      const response = selectedAreaKeys.includes('exploration') && selectedExploration
-        ? await runExplorationMarketAnalysis(request, selectedExploration)
-        : await api.runMarketConditionsAnalysis(request);
+      const response = await runMarketStudies(request, selectedExploration);
       const nextReconciliation = defaultReconciliation(response);
       const signature = resultFingerprint(
         selectedAreaKeys,
@@ -1433,7 +1431,7 @@ export default function MarketConditionsAnalysis({
               loadingContext ||
               !subject ||
               !selectedAreaKeys.length ||
-              (selectedAreaKeys.includes('exploration') && !selectedExploration)
+              (selectedAreaKeys.length === 1 && selectedAreaKeys.includes('exploration') && !selectedExploration)
             }
             className={`rounded-lg bg-emerald-700 px-5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300 ${embedded ? 'py-2' : 'py-2.5'}`}
           >
@@ -1451,8 +1449,9 @@ export default function MarketConditionsAnalysis({
 
         {analysisResult && !studyIsCurrent && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-            The map selection, date, period, or study geography changed after the last calculation.
-            Rerun the market studies before selecting comparables.
+            {runSignature === currentSignature && analysisResult.unavailable_areas.length
+              ? 'Some selected areas could not be calculated. Completed studies are shown below.'
+              : 'The area or observation dates changed. Rerun the market studies to update the results.'}
           </div>
         )}
         {error && (

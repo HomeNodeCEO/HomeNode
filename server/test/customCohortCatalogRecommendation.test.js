@@ -67,6 +67,40 @@ async function setup(options, source = decisionEvidenceFixture) {
   return { f, state, service, input };
 }
 
+test('market membership owner retains current checks without opening source payloads or computing previews', async () => {
+  const { service, input, state } = await setup();
+  const checked = await service.authorizeMarketSelection(input);
+  assert.deepEqual(checked.accountIds, []);
+  assert.equal(checked.binding.selection_revision, input.selection.revision);
+  assert.deepEqual(checked.target, { account_id: input.accountId, assignment_file_id: input.assignmentFileId });
+  assert.equal(state.sourceReads, 0);
+  assert.deepEqual(state.policies.map(call => call.exposure), [SUMMARY, SUMMARY]);
+  assert.equal(state.connects, 1);
+});
+
+test('market membership refuses final source-policy revocation and foreign selected accounts', async () => {
+  const first = await setup();
+  first.state.onPolicy = count => count === 2 ? { allowed: false } : {
+    allowed: true, ...first.f.input.retained_inputs.acquisition.captured_query_request.market_decision };
+  await assert.rejects(first.service.authorizeMarketSelection(first.input), /market_data_access_denied/);
+  assert.equal(first.state.sourceReads, 0);
+  const second = await setup();
+  second.input.selection.pockets = [{ id: 'foreign', label: 'Foreign', account_ids: ['NOT-IN-CAPTURE'] }];
+  await assert.rejects(second.service.authorizeMarketSelection(second.input), /invalid_selection/);
+  assert.equal(second.state.sourceReads, 0);
+});
+
+for (const change of ['assignment', 'material']) test(`market membership still checks current ${change} before admitting numeric work`, async () => {
+  const { service, input, state, f } = await setup();
+  state.onPolicy = () => {
+    if (change === 'assignment') state.assigned = '80000000-0000-4000-8000-000000000002';
+    else setSection(f.f.state.input, 1, '{"main_improvement":{"living_area_sqft":9999}}');
+    return { allowed: true, ...f.input.retained_inputs.acquisition.captured_query_request.market_decision };
+  };
+  await assert.rejects(service.authorizeMarketSelection(input), change === 'assignment' ? /assignment_access_denied/ : /subject_changed/);
+  assert.equal(state.sourceReads, 0);
+});
+
 test('omitted/false recommendations preserve exact legacy catalog and only catalog policy checks', async () => {
   const { service, input, state } = await setup();
   const old = await service.catalog(input), explicit = await service.catalog({ ...input, includeRecommendation: false });

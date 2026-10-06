@@ -1380,10 +1380,10 @@ export async function buildMarketConditionsAnalyses(
 
   const storedSubject = await getMarketContext(pool, subjectAccountId, {
     accountIdAllowed,
-    // An exact selected roster does not need a point/radius lookup. Missing
-    // location remains unavailable; do not call CAD or write a new location
-    // while calculating this retained selection's market observations.
-    refreshLocation: !areas.some(area => area.scope === 'exploration'),
+    // Numeric studies consume the stored geography and selected date window.
+    // Do not fetch CAD or repair locations during a calculation. ZIP/city can
+    // still run without coordinates; unavailable radii remain explicit.
+    refreshLocation: false,
   });
   const subject = applyMarketContextOverride(
     storedSubject,

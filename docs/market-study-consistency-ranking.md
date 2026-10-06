@@ -64,6 +64,12 @@ not added together. Missing period evidence stays unavailable with contributing
 study counts shown. The study observation dates, not appraisal effective date,
 continue to define these windows.
 
+Trend classification compares the unrounded annual estimate with the existing
+stability threshold; only displayed/saved percentages are rounded. A selected
+study marked `sample_sufficient: false` remains usable but the determination
+and saved explanation identify its estimate as provisional. This warning does
+not alter COD/CV ranking or prevent appraiser-reviewed export.
+
 Present land use is a separate protected retained-selection operation. It uses
 the existing indexed `gis.dcad_parcels` mirror, includes exactly one layer of
 edge-sharing neighbors (rook adjacency: `&&` then DE-9IM `F***1****`), and does

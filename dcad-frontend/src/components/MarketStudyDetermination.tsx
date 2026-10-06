@@ -25,6 +25,9 @@ export default function MarketStudyDetermination({ response, appliedKeys, select
           <span className="text-xl font-bold capitalize text-slate-950">{determination.conclusion}</span>
           <span className="text-sm font-semibold text-indigo-800">{percent(determination.annual.value)} reconciled annualized change</span>
         </div>
+        {determination.sampleLimitedStudies.length > 0 && <p role="status" className="mt-1 text-sm font-semibold text-amber-900">
+          Provisional · insufficient sales sample: {determination.sampleLimitedStudies.join(', ')}
+        </p>}
         {recent.map(([label, estimate]) => <div key={label} className="mt-1 text-sm text-indigo-950">
           {label}: <strong>{percent(estimate.value)}</strong><span className="ml-2 text-xs text-slate-600">{estimate.count}/{appliedKeys.length} studies</span>
         </div>)}

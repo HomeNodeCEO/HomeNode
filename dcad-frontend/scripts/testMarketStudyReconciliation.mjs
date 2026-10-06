@@ -47,3 +47,28 @@ test('missing values are never zero and explanation follows applied studies and 
   assert.doesNotMatch(chosen.explanation, /exploration/);
   assert.match(chosen.explanation, /\+50.0%.*\+20.0%/);
 });
+
+test('the stability threshold uses full precision, even when the displayed estimate rounds to one percent', () => {
+  for (const change of [0.995, -0.995]) {
+    const input = response(area('zip', change));
+    assert.equal(selectedMarketDetermination(input, ['zip']).conclusion, 'stable');
+    assert.equal(appliedMarketReconciliation(input, ['zip']).trendConclusion, 'stable');
+  }
+  const combined = response(area('zip', 0.99), area('exploration', 1));
+  assert.equal(selectedMarketDetermination(combined, ['zip', 'exploration']).annual.value, 1);
+  assert.equal(selectedMarketDetermination(combined, ['zip', 'exploration']).conclusion, 'stable');
+  assert.equal(selectedMarketDetermination(response(area('zip', 1)), ['zip']).conclusion, 'increasing');
+  assert.equal(selectedMarketDetermination(response(area('zip', -1)), ['zip']).conclusion, 'decreasing');
+});
+
+test('insufficient selected samples remain available but are provisional in the determination and saved explanation', () => {
+  const input = response(area('zip', 10), area('exploration', 20));
+  input.analyses[0].statistics.sample_sufficient = false;
+  input.analyses[1].statistics.sample_sufficient = true;
+  const provisional = selectedMarketDetermination(input, ['zip', 'exploration']);
+  assert.equal(provisional.annual.value, 15);
+  assert.deepEqual(provisional.sampleLimitedStudies, ['zip']);
+  assert.match(appliedMarketReconciliation(input, ['zip', 'exploration']).explanation, /Provisional estimate: zip have insufficient sales samples/);
+  assert.deepEqual(selectedMarketDetermination(input, ['exploration']).sampleLimitedStudies, []);
+  assert.doesNotMatch(appliedMarketReconciliation(input, ['exploration']).explanation, /Provisional/);
+});

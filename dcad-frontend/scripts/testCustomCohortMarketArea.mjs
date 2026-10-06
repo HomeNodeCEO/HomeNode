@@ -319,7 +319,7 @@ test('the recommendation describes consistency scoring and flags older saved sco
 test('ranked-card selection applies new numbers and explanation without another request or modifying the study results', async t => {
   const value = completeResult(), keys = ['zip', 'radius_1', 'exploration'];
   value.analyses = keys.map((key, index) => ({ ...value.analyses[0], market: { key, label: key },
-    statistics: { annualized_change_percent: [10, 80, -20][index] } }));
+    statistics: { annualized_change_percent: [10, 80, -20][index], sample_sufficient: index !== 0 } }));
   value.recommendation.ranked_studies = value.analyses.map((a, index) => ({ key: a.market.key, label: a.market.label,
     rank: index + 1, reliability_score: 80, sale_count: 50, annualized_change_percent: a.statistics.annualized_change_percent }));
   const h = marketComponent({ initialDraft: { ...draft(value), selectedAreaKeys: keys,
@@ -336,6 +336,8 @@ test('ranked-card selection applies new numbers and explanation without another 
   assert.equal(chosen.response, value);
   assert.equal(h.queries.length, 0);
   assert.match(text(determination().type(determination().props)), /-5.0% reconciled annualized change/);
+  assert.match(text(determination().type(determination().props)), /Provisional.*insufficient sales sample: zip/);
+  assert.match(chosen.reconciliation.explanation, /Provisional estimate: zip/);
 });
 
 test('an analysis finishing after another map click cannot publish an old selection', async t => {

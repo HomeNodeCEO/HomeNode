@@ -6,11 +6,15 @@ const round = (value: number | null) => value === null ? null : Math.round(value
 
 /** Reconcile independent estimates, never pool overlapping sale populations or
  * claim that an average of study medians is a pooled population median. */
-export function reconcileStudyValues(values: Array<number | null | undefined>) {
+function fullPrecisionStudyValues(values: Array<number | null | undefined>) {
   const sorted = values.filter(valid).sort((a, b) => a - b), middle = Math.floor(sorted.length / 2);
   const average = sorted.length ? sorted.reduce((sum, value) => sum + value, 0) / sorted.length : null;
   const median = sorted.length ? sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2 : null;
-  return { average: round(average), median: round(median), value: round(average === null || median === null ? null : (average + median) / 2), count: sorted.length };
+  return { average, median, value: average === null || median === null ? null : (average + median) / 2, count: sorted.length };
+}
+export function reconcileStudyValues(values: Array<number | null | undefined>) {
+  const estimate = fullPrecisionStudyValues(values);
+  return { average: round(estimate.average), median: round(estimate.median), value: round(estimate.value), count: estimate.count };
 }
 
 /** Actual change between end-month median and the median exactly N months
@@ -27,15 +31,18 @@ export function recentStudyChange(analysis: MarketConditionsAnalysis, months: 3 
 
 export function selectedMarketDetermination(response: MarketConditionsResponse, keys: MarketConditionsStudyAreaKey[]) {
   const analyses = response.analyses.filter(analysis => keys.includes(analysis.market.key));
-  const annual = reconcileStudyValues(analyses.map(analysis => analysis.statistics.annualized_change_percent));
+  const annualRaw = fullPrecisionStudyValues(analyses.map(analysis => analysis.statistics.annualized_change_percent));
+  const annual = { average: round(annualRaw.average), median: round(annualRaw.median), value: round(annualRaw.value), count: annualRaw.count };
+  const sampleLimitedStudies = analyses.filter(analysis => analysis.statistics.sample_sufficient === false).map(analysis => analysis.market.label);
   const recent = (months: 3 | 6) => reconcileStudyValues(analyses.map(analysis => recentStudyChange(analysis, months)));
   const marketing = (months: 3 | 6 | 12) => reconcileStudyValues(analyses.map(analysis =>
     analysis.recent_periods?.find(period => period.months === months)?.median_days_on_market));
   const threshold = response.recommendation.stable_threshold_percent;
-  const conclusion = annual.value === null ? 'insufficient' : Math.abs(annual.value) < threshold ? 'stable'
-    : annual.value > 0 ? 'increasing' : 'decreasing';
+  // Rounding a 0.995% estimate to 1.00% must not cross the 1% stability cutoff.
+  const conclusion = annualRaw.value === null ? 'insufficient' : Math.abs(annualRaw.value) < threshold ? 'stable'
+    : annualRaw.value > 0 ? 'increasing' : 'decreasing';
   return { analyses, annual, sixMonths: recent(6), threeMonths: recent(3),
-    marketingYear: marketing(12), marketingSixMonths: marketing(6), marketingThreeMonths: marketing(3), conclusion } as const;
+    marketingYear: marketing(12), marketingSixMonths: marketing(6), marketingThreeMonths: marketing(3), conclusion, sampleLimitedStudies } as const;
 }
 
 const percent = (value: number | null) => value === null ? 'unavailable' : `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
@@ -54,6 +61,7 @@ export function appliedMarketReconciliation(response: MarketConditionsResponse, 
       + `Past six-month change is ${percent(selected.sixMonths.value)}; past three-month change is ${percent(selected.threeMonths.value)}. `
       + `Reconciled study median marketing times for the past year, six months, and three months are ${days(selected.marketingYear.value)}, ${days(selected.marketingSixMonths.value)}, and ${days(selected.marketingThreeMonths.value)}, respectively. `
       + 'Changes use monthly median endpoints; marketing times reconcile separate study medians, not pooled overlapping sales. '
+      + (selected.sampleLimitedStudies.length ? `Provisional estimate: ${selected.sampleLimitedStudies.join(', ')} have insufficient sales samples. ` : '')
       + (unavailable ? 'Some selected studies lack period evidence; available-study counts are shown in HomeNode. ' : '')
       + 'The selected populations and their COD/CV consistency were considered in this reconciliation.' };
 }

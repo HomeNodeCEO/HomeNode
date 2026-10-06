@@ -125,6 +125,7 @@ export async function runCustomCohortPreparationCheckpointDatabaseChecks({ pool,
     FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1`, [organization])).rows
     .filter(row => { const v = JSON.parse(row.canonical_utf8); return v.schema_version === 1 && v.projection && Array.isArray(v.records); })
     .map(row => row.content_sha256));
+  assert.ok(sourceHashes.size > 0, 'fixture must retain source payload blobs for the source-denial assertion');
   try {
     allowSource = false; await makeDue(denied.operation); const from = calls.length;
     const refused = await worker(); assert.equal(refused.status, 'retry'); assert.equal(refused.reason, 'capture_failed');

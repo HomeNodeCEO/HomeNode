@@ -336,13 +336,14 @@ test('renders exact retained Polygon holes and disconnected MultiPolygons, never
   assert.deepEqual(map.fits[0].bounds, [[-97, 32], [-96.78, 32.01]]);
   assert.match(h.html(), /Included · red outline/);
   assert.doesNotMatch(h.html(), /Color parcels by/);
-  assert.match(h.html(), /not legal subdivision or neighborhood boundaries/); assert.doesNotMatch(h.html(), /Loading parcel map/);
+  assert.doesNotMatch(h.html(), /Click a subdivision|Shapes follow cached parcels|Loading parcel map/);
 });
 test('range controls follow the similarity legend and live statistics follow the map before city limits', async () => {
   const props = { ...fixture(), scoreBandSelector: 'Score controls marker', belowMapStatistics: 'Live statistics marker' };
   const h = harness(); await h.ready(props);
   const markup = h.html();
-  assert.ok(markup.indexOf('Fill reflects recorded-group similarity') < markup.indexOf('Score controls marker'));
+  assert.ok(markup.indexOf('Pocket similarity and inclusion colors') < markup.indexOf('Score controls marker'));
+  assert.doesNotMatch(markup, /Fill reflects recorded-group similarity/);
   assert.ok(markup.indexOf('Score controls marker') < markup.indexOf('Interactive parcel map'));
   assert.ok(markup.indexOf('Interactive parcel map') < markup.indexOf('Live statistics marker'));
   assert.ok(markup.indexOf('Live statistics marker') < markup.indexOf('City limits marker'));
@@ -1056,7 +1057,7 @@ test('activation uses the complete subdivision at every finite live zoom', async
   const calls = [], legacy = [], props = { ...familyFixture(), onActivatePocket: (...args) => calls.push(args),
     onInspectPocket: id => legacy.push(id) }, h = harness(); await h.ready(props);
   const map = h.maps[0];
-  assert.match(h.html(), /Subdivision view: clicks include all captured related groups/);
+  assert.doesNotMatch(h.html(), /Subdivision view:|Related names are review groupings/);
   for (const zoom of [14.999, 15, 15.001, 12]) {
     // Deliberately do not emit zoom or rerender: the callback must not use the
     // last React display mode, even when the camera changed moments ago.
@@ -1100,8 +1101,7 @@ test('zoom never changes subdivision interaction, selection or either source', a
   assert.equal(source.replacements.length, 0); assert.equal(labels.replacements.length, 0);
   assert.equal(map.states.length, 0); assert.equal(map.fits.length, 1); assert.equal(h.presentationCount, 1);
   assert.equal(JSON.stringify(props), original); assert.equal(h.loadCount, 1);
-  assert.match(h.html(), /Zooming does not change your choices/);
-  assert.match(h.html(), /not verified legal phases or coverage outside this capture/);
+  assert.doesNotMatch(h.html(), /Zooming does not change your choices|not verified legal phases or coverage outside this capture/);
 });
 
 for (const largerSecondChild of [false, true]) test(`parent label keeps exact retained ${largerSecondChild ? 'largest child' : 'ID tie-break child'} anchor`, async () => {

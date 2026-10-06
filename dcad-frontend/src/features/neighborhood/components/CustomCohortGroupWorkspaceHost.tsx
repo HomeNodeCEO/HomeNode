@@ -146,9 +146,12 @@ function HostSession(props: Props) {
   });
   function inspectedDisplay(input: { accountId: string; assignmentFileId: string; contextRef: object; selection: { revision: number } }) {
     const display = owner.current?.getState().display;
+    // An independently inspected original subset has its own revision (the
+    // workspace uses 1), not the saved main population's selection revision.
+    // read() still binds the current display at click and actual lane admission.
     if (!display || input.accountId !== initial.target.accountId || input.assignmentFileId !== initial.target.assignmentFileId
       || JSON.stringify(input.contextRef) !== JSON.stringify(display.active.context_ref)
-      || input.selection.revision !== display.active.selection_ref.selection_revision) throw fault('context_changed');
+      || !Number.isSafeInteger(input.selection.revision) || input.selection.revision < 1) throw fault('context_changed');
     admitDisplay(display); return display;
   }
   const [inspectionPreview] = useState<CustomCohortExactWorkspace['inspectionPreview']>(() => (...[input, options]: Parameters<CustomCohortExactWorkspace['inspectionPreview']>) => {

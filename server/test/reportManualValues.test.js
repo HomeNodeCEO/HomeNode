@@ -3,6 +3,17 @@ import test from "node:test";
 
 import { validateAssignmentDetails } from "../src/util/reportManualValues.js";
 
+test('neighborhood generated baseline and retained review flags stay bounded', () => {
+  assert.equal(validateAssignmentDetails({ subject_neighborhood_summary: 'Appraiser template.',
+    subject_neighborhood_summary_template: 'Appraiser template.', subject_neighborhood_summary_review_items: ['nearby_school_and_amenities'] }), true);
+  for (const extra of [{ subject_neighborhood_summary_template: 123 },
+    { subject_neighborhood_summary_template: 'x'.repeat(8001) },
+    { subject_neighborhood_summary_review_items: ['x'.repeat(121)] },
+    { subject_neighborhood_summary_review_items: Array(33).fill('travel_times') }]) {
+    assert.throws(() => validateAssignmentDetails(extra), /invalid_subject_neighborhood_summary/);
+  }
+});
+
 test("assignment details allow a PUD with complete dues", () => {
   assert.equal(validateAssignmentDetails({
     pud: true,

@@ -101,13 +101,35 @@ test('narrative bedroom/bath medians use only in-period single-account closed so
     sale(6, 'A', { source_bedrooms_total: 9 }),
   ], links: [link(61, 6, 'B')] });
   const result = summary(source).narrative_observations;
-  assert.equal(result.basis, 'in_period_single_account_closed_source_records');
+  assert.equal(result.basis, 'in_period_single_account_closed_sales');
   assert.equal(result.authority, 'not_established');
   assert.equal(result.source_record_count, 2);
+  assert.equal(result.canonical_sale_count, 2);
   assert.deepEqual(result.metrics.bedrooms_total, { median: 4, count: 2, missing_count: 0 });
   assert.deepEqual(result.metrics.bathrooms_total_integer, { median: 3, count: 2, missing_count: 0 });
   assert.equal(summary(built({ pockets: [] })).narrative_observations.source_record_count, 0);
   assert.equal(summary(built({ pockets: [] })).narrative_observations.metrics.bedrooms_total.median, null);
+});
+
+test('narrative medians count each canonical sale once and retain source disagreement as missing', () => {
+  const source = built({ sales: [
+    ...Array.from({ length: 8 }, (_, i) => sale(i + 1, 'A', {
+      sale_id: '1', source_bedrooms_total: 3, source_bathrooms_total_integer: 2,
+    })),
+    sale(9, 'A', { source_bedrooms_total: 5, source_bathrooms_total_integer: 4 }),
+    sale(10, 'A', { source_bedrooms_total: 7, source_bathrooms_total_integer: 5 }),
+    sale(11, 'A', { sale_id: '10', source_bedrooms_total: 8, source_bathrooms_total_integer: 5 }),
+  ] });
+  const result = summary(source).narrative_observations;
+  assert.equal(result.source_record_count, 11);
+  assert.equal(result.canonical_sale_count, 3);
+  assert.deepEqual(result.metrics.bedrooms_total, { median: 4, count: 2, missing_count: 1 });
+  assert.deepEqual(result.metrics.bathrooms_total_integer, { median: 4, count: 3, missing_count: 0 });
+  const missing = summary(built({ sales: [
+    sale(1, 'A', { source_bedrooms_total: 3 }),
+    sale(2, 'A', { sale_id: '1', source_bedrooms_total: null }),
+  ] })).narrative_observations;
+  assert.deepEqual(missing.metrics.bedrooms_total, { median: null, count: 0, missing_count: 1 });
 });
 
 test('zero is zero; absent/conflicting/invalid data remains unavailable with the original missing denominator', () => {

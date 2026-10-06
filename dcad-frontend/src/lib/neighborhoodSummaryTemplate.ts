@@ -19,7 +19,7 @@ export function neighborhoodSummaryTemplate(input: SubjectNeighborhoodSummaryInp
   const summary = object(group?.summary), selected = object(summary.selected), stock = object(object(selected.stock).metrics);
   const narrative = object(summary.narrative_observations), period = object(narrative.observation_period);
   const expected = object(summary.observation_period);
-  const matching = narrative.basis === 'in_period_single_account_closed_source_records'
+  const matching = narrative.basis === 'in_period_single_account_closed_sales'
     && typeof expected.start_date === 'string' && period.start_date === expected.start_date && period.end_date === expected.end_date;
   const metrics = matching ? object(narrative.metrics) : {};
   return buildSubjectNeighborhoodSummary({ ...input, medianYearBuilt: median(stock.year_built),

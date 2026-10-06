@@ -7,7 +7,7 @@ import { assignmentDraftFromDetail } from '../src/lib/propertyReportAssignment.t
 const input = { subdivision: 'MONICA PARK 4', city: 'Garland', effectiveDate: '2026-08-31', locationType: 'suburban' };
 const group = { summary: { observation_period: { start_date: '2024-09-01', end_date: '2026-08-31' },
   selected: { stock: { metrics: { year_built: { count: 2000, median: 1958 } } } },
-  narrative_observations: { basis: 'in_period_single_account_closed_source_records',
+  narrative_observations: { basis: 'in_period_single_account_closed_sales',
     observation_period: { start_date: '2024-09-01', end_date: '2026-08-31' },
     metrics: { bedrooms_total: { count: 50, median: 3 }, bathrooms_total_integer: { count: 48, median: 2 } } } } };
 

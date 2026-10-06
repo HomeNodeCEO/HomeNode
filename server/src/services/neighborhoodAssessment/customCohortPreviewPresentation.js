@@ -149,14 +149,27 @@ function narrativeObservations(preview) {
     row.associated_account_ids.length === 1 && selected.has(row.associated_account_ids[0])
     && row.record_types.length === 1 && row.record_types[0] === 'closed_sale'
     && row.canonical_transaction_ids.length === 1 && inPeriod.has(row.canonical_transaction_ids[0]));
+  // One retained canonical sale gets one vote even when multiple uploaded source
+  // records describe it. Inconsistent/missing source measurements stay missing;
+  // do not select the first provider or average disagreements into a new fact.
+  const sales = new Map();
+  for (const row of sources) {
+    const id = row.canonical_transaction_ids[0];
+    if (!sales.has(id)) sales.set(id, []);
+    sales.get(id).push(row);
+  }
   const metrics = Object.fromEntries(['bedrooms_total', 'bathrooms_total_integer'].map(key => {
-    const values = sources.map(row => row.observations[key]?.state === 'observed'
-      ? row.observations[key].value : null);
+    const values = [...sales.values()].map(rows => {
+      const first = rows[0].observations[key];
+      return first?.state === 'observed' && rows.every(row => row.observations[key]?.state === 'observed'
+        && row.observations[key].value === first.value) ? first.value : null;
+    });
     const result = exactDistribution(values);
     return [key, { median: result.median, count: result.count, missing_count: result.missing_count }];
   }));
-  return { basis: 'in_period_single_account_closed_source_records', authority: 'not_established',
-    source_record_count: sources.length, observation_period: { ...preview.observation_period }, metrics };
+  return { basis: 'in_period_single_account_closed_sales', authority: 'not_established',
+    source_record_count: sources.length, canonical_sale_count: sales.size,
+    observation_period: { ...preview.observation_period }, metrics };
 }
 
 /** Browser-shaped data, not HTML or authority. Call only after exact authorized

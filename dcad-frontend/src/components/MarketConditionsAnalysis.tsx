@@ -537,13 +537,18 @@ export default function MarketConditionsAnalysis({
   const explorationIdentity = selectedExploration ? explorationAreaIdentity(selectedExploration.binding) : null;
   const onCompletionChangeRef = useRef(onCompletionChange);
   onCompletionChangeRef.current = onCompletionChange;
+  const databaseOwned = Boolean(onCompletionChange);
   const savedDraft = useMemo(
     () => {
-      const value = initialDraft || readMarketConditionsDraft(subjectAccountId, assignmentFileId, applicationSession);
+      // Callback editors persist through their parent workfile. A lazy mount
+      // must wait for that database draft, not publish an older browser cache
+      // back over it. Standalone editors may still use their local draft.
+      const value = initialDraft || (databaseOwned ? null
+        : readMarketConditionsDraft(subjectAccountId, assignmentFileId, applicationSession));
       return value?.accountId.trim().toUpperCase() === subjectAccountId.trim().toUpperCase()
         && value.assignmentFileId === assignmentFileId ? value : null;
     },
-    [applicationSession, assignmentFileId, initialDraft, subjectAccountId],
+    [applicationSession, assignmentFileId, databaseOwned, initialDraft, subjectAccountId],
   );
   const [subject, setSubject] = useState<MarketConditionsSubject | null>(
     savedDraft?.response.subject || null,

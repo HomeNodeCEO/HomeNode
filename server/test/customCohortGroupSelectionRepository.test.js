@@ -83,7 +83,8 @@ test('registers exact complete selection, lost-ACK replay and original reopen wi
   assert.deepEqual(loaded.original, f.staged.original);
   assert.equal(f.revisions.size, 1); assert.equal(f.operations.size, 1);
   assert.ok(f.calls.every(c => !/\b(BEGIN|COMMIT|ROLLBACK|DELETE|TRUNCATE)\b/.test(c.sql)));
-  assert.match(f.calls.find(c => c.tag === 'custom-cohort-group-selection:target' && /UPDATE/.test(c.sql)).sql, /FOR UPDATE NOWAIT/);
+  assert.match(f.calls.find(c => c.tag === 'custom-cohort-group-selection:target' && /UPDATE/.test(c.sql)).sql, /FOR NO KEY UPDATE NOWAIT/);
+  assert.match(f.calls.find(c => c.tag === 'custom-cohort-group-selection:target' && /FOR SHARE/.test(c.sql)).sql, /FOR SHARE NOWAIT/);
 });
 
 test('explicit empty selection advances once and old/stale operations cannot rewind it', async () => {

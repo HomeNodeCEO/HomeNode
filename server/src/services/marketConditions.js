@@ -552,8 +552,13 @@ async function validateCustomAreaInDatabase(pool, geometry, subject) {
   };
 }
 
+// This deterministic, single-row parameter CTE must be inlined. Materializing
+// it hides the chosen date/area constants from PostgreSQL, delaying geographic
+// filtering until after the broad enriched-sale joins and preventing hashed
+// membership checks for large exploration unions. All statistics remain over
+// the same complete eligible population; this is not a sampling or cache change.
 const MARKET_ANALYSIS_SQL = `
-  WITH parameters AS (
+  WITH parameters AS NOT MATERIALIZED (
     SELECT
       NULLIF($1, '')::date AS period_end,
       (

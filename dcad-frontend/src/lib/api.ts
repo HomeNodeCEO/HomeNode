@@ -242,6 +242,9 @@ export interface ReportManualValue {
 
 export interface AssignmentDetailsPayload {
   subject_neighborhood_summary?: string;
+  subject_neighborhood_summary_template?: string;
+  subject_neighborhood_summary_review_items?: string[];
+  subject_neighborhood_summary_school?: import('./nearbySchoolContext').NearbySchoolContext;
   subject_condition_rating?: string;
   subject_condition_notes?: string;
   significant_physical_deficiencies?: boolean | null;
@@ -1249,6 +1252,8 @@ export type MarketConditionsAreaKey =
   | 'radius_5'
   | 'custom';
 
+export type MarketConditionsStudyAreaKey = MarketConditionsAreaKey | 'exploration';
+
 export type GeoJsonPolygon = {
   type: 'Polygon';
   coordinates: number[][][];
@@ -1383,8 +1388,8 @@ export interface MarketStudyStatistics {
 
 export interface MarketConditionsAnalysis {
   market: {
-    key: MarketConditionsAreaKey;
-    scope: 'city' | 'zip' | 'radius' | 'custom';
+    key: MarketConditionsStudyAreaKey;
+    scope: 'city' | 'zip' | 'radius' | 'custom' | 'exploration';
     label: string;
     city: string | null;
     county: string | null;
@@ -1463,7 +1468,7 @@ export interface MarketConditionsResponse {
     recommended_change_percent: number | null;
     ranked_studies: Array<{
       rank: number;
-      key: MarketConditionsAreaKey;
+      key: MarketConditionsStudyAreaKey;
       label: string;
       reliability_score: number | null;
       reconciliation_weight_percent?: number | null;
@@ -1475,7 +1480,7 @@ export interface MarketConditionsResponse {
     }>;
   };
   unavailable_areas: Array<{
-    key: MarketConditionsAreaKey;
+    key: MarketConditionsStudyAreaKey;
     label: string;
     reason: string;
   }>;
@@ -1485,7 +1490,7 @@ export interface MarketConditionsResponse {
 export interface MarketConditionsRequest {
   subjectAccountId: string;
   assignmentFileId?: number | null;
-  areaKeys: MarketConditionsAreaKey[];
+  areaKeys: MarketConditionsStudyAreaKey[];
   asOf?: string;
   periodMonths: 12 | 24 | 36;
   customGeometry?: GeoJsonPolygon | null;
@@ -1941,7 +1946,7 @@ export async function searchAccounts(q: string, limit = 25, offset = 0): Promise
   return fetchJSON<AccountRow[]>(url);
 }
 
-/** Get a single account (core + latest market values + primary improvements) */
+/** Get account, market values and primary improvements. */
 export async function getAccount(
   accountId: string,
   options: { assignmentFileId?: number | null } = {},
@@ -1953,7 +1958,7 @@ export async function getAccount(
   return fetchJSON<AccountDetail>(url);
 }
 
-/** Load the latest ordered MLS photo gallery available for an account. */
+/** Load ordered MLS photos. */
 export async function getAccountPhotos(accountId: string): Promise<AccountPhotosResponse> {
   const id = (accountId || '').trim();
   const url = makeUrl(`/api/accounts/${encodeURIComponent(id)}/photos`);
@@ -2974,7 +2979,7 @@ export async function savePropertyZoningVerification(
   });
 }
 
-/** Resolve one property's Census tract immediately, ahead of the background queue. */
+/** Resolve the subject Census tract. */
 export async function lookupAccountCensusGeography(
   accountId: string,
   editorKey: string,
@@ -3028,7 +3033,7 @@ export async function getCensusZipProfile(postalCode: string): Promise<CensusZip
   );
 }
 
-/** Load the official ACS 5-year unemployment estimate for a city/place. */
+/** Load city/place ACS unemployment. */
 export async function getCensusCityProfile(
   city: string,
   state = 'TX',
@@ -3055,7 +3060,7 @@ export async function updateAccountHousingProfile(
   });
 }
 
-/** Save one or more explicitly edited Property Report sections with audit history. */
+/** Save edited report sections with audit history. */
 export async function updatePropertyReportSections(
   accountId: string,
   sections: Partial<Record<ReportManualSectionKey, unknown>>,
@@ -3084,7 +3089,7 @@ export async function updatePropertyReportSections(
   });
 }
 
-/** Load the immutable assignment-file log and the latest values available to inherit. */
+/** Load assignment-file log and inheritable values. */
 export async function getAssignmentFiles(
   accountId: string,
   assignmentFileId?: number | null,
@@ -3547,7 +3552,7 @@ export async function getComparableRecommendations(
   return fetchJSON<ComparableRecommendationsResponse>(url, { timeoutMs: 90000 });
 }
 
-/** Load the subject location used to center the independent market-study map. */
+/** Load the subject location for market studies. */
 export async function getMarketConditionsContext(
   subjectAccountId: string,
   assignmentFileId?: number | null,
@@ -3574,7 +3579,7 @@ export async function getRelatedParcels(
   return fetchJSON<RelatedParcelsResponse>(url, { timeoutMs: 90000 });
 }
 
-/** Build independent market-condition studies without filtering comparable inventory. */
+/** Independent market studies. */
 export async function runMarketConditionsAnalysis(
   request: MarketConditionsRequest,
 ): Promise<MarketConditionsResponse> {

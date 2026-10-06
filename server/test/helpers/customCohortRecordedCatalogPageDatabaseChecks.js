@@ -54,6 +54,15 @@ export async function checkCustomCohortRecordedCatalogPageDatabase(pool) {
   try {
     await observer.query('BEGIN');
     const blobs = createNeighborhoodCohortBlobRepository(observer, organization), fresh = await prepare(make('').input);
+    const directory = await store(blobs).open(fresh, staged.manifest_ref);
+    assert.equal(directory.status, 'display_directory'); assert.equal(directory.authority, 'not_established');
+    assert.deepEqual(directory.manifest_ref, staged.manifest_ref);
+    assert.deepEqual(JSON.parse(directory.metadata_json), complete.metadata);
+    const manifest = JSON.parse(directory.manifest_json);
+    assert.equal(manifest.pages.length, 3); assert.equal(manifest.account_count, '1001');
+    assert.equal(manifest.group_count, '238'); assert.ok(!Object.hasOwn(directory, 'groups'));
+    await assert.rejects(store(createNeighborhoodCohortBlobRepository(observer, other)).open(fresh, staged.manifest_ref),
+      /missing_or_changed_original/);
     assert.deepEqual(await store(blobs).reopen(fresh, staged.manifest_ref), complete);
     for (let i = 0; i < fresh.page_count; i++) {
       const page = await store(blobs).readPage(await prepare(make('').input), staged.manifest_ref, i);

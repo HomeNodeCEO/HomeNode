@@ -159,6 +159,16 @@ export function createCustomCohortRecordedCatalogPageStore(repository, operation
     await load(source.original); await load(source.metadata); await load(source.manifest); op.live();
   };
   return Object.freeze({
+    async open(receipt, manifestRef) {
+      const source = sourceOf(receipt); pinned(source, manifestRef);
+      return run(receipt, async s => {
+        await begin(s); await end(s);
+        // Navigation only: this header names the complete directory, but no
+        // stored display page has been read. It is not a completed catalog.
+        return Object.freeze({ authority: 'not_established', status: 'display_directory',
+          manifest_ref: s.manifest.ref, manifest_json: s.manifest.text, metadata_json: s.metadata.text });
+      });
+    },
     async stage(receipt) {
       return run(receipt, async source => {
         for (const entry of [source.original, source.metadata, ...source.pages, source.manifest]) await retain(entry);

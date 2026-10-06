@@ -496,6 +496,40 @@ exact-reference report proposal/Apply and its browser consumer still have to
 land together before any genuine file transitions to V7. Partial source pages,
 complete >50k numeric studies and realistic live acceptance remain unfinished.
 
+## Exact-reference workspace proposal and coherent Apply (not browser activation)
+
+V7 report proposal/Apply and reviewed-input preparation now share the same
+original-selection verifier as the exact-reference numeric/map/member owners.
+After reloading the actor's current database roles and separately checking
+catalog and report/source purposes, the owner reconstructs the exact catalog
+and independent roster from verified prepared facts or the retained originals.
+It verifies the complete original command, metadata, membership and union pages
+against the current reference before deriving any owner-local group IDs for
+the existing report calculation kernels. A viewport or a member-page prefix
+cannot become the analytical selection. Shared prepared facts do not stand in
+for private CSV rights or their original review state.
+
+The exact selection reference is also part of the proposal's immutable fences.
+Before publication and before/after atomic Apply, the owner checks the current
+head under the existing workfile-before-target/context lock order, alongside
+the workspace/editor/boundary, current subject, source/private-review and report
+policy fences. Current actor roles are reloaded again at these final fences.
+The existing one-group boundary/population/statistics/provenance acceptance,
+history and lost-COMMIT-acknowledgment replay remain the publication mechanism;
+the new reference does not grant access or independently accept statistics.
+V1-v6 fingerprints and current browser defaults remain unchanged.
+
+An additional native test uses its own newly migrated disposable database and
+an actual preselected effective day, real retained captures, two registered
+selection originals, and an owner-saved V7 checkpoint. It exercises current-role
+and independent catalog denial, post-write refusal, a changed current-head
+pointer with identical workspace bytes, reviewed-input reopening, coherent
+proposal/Apply and lost-acknowledgment replay without changing original evidence
+or history. These assertions must pass actual CI; local SQL recording tests are
+not PostgreSQL proof. This slice does not add a public atomic save route, switch
+the browser, implement V7 context/period transitions, raise source/publication
+capacity, schedule partial source capture or establish a production speed SLA.
+
 The worker CLI validates its database URL before constructing the pool and
 requires certificate-verified TLS for every non-loopback host, including internal
 hosts. Only literal localhost/127.0.0.1/::1 development connections may be

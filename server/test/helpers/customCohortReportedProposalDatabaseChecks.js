@@ -17,8 +17,9 @@ import { loadCustomCohortCaptureInputs } from '../../src/services/neighborhoodAs
  * fixture, not a production schema/rights oracle. The caller creates/guards the
  * child database. No connection creation, cleanup, external data or mocked SQL.
  */
-export async function checkCustomCohortReportedProposalDatabase({ pool, databaseName, discovery, recordedHousing = false }) {
-  assert.equal(typeof recordedHousing, 'boolean');
+export async function checkCustomCohortReportedProposalDatabase({ pool, databaseName, discovery, recordedHousing = false,
+  exactSelectionWorkspace = false }) {
+  assert.equal(typeof recordedHousing, 'boolean'); assert.equal(typeof exactSelectionWorkspace, 'boolean');
   const choice = discovery === undefined ? null : prepareNeighborhoodDiscoveryChoice(discovery);
   const city = choice?.profile_id === 'custom-city-polygon-v1';
   // The optional case adds a genuinely distant parcel, not a relabeled v1
@@ -52,6 +53,10 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
     await client.query('BEGIN');
     await client.query("INSERT INTO app_auth.organizations(id,legal_name,display_name) VALUES($1,'Synthetic reported owner','Synthetic reported owner')", [organization]);
     await client.query("INSERT INTO app_auth.users(id,email,display_name) VALUES($1,$2,'Synthetic reported reviewer')", [actor, `${actor}@example.test`]);
+    if (exactSelectionWorkspace) {
+      await client.query('INSERT INTO app_auth.organization_memberships(organization_id,user_id) VALUES($1,$2)', [organization, actor]);
+      await client.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')", [organization, actor]);
+    }
     for (const id of [account, other, linked]) await client.query("INSERT INTO core.accounts(account_id,county,address,city,subdivision) VALUES($1,'Dallas','Synthetic only','Synthetic','Reported Native Plat')", [id]);
     if (expandedAccount) await client.query("INSERT INTO core.accounts(account_id,county,address,city,subdivision) VALUES($1,'Dallas',$2,'Synthetic','Reported Native Plat')",
       [expandedAccount, city ? 'Synthetic city-study parcel' : 'Synthetic four-mile parcel']);
@@ -93,6 +98,7 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
   const base = { auth, accountId: account, assignmentFileId: assignment };
   const calls = [], policyEvents = [];
   let afterCommit = null, loseCommit = false, denyAt = 0, changeAt = 0, policyCount = 0;
+  let denyCatalogAt = 0, catalogPolicyCount = 0;
   const observed = { async connect() {
     const raw = await pool.connect();
     return { release: error => raw.release(error), async query(config) {
@@ -106,8 +112,10 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
   const marketDecision = { allowed: true, decision_id: 'synthetic-retained-native', policy_revision: 'native-v1' };
   const reportDecision = { allowed: true, decision_id: 'synthetic-reported-native', policy_revision: 'native-v2' };
   const owner = createCustomCohortContextCapture({ pool: observed,
-    authorizeMarketData: async (_client, actualAuth, context) => {
-      assert.equal(actualAuth.userId, actor); assert.equal(context.scope.organization_id, organization); return marketDecision;
+    authorizeMarketData: async (_client, actualAuth, context, _purpose, options) => {
+      assert.equal(actualAuth.userId, actor); assert.equal(context.scope.organization_id, organization);
+      if (options?.exposure === 'report_observation_catalog' && ++catalogPolicyCount === denyCatalogAt) return { allowed: false };
+      return marketDecision;
     }, authorizeReportedObservations: async (_client, actualAuth, context, purpose, options) => {
       assert.equal(actualAuth.userId, actor); assert.equal(context.scope.organization_id, organization);
       assert.equal(purpose.kind, 'custom_reported_observations_v2'); assert.equal(options.exposure, 'custom_report_observations');
@@ -129,13 +137,14 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
     const legacy = await owner.capture({ ...base, operationId: randomUUID(), observationPeriod: period });
     assert.equal(legacy.discovery.radius_metres, '4828.032'); assert.equal(legacy.discovery.account_count, city ? 3 : 2);
   }
-  const catalog = await owner.catalog({ ...base, contextRef: captured.context_ref, selection: { revision: 1, pockets: [] } });
+  const catalog = await owner.catalog({ ...base, contextRef: captured.context_ref, selection: { revision: 1, pockets: [] },
+    ...(exactSelectionWorkspace ? { catalogVersion: 3 } : {}) });
   assert.equal(catalog.catalog.catalog_complete, true);
   if (city) assert.deepEqual(catalog.discovery, choice);
   const groupIds = catalog.catalog.pockets.map(value => value.id);
   if (catalog.catalog.unassigned.member_count) groupIds.push('discovery:unassigned');
   assert.ok(groupIds.length > 0);
-  const checkpoint = { workspace_version: city ? 4 : choice ? 3 : 1, pending_capture: null, active: { context_ref: captured.context_ref,
+  let checkpoint = { workspace_version: exactSelectionWorkspace ? 6 : city ? 4 : choice ? 3 : 1, pending_capture: null, active: { context_ref: captured.context_ref,
     observation_period: period, selection: { revision: 1, included_recorded_group_ids: groupIds },
     ...(choice ? { discovery: choice } : {}) } };
   client = await pool.connect();
@@ -145,7 +154,19 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
       sectionKey: 'neighborhood_workspace', sectionValue: checkpoint, expectedRevision: 0, saveReason: 'manual_save', reviewer: actor });
     assert.equal(saved.revision, 1); await client.query('COMMIT');
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
-  const proposalInput = () => ({ ...base, contextRef: captured.context_ref, expectedWorkspaceRevision: 1, expectedEditorRevision: 0, operationId: randomUUID() });
+  let workspaceRevision = 1, selectionRevision = 1, predecessorSelection = null;
+  if (exactSelectionWorkspace) {
+    predecessorSelection = await owner.selectRecordedGroups({ ...base, contextRef: captured.context_ref,
+      operationId: randomUUID(), expectedSelectionRef: null, includedRecordedGroupIds: groupIds });
+    const saved = await owner.selectAndSaveRecordedGroups({ ...base, contextRef: captured.context_ref,
+      operationId: randomUUID(), expectedSelectionRef: predecessorSelection.selection_ref,
+      includedRecordedGroupIds: groupIds, expectedWorkspaceRevision: workspaceRevision });
+    checkpoint = saved.workspace.value; workspaceRevision = saved.workspace.revision;
+    selectionRevision = saved.selection_ref.selection_revision;
+    assert.equal(checkpoint.workspace_version, 7); assert.equal(workspaceRevision, 2); assert.equal(selectionRevision, 2);
+  }
+  const proposalInput = () => ({ ...base, contextRef: captured.context_ref, expectedWorkspaceRevision: workspaceRevision,
+    expectedEditorRevision: 0, operationId: randomUUID() });
   const protectedState = async () => (await pool.query(`SELECT
     (SELECT count(*)::integer FROM app.neighborhood_assessment_jobs j JOIN app.neighborhood_assessments h ON h.id=j.assessment_id WHERE h.organization_id=$1) AS jobs,
     (SELECT count(*)::integer FROM app.neighborhood_assessment_requests r JOIN app.neighborhood_assessments h ON h.id=r.assessment_id WHERE h.organization_id=$1) AS requests,
@@ -163,8 +184,8 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
       discovery: city ? { ...choice, city: { ...choice.city, vintage: '2025-01-01' } } : { ...choice, radius_metres: '16093.44' } } };
     const replace = async (value, expected) => {
       const result = await pool.query(`UPDATE app.custom_appraisal_workfile_sections SET section_value=$2::jsonb
-        WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace' AND revision=1
-          AND section_value=$3::jsonb RETURNING revision`, [assignment, JSON.stringify(value), JSON.stringify(expected)]);
+        WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace' AND revision=$4
+          AND section_value=$3::jsonb RETURNING revision`, [assignment, JSON.stringify(value), JSON.stringify(expected), workspaceRevision]);
       assert.equal(result.rowCount, 1, 'change only this exact owned synthetic checkpoint; preserve its editor revision');
     };
     await replace(changed, checkpoint);
@@ -175,7 +196,50 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
       assert.ok(!calls.slice(from).some(sql => /neighborhood:(enqueue|exact-claim|publish)|INSERT INTO app\.custom_neighborhood_acceptances/.test(sql)));
     } finally { await replace(checkpoint, changed); resetPolicy(); }
   }
+  const suspend = status => pool.query('UPDATE app_auth.organization_memberships SET status=$3 WHERE organization_id=$1 AND user_id=$2',
+    [organization, actor, status]);
+  const changeHead = async (next, expected) => {
+    const changed = await pool.query(`UPDATE app.neighborhood_custom_cohort_group_selection_heads SET selection_revision=$3
+      WHERE organization_id=$1 AND context_id=$2 AND selection_revision=$4 RETURNING selection_revision`,
+    [organization, captured.context_ref.context_id, next, expected]);
+    assert.equal(changed.rowCount, 1, 'fault injection changes only the exact disposable fixture current-head pointer');
+  };
   const before = await protectedState();
+  if (exactSelectionWorkspace) {
+    await suspend('suspended');
+    try { await assert.rejects(owner.prepareReportedObservations(proposalInput()), /job_actor_access_revoked/); }
+    finally { await suspend('active'); }
+    assert.deepEqual(await protectedState(), before);
+    catalogPolicyCount = 0; denyCatalogAt = 1;
+    try { await assert.rejects(owner.prepareReportedObservations(proposalInput()), /market_data_access_denied/); }
+    finally { denyCatalogAt = 0; }
+    assert.deepEqual(await protectedState(), before);
+    catalogPolicyCount = 0; denyCatalogAt = 4;
+    const finalCatalogFrom = calls.length;
+    try { await assert.rejects(owner.prepareReportedObservations(proposalInput()), /market_data_access_denied/); }
+    finally { denyCatalogAt = 0; }
+    assert.ok(calls.slice(finalCatalogFrom).some(sql => sql.includes('neighborhood:exact-claim')),
+      'catalog revocation witness must occur after actual publication writes');
+    assert.deepEqual(await protectedState(), before);
+    afterCommit = () => suspend('suspended');
+    try { await assert.rejects(owner.prepareReportedObservations(proposalInput()), /job_actor_access_revoked/); }
+    finally { await suspend('active'); }
+    assert.deepEqual(await protectedState(), before);
+    // Both revisions have actual retained originals. Fault-inject only the
+    // current pointer between owner transactions, keeping workspace bytes and
+    // revision identical. Do not rewrite any original, history or acceptance.
+    afterCommit = () => changeHead(predecessorSelection.selection_ref.selection_revision, selectionRevision);
+    try { await assert.rejects(owner.prepareReportedObservations(proposalInput()), /selection_changed/); }
+    finally { await changeHead(selectionRevision, predecessorSelection.selection_ref.selection_revision); }
+    assert.deepEqual(await protectedState(), before);
+    const prepared = await owner.prepareReviewedInputs({ ...base, contextRef: captured.context_ref,
+      expectedWorkspaceRevision: workspaceRevision, expectedReviewGeneration: '0' });
+    assert.equal(prepared.workspace_section_revision, workspaceRevision);
+    assert.equal(prepared.supported_inputs.selection.revision, selectionRevision);
+    assert.deepEqual(await protectedState(), before);
+    resetPolicy();
+    checks.push('native V7 full original selection reopen and reviewed-input preparation; initial/final current-role and catalog refusals and a changed current head with identical workspace bytes prevent any proposal publication');
+  }
   if (choice) {
     await rejectChangedDiscovery(() => owner.prepareReportedObservations(proposalInput()), before);
     checks.push(city ? 'a city retained context cannot be relabeled with another city asset vintage before proposal; no publication writes'
@@ -195,12 +259,13 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
   assert.deepEqual(await protectedState(), before); resetPolicy();
   checks.push('initial/report-final rights denial and changed decisions reject; post-publication denial rolls request/claim/source/attachment writes back');
 
-  afterCommit = async () => { await pool.query(`UPDATE app.custom_appraisal_workfile_sections SET revision=2
-    WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace' AND revision=1`, [assignment]); };
+  afterCommit = async () => { await pool.query(`UPDATE app.custom_appraisal_workfile_sections SET revision=$2
+    WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace' AND revision=$3`, [assignment, workspaceRevision + 1, workspaceRevision]); };
   await assert.rejects(owner.prepareReportedObservations(proposalInput()), /workspace_changed/);
   assert.deepEqual(await protectedState(), before);
-  assert.equal((await pool.query(`UPDATE app.custom_appraisal_workfile_sections SET revision=1
-    WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace' AND revision=2 RETURNING revision`, [assignment])).rowCount, 1);
+  assert.equal((await pool.query(`UPDATE app.custom_appraisal_workfile_sections SET revision=$2
+    WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace' AND revision=$3 RETURNING revision`,
+  [assignment, workspaceRevision, workspaceRevision + 1])).rowCount, 1);
   resetPolicy();
   checks.push('a real committed checkpoint revision change between owner transactions prevents publication');
 
@@ -209,7 +274,7 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
   const requested = proposalInput(), from = calls.length;
   const proposal = await owner.prepareReportedObservations(requested);
   assert.equal(proposal.status, 'proposed', JSON.stringify(proposal)); assert.equal(proposal.reused, false);
-  assert.equal(proposal.assessment.contract_version, 2); assert.equal(proposal.editor_revision, 0); assert.equal(proposal.workspace_section_revision, 1);
+  assert.equal(proposal.assessment.contract_version, 2); assert.equal(proposal.editor_revision, 0); assert.equal(proposal.workspace_section_revision, workspaceRevision);
   assert.equal(proposal.assessment.status, 'ready'); assert.equal(proposal.assessment.geography_status, 'ready');
   assert.ok(calls.slice(from).some(sql => sql.includes('neighborhood:exact-claim')));
   assert.ok(!calls.slice(from).some(sql => sql.includes('neighborhood:claim */')));
@@ -229,6 +294,24 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
   const applying = { ...requested, operationId: randomUUID(), proposalOperationId: requested.operationId,
     attachmentId: proposal.attachment_ref.attachment_id, attachmentRevision: proposal.attachment_ref.attachment_revision,
     bindingDigest: proposal.attachment_ref.binding_digest, adopt: true };
+  if (exactSelectionWorkspace) {
+    await suspend('suspended');
+    try { await assert.rejects(owner.applyReportedObservations(applying), /job_actor_access_revoked/); }
+    finally { await suspend('active'); }
+    assert.deepEqual(await protectedState(), frozen);
+    await changeHead(predecessorSelection.selection_ref.selection_revision, selectionRevision);
+    try { await assert.rejects(owner.applyReportedObservations(applying), /selection_changed/); }
+    finally { await changeHead(selectionRevision, predecessorSelection.selection_ref.selection_revision); }
+    assert.deepEqual(await protectedState(), frozen);
+    catalogPolicyCount = 0; denyCatalogAt = 3;
+    const afterApplyFrom = calls.length;
+    try { await assert.rejects(owner.applyReportedObservations(applying), /market_data_access_denied/); }
+    finally { denyCatalogAt = 0; }
+    assert.ok(calls.slice(afterApplyFrom).some(sql => sql.includes('custom-neighborhood-acceptance:insert')),
+      'catalog revocation witness must occur after actual coherent acceptance writes');
+    assert.deepEqual(await protectedState(), frozen); resetPolicy();
+    checks.push('native V7 Apply reloads current roles, refuses a changed head with identical workspace, and rolls acceptance/section/history back on post-write catalog revocation');
+  }
   if (choice) {
     await rejectChangedDiscovery(() => owner.applyReportedObservations(applying), frozen);
     checks.push('Apply refuses changed saved discovery at the same workspace revision before accepting any of the five report parts');
@@ -260,7 +343,7 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
     report_file_id: report, assignment_file_id: Number(assignment), account_id: account } });
   assert.equal(projected.status, 'ready', JSON.stringify(projected)); assert.equal(projected.assessment.contract_version, 2);
   assert.deepEqual(projected.assessment.geographic_neighborhood.geometry, geometry);
-  assert.equal(projected.assessment.selection.revision, '1');
+  assert.equal(projected.assessment.selection.revision, String(selectionRevision));
   assert.ok(projected.assessment.populations.some(value => value.member_unit === 'source_record'));
   assert.equal(projected.assessment.application_group.status, 'ready');
   if (choice) {
@@ -287,7 +370,7 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
     }
     const cadSource = sources.rows.find(row => row.source_id === population.capture_source_ref);
     assert.deepEqual(cadSource.source_payload.binding.context_ref, captured.context_ref);
-    assert.equal(cadSource.source_payload.binding.selection_revision, checkpoint.active.selection.revision);
+    assert.equal(cadSource.source_payload.binding.selection_revision, selectionRevision);
     const scopeJson = canonicalAssessmentJson({ organization_id: organization, report_file_id: report,
       assignment_file_id: assignment, account_id: account });
     client = await pool.connect();

@@ -583,3 +583,40 @@ Public save/transition HTTP routes and the complete V7 browser lifecycle are
 still unactivated. Installed source/numerical limits, release policy, background
 schedules and production speed claims are unchanged; partial source paging,
 complete >50k studies and 5-/10-mile/retrospective live acceptance remain open.
+
+## Opt-in atomic workspace HTTP and browser transport (not UI activation)
+
+The dedicated cohort router can now explicitly opt into the four closed V7
+commands: `save-groups`, `start-group-capture`, `cancel-group-capture`, and
+`complete-group-capture`. The default is off, and opting in requires all four
+actual owner methods. No production composition enables it in this slice. The
+existing authenticated/CSRF mount, finite execution gate, disconnect signal,
+int64 assignment identity and 262,144-byte decoded request/response ceilings
+remain. Each route maps only middleware identity and admitted intent to the
+same transaction owners; request roles, source rows, member arrays, accepted
+statistics and generic section-writer capabilities are rejected.
+
+Responses contain only a checked immediate workspace CAS successor and, for
+save/completion, the same exact registered selection receipt. Active context and
+selection references must agree; completion must preserve the exact pending
+observation period/discovery and clear pending intent. Start/cancel retain the
+exact prior active selection. Conflicts, current access denial, signed locks,
+interruption and unknown COMMIT outcomes remain distinct sanitized responses.
+Neither a receipt nor a pending operation establishes report authority.
+
+The new browser transport uses existing authenticated cancellation-aware I/O,
+closed action names and the same decoded byte ceilings. It admits immutable V7
+references and the unchanged date/discovery/private-review component grammar,
+checks the entire response against the request, and never allocates operations,
+retries automatically or infers all groups. Its section reader distinguishes
+actual absence from present corrupt/legacy/future data; old V1-v6 readers and
+defaults stay unchanged and still do not silently activate/reset V7. Local
+syntax/HTTP/transport doubles are not additional PostgreSQL proof. Actual owner
+transactions and coherent report Apply remain covered by their separate migrated
+native fixtures; full current-head CI must pass before merge.
+
+The complete browser lifecycle and coherent public composition must land before
+this opt-in is enabled. No genuine saved file, accepted report, source/numeric
+capacity, background schedule, release policy or production SLA changes here.
+Partial source-page recovery and realistic complete >50k/5-/10-mile/retrospective
+acceptance remain unfinished.

@@ -1,5 +1,6 @@
 import { prepareNeighborhoodCohortBlob as blob, prepareNeighborhoodCohortBlobReference as blobRef } from './cohortEvidenceBlobRepository.js';
-import { stageCohortPagedGroupSelectionV1, verifyCohortPagedGroupSelectionV1 } from './cohortPagedGroupSelectionV1.js';
+import { stageCohortPagedGroupSelectionV1, verifyCohortPagedGroupSelectionV1,
+  COHORT_PAGED_GROUP_SELECTION_V1_LIMITS as L } from './cohortPagedGroupSelectionV1.js';
 
 function fail(reason) { throw new TypeError(`cohort_paged_group_selection_v1_store_${reason}`); }
 function matches(actual, expected) {
@@ -36,9 +37,16 @@ export function createCohortPagedGroupSelectionV1Store(repository) {
     async verify({ manifestRef, ...input }) {
       let expected;
       try {
-        if (!manifestRef || Reflect.ownKeys(manifestRef).length !== 2) fail('invalid_reference');
+        if (!manifestRef || Object.getPrototypeOf(manifestRef) !== Object.prototype
+          || Reflect.ownKeys(manifestRef).length !== 2) fail('invalid_reference');
+        for (const key of ['content_sha256', 'canonical_utf8_bytes']) {
+          const d = Object.getOwnPropertyDescriptor(manifestRef, key);
+          if (!d?.enumerable || !Object.hasOwn(d, 'value')) fail('invalid_reference');
+        }
         expected = blobRef(manifestRef.content_sha256, manifestRef.canonical_utf8_bytes);
+        if (Number(expected.canonical_utf8_bytes) > L.manifest_bytes) fail('invalid_reference');
       } catch { fail('invalid_reference'); }
+      if (input.checkBudget !== undefined && typeof input.checkBudget !== 'function') fail('invalid_input');
       if (input.signal?.aborted) fail('cancelled'); input.checkBudget?.();
       const text = await repository.get(expected.content_sha256, expected.canonical_utf8_bytes);
       if (text === null) fail('missing_manifest');

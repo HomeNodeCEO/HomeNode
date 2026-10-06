@@ -166,6 +166,7 @@ export async function stageCohortPagedGroupSelectionV1({ metadataJson, membershi
  */
 export async function verifyCohortPagedGroupSelectionV1({ metadataJson, manifestJson,
   readPage, signal, checkBudget } = {}) {
+  check(checkBudget === undefined || typeof checkBudget === 'function', 'invalid_input');
   metadata(metadataJson);
   const manifest = original(manifestJson, L.manifest_bytes, 'invalid_manifest');
   closed(manifest, ['selection_version', 'usage', 'metadata_ref', 'membership_count', 'account_count',
@@ -185,6 +186,7 @@ export async function verifyCohortPagedGroupSelectionV1({ metadataJson, manifest
       check(ref.page_index === String(index) && typeof ref.entry_count === 'string'
         && /^[1-9]\d*$/.test(ref.entry_count) && Number(ref.entry_count) <= L.page_entries, 'invalid_manifest');
       reference(ref.page, 'invalid_manifest');
+      check(Number(ref.page.canonical_utf8_bytes) <= L.page_bytes, 'invalid_manifest');
     }
   }
   check(!signal?.aborted, 'cancelled'); checkBudget?.();

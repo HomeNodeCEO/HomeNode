@@ -210,3 +210,18 @@ test('storage keeps original metadata even if the caller mutates its input durin
   assert.equal(result.selection_sha256, f.selectionSha);
   assert.deepEqual(await store.verify({ metadataJson: f.metadataJson, manifestRef: result.manifest_ref }), result);
 });
+
+test('oversize page and manifest references are refused before fetching their originals', async () => {
+  const f = fixture(), r = await retain(f), manifest = JSON.parse(r.result.manifest_json);
+  let reads = 0; const readPage = async () => { reads++; assert.fail('oversize reference must not be fetched'); };
+  manifest.membership_pages[0].page.canonical_utf8_bytes = '256001';
+  await assert.rejects(verify({ metadataJson: f.metadataJson, manifestJson: json(manifest), readPage }), /invalid_manifest/);
+  const store = createStore({ put: async () => {}, get: readPage });
+  await assert.rejects(store.verify({ metadataJson: f.metadataJson,
+    manifestRef: { ...r.result.manifest_ref, canonical_utf8_bytes: '750001' } }), /invalid_reference/);
+  const getter = Object.defineProperty({ canonical_utf8_bytes: '100' }, 'content_sha256', {
+    enumerable: true, get() { assert.fail('reference accessor must not run'); },
+  });
+  await assert.rejects(store.verify({ metadataJson: f.metadataJson, manifestRef: getter }), /invalid_reference/);
+  assert.equal(reads, 0);
+});

@@ -2,6 +2,7 @@ import type {
   PropertyComplexityAssessment,
   PropertyComplexityLevel,
 } from "@/lib/api";
+import type { ReactNode } from "react";
 import { SummaryField } from "@/components/PropertyReportControls";
 
 type PropertyContextSectionProps = {
@@ -15,6 +16,11 @@ type PropertyContextSectionProps = {
   onComplexityChange: (value: PropertyComplexityLevel) => void;
   onNotesChange: (value: string) => void;
   onSave: () => void;
+  analyzeDisabled?: boolean;
+  saveDisabled?: boolean;
+  emptyMessage?: string;
+  peerSummary?: string;
+  studyEvidence?: ReactNode;
 };
 
 function titleCase(value: string): string {
@@ -32,9 +38,14 @@ export default function PropertyContextSection({
   onComplexityChange,
   onNotesChange,
   onSave,
+  analyzeDisabled = false,
+  saveDisabled = false,
+  emptyMessage,
+  peerSummary,
+  studyEvidence,
 }: PropertyContextSectionProps) {
   return (
-    <div className="mt-5 border-t border-slate-200 pt-4">
+    <div>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
@@ -52,14 +63,13 @@ export default function PropertyContextSection({
             ) : null}
           </div>
           <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-500">
-            Appraisal screening based on GLA, age, site size, amenities, parcel configuration,
-            nearby land uses, and road influences. The appraiser remains responsible for the final determination.
+            Subject characteristics, local influences, and the completed market studies.
           </p>
         </div>
         <button
           type="button"
           onClick={onAnalyze}
-          disabled={loading}
+          disabled={loading || saving || analyzeDisabled}
           className="hn-action-primary btn btn-sm normal-case rounded-lg disabled:opacity-60"
         >
           {loading ? "Analyzing..." : context ? "Refresh Context" : "Analyze Context"}
@@ -82,10 +92,12 @@ export default function PropertyContextSection({
                 .join(" - ")}
             />
             <SummaryField
-              label="Peer Properties"
-              value={`${context.peer_statistics.peer_count.toLocaleString()} analyzed`}
+              label={peerSummary ? "Study Areas" : "Peer Properties"}
+              value={peerSummary || `${context.peer_statistics.peer_count.toLocaleString()} analyzed`}
             />
           </div>
+
+          {studyEvidence}
 
           {context.factors.length ? (
             <div className="grid gap-2 md:grid-cols-2">
@@ -150,7 +162,7 @@ export default function PropertyContextSection({
             <button
               type="button"
               onClick={onSave}
-              disabled={saving}
+              disabled={saving || saveDisabled}
               className="hn-action-primary btn btn-sm normal-case rounded-lg disabled:opacity-60"
             >
               {saving ? "Saving..." : "Save Complexity Review"}
@@ -159,7 +171,7 @@ export default function PropertyContextSection({
         </div>
       ) : (
         <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-          Run the local context analysis to establish the assignment-complexity recommendation before selecting comparable sales.
+          {emptyMessage || 'Run the local context analysis to establish the assignment-complexity recommendation before selecting comparable sales.'}
         </div>
       )}
 

@@ -794,8 +794,9 @@ they cannot become a statistical population, source capability or report input.
 
 The existing parcel-map component now also accepts that display plus a host-owned
 viewport read port. Its labels, subdivision clicks/right-clicks, red inclusion
-outlines, similarity fills, retained subject pointer, city reference control and
-layout are unchanged. The exact path never calls the legacy flat-selection HTTP
+outlines, similarity fills and retained subject pointer are unchanged. The
+protected UI cleanup is retained: the removed city-reference selector is not
+restored in either mode. The exact path never calls the legacy flat-selection HTTP
 function. A stale display keeps the old map/observations paired; late pans cannot
 paint a newer selection. Legacy map inputs remain supported unchanged, and the
 production workspace still uses that legacy path.
@@ -818,7 +819,8 @@ responses may retain previously complete geometry marked incomplete for a new
 camera; access, conflict and integrity failures cannot hide behind that fallback.
 
 This opt-in still requires coherent V7 host admission/draft/read-only/flush fences,
-member/subdivision inspection and report consumers before production activation.
+optional member/subdivision read ports and report consumers before production
+activation; it must not restore removed inspection or adoption panels.
 Neither the component's optional port nor its local composition witness grants
 source access or Apply. No genuine appraisal, accepted report, production worker,
 schedule, installed capacity, release policy or speed SLA changes here. Local
@@ -875,17 +877,19 @@ selection and inspection admission. Mode, file, context and session changes
 have separate keyed ownership. The composed-display witness and matching target
 checks are local rendering validation, never source or report authority.
 
-Independent subdivision snapshots and record inspectors keep their separate
-explicit original-subset read contracts. Their small neutral input is not a
-fabricated V7 main population. The same host must supply these read-only ports
-under its current assignment/session lane. The location-review hint now requires
+The protected UI cleanup remains in force: neither legacy nor exact exploration
+mounts per-area snapshots, subdivision dialogs, pocket inspectors or the removed
+recorded-source-details panel. Map inspection clicks make no per-area requests
+and do not replace the complete selected statistics. Independent original-subset
+read contracts remain available to the host under its assignment/session lane;
+they are not a fabricated V7 main population. The location-review hint requires
 only checked binding and retained map/manifest fields; a deferred viewport or
 missing complete geometry cannot claim verified whole-family location coverage.
 No viewport fragment is reused as population evidence or averaged into statistics.
 
 Actual retained producers and checked display/transport fixtures feed nine new
 existing hook-harness tests for coherent composition, ID-only intent, empty
-successor, repeated renders, stale/read-only closure, independent subset reads,
+successor, repeated renders, stale/read-only closure, removed-panel/no-read checks,
 foreign/cloned targets, legacy/exact owner separation and refusing to fabricate a
 legacy market-analysis membership request from an exact display. That legacy
 callback stays null in exact mode; reference-aware analysis needs its own adapter.

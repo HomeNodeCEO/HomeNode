@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { loadMapLibreRuntime, MAPLIBRE_BASE_STYLE } from '../../../lib/mapLibreRuntime';
 import type { ParcelMapClick, ParcelMapRuntimeInstance } from '../../../lib/mapLibreRuntime';
-import NeighborhoodCityReferenceControl from '../../../components/NeighborhoodCityReferenceControl';
 import { buildCustomCohortMapPresentation } from '../customCohortMapPresentation';
 import type { CustomCohortMapLabel, CustomCohortMapPresentation, CustomCohortMapScore } from '../customCohortMapPresentation';
 import type { CustomCohortMapDisplay } from '../customCohortMapPresentation';
@@ -201,9 +200,8 @@ export default function CustomCohortParcelMap(props: Props) {
   const legacyGroup = props.group, legacyRequest = legacyGroup?.request, readViewport = props.readViewport;
   const container = useRef<HTMLDivElement>(null), mapRef = useRef<ParcelMapRuntimeInstance | null>(null);
   const painted = useRef<readonly PaintedParcel[]>([]);
-  const paintedLabels = useRef(''), cityViewActive = useRef(false);
+  const paintedLabels = useRef('');
   const paintedSubject = useRef('');
-  const [cityMap, setCityMap] = useState<ParcelMapRuntimeInstance | null>(null);
   const [showLabels, setShowLabels] = useState(true);
   const [displayMode, setDisplayMode] = useState<ActivationMode | null>(null);
   const [mapState, setMapState] = useState<'loading' | 'drawing' | 'ready' | 'failed'>('loading');
@@ -373,7 +371,6 @@ export default function CustomCohortParcelMap(props: Props) {
     let instance: ParcelMapRuntimeInstance | null = null;
     let observer: ResizeObserver | null = null;
     setMapState('loading'); setTileError(false); painted.current = []; paintedLabels.current = ''; paintedSubject.current = '';
-    setCityMap(null); cityViewActive.current = false;
     setDisplayMode(null);
     const timeout = window.setTimeout(() => { if (!disposed && !loaded) setMapState('failed'); }, 20_000);
     const onResize = () => { if (!disposed) instance?.resize(); };
@@ -520,7 +517,7 @@ export default function CustomCohortParcelMap(props: Props) {
           const bounds = displayBounds(latest.current.presentation, data.features);
           if (bounds) instance.fitBounds(bounds, { padding: 28, maxZoom: 16, duration: 0 });
           updateDisplayMode();
-          painted.current = data.features; loaded = true; window.clearTimeout(timeout); setCityMap(instance);
+          painted.current = data.features; loaded = true; window.clearTimeout(timeout);
           setCameraRevision(n => n + 1);
           awaitingDraw.current = true; setMapState('drawing');
           drawTimeout.current = window.setTimeout(() => { awaitingDraw.current = false; if (!disposed) setMapState('failed'); }, 20_000);
@@ -535,7 +532,7 @@ export default function CustomCohortParcelMap(props: Props) {
       if (drawTimeout.current !== null) window.clearTimeout(drawTimeout.current);
       drawTimeout.current = null; awaitingDraw.current = false;
       instance?.remove(); if (mapRef.current === instance) mapRef.current = null; painted.current = [];
-      setCityMap(null); cityViewActive.current = false; paintedLabels.current = ''; paintedSubject.current = '';
+      paintedLabels.current = ''; paintedSubject.current = '';
     };
   }, [contextKey, hasMap, deferredMode]);
 
@@ -561,7 +558,7 @@ export default function CustomCohortParcelMap(props: Props) {
         const bounds = displayBounds(presentation, geojson.features);
         // A viewport response only replaces visible detail. Refitting to the
         // capture here would zoom back out and immediately discard that detail.
-        if (bounds && !cityViewActive.current && !deferredMode) map.fitBounds(bounds, { padding: 28, maxZoom: 16, duration: 0 });
+        if (bounds && !deferredMode) map.fitBounds(bounds, { padding: 28, maxZoom: 16, duration: 0 });
       }
       painted.current = geojson.features;
       if (paintedLabels.current !== labelsKey) {
@@ -610,9 +607,9 @@ export default function CustomCohortParcelMap(props: Props) {
       : !hasMap ? <p role="status" className="p-4">{group.parcel_map.status === 'unavailable'
         ? `Parcel map unavailable: ${group.parcel_map.reason}.` : 'No captured parcel outlines are available for this context.'} Statistics remain observation-only.</p>
       : <div className="relative">
-        <div ref={container} className="h-[440px] min-h-80 w-full" role="region" aria-label="Interactive parcel map; use the recorded group list for keyboard selection" />
+        <div ref={container} className="h-[440px] min-h-80 w-full" role="region" aria-label="Interactive parcel map" />
         {(mapState === 'loading' || mapState === 'drawing') && <p role="status" className="absolute inset-0 grid place-content-center bg-white p-4 text-sm">{mapState === 'drawing' ? 'Drawing the matching parcel selection…' : 'Loading parcel map…'}</p>}
-        {mapState === 'failed' && <p role="alert" className="absolute inset-0 grid place-content-center bg-white p-4 text-sm">The map could not be displayed. Use the recorded group list; no substitute boundary has been drawn.</p>}
+        {mapState === 'failed' && <p role="alert" className="absolute inset-0 grid place-content-center bg-white p-4 text-sm">The map could not be displayed. Retry the preview; your saved selection is unchanged.</p>}
         {tileError && mapState === 'ready' && <p role="status" className="absolute bottom-3 left-3 rounded bg-white/95 p-2 text-xs">Some basemap resources could not load. Parcel selection and statistics are unchanged.</p>}
         {group.parcel_map.status === 'deferred' && mapState === 'ready' && detailState !== 'ready' &&
           <p role="status" className="absolute bottom-3 right-3 max-w-xs rounded bg-white/95 p-2 text-xs shadow">
@@ -625,7 +622,5 @@ export default function CustomCohortParcelMap(props: Props) {
           </p>}
       </div>}
     {belowMapStatistics && <div className="px-4 py-3">{belowMapStatistics}</div>}
-    <div className="px-4 pb-3"><NeighborhoodCityReferenceControl map={mapState === 'failed' ? null : cityMap}
-      onViewChange={active => { if (cityMap && mapRef.current === cityMap && mapState !== 'failed') cityViewActive.current = active; }} /></div>
   </section>;
 }

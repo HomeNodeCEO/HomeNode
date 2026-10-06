@@ -691,6 +691,11 @@ context/runtime bounds and no provider/source recapture or report writes. The
 new checksummed migration retains a new immutable derivative; it does not edit
 any original, tile, selection, accepted report or historical migration.
 
+The map-opening CLI reuses the reviewed certificate-verifying remote database
+URL boundary, retains one connection and its 120-second statement timeout, and
+sanitizes both idle connection failures and unknown worker errors. This does
+not alter runtime trust stores, production settings or the worker schedule.
+
 The manifest is selection-neutral. It preserves the original exact parcel
 bounds/counts, one retained exterior-ring anchor per named group, and retained
 subject anchors. Neither a label nor a viewport defines a legal subdivision

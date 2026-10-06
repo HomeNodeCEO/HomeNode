@@ -178,3 +178,13 @@ test('new immutable derivative migration is ordered after unchanged originals an
   assert.match(sql, /BETWEEN 1 AND 4000000/);
   assert.doesNotMatch(sql, /ALTER TABLE|DROP TABLE|DELETE FROM|TRUNCATE app|INSERT INTO|UPDATE app/);
 });
+
+test('map-opening CLI reuses verified remote TLS and never logs driver connection details', () => {
+  const script = fs.readFileSync(new URL('../scripts/runCustomCohortPreparedMapOpenings.js', import.meta.url), 'utf8');
+  assert.match(script, /\.\.\.customCohortCaptureJobPoolOptions\(process\.env\.DATABASE_URL\), max: 1/);
+  assert.match(script, /statement_timeout: 120_000/);
+  assert.match(script, /pool\.on\('error'/);
+  assert.match(script, /'database_connection_failed'/);
+  assert.match(script, /\? message : 'job_failed'/);
+  assert.doesNotMatch(script, /connectionString: process\.env|rejectUnauthorized: false|error\?\.code|error\?\.name/);
+});

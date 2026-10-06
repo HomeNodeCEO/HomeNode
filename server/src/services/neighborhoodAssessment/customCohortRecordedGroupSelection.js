@@ -73,8 +73,10 @@ export function prepareCustomCohortGroupSelectionCommandOriginal(text) {
  * complete selected memberships are separately retained by the paged store.
  */
 export async function prepareCustomCohortRecordedGroupSelection({ scopeJson, contextJson,
-  catalogJson, rosterJson, includedGroupIds, revision, commandJson = null, signal, checkBudget = () => {} } = {}) {
+  catalogJson, rosterJson, includedGroupIds, revision, commandJson = null,
+  catalogIdentityVersion = 1, signal, checkBudget = () => {} } = {}) {
   check(typeof checkBudget === 'function' && (signal === undefined || signal instanceof AbortSignal), 'invalid_options');
+  check(catalogIdentityVersion === 1 || catalogIdentityVersion === 2, 'invalid_catalog_identity_version');
   const cancelled = () => { check(!signal?.aborted, 'cancelled'); checkBudget(); };
   cancelled();
   // Strings are immutable; detach the sole caller-owned array before suspension.
@@ -134,9 +136,24 @@ export async function prepareCustomCohortRecordedGroupSelection({ scopeJson, con
     && catalog.coverage?.assigned_account_count === expected.size - unassigned.member_count, 'catalog_roster_mismatch');
   for (const id of selectedIds) check(groups.has(id), 'unknown_group');
   descriptors.sort((a, b) => compare(a.id, b.id));
-  const catalog_original_json = json({ selection_catalog_version: 1, usage: 'retained_recorded_group_membership_digests',
-    scope, context_ref, catalog_version: 3, original_catalog_sha256: hash(catalogJson),
-    original_roster_sha256: hash(rosterJson), groups: descriptors,
+  // Preserve v1 byte identity for retained originals. New owner-produced v2
+  // receipts bind the COMPLETE independently retained roster and every group's
+  // membership, not labels/reasons/rendering or read-model property order.
+  // Hash incrementally: this roster can exceed the legacy blob/node limits.
+  let identity;
+  if (catalogIdentityVersion === 1) identity = { original_catalog_sha256: hash(catalogJson),
+    original_roster_sha256: hash(rosterJson) };
+  else {
+    const ordered = [...expected].sort(compare), digest = createHash('sha256').update('{"account_ids":[', 'utf8');
+    for (let i = 0; i < ordered.length; i++) {
+      digest.update(i === 0 ? JSON.stringify(ordered[i]) : `,${JSON.stringify(ordered[i])}`, 'utf8');
+      if (++work % 125 === 0) { cancelled(); await yieldToRequests(); cancelled(); }
+    }
+    identity = { roster_account_ids_sha256: digest.update(']}', 'utf8').digest('hex') };
+  }
+  const catalog_original_json = json({ selection_catalog_version: catalogIdentityVersion,
+    usage: 'retained_recorded_group_membership_digests', scope, context_ref, catalog_version: 3,
+    ...identity, groups: descriptors,
     ...(command ? { selection_command: command } : {}) });
   const catalog_ref = blob(catalog_original_json), selected = new Set(selectedIds);
   const metadata_json = json({ selection_version: 1, usage: 'retained_group_selection_only',

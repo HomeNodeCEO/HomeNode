@@ -8,6 +8,8 @@ import { hasValidCustomWorkspaceObservationPeriod } from '../customWorkspaceChec
 import { createCustomWorkspaceRequestLane, CUSTOM_WORKSPACE_CAPTURE_TIMEOUT_MS } from '../customWorkspaceRequestLane';
 import { createCustomCohortGroupMemberReader } from '../customCohortGroupMemberView';
 import type { CustomCohortGroupDisplay } from '../customCohortGroupDisplay';
+import type { CustomCohortGroupMarketArea } from '../customCohortGroupMarketView';
+import { prepareCustomCohortGroupMarketWindow } from '../customCohortGroupMarketTransport';
 import type { CheckedPocketCatalog } from '../customCohortPocketCatalog';
 import type { CustomNeighborhoodWorkspaceControls } from './CustomNeighborhoodWorkspaceHost';
 import CustomCohortWorkspace from './CustomCohortWorkspace';
@@ -24,6 +26,8 @@ interface Props {
   initialGroups: (catalog: CheckedPocketCatalog) => readonly string[];
   registerControls?: (controls: CustomNeighborhoodWorkspaceControls | null) => void;
   onAccepted?: () => Promise<boolean>;
+  /** Exact display and keyed read lane, never the legacy flat-member group. */
+  onMarketAreaChange?: (area: CustomCohortGroupMarketArea | null) => void;
 }
 const button = 'hn-action-secondary btn btn-sm normal-case';
 const RADII = { '1': '1609.344', '2': '3218.688', '3': '4828.032', '5': '8046.72', '10': '16093.44' } as const;
@@ -139,6 +143,20 @@ function HostSession(props: Props) {
     const reader = createCustomCohortGroupMemberReader(initial.api);
     return (...[display, kind, page, io, previous]: Parameters<CustomCohortExactWorkspace['readMembers']>) => read(display, io, options => reader(display, kind, page, options, previous));
   });
+  const marketCallback = useRef(props.onMarketAreaChange); marketCallback.current = props.onMarketAreaChange;
+  const [readMarket] = useState(() => (display: CustomCohortGroupDisplay,
+    window: Parameters<CustomCohortGroupMarketArea['read']>[0], io: CustomWorkspaceOperationOptions) => {
+    let study: typeof window;
+    try { study = prepareCustomCohortGroupMarketWindow(window); } catch (error) { return Promise.reject(error); }
+    const epoch = generation.current;
+    return read(display, io, options => initial.api.market(display, study, options)).then(result => {
+      // A click, reload, signing transition or unmount can invalidate this
+      // display while the network settles, even when the server reply matched.
+      admitDisplay(display);
+      if (generation.current !== epoch || io.signal.aborted || io.deadline <= performance.now()) throw fault('target_changed');
+      return result;
+    });
+  });
   function inspectedDisplay(input: { accountId: string; assignmentFileId: string; contextRef: object; selection: { revision: number } }) {
     const display = owner.current?.getState().display;
     // An independently inspected original subset has its own revision (the
@@ -237,6 +255,14 @@ function HostSession(props: Props) {
     : state?.checkpoint?.pending_capture ? 'pending_capture' : state?.status === 'ready' || state?.status === 'idle' ? null : 'reload_required';
   const explorationBlocked = blockedReason;
   const display = state?.display, installed = scope?.profile_id !== 'custom-city-polygon-v1' || cities.some(c => scopeKey(c.discovery) === scopeKey(scope));
+  useEffect(() => {
+    const callback = marketCallback.current;
+    if (!callback) return;
+    const current = display && !saving && !explorationBlocked && state?.display_freshness === 'current'
+      ? Object.freeze({ display, read: (window: Parameters<CustomCohortGroupMarketArea['read']>[0], io: CustomWorkspaceOperationOptions) => readMarket(display, window, io) }) : null;
+    callback(current);
+    return () => callback(null);
+  }, [display, saving, explorationBlocked, state?.display_freshness, readMarket, props.onMarketAreaChange]);
   const recoveryNeeded = Boolean(actionFailed.current || message || state?.recovery || state?.status === 'error' || state?.checkpoint?.pending_capture || (!state && !actionPending));
   return <section className="space-y-3 print:hidden" aria-label="Saved neighborhood workspace">
     <div className="flex flex-wrap items-end gap-3 rounded-xl border border-violet-200 p-3">

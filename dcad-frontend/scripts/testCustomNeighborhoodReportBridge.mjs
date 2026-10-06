@@ -6,6 +6,7 @@ import * as catalog from '../src/features/neighborhood/customCohortPocketCatalog
 import * as transport from '../src/features/neighborhood/customCohortPreviewTransport.ts';
 import * as defaultPeriod from '../src/features/neighborhood/customWorkspaceDefaultPeriod.ts';
 import * as groupSelection from '../src/features/neighborhood/customCohortRecordedGroupTransport.ts';
+import * as marketTransport from '../src/features/neighborhood/customCohortGroupMarketTransport.ts';
 import { workspace, displayModule, mapView, groupMemberViewFixture } from './customCohortGroupMemberViewFixture.mjs';
 import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
@@ -17,10 +18,12 @@ function compile(name, imports, globals = {}) {
 const checkpoint = compile('customWorkspaceCheckpoint.ts', { './customCohortPocketCatalog': catalog,
   './customWorkspaceDiscovery.ts': compile('customWorkspaceDiscovery.ts', {}) });
 const api = compile('customWorkspaceApi.ts', { './customCohortPreviewTransport': transport, './customWorkspaceCheckpoint': checkpoint });
+const marketView = compile('customCohortGroupMarketView.ts', { './customCohortGroupDisplay.ts': displayModule, './customCohortGroupMarketTransport.ts': marketTransport });
 const groupApi = compile('customCohortGroupWorkspaceApi.ts', { './customWorkspaceApi.ts': api,
   './customCohortPreviewTransport.ts': transport, './customCohortGroupWorkspaceTransport.ts': workspace,
   './customCohortRecordedGroupTransport.ts': groupSelection, './customCohortGroupDisplay.ts': displayModule,
-  './customCohortGroupMapView.ts': mapView });
+  './customCohortGroupMapView.ts': mapView,
+  './customCohortGroupMarketView.ts': marketView, './customCohortGroupMarketTransport.ts': marketTransport });
 const copy = value => structuredClone(value);
 const period = { start_date: '2024-01-01', end_date: '2024-12-31' };
 const context = { context_id: '10000000-0000-4000-8000-000000000001', context_revision: '1', context_sha256: 'a'.repeat(64) };

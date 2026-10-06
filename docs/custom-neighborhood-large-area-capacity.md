@@ -1280,3 +1280,40 @@ duplicate, conflicting, insecure remote, and driver-setting overrides are refuse
 The runtime trust store must contain the provider's trusted certificate chain.
 There is no fallback that disables verification, no raw driver error logging,
 and no automatic worker schedule or production environment change from this fix.
+
+## Exact-display browser market transport (not V7 activation)
+
+The opt-in V7 API now exposes a market read from the actual composed immutable
+display. Its closed authenticated `selection-market-analysis` action sends one
+original context/selection reference and the appraiser's explicit calendar date,
+12/24/36-month window and scalar override. No flat account list, legacy pocket
+selection, viewport, geometry, session identity or report editor key travels.
+The new action keeps a 262,144-byte request and the ordinary 4MB response bound;
+the other transport limits and the existing 50k market-member limit stay intact.
+
+The decoder checks the full manifest reference, subject/context/selection binding,
+exploration-only area, exact complete-calendar-month window and closed-sale
+filters. Detached bounded JSON becomes an immutable local receipt; a second
+view admission of that same receipt does not allocate another response copy.
+This witness is not an authorization, source cache or completed report. The
+server still reopens CURRENT assignment/source rights and the whole original
+selected union before and after the unchanged market calculator.
+
+The keyed host exposes a read-only exact market-area callback only while the
+display is current/editable. It detaches the chosen window before queueing, uses
+the existing serial finite lane and fences the same display/session at actual
+admission AND settlement. A click, reload, finalization, cancellation, deadline
+or unmount prevents old results/callbacks from entering newer display state.
+There is no independent timer, retry, generic save, Apply UI or automatic study.
+
+Synthetic tests cover actual server wire grammar and calendar parity, exact
+producer-built display/summary/opening fixtures, empty selections, foreign or
+stale references, caller mutation, queued admission, current-host invalidation,
+late settlement and response/request bounds. The full TypeScript/React host/view
+fixtures require fresh CI; local transport tests alone do not establish them.
+The market UI's legacy callback remains unchanged until a separately tested
+exact-area consumer is composed. V7 remains default-off; no genuine appraisal
+choice, accepted report, source right, flag, cap, deployment or cron schedule is
+changed by this slice. Complete >50k numerical/publication ownership, compact
+catalog, partial source/spatial recovery and real large-area/live QA acceptance
+remain outstanding.

@@ -1,5 +1,44 @@
 # Complete larger-area Custom neighborhood studies
 
+## Original-bound paged display catalog (not a browser/catalog switch)
+
+`customCohortRecordedCatalogPages.js` compiles small subdivision display pages
+from the complete original v3 catalog and its independently retained roster.
+The unchanged recorded-group producer first verifies every group's ordered
+membership digest, complete partition, original context/scope and whole roster.
+Names, counts, subject membership, unresolved reasons and limitations are retained
+under a separate exact read-model digest; changing presentation cannot silently
+relabel an older opening. Pages contain at most 100 groups, their counts and
+original membership digests, **not** account/member arrays. Empty and unresolved
+populations stay explicit. No phase inference, sample or median change is made.
+
+The transaction-bound immutable store names all of its original-digest,
+metadata, page and root retention references. Full reopen freshly checks every
+original page plus beginning/ending metadata/root/original fences. A single-page
+read checks only that requested page and its exact binding/fences, and explicitly
+returns a display page, never a claim that all other pages or the analytical
+population were read. Missing late originals return no whole result. Caller
+mutation cannot rebind held requests. One finite shared I/O budget spans calls,
+and cancellation does not release its serial lane before actual storage settles.
+
+Synthetic tests include 60,001 members in an over-1.5MB old catalog represented
+by a sub-5KB display-page response, exact counts/digests, complete empty results,
+missing/altered late pages, foreign contexts, changed unselected members, data
+traps, ending failure, cancellation and aggregate ceilings. The guarded migrated
+SQL fixture separately checks organization scope, real original storage,
+fresh-client reopen, commit/rollback and unchanged protected report rows using
+1,001 synthetic members. Only actual current-head CI execution proves native SQL.
+Neither fixture is live performance or a complete >50k source capture/Apply test.
+
+This is a supplemental display graph, not a source authority or registry. The
+owner must combine it with the whole ORIGINAL acquisition/selection graph,
+charge all roots/bytes, recheck current assignment/source/subject rights and
+register coherently or roll back. Browser/HTTP/current coordinator wiring still
+uses the old full catalog and must move to an explicitly versioned paged contract
+with corresponding opening/member/viewport admission; do not remove their
+complete-membership checks in isolation. The installed 50k limit, default-off
+V7 flag, accepted reports, cron and production choices remain unchanged.
+
 ## Exact-reference market-study server adapter (not browser activation)
 
 `customCohortRecordedGroupMarketAnalysis.js` connects an exact current retained

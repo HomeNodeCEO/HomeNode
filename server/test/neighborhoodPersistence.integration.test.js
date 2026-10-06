@@ -15,6 +15,7 @@ import { checkNeighborhoodCohortBlobDatabase } from "./helpers/neighborhoodCohor
 import { checkExactPagedObservationRunDatabase } from "./helpers/exactPagedObservationRunDatabaseChecks.js";
 import { checkCustomCohortOriginalMetricRunDatabase } from "./helpers/customCohortOriginalMetricRunDatabaseChecks.js";
 import { checkCustomCohortCompleteMetricGroupDatabase } from "./helpers/customCohortCompleteMetricGroupDatabaseChecks.js";
+import { checkCustomCohortRecordedCatalogPageDatabase } from "./helpers/customCohortRecordedCatalogPageDatabaseChecks.js";
 import { checkNeighborhoodCohortCompactAckDatabase } from "./helpers/neighborhoodCohortCompactAckDatabaseChecks.js";
 import { checkCustomCohortSubjectDatabase } from "./helpers/customCohortSubjectDatabaseChecks.js";
 import { checkCustomCohortSelectionDatabase } from "./helpers/customCohortSelectionDatabaseChecks.js";
@@ -395,6 +396,8 @@ test("neighborhood persistence: real PostgreSQL canonical identities, publicatio
       checkCustomCohortOriginalMetricRunDatabase(pool));
     await t.test("synthetic complete fifteen-metric group retains every original and reopens coherently through actual scoped SQL", () =>
       checkCustomCohortCompleteMetricGroupDatabase(pool));
+    await t.test("synthetic paged recorded catalog omits member arrays and reopens exact original display pages through actual scoped SQL", () =>
+      checkCustomCohortRecordedCatalogPageDatabase(pool));
     await t.test("cohort compact acknowledgments verify exact bytes and concurrent replay without returning evidence text", async () => {
       const result = await checkNeighborhoodCohortCompactAckDatabase(pool);
       t.diagnostic(JSON.stringify(result));

@@ -1,9 +1,11 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { SummarySection } from '@/components/PropertyReportControls';
 import type { CustomCohortPreviewGroup } from '../customCohortPreviewController';
 import type { MarketConditionsDraft } from '@/lib/marketConditionsDraft';
 import type { AcceptedNeighborhoodState } from '../customNeighborhoodAcceptedState';
 import type { CustomNeighborhoodReportBridge } from '../useCustomNeighborhoodReportBridge';
+import type { SubjectNeighborhoodSummaryInput } from '@/lib/subjectNeighborhoodSummary';
+import { neighborhoodSummaryTemplate, refreshNeighborhoodSummaryTemplate, NEIGHBORHOOD_TEMPLATE_REVIEW_ITEMS } from '@/lib/neighborhoodSummaryTemplate';
 
 const CustomNeighborhoodAcceptedSummary = lazy(() => import('./CustomNeighborhoodAcceptedSummary'));
 const CustomNeighborhoodAcceptedOutline = lazy(() => import('./CustomNeighborhoodAcceptedOutline'));
@@ -13,6 +15,11 @@ const MarketConditionsAnalysis = lazy(() => import('@/components/MarketCondition
 interface Props {
   neighborhoodSummary: string;
   onNeighborhoodSummaryChange: (value: string) => void;
+  summaryTemplate?: string;
+  summaryInput?: SubjectNeighborhoodSummaryInput;
+  summaryReadOnly?: boolean;
+  onGeneratedSummary?: (value: string, reviewItems: readonly string[]) => void;
+  onLocationTypeChange?: (value: string) => void;
   workspace: CustomNeighborhoodReportBridge;
   acceptedNeighborhood: AcceptedNeighborhoodState | null;
   assignmentFilesError: boolean;
@@ -44,15 +51,38 @@ function appliedStatus(props: Props): string {
  * while market trend analysis is an explicit independent calculation. */
 export default function CustomNeighborhoodCharacteristicsSection(props: Props) {
   const [explorationArea, setExplorationArea] = useState<CustomCohortPreviewGroup | null>(null);
+  const [includesTownhomes, setIncludesTownhomes] = useState(false);
+  const onAnalysisSelection = useCallback((group: CustomCohortPreviewGroup | null, townhomes?: boolean) => {
+    setExplorationArea(group);
+    if (group) setIncludesTownhomes(townhomes === true);
+  }, []);
+  const { summaryReadOnly, summaryInput, onGeneratedSummary, neighborhoodSummary, summaryTemplate } = props;
+  useEffect(() => {
+    if (summaryReadOnly || !summaryInput || !onGeneratedSummary) return;
+    const next = refreshNeighborhoodSummaryTemplate(neighborhoodSummary, summaryTemplate, { ...summaryInput, includesTownhomes }, explorationArea);
+    if (next !== null) onGeneratedSummary(next, NEIGHBORHOOD_TEMPLATE_REVIEW_ITEMS);
+  }, [summaryReadOnly, summaryInput, summaryTemplate, neighborhoodSummary, onGeneratedSummary, explorationArea, includesTownhomes]);
   return <SummarySection title="Neighborhood Characteristics"
     subtitle="Explore the complete captured area, review exact selected statistics, apply one boundary-and-statistics group, and reconcile market conditions"
     manuallyVerified={props.acceptedNeighborhood?.status === 'accepted'}>
     <section className="mb-4 rounded-xl border border-violet-200 bg-white p-4" aria-label="Neighborhood summary">
-      <label htmlFor="custom-neighborhood-summary" className="block text-sm font-semibold text-slate-950">Neighborhood summary</label>
-      <p className="mt-1 text-xs text-slate-600">A source-limited starting description saved with this file. Review and edit before signing; verify any schools, amenities, services, and access details you add.</p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <label htmlFor="custom-neighborhood-summary" className="block text-sm font-semibold text-slate-950">Neighborhood summary</label>
+        <div className="flex flex-wrap items-center gap-2">
+        {summaryInput && onGeneratedSummary && <button type="button" className="hn-action-secondary btn btn-sm normal-case"
+          disabled={summaryReadOnly} onClick={() => onGeneratedSummary(neighborhoodSummaryTemplate({ ...summaryInput, includesTownhomes }, explorationArea), NEIGHBORHOOD_TEMPLATE_REVIEW_ITEMS)}>Use template</button>}
+        {props.onLocationTypeChange && <label className="inline-flex items-center gap-2 text-xs font-medium text-violet-950">Location
+          <select className="select select-bordered select-sm bg-white" aria-label="Neighborhood location classification"
+            value={props.summaryInput?.locationType || ''} disabled={props.summaryReadOnly}
+            onChange={event => props.onLocationTypeChange?.(event.target.value)}>
+            <option value="">Select location</option><option value="urban">Urban</option><option value="suburban">Suburban</option><option value="rural">Rural</option>
+          </select>
+        </label>}
+        </div>
+      </div>
       <textarea id="custom-neighborhood-summary" className="textarea textarea-bordered mt-2 min-h-32 w-full bg-white"
         value={props.neighborhoodSummary} onChange={event => props.onNeighborhoodSummaryChange(event.target.value)}
-        maxLength={8000} placeholder="Enter the appraiser-reviewed neighborhood description." />
+        maxLength={8000} disabled={props.summaryReadOnly} placeholder="Enter the appraiser-reviewed neighborhood description." />
     </section>
     <div className="print:hidden">
       {props.workspace.message && <p role={props.workspace.status === 'unavailable' ? 'alert' : 'status'} className="mb-3 text-sm">
@@ -61,7 +91,7 @@ export default function CustomNeighborhoodCharacteristicsSection(props: Props) {
       {props.workspace.status === 'unavailable' && <button type="button" className="hn-action-secondary btn btn-sm normal-case"
         onClick={props.workspace.retry}>Reload neighborhood workspace</button>}
       {props.workspace.hostProps && <Suspense fallback={<Loading label="saved neighborhood workspace" />}>
-        <CustomNeighborhoodWorkspaceHost {...props.workspace.hostProps} onAnalysisSelection={setExplorationArea} />
+        <CustomNeighborhoodWorkspaceHost {...props.workspace.hostProps} onAnalysisSelection={onAnalysisSelection} />
       </Suspense>}
     </div>
 

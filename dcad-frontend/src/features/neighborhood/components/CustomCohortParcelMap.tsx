@@ -560,17 +560,12 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
   }, [geojson, presentation, labels, labelsKey, subjectMarkers, subjectKey, mapState, hasMap, deferredMode]);
 
   return <section className="hn-subtle-panel overflow-hidden rounded-xl border border-purple-200 print:hidden" aria-label="Captured parcel selection map"
-    data-selection-revision={group.binding.selectionRevision} data-freshness={freshness}>
+    data-selection-revision={group.binding.selectionRevision} data-freshness={freshness} data-map-interaction-mode={displayMode ?? 'unavailable'}>
     <div className="space-y-2 px-4 py-3">
       <h3 className="font-semibold">Captured parcel selection</h3>
-      <p className="text-xs text-slate-600">{onActivatePocket
-        ? 'Click a subdivision to include all its recorded groups and compare the updated statistics. Right-click to remove it. Zooming does not change your choices. '
-        : 'Click a parcel or subdivision label to inspect its recorded CAD group. '}
-        Shapes follow cached parcels, not legal subdivision or neighborhood boundaries.</p>
-      {onActivatePocket && <p className="text-xs font-medium text-violet-900" role="status" data-map-interaction-mode={displayMode ?? 'unavailable'}>
-        {displayMode === 'subdivision' ? 'Subdivision view: clicks include all captured related groups.' : 'Map interaction is not ready.'}
-        {' '}Related names are review groupings, not verified legal phases or coverage outside this capture.
-      </p>}
+      {/* Activation includes the complete captured subdivision family; right-click
+          excludes it. Zoom does not change selection semantics or legal authority. */}
+      {onActivatePocket && displayMode !== 'subdivision' && <p className="text-xs font-medium text-violet-900" role="status">Map interaction is not ready.</p>}
       <div className="flex flex-wrap items-center gap-4 text-xs">
         <label className="inline-flex items-center gap-2"><input type="checkbox" checked={showLabels} disabled={presentation?.status !== 'available'}
           onChange={event => setShowLabels(event.target.checked)} />Show recorded subdivision labels</label>
@@ -581,7 +576,8 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
         <li className="inline-flex items-center gap-1.5"><span aria-hidden="true" className="h-3 w-3 rounded-sm border-[3px] bg-white" style={{ borderColor: COLORS.included }} />Included · red outline</li>
         <li className="inline-flex items-center gap-1.5"><span aria-hidden="true" className="h-3 w-3 rounded-sm border" style={{ borderColor: COLORS.subject }} />Subject pointer</li>
       </ul>
-      <p className="text-xs text-slate-600">Fill reflects recorded-group similarity to the subject, not an individual parcel score or statistical reliability. Missing observations remain unknown.</p>
+      {/* Fill describes recorded-group similarity, not an individual parcel score
+          or statistical reliability. Missing observations stay unknown. */}
       {scoreBandSelector}
       {catalog.prepared_secondary_map && <p className="text-xs text-slate-600">{catalog.prepared_secondary_map.version === 2
         ? `Similarity colors use CAD observations captured ${new Date(catalog.prepared_secondary_map.retained_capture_at).toLocaleDateString()}.`

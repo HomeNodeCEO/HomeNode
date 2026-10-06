@@ -105,6 +105,15 @@ export function validateAssignmentDetails(value, { requireCompletion = true } = 
     (typeof value.subject_neighborhood_summary !== "string" || value.subject_neighborhood_summary.length > 8000)) {
     throw new Error("invalid_subject_neighborhood_summary");
   }
+  if (value.subject_neighborhood_summary_template !== undefined &&
+    (typeof value.subject_neighborhood_summary_template !== "string" || value.subject_neighborhood_summary_template.length > 8000)) {
+    throw new Error("invalid_subject_neighborhood_summary");
+  }
+  if (value.subject_neighborhood_summary_review_items !== undefined &&
+    (!Array.isArray(value.subject_neighborhood_summary_review_items) || value.subject_neighborhood_summary_review_items.length > 32 ||
+      value.subject_neighborhood_summary_review_items.some(item => typeof item !== "string" || item.length > 120))) {
+    throw new Error("invalid_subject_neighborhood_summary");
+  }
   if (value.pud !== undefined && typeof value.pud !== "boolean") {
     throw new Error("invalid_pud_value");
   }

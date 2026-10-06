@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { assessmentDate, canonicalAssessmentJson } from './contract.js';
 import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
 import { isCustomCohortObservationPreview, customCohortObservationMembers } from './customCohortObservationPreview.js';
+import { exactDistribution } from './statistics.js';
 
 export const CUSTOM_COHORT_PREVIEW_PRESENTATION_LIMITS = Object.freeze({
   pockets: 128, pocket_memberships: 100000, population_members: 100000,
@@ -135,6 +136,29 @@ function boundedResult(value, maximum) {
   check(Buffer.byteLength(JSON.stringify(value)) <= maximum, 'output_bytes_limit'); return freeze(value);
 }
 
+/** Small narrative inputs from already retained members. Never substitute the
+ * all-date MLS distribution for an in-period sales distribution, multiply a
+ * source row by parcel links, or infer a bedroom/bath count from the subject. */
+function narrativeObservations(preview) {
+  const population = preview.selected;
+  const transactions = memberArray(preview, population, 'transactions');
+  const inPeriod = new Set(transactions.filter(row => row.disposition === 'in_period')
+    .map(row => row.canonical_transaction_id));
+  const selected = new Set(population.account_ids);
+  const sources = memberArray(preview, population, 'source_reported').filter(row =>
+    row.associated_account_ids.length === 1 && selected.has(row.associated_account_ids[0])
+    && row.record_types.length === 1 && row.record_types[0] === 'closed_sale'
+    && row.canonical_transaction_ids.length === 1 && inPeriod.has(row.canonical_transaction_ids[0]));
+  const metrics = Object.fromEntries(['bedrooms_total', 'bathrooms_total_integer'].map(key => {
+    const values = sources.map(row => row.observations[key]?.state === 'observed'
+      ? row.observations[key].value : null);
+    const result = exactDistribution(values);
+    return [key, { median: result.median, count: result.count, missing_count: result.missing_count }];
+  }));
+  return { basis: 'in_period_single_account_closed_source_records', authority: 'not_established',
+    source_record_count: sources.length, observation_period: { ...preview.observation_period }, metrics };
+}
+
 /** Browser-shaped data, not HTML or authority. Call only after exact authorized
  * retained loading/numeric computation, and retain the owner's final access and
  * material fences. Projection is by explicit field, never object spread of raw
@@ -148,7 +172,7 @@ export function presentCustomCohortPreview({ preview, expected } = {}) {
     overlap_account_count: count(pocket.overlap_account_count), result: summaryPopulation(preview, pocket.result, 'pocket', pocket.id),
   }));
   return boundedResult({ ...header(preview, binding), contents: 'population_summaries_only', members_included: false,
-    all, selected, pockets }, L.summary_utf8_bytes);
+    all, selected, pockets, narrative_observations: narrativeObservations(preview) }, L.summary_utf8_bytes);
 }
 
 function findPopulation(preview, requested) {

@@ -204,6 +204,7 @@ test('dense list pages50 groups while map selection and Include all retain887; m
   const h = harness(), dense = denseCatalog(), all = catalogHelpers.customCohortCatalogGroupIds(dense);
   const props = h.props(all); props.workspace.catalog = dense;
   h.render(props); await h.tick(); await h.waitForRequest(0);
+  assert.doesNotMatch(h.text(), /Explore broad observations|All 887 recorded groups|Recorded CAD groups in the retained discovery area/);
   assert.equal(h.calls[0].request.selection.pockets[0].account_ids.length, 887);
   const checkboxes = () => h.nodes().filter(n => n.type === 'input' && n.props.type === 'checkbox');
   assert.equal(checkboxes().length, 50); assert.match(h.text(), /Page 1 of 18/);
@@ -426,6 +427,21 @@ test('market analysis receives only the current coherent selection and is cleare
   await h.tick(); assert.equal(changes.at(-1), null, 'old figures cannot become the new market-study area');
   await h.complete(); assert.equal(changes.at(-1).binding.selectionRevision, 8);
   h.unmount(); assert.equal(changes.at(-1), null);
+});
+
+test('townhome template hint uses only included checked composition groups and adds no reads', async t => {
+  const h = harness(); t.after(() => h.unmount()); const changes = [], props = withRecommendation(h.props());
+  props.onAnalysisSelection = (group, townhomes) => changes.push([group, townhomes]);
+  props.workspace.catalog.recommendation.stock_composition_v1 = { status: 'available', pockets: [
+    [groupId(1), 1, [], [[1, 0, 0, 0, 0], [1, 0, 0, 0, 0, 0, 0]]],
+    [groupId(2), 1, [], [[1, 0, 0, 0, 0], [0, 1, 0, 0, 0, 0, 0]]],
+  ] };
+  h.render(props); await h.tick(); await h.complete();
+  assert.equal(changes.at(-1)[1], false, 'an excluded townhouse group cannot alter the narrative');
+  h.render({ ...props, workspace: { ...props.workspace, selection: { revision: 8, included_recorded_group_ids: [groupId(1), groupId(2)] } } });
+  assert.deepEqual(changes.at(-1), [null, undefined]);
+  await h.tick(); await h.complete(); assert.equal(changes.at(-1)[1], true);
+  assert.equal(h.catalogCalls.length, 0); assert.equal(h.calls.length, 2, 'only the existing coherent previews');
 });
 
 test('standalone mode retains broad catalog loading and all-observations initialization', async () => {

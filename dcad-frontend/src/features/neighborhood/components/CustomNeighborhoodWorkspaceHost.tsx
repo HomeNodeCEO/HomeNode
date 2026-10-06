@@ -30,7 +30,7 @@ interface Props {
   api: ReturnType<typeof createCustomWorkspaceApi>;
   registerControls?: (controls: CustomNeighborhoodWorkspaceControls | null) => void;
   onAccepted?: () => Promise<boolean>;
-  onAnalysisSelection?: (group: CustomCohortPreviewGroup | null) => void;
+  onAnalysisSelection?: (group: CustomCohortPreviewGroup | null, includesTownhomes?: boolean) => void;
 }
 const button = 'hn-action-secondary btn btn-sm normal-case';
 const PERIOD_GUIDANCE = 'Choose valid observation start and end dates, with the start on or before the end. No study has been requested for these dates.';

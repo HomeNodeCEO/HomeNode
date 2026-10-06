@@ -242,6 +242,8 @@ export interface ReportManualValue {
 
 export interface AssignmentDetailsPayload {
   subject_neighborhood_summary?: string;
+  subject_neighborhood_summary_template?: string;
+  subject_neighborhood_summary_review_items?: string[];
   subject_condition_rating?: string;
   subject_condition_notes?: string;
   significant_physical_deficiencies?: boolean | null;
@@ -1943,7 +1945,7 @@ export async function searchAccounts(q: string, limit = 25, offset = 0): Promise
   return fetchJSON<AccountRow[]>(url);
 }
 
-/** Get a single account (core + latest market values + primary improvements) */
+/** Get account, market values and primary improvements. */
 export async function getAccount(
   accountId: string,
   options: { assignmentFileId?: number | null } = {},
@@ -3057,7 +3059,7 @@ export async function updateAccountHousingProfile(
   });
 }
 
-/** Save one or more explicitly edited Property Report sections with audit history. */
+/** Save edited report sections with audit history. */
 export async function updatePropertyReportSections(
   accountId: string,
   sections: Partial<Record<ReportManualSectionKey, unknown>>,
@@ -3086,7 +3088,7 @@ export async function updatePropertyReportSections(
   });
 }
 
-/** Load the immutable assignment-file log and the latest values available to inherit. */
+/** Load assignment-file log and inheritable values. */
 export async function getAssignmentFiles(
   accountId: string,
   assignmentFileId?: number | null,

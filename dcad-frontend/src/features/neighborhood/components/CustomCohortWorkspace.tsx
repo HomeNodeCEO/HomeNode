@@ -31,7 +31,7 @@ interface Props {
   /** Changes on session/organization transition, even for the same file. */
   sessionKey: string; subjectLabel: string; enabled: boolean;
   workspace?: CustomCohortControlledWorkspace;
-  onAnalysisSelection?: (group: CustomCohortPreviewGroup | null) => void;
+  onAnalysisSelection?: (group: CustomCohortPreviewGroup | null, includesTownhomes?: boolean) => void;
 }
 const timer = { set: (fn: () => void, ms: number) => setTimeout(fn, ms),
   clear: (handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>) };
@@ -81,7 +81,6 @@ function WorkspaceSession(props: Props) {
   const [input] = useState<CustomCohortPreviewInput>(() => ({ accountId: props.accountId,
     assignmentFileId: props.assignmentFileId, contextRef: { ...props.contextRef }, selection: { revision: 1, pockets: [] } }));
   const { accountId, assignmentFileId, contextRef } = input;
-  const { subjectLabel } = props;
   const [localCatalog, setCatalog] = useState<CheckedPocketCatalog | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
@@ -228,7 +227,15 @@ function WorkspaceSession(props: Props) {
   // Analysis never borrows stale figures while a selection save/preview is in
   // flight. Its identity includes the exact context and selection fingerprint.
   const onAnalysisSelection = props.onAnalysisSelection;
-  useEffect(() => { onAnalysisSelection?.(current ? group : null); }, [current, group, onAnalysisSelection]);
+  const includesTownhomes = useMemo(() => {
+    const composition = catalog?.recommendation?.stock_composition_v1;
+    if (composition?.status !== 'available') return false;
+    const selected = new Set(included);
+    // The checked composition uses the fixed housing-category order:
+    // detached single family, townhouse, condominium, duplex, apartment, etc.
+    return composition.pockets.some(row => selected.has(row[0]) && row[3][1][1] > 0);
+  }, [catalog, included]);
+  useEffect(() => { onAnalysisSelection?.(current ? group : null, current ? includesTownhomes : undefined); }, [current, group, includesTownhomes, onAnalysisSelection]);
   useEffect(() => () => onAnalysisSelection?.(null), [onAnalysisSelection]);
   const selectionDisabled = selectionBlocked || !desired;
   const area = recommendation?.sales_aware_area;
@@ -259,12 +266,11 @@ function WorkspaceSession(props: Props) {
 
   return <section aria-label="Neighborhood pocket exploration" className="space-y-4 rounded-2xl border border-violet-200 p-4 print:hidden">
     <header className="flex flex-wrap items-start justify-between gap-3">
-      <div><h3 className="text-base font-semibold">Neighborhood pocket exploration</h3>
-        <p className="text-sm opacity-80">{subjectLabel} · Recorded CAD groups in the retained discovery area</p></div>
+      <div><h3 className="text-base font-semibold">Neighborhood pocket exploration</h3></div>
       <span className="rounded-full border border-amber-300 px-3 py-1 text-xs">Preview only · report unchanged</span>
     </header>
-    <p className="text-sm">Explore broad observations, then include or exclude recorded groups. These parcel shapes are not legal subdivision
-      or appraiser-defined neighborhood boundaries. Current-observation similarity is for review only; reliability and report-ready eligibility are not established.</p>
+    {/* Parcel geometry and similarity limitations remain in the retained workfile,
+        not in explanatory paragraphs above the appraiser's controls. */}
     {!catalog && !catalogError && <p role="status">Loading recorded groups…</p>}
     {!controlled && catalogError && <div role="alert" className="space-y-2"><p>{catalogError}</p>
       <button type="button" className={button} onClick={() => setReload(n => n + 1)}>Retry group loading</button></div>}
@@ -272,11 +278,6 @@ function WorkspaceSession(props: Props) {
       {!desired && <p role="alert">The saved group selection does not match this retained context. Reload the workspace; no replacement selection has been inferred.</p>}
       {catalog.status === 'incomplete' && <p role="alert">Subdivision grouping reached a capacity limit: {catalog.unassigned.reason_counts.map(row => unassignedReasonLabel(row.reason)).join(', ')}.
         {' '}All captured accounts remain selectable together; their individual CAD subdivision names have not been judged missing.</p>}
-      {!recommendation && catalog.pockets.length > 128 && <p className="text-sm">
-        All {catalog.pockets.length.toLocaleString('en-US')} recorded groups are available for inspection and inclusion.
-        Automatic ranking is unavailable for this retained study; historical applicability and complete recommendation capacity are required.
-        No subset was ranked or omitted. The page list is paginated, not the map or selected statistics.
-        {catalog.catalog_version < 3 && ' This saved file uses an older grouping version; Refresh subdivision grouping above requests the expanded version while retaining the saved selection.'}</p>}
       {recommendation && <details className="rounded-xl border border-amber-300 bg-violet-50/40 p-4">
         <summary className="cursor-pointer text-sm font-medium">Optional automatic recommendation</summary>
         <section aria-label="Recommended pockets for review" className="mt-3 space-y-2">
@@ -374,7 +375,6 @@ function WorkspaceSession(props: Props) {
           scoreBandSelector={scoreBandSelector} belowMapStatistics={liveStatistics} />
           : <div className="space-y-3 rounded-xl border border-violet-200 p-4">
             <p role="status" className="grid min-h-40 place-content-center">Waiting for a coherent map and statistics…</p>
-            <p className="text-xs text-slate-600">Fill reflects recorded-group similarity to the subject, not an individual parcel score or statistical reliability. Missing observations remain unknown.</p>
             {scoreBandSelector}
             {liveStatistics}
           </div>}

@@ -91,6 +91,25 @@ test('summary never carries raw source data, member/account arrays, private keys
   }
 });
 
+test('narrative bedroom/bath medians use only in-period single-account closed source records', () => {
+  const source = built({ sales: [
+    sale(1, 'A', { source_bedrooms_total: 3, source_bathrooms_total_integer: 2 }),
+    sale(2, 'A', { source_bedrooms_total: 5, source_bathrooms_total_integer: 4 }),
+    sale(3, 'A', { sale_closing_date: '2026-01-01', source_bedrooms_total: 9 }),
+    sale(4, 'A', { record_type: 'active_listing', source_bedrooms_total: 9 }),
+    sale(5, 'B', { source_bedrooms_total: 9 }),
+    sale(6, 'A', { source_bedrooms_total: 9 }),
+  ], links: [link(61, 6, 'B')] });
+  const result = summary(source).narrative_observations;
+  assert.equal(result.basis, 'in_period_single_account_closed_source_records');
+  assert.equal(result.authority, 'not_established');
+  assert.equal(result.source_record_count, 2);
+  assert.deepEqual(result.metrics.bedrooms_total, { median: 4, count: 2, missing_count: 0 });
+  assert.deepEqual(result.metrics.bathrooms_total_integer, { median: 3, count: 2, missing_count: 0 });
+  assert.equal(summary(built({ pockets: [] })).narrative_observations.source_record_count, 0);
+  assert.equal(summary(built({ pockets: [] })).narrative_observations.metrics.bedrooms_total.median, null);
+});
+
 test('zero is zero; absent/conflicting/invalid data remains unavailable with the original missing denominator', () => {
   const result = summary(built({ accounts: ['A', 'B', 'C'], parcels: [parcel(1, 'A', { current_market_value: '0', residential_area_sqft: null }),
     parcel(2, 'B', { residential_area_sqft: '0' })], sales: [sale(1, 'A', { sale_price: null })] }));

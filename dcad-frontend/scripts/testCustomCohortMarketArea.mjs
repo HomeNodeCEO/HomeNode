@@ -152,6 +152,47 @@ test('all four areas remain visible in conclusion weighting, including fourth-ra
   assert.match(text(weight), /Exploration Map Area/);
 });
 
+test('a database draft arriving after lazy mount restores results and the saved complexity review once', async t => {
+  const h = marketComponent({ explorationArea: null }); t.after(h.dispose); await h.settle();
+  assert.match(h.text, /Study required/);
+  const value = completeResult(), keys = ['zip', 'radius_1', 'radius_2', 'exploration'];
+  value.analyses = keys.map(key => ({ ...value.analyses[0], market: { key, label: key } }));
+  const review = { version: 1, review: { notes: 'Saved review' } };
+  const restored = { ...draft(value), selectedAreaKeys: keys, asOfDate: '2026-09-30', periodMonths: 12,
+    propertyComplexity: review };
+  h.update({ initialDraft: restored }); await h.settle();
+  assert.match(h.text, /Study required/, 'Restored results still wait for the exact map selection');
+  assert.equal(h.published.filter(Boolean).length, 0);
+  h.update({ explorationArea: group }); await h.settle();
+  assert.match(h.text, /Study complete/);
+  assert.deepEqual(h.published.at(-1).selectedAreaKeys, keys);
+  assert.equal(h.published.at(-1).asOfDate, '2026-09-30');
+  assert.equal(h.published.at(-1).periodMonths, 12);
+  assert.equal(h.published.at(-1).propertyComplexity, review);
+  assert.equal(walk(h.render()).find(n => n.type === 'MarketStudyPropertyContext').props.initialScreening, review);
+  assert.equal(h.queries.length, 0, 'Reopening reuses the completed market result');
+  h.button('Clear').props.onClick(); await h.settle();
+  h.update({ initialDraft: { ...restored, savedAt: '2026-10-06T01:00:00Z' } }); await h.settle();
+  assert.equal(h.button('Run  market studies').props.disabled, true, 'A later save cannot reset current edits');
+});
+
+test('late workfile hydration cannot overwrite edits or import another appraisal file', async t => {
+  const saved = draft(completeResult());
+  for (const foreign of [{ ...saved, accountId: 'OTHER' }, { ...saved, assignmentFileId: 16 }]) {
+    const h = marketComponent({ initialDraft: foreign }); t.after(h.dispose); await h.settle();
+    assert.match(h.text, /Study required/);
+    assert.equal(h.published.filter(Boolean).length, 0);
+    h.update({ initialDraft: saved }); await h.settle();
+    assert.match(h.text, /Study complete/, 'Only the current file draft is adopted');
+  }
+  const h = marketComponent(); t.after(h.dispose); await h.settle();
+  h.button('Clear').props.onClick(); await h.settle();
+  h.update({ initialDraft: saved }); await h.settle();
+  assert.match(h.text, /Study required/);
+  assert.equal(h.button('Run  market studies').props.disabled, true);
+  assert.equal(h.published.filter(Boolean).length, 0);
+});
+
 test('ZIP and radius studies bypass retained exploration when it is not selected', async () => {
   const ordinary = { ...completeResult(), analyses: [{ ...completeResult().analyses[0], market: { key: 'zip' } }], exploration_binding: undefined };
   const f = fixture(() => assert.fail('No neighborhood transport'), ordinary);

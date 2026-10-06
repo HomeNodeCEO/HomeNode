@@ -103,6 +103,9 @@ test('stale studies cannot trigger or publish context; saved current evidence re
   const saved = helper.buildMarketStudyComplexity(base(), response(area('exploration')), ['exploration'], 'sig');
   const restored = component({ initialScreening: saved }); t.after(restored.dispose); await restored.settle();
   assert.equal(restored.queries.length, 0); assert.equal(restored.published.at(-1).studySignature, 'sig');
+  const changedGeography = component({ initialScreening: saved, geography: 'rural' }); t.after(changedGeography.dispose);
+  await changedGeography.settle(); assert.equal(changedGeography.queries.length, 1);
+  assert.equal(changedGeography.published.at(-1), null, 'saved suburban screening cannot masquerade as rural');
 });
 
 test('review response cannot overwrite changed weighting or another file', async t => {

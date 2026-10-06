@@ -13,7 +13,8 @@ const number = (value: number | null, suffix = '') => value === null ? '—' : `
 
 export default function MarketStudyPropertyContext(props: Props) {
   const { accountId, assignmentFileId, response, current, studySignature, studyRevision, geography, reliedUpon, initialScreening, onChange } = props;
-  const initial = useRef(initialScreening?.studySignature === studySignature ? initialScreening : null);
+  const initial = useRef(initialScreening?.studySignature === studySignature
+    && (!geography || initialScreening.assessment.geography === geography) ? initialScreening : null);
   const [source, setSource] = useState<PropertyComplexityAssessment | null>(initial.current?.assessment ?? null);
   const [review, setReview] = useState<MarketComplexityReview | null>(initial.current?.review ?? null);
   const [loading, setLoading] = useState(false), [saving, setSaving] = useState(false), [message, setMessage] = useState('');

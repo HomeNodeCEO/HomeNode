@@ -83,7 +83,7 @@ export async function runCustomCohortGroupWorkspaceHttpDatabaseChecks({ pool, ow
     assert.deepEqual(await workspaceState(), committedSelection, 'HTTP replay must not add a second head/history row');
     assert.equal(committedSelection.history, beforeAdmission.history + 1);
     assert.equal(committedSelection.head, selected.selection_ref.selection_revision);
-    await refusal('save-groups', { ...selectionCommand, operation_id: randomUUID() }, 409, 'neighborhood_workspace_changed');
+    await refusal('save-groups', { ...selectionCommand, operation_id: randomUUID() }, 409, 'neighborhood_selection_changed');
     assert.deepEqual(await workspaceState(), committedSelection);
 
     const deniedCommand = saveBody(selected);

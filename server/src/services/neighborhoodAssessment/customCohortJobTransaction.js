@@ -37,6 +37,7 @@ export async function withCustomCohortJobTransaction(pool, action) {
     throw new TypeError('custom_cohort_job_transaction_invalid_input');
   const raw = await connect(pool);
   let open = false, closed = false, discard = null, connectionError = null, commitAttempted = false;
+  let result, failure, failed = false;
   const connectionFailed = error => { connectionError ||= error; discard ||= error; };
   raw.on?.('error', connectionFailed);
   const client = Object.freeze({ async query(sql, values) {
@@ -53,22 +54,30 @@ export async function withCustomCohortJobTransaction(pool, action) {
   try {
     await client.query('BEGIN'); open = true;
     await client.query("SET LOCAL statement_timeout='5000ms'; SET LOCAL lock_timeout='1000ms'; SET LOCAL idle_in_transaction_session_timeout='10000ms'");
-    const result = await action(client);
+    result = await action(client);
     if (discard) throw discard;
     commitAttempted = true;
     await client.query('COMMIT'); open = false;
-    return result;
   } catch (error) {
-    if (commitAttempted) throw uncertain(error);
-    if (open && !discard) {
+    failed = true;
+    failure = commitAttempted ? uncertain(error) : error;
+    if (!commitAttempted && open && !discard) {
       try { await raw.query({ text: 'ROLLBACK', query_timeout: LIMITS.cleanup_ms }); }
       catch (rollbackError) { discard = rollbackError; }
     }
-    throw error;
   } finally {
     closed = true;
     try { raw.release(discard || undefined); }
-    catch (releaseError) { throw commitAttempted ? uncertain(releaseError) : releaseError; }
+    catch (releaseError) {
+      // Preserve an earlier denial/driver failure. Cleanup must not turn
+      // access_revoked into capture_failed or erase a lost-COMMIT outcome.
+      if (!failed) {
+        failed = true;
+        failure = commitAttempted ? uncertain(releaseError) : releaseError;
+      }
+    }
     finally { raw.off?.('error', connectionFailed); }
   }
+  if (failed) throw failure;
+  return result;
 }

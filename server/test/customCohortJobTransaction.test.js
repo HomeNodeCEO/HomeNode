@@ -87,6 +87,24 @@ test('post-commit release failure is an unknown outcome rather than a successful
   assert.equal(deps.raw.listenerCount('error'), 0);
 });
 
+test('release failure never replaces the original denial or driver failure', async () => {
+  for (const rollbackError of [undefined, new Error('synthetic rollback also failed')]) {
+    const deps = fixture({ releaseError: new Error('synthetic release failed'), rollbackError });
+    const denial = new Error('custom_cohort_job_actor_access_revoked');
+    await assert.rejects(withCustomCohortJobTransaction(deps.pool, async () => { throw denial; }),
+      error => error === denial && !error.outcome_unknown);
+    assert.deepEqual(deps.releases, [rollbackError]);
+    assert.equal(deps.raw.listenerCount('error'), 0);
+  }
+  for (const failAt of ['BEGIN', 'COMMIT']) {
+    const deps = fixture({ failAt, releaseError: new Error('synthetic release failed') });
+    await assert.rejects(withCustomCohortJobTransaction(deps.pool, async () => 'not acknowledged'),
+      error => error === deps.error && Boolean(error.outcome_unknown) === (failAt === 'COMMIT'));
+    assert.deepEqual(deps.releases, [deps.error]);
+    assert.equal(deps.raw.listenerCount('error'), 0);
+  }
+});
+
 test('escaped job client cannot issue SQL after its transaction owner releases it', async () => {
   const deps = fixture(); let escaped;
   await withCustomCohortJobTransaction(deps.pool, async client => { escaped = client; });

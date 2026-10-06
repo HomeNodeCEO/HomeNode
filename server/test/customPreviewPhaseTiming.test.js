@@ -54,7 +54,7 @@ test('optional prepared-secondary fallback retains a failed timing outcome', asy
 test('saved catalog timings distinguish authorized reads from projection and final recheck without evidence', async t => {
   let now = 100; t.mock.method(performance, 'now', () => now);
   const events = [], phase = createCustomPreparedCatalogPhaseTiming(event => events.push(event));
-  const names = ['target', 'authorization', 'catalog_read', 'preview_read', 'projection', 'recheck'];
+  const names = ['target', 'authorization', 'catalog_read', 'map_opening_read', 'preview_read', 'projection', 'recheck'];
   for (const name of names) assert.equal(await phase(name, () => { now += 3; return 'PRIVATE'; }), 'PRIVATE');
   assert.deepEqual(events, names.map((name, index) => ({ phase: name, outcome: 'completed',
     duration_ms: 3, elapsed_ms: (index + 1) * 3 })));

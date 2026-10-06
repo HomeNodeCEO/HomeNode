@@ -680,6 +680,50 @@ and pass live acceptance before opting in. These ports do not remove full-catalo
 membership bounds, activate durable job HTTP/scheduling, increase installed caps,
 alter a genuine appraisal or establish an instant map SLA.
 
+## Offline compact map-opening metadata (not a larger capture or speed SLA)
+
+The saved map's compact opening previously still decoded the whole retained
+parcel map to rebuild its bounds, subdivision label anchors and subject pointer.
+`maintenance:neighborhood-map-openings` can now prepare that same display-only
+manifest once from the complete immutable catalog, numeric preview and original
+parcel map. It has a separate advisory lock, one transaction per context, explicit
+context/runtime bounds and no provider/source recapture or report writes. The
+new checksummed migration retains a new immutable derivative; it does not edit
+any original, tile, selection, accepted report or historical migration.
+
+The map-opening CLI reuses the reviewed certificate-verifying remote database
+URL boundary, retains one connection and its 120-second statement timeout, and
+sanitizes both idle connection failures and unknown worker errors. This does
+not alter runtime trust stores, production settings or the worker schedule.
+
+Preview format and source catalog format are independent. Each derivative is
+keyed and foreign-keyed to its exact catalog format (1 or 2), and preparation
+and reads choose the same latest supported original as the catalog repository.
+A newer catalog can receive a new immutable derivative without overwriting its
+predecessor. Until that derivative exists, the normal full-map fallback remains;
+an older derivative is never relabelled as the newer catalog's opening.
+
+The manifest is selection-neutral. It preserves the original exact parcel
+bounds/counts, one retained exterior-ring anchor per named group, and retained
+subject anchors. Neither a label nor a viewport defines a legal subdivision
+boundary or analytical population. All six text/compressed-byte source identities
+are bound to the complete catalog/preview/map. A prepared opening verifies their
+current database hashes, its own bounded payload and the current catalog binding
+without transferring or decoding the full map. Current assignment, original
+context, source purposes and final subject/role rechecks still surround this read.
+Private CSV openings stay on their existing independently authorized path.
+
+Missing or explicitly unsupported derivatives keep the original full-map
+fallback. Corrupt or detached prepared metadata is refused, never substituted
+with a plausible partial map. The ordinary complete-geometry opening and exact
+viewport tiles remain unchanged. Numerical union statistics still require their
+complete retained populations; this removes one geometry-decode stage, not all
+server work. Native CI must verify full-response parity, no full-map transfer,
+real immutable/repeat behavior and current source denial before merge. Local
+recording tests are not PostgreSQL proof. Production backfill/scheduling and
+measured Hardy reload acceptance remain necessary; no new worker schedule,
+deployment, source/publication cap or instantaneous-map guarantee is implied.
+
 The worker CLI validates its database URL before constructing the pool and
 requires certificate-verified TLS for every non-loopback host, including internal
 hosts. Only literal localhost/127.0.0.1/::1 development connections may be

@@ -256,7 +256,11 @@ export function presentCustomCohortSelectionViewportMap(preview, viewport) {
       Object.freeze(value);
     }
   };
-  freeze(output); selectionViewportProjections.add(output); return output;
+  // The legacy projection deliberately shares source feature/geometry and
+  // identity objects. Freeze a detached, already byte-bounded public response
+  // so this consumer neither mutates those inputs nor retains their aliases.
+  const detached = structuredClone(output);
+  freeze(detached); selectionViewportProjections.add(detached); return detached;
 }
 export function isCustomCohortPresentedSelectionViewport(value) {
   return selectionViewportProjections.has(value);

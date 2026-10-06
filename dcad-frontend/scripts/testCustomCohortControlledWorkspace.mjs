@@ -204,6 +204,7 @@ test('dense list pages50 groups while map selection and Include all retain887; m
   const h = harness(), dense = denseCatalog(), all = catalogHelpers.customCohortCatalogGroupIds(dense);
   const props = h.props(all); props.workspace.catalog = dense;
   h.render(props); await h.tick(); await h.waitForRequest(0);
+  assert.doesNotMatch(h.text(), /Explore broad observations|All 887 recorded groups|Recorded CAD groups in the retained discovery area/);
   assert.equal(h.calls[0].request.selection.pockets[0].account_ids.length, 887);
   const checkboxes = () => h.nodes().filter(n => n.type === 'input' && n.props.type === 'checkbox');
   assert.equal(checkboxes().length, 50); assert.match(h.text(), /Page 1 of 18/);
@@ -211,7 +212,8 @@ test('dense list pages50 groups while map selection and Include all retain887; m
   h.click('Include all observations'); assert.deepEqual(h.intents.at(-1), all);
   await h.complete();
   h.child('CustomCohortParcelMap').onInspectPocket(groupId(887)); h.render(props);
-  assert.equal(h.child('CustomCohortPocketInspector').pocketId, groupId(887));
+  assert.equal(h.child('CustomCohortParcelMap').inspectedPocketId, groupId(887));
+  assert.equal(h.child('CustomCohortPocketInspector'), undefined, 'no duplicate area breakdown below source details');
   const search = h.nodes().find(n => n.type === 'input' && n.props.maxLength === 200);
   search.props.onChange({ target: { value: 'Dense group 886' } }); h.render(props);
   assert.equal(checkboxes().length, 1); assert.equal(checkboxes()[0].props['aria-label'], 'Include Dense group 886');
@@ -400,17 +402,48 @@ test('preview retry is read-only and preserves the exact saved selection revisio
   assert.equal(h.calls[1].request.selection.revision, 19); assert.equal(h.intents.length, 0); assert.equal(h.catalogCalls.length, 0);
   await h.complete(); assert.equal(h.child('CustomCohortStatistics').freshness, 'current'); h.unmount();
 });
-test('independent inspection receives the shared transport and never selects its group', async () => {
+test('source-row inspection changes focus without adding a duplicate area breakdown or selecting its group', async () => {
   const h = harness(), props = h.props([groupId(1)]), memberTransport = () => assert.fail('Member reads must be explicit');
   props.workspace.memberTransport = memberTransport;
   h.render(props); await h.tick(); await h.complete(); h.click('Beta1 accounts · Dallas');
-  const inspect = h.child('CustomCohortPocketInspector'); assert.equal(inspect.previewTransport, h.previewTransport);
-  assert.equal(inspect.memberTransport, memberTransport); assert.equal(inspect.membersPaused, false);
-  assert.equal(inspect.pocketId, groupId(2)); assert.equal(h.intents.length, 0); assert.equal(h.calls.length, 1);
+  assert.equal(h.child('CustomCohortPocketInspector'), undefined);
+  assert.equal(h.child('CustomCohortParcelMap').inspectedPocketId, groupId(2));
+  assert.equal(h.intents.length, 0); assert.equal(h.calls.length, 1);
   h.render({ ...props, workspace: { ...props.workspace, saving: true } });
-  assert.equal(h.child('CustomCohortPocketInspector').membersPaused, true);
-  assert.equal(h.child('CustomCohortPocketInspector').memberTransport, memberTransport); h.unmount();
+  assert.equal(h.child('CustomCohortPocketInspector'), undefined);
+  assert.equal(h.child('CustomCohortParcelMap').inspectedPocketId, groupId(2)); h.unmount();
 });
+test('market analysis receives only the current coherent selection and is cleared during saves and on disposal', async t => {
+  const h = harness(); t.after(() => h.unmount()); const changes = [];
+  const props = { ...h.props(), onAnalysisSelection: value => changes.push(value) };
+  h.render(props); assert.equal(changes.at(-1), null);
+  await h.tick(); await h.complete();
+  assert.equal(changes.at(-1), h.child('CustomCohortStatistics').group);
+  assert.equal(h.child('CustomCohortCompactStatistics').mapStrip, true);
+  h.render({ ...props, workspace: { ...props.workspace, saving: true } });
+  assert.equal(changes.at(-1), null);
+  h.render({ ...props, workspace: { ...props.workspace,
+    selection: { revision: 8, included_recorded_group_ids: [groupId(2)] } } });
+  await h.tick(); assert.equal(changes.at(-1), null, 'old figures cannot become the new market-study area');
+  await h.complete(); assert.equal(changes.at(-1).binding.selectionRevision, 8);
+  h.unmount(); assert.equal(changes.at(-1), null);
+});
+
+test('townhome template hint uses only included checked composition groups and adds no reads', async t => {
+  const h = harness(); t.after(() => h.unmount()); const changes = [], props = withRecommendation(h.props());
+  props.onAnalysisSelection = (group, townhomes) => changes.push([group, townhomes]);
+  props.workspace.catalog.recommendation.stock_composition_v1 = { status: 'available', pockets: [
+    [groupId(1), 1, [], [[1, 0, 0, 0, 0], [1, 0, 0, 0, 0, 0, 0]]],
+    [groupId(2), 1, [], [[1, 0, 0, 0, 0], [0, 1, 0, 0, 0, 0, 0]]],
+  ] };
+  h.render(props); await h.tick(); await h.complete();
+  assert.equal(changes.at(-1)[1], false, 'an excluded townhouse group cannot alter the narrative');
+  h.render({ ...props, workspace: { ...props.workspace, selection: { revision: 8, included_recorded_group_ids: [groupId(1), groupId(2)] } } });
+  assert.deepEqual(changes.at(-1), [null, undefined]);
+  await h.tick(); await h.complete(); assert.equal(changes.at(-1)[1], true);
+  assert.equal(h.catalogCalls.length, 0); assert.equal(h.calls.length, 2, 'only the existing coherent previews');
+});
+
 test('standalone mode retains broad catalog loading and all-observations initialization', async () => {
   const h = harness(), p = h.props(); delete p.workspace; h.render(p); await h.drain(); await h.tick();
   assert.equal(h.catalogCalls.length, 1); assert.deepEqual(h.calls[0].request.selection.pockets[0].account_ids, ['A', 'B', 'C']);
@@ -536,7 +569,7 @@ test('recommended group inspection remains independent and fresh equivalent reco
   const h = harness(); t.after(() => h.unmount()); h.render(withRecommendation(h.props([]))); await h.tick(); await h.complete();
   const beta = h.nodes().find(n => n.type === 'button' && text(n).startsWith('Beta1 accounts'));
   assert.ok(beta); beta.props.onClick(); await h.drain();
-  assert.equal(h.child('CustomCohortPocketInspector').pocketId, groupId(2)); assert.equal(h.intents.length, 0);
+  assert.equal(h.child('CustomCohortParcelMap').inspectedPocketId, groupId(2)); assert.equal(h.intents.length, 0);
   h.render(withRecommendation(h.props([]))); await h.tick();
   assert.equal(h.calls.length, 1); assert.equal(h.catalogCalls.length, 0); assert.equal(h.child('CustomCohortStatistics').freshness, 'current');
 });
@@ -623,7 +656,7 @@ test('admission consumes the original65s deadline; late success cannot publish a
   assert.deepEqual(h.intents, []);
 });
 
-test('read-only quiescence disables direct group/map inspection callbacks and preserves cached inspector identity', async t => {
+test('read-only quiescence disables direct group/map inspection callbacks and preserves map focus', async t => {
   const h = harness(); t.after(() => h.unmount()); h.render(h.props()); await h.tick(); await h.complete();
   const paused = h.props(); paused.workspace.blockedReason = 'read_only'; h.render(paused);
   const groupButton = h.nodes().find(n => n.type === 'button' && text(n).startsWith('Beta1 accounts'));
@@ -632,9 +665,10 @@ test('read-only quiescence disables direct group/map inspection callbacks and pr
   h.child('CustomCohortParcelMap').onInspectAccount('C'); await h.drain();
   assert.equal(h.child('CustomCohortPocketInspector'), undefined); assert.equal(h.calls.length, 1);
   h.render(h.props()); h.child('CustomCohortParcelMap').onInspectPocket(groupId(2)); await h.drain();
-  assert.equal(h.child('CustomCohortPocketInspector').pocketId, groupId(2));
-  h.render(paused); assert.equal(h.child('CustomCohortPocketInspector').paused, true);
-  h.render(h.props()); assert.equal(h.child('CustomCohortPocketInspector').paused, false); assert.equal(h.calls.length, 1);
+  assert.equal(h.child('CustomCohortParcelMap').inspectedPocketId, groupId(2));
+  h.render(paused); h.child('CustomCohortParcelMap').onInspectPocket(groupId(1)); await h.drain();
+  assert.equal(h.child('CustomCohortParcelMap').inspectedPocketId, groupId(2));
+  h.render(h.props()); assert.equal(h.child('CustomCohortPocketInspector'), undefined); assert.equal(h.calls.length, 1);
 });
 
 test('a paused transport failure can explicitly retry the unchanged saved selection after release without an implicit retry loop', async t => {
@@ -695,7 +729,7 @@ test('mixed bare/PH Willow list review opens the complete 307-account family wit
   const originalGroup = h.child('CustomCohortStatistics').group;
   const card = h.nodes().find(node => node.type === 'button' && text(node).startsWith('WILLOW RUN 5145 accounts'));
   assert.ok(card, 'the literal WILLOW RUN 5 row remains inspectable'); card.props.onClick(); await h.drain();
-  assert.equal(h.child('CustomCohortPocketInspector').pocketId, groupId(3));
+  assert.equal(h.child('CustomCohortParcelMap').inspectedPocketId, groupId(3));
   h.click('Review subdivision and phases');
   const dialog = h.child('CustomCohortSubdivisionDialog');
   assert.equal(dialog.family.label, 'WILLOW RUN'); assert.equal(dialog.family.basis, 'candidate_numbered_name');
@@ -731,7 +765,8 @@ test('closing full review restores list inspection even when no map snapshot is 
   h.child('CustomCohortSubdivisionDialog').onClose(); await h.drain();
   assert.equal(h.child('CustomCohortSubdivisionDialog'), undefined);
   assert.equal(h.child('CustomCohortMapSnapshot'), undefined);
-  assert.equal(h.child('CustomCohortPocketInspector').pocketId, groupId(1));
+  assert.equal(h.child('CustomCohortParcelMap').inspectedPocketId, groupId(1));
+  assert.equal(h.child('CustomCohortPocketInspector'), undefined);
   assert.deepEqual(h.intents, []);
 });
 

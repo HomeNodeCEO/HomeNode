@@ -156,7 +156,12 @@ test('retrospective owner omits actionable recommendations but retains the exact
   state.policies.length = 0;
   const result = await service.catalog({ ...input, includeRecommendation: true });
   assert.equal(Object.hasOwn(result, 'recommendation'), false);
-  assert.equal(json(result), json(ordinary));
+  const { prepared_secondary_map, ...unchanged } = result;
+  assert.equal(json(unchanged), json(ordinary));
+  assert.equal(prepared_secondary_map.version, 2);
+  assert.equal(prepared_secondary_map.basis, 'current_retained_cad_snapshot_diagnostic_only');
+  assert.equal(prepared_secondary_map.authority, 'not_established');
+  assert.deepEqual(prepared_secondary_map.groups.map(group => group.id), result.catalog.pockets.map(pocket => pocket.id));
   assert.equal(result.catalog.catalog_complete, true);
   assert.deepEqual(result.catalog.pockets.flatMap(p => p.account_ids).sort(), [...f.accountIds].sort());
   assert.deepEqual(input.selection, { revision: 7, pockets: [] });
@@ -241,7 +246,7 @@ test('invalid optional flag is rejected before checkout and cannot act as a call
 
 test('opening catalog/map/statistics equal independent views but read the retained graph only once', async () => {
   const { service, input, state } = await setup({ effectiveDate: '2026-09-05' });
-  const catalog = await service.catalog(input);
+  const catalog = await service.catalog({ ...input, includeRecommendation: true });
   const all = [...catalog.catalog.pockets.map(p => p.id),
     ...(catalog.catalog.unassigned.member_count ? ['discovery:unassigned'] : [])];
   for (const ids of [all, all.slice(0, 1), []]) {

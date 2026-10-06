@@ -11,6 +11,7 @@ import { buildCachedSourceCaptures } from '../src/services/neighborhoodAssessmen
 import { mapCachedParcelRow, mapCachedAccountRow, mapCachedSaleRow, mapCachedSaleLinkRow } from '../src/services/neighborhoodAssessment/cachedRowMappings.js';
 import { contextFixture } from './fixtures/customCohortContextFixture.js';
 import { canonicalAssessmentJson } from '../src/services/neighborhoodAssessment/contract.js';
+import { presentCustomCohortPreview } from '../src/services/neighborhoodAssessment/customCohortPreviewPresentation.js';
 import { createCustomCohortPreparedPreviewRepository as preparedRepository,
   selectCustomCohortPreparedParcelMap as selectPreparedMap,
   customCohortPreparedParcelMapJsonBytes as preparedMapJsonBytes } from '../src/services/neighborhoodAssessment/customCohortPreparedPreviewRepository.js';
@@ -145,6 +146,34 @@ test('prepared selection recomputes exact union distributions from individual me
   }
   assert.equal(base.selection_revision, 1);
   assert.deepEqual(base.pockets, []);
+});
+
+test('cold catalog opening reuses the same member tables with exact summary parity for all, subset and empty selections', async () => {
+  const args = fixture({ accounts: ['A', 'B', 'C'], parcels: [
+    parcel(1, 'A', { residential_year_built: 1959, residential_area_sqft: '1024' }),
+    parcel(2, 'B', { residential_year_built: 1984, residential_area_sqft: '3438' }),
+    parcel(3, 'C', { residential_year_built: 2006, residential_area_sqft: '1800' }),
+  ], sales: [sale(1, 'A', { sale_price: '282500', source_days_on_market: 77 }),
+    sale(2, 'B', { sale_price: '785000', source_days_on_market: 30 }),
+    sale(3, 'C', { sale_price: '400000', sale_closing_date: '2025-01-01', source_close_date: '2025-01-01' })],
+  links: [link(1, 1, 'B')], pockets: [] });
+  const initial = await batched(args), originalBytes = JSON.stringify(initial);
+  for (const account_ids of [['A', 'B', 'C'], ['A', 'B'], ['C'], []]) {
+    const selection = { revision: 7, pockets: account_ids.length
+      ? [{ id: 'discovery:selected', label: 'Selected observations', account_ids }] : [] };
+    const opening = reselect(initial, selection);
+    const independentlyBuilt = await batched({ ...args, selection });
+    const expected = { context_ref, selection_revision: 7 };
+    assert.equal(opening.member_tables, initial.member_tables, 'no second member table is constructed');
+    assert.equal(opening.all, initial.all, 'unchanged broad statistics are reused');
+    assert.deepEqual(presentCustomCohortPreview({ preview: opening, expected, includeNarrative: true }),
+      presentCustomCohortPreview({ preview: independentlyBuilt, expected, includeNarrative: true }));
+    assert.equal(opening.selected.stock.member_count, account_ids.length);
+    assert.equal(opening.selected.transactions.member_count, account_ids.includes('B') ? 2 : 0,
+      'shared sale is counted once and the out-of-period sale remains omitted');
+    assert.ok(Object.isFrozen(opening.member_tables.stock[0]));
+  }
+  assert.equal(JSON.stringify(initial), originalBytes, 'opening selection never mutates the broad index');
 });
 
 test('context-scoped immutable prepared read model survives serialization and rejects corrupted bytes', async () => {

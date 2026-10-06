@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCustomCohortPocketRecommendation as build, CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY as POLICY } from '../src/services/neighborhoodAssessment/customCohortPocketRecommendation.js';
+import { buildCustomCohortPocketRecommendation as build, buildCustomCohortMapScoresBatched,
+  CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY as POLICY } from '../src/services/neighborhoodAssessment/customCohortPocketRecommendation.js';
 import { buildCachedSourceCaptures } from '../src/services/neighborhoodAssessment/cachedSourceCaptures.js';
 import { mapCachedParcelRow, mapCachedAccountRow, mapCachedSaleRow } from '../src/services/neighborhoodAssessment/cachedRowMappings.js';
 import { projectCustomNeighborhoodMaterialInputs } from '../src/services/neighborhoodAssessment/customMaterialInputs.js';
@@ -55,6 +56,20 @@ function fixture({ accounts = ['A', 'B'], parcels = accounts.map(id => parcel(id
 }
 const property = (result, id = 'B') => result.properties.find(row => row.account_id === id);
 const close = (actual, expected) => assert.ok(Math.abs(actual - expected) < 0.00011, `${actual} != ${expected}`);
+
+test('compact display scores stay small on a 10000-property retained discovery without publishing per-property factors', async t => {
+  const accounts = Array.from({ length: 10_000 }, (_, i) => i ? `P${i}` : 'A');
+  const input = fixture({ accounts, names: Object.fromEntries(accounts.map((id, i) => [id, `Subdivision ${i % 128}`])),
+    parcels: accounts.map((id, i) => parcel(id, { residential_area_sqft: 1500 + i % 1500,
+      residential_year_built: 1950 + i % 70 }, String(i + 1))) });
+  const start = performance.now();
+  const result = await buildCustomCohortMapScoresBatched(input);
+  const elapsed = performance.now() - start, bytes = Buffer.byteLength(JSON.stringify(result));
+  assert.equal(result.groups.length, 128);
+  assert.equal(result.groups.reduce((n, group) => n + group.member_count, 0), 10_000);
+  assert.ok(bytes < 25_000, 'only bounded group scores accompany the existing map/catalog');
+  t.diagnostic(JSON.stringify({ synthetic_accounts: 10_000, groups: 128, map_score_ms: Math.round(elapsed), output_bytes: bytes }));
+});
 
 test('actual retained capture/persist/reopen feeds a bound observation-only recommendation without writes', async () => {
   const f = await decisionEvidenceFixture(), { input } = f;

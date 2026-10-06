@@ -242,5 +242,36 @@ its original existing validation and limits; this bridge does not bypass them.
 
 The bridge does not read a source, authorize a request, save a workspace, move a
 selection head or publish statistics. Its strings must come from freshly
-authorized originals, never a browser body. Wiring that owner, current-rights
-rechecks and browser/statistics/publication consumers remains outstanding.
+authorized originals, never a browser body. An optional closed command original
+binds the server-authenticated reviewer, operation, exact predecessor and sorted
+group choices inside the same immutable catalog/selection graph. This retained
+actor stamp is intent, not a current permission or statistical certification.
+
+### Internal recorded-group selection owner (HTTP/consumers not activated)
+
+`customCohortRecordedGroupSelectionOwner.js` supplies additive internal methods
+on the existing Custom capture owner. Requests contain only context/group IDs,
+an operation UUID and the exact expected prior selection reference. The owner
+reloads current database roles and assignment access, then checks the original
+shared/private source purposes before reading prepared catalog/roster facts or
+original source pages. Shared prepared reads do not transfer parcel geometry;
+private captures cannot silently use a shared-only cache. Complete membership,
+command original, paged union and head update share one bounded transaction.
+The workfile/assignment/batch lock order matches signing and private review.
+
+Before commit/delivery the owner again checks current actor/assignment, subject
+and source rights and the exact private CSV review when present. Reopening
+re-derives metadata from the freshly authorized original catalog/roster and
+verifies every retained membership/union original and the current head. Missing
+originals, stale predecessors, changed operations or expired/revoked rights do
+not become an empty or broader successful selection. Absent and explicitly
+empty selections are distinct. Only selected IDs and their bounded reference
+leave these methods; membership arrays, source rows and raw failure details do
+not. Existing report/workspace/accepted sections and Apply remain unchanged.
+
+These methods are not exposed by HTTP or installed in browser/statistics/map
+consumers. Their guarded database tests require the disposable migrated CI
+database; local unit/SQL-double passes are not a substitute for that run or live
+load acceptance. Server-owned public commands, exact statistics/publication
+consumers, partial acquisition-page recovery and greater-than-50k capture/load
+acceptance remain outstanding. Existing installed source limits stay unchanged.

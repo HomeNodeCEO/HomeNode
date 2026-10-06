@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { canonicalAssessmentJson as json } from '../src/services/neighborhoodAssessment/contract.js';
 import { prepareNeighborhoodCohortBlob as blob } from '../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
-import { prepareCustomCohortRecordedGroupSelection as prepare }
+import { prepareCustomCohortRecordedGroupSelection as prepare, prepareCustomCohortGroupSelectionCommandOriginal as commandOriginal }
   from '../src/services/neighborhoodAssessment/customCohortRecordedGroupSelection.js';
 import { createCohortPagedGroupSelectionV1Store as createStore }
   from '../src/services/neighborhoodAssessment/cohortPagedGroupSelectionV1Store.js';
@@ -71,6 +71,35 @@ test('explicit empty selection keeps complete catalog lineage while producing no
   const empty = fixture([], []);
   assert.deepEqual(await rows(await prepare({ ...empty.input, includedGroupIds: [] })), []);
   await assert.rejects(prepare({ ...empty.input, includedGroupIds: [U] }), /unknown_group/);
+});
+
+test('server-owned reviewer intent is retained with catalog/group originals and changes cannot share a receipt', async () => {
+  const f = fixture(), command = { command_version: 1, actor_user_id: scope.organization_id,
+    operation_id: context.context_id, expected_selection_ref: null, included_recorded_group_ids: [A, B].sort(), selection_revision: 1 };
+  const commandJson = json(command), p = await prepare({ ...f.input, includedGroupIds: [B, A], revision: 1, commandJson });
+  assert.deepEqual(JSON.parse(p.catalog_original_json).selection_command, command);
+  const metadata = JSON.parse(p.metadata_json); assert.deepEqual(metadata.catalog_ref, blob(p.catalog_original_json));
+  assert.equal(commandOriginal(commandJson).selection_revision, 1);
+  const q = await prepare({ ...f.input, includedGroupIds: [A, B], revision: 1,
+    commandJson: json({ ...command, actor_user_id: scope.report_file_id }) });
+  assert.notDeepEqual(q.catalog_ref, p.catalog_ref, 'a different reviewer cannot reuse the same immutable intent receipt');
+  const staged = await memoryStore().store.stage({ metadataJson: p.metadata_json, membershipPages: p.membershipPages() });
+  const other = await memoryStore().store.stage({ metadataJson: q.metadata_json, membershipPages: q.membershipPages() });
+  assert.equal(staged.selection_sha256, other.selection_sha256, 'the chosen population identity does not depend on who reviewed it');
+  assert.notDeepEqual(staged.manifest_ref, other.manifest_ref, 'the evidence manifest retains the distinct reviewer lineage');
+});
+
+test('reviewer command grammar, revision/predecessor and selected-group binding refuse mismatches', async () => {
+  const f = fixture(), command = { command_version: 1, actor_user_id: scope.organization_id,
+    operation_id: context.context_id, expected_selection_ref: null, included_recorded_group_ids: [A, B].sort(), selection_revision: 1 };
+  for (const bad of [{ ...command, actor_user_id: 'browser-user' }, { ...command, authority: 'allowed' },
+    { ...command, operation_id: 'bad-operation' }, { ...command, selection_revision: 2 },
+    { ...command, included_recorded_group_ids: [B, A] }, { ...command, expected_selection_ref: {} }]) {
+    assert.throws(() => commandOriginal(json(bad)), /invalid_command/);
+  }
+  await assert.rejects(prepare({ ...f.input, revision: 1, includedGroupIds: [A], commandJson: json(command) }), /command_mismatch/);
+  await assert.rejects(prepare({ ...f.input, revision: 2, includedGroupIds: [A, B], commandJson: json(command) }), /command_mismatch/);
+  assert.throws(() => commandOriginal('x'.repeat(262_145)), /invalid_command/);
 });
 
 test('a selected subset cannot conceal partial, conflicting or altered unselected catalog membership', async () => {

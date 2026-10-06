@@ -3,11 +3,14 @@ import { setImmediate as yieldToRequests } from 'node:timers/promises';
 import { canonicalAssessmentJson as json } from './contract.js';
 import { prepareCustomCohortContextScope, prepareCustomCohortContextReference } from './customCohortContextContract.js';
 import { prepareCustomNeighborhoodRecordedGroupIds } from './customWorkspaceCheckpoint.js';
+import { prepareCustomCohortGroupSelectionReference } from './customCohortGroupSelectionRepository.js';
 import { prepareNeighborhoodCohortBlob as blob } from './cohortEvidenceBlobRepository.js';
 import { COHORT_PAGED_GROUP_SELECTION_V1_LIMITS as L,
   prepareCohortPagedGroupSelectionV1Metadata } from './cohortPagedGroupSelectionV1.js';
 
 const INPUT_BYTES = 4_000_000;
+const COMMAND_BYTES = 262_144;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const hash = text => createHash('sha256').update(text, 'utf8').digest('hex');
 function fail(reason) { throw new TypeError(`custom_cohort_recorded_group_selection_${reason}`); }
@@ -35,6 +38,31 @@ function account(value) {
   }
 }
 
+/** Recorded server-owned reviewer intent, never a current authorization grant.
+ * The executable owner must supply the freshly authenticated actor, not a
+ * browser actor claim. Its immutable receipt shares the selection transaction.
+ */
+export function prepareCustomCohortGroupSelectionCommandOriginal(text) {
+  check(typeof text === 'string' && Buffer.byteLength(text, 'utf8') <= COMMAND_BYTES, 'invalid_command');
+  let value;
+  try { value = JSON.parse(text); check(json(value) === text, 'invalid_command'); } catch { fail('invalid_command'); }
+  const keys = ['command_version', 'actor_user_id', 'operation_id', 'expected_selection_ref',
+    'included_recorded_group_ids', 'selection_revision'];
+  check(value && Object.getPrototypeOf(value) === Object.prototype
+    && Object.keys(value).length === keys.length && keys.every(k => Object.hasOwn(value, k))
+    && value.command_version === 1 && typeof value.actor_user_id === 'string' && UUID.test(value.actor_user_id)
+    && typeof value.operation_id === 'string' && UUID.test(value.operation_id), 'invalid_command');
+  let expected;
+  try { expected = value.expected_selection_ref === null ? null
+    : prepareCustomCohortGroupSelectionReference(value.expected_selection_ref); } catch { fail('invalid_command'); }
+  let ids;
+  try { ids = prepareCustomNeighborhoodRecordedGroupIds(value.included_recorded_group_ids, 3); } catch { fail('invalid_command'); }
+  check(ids.every((id, i) => i === 0 || ids[i - 1] < id) && Number.isInteger(value.selection_revision)
+    && value.selection_revision > 0 && value.selection_revision <= 2147483647
+    && value.selection_revision === (expected?.selection_revision ?? 0) + 1, 'invalid_command');
+  return Object.freeze({ ...value, expected_selection_ref: expected, included_recorded_group_ids: ids });
+}
+
 /** Derive complete memberships from the owner's already authorized ORIGINAL
  * JSON-encoded catalog and independently retained roster. Neither string may come from a
  * browser. This pure bridge grants no source access, updates no head, and does
@@ -43,7 +71,7 @@ function account(value) {
  * complete selected memberships are separately retained by the paged store.
  */
 export async function prepareCustomCohortRecordedGroupSelection({ scopeJson, contextJson,
-  catalogJson, rosterJson, includedGroupIds, revision, signal, checkBudget = () => {} } = {}) {
+  catalogJson, rosterJson, includedGroupIds, revision, commandJson = null, signal, checkBudget = () => {} } = {}) {
   check(typeof checkBudget === 'function' && (signal === undefined || signal instanceof AbortSignal), 'invalid_options');
   const cancelled = () => { check(!signal?.aborted, 'cancelled'); checkBudget(); };
   cancelled();
@@ -52,6 +80,9 @@ export async function prepareCustomCohortRecordedGroupSelection({ scopeJson, con
   const scope = prepareCustomCohortContextScope(scopeJson), context_ref = prepareCustomCohortContextReference(contextJson);
   const catalog = original(catalogJson, 'invalid_catalog'), roster = original(rosterJson, 'invalid_roster');
   check(Number.isInteger(revision) && revision > 0 && revision <= 2147483647, 'invalid_revision');
+  const command = commandJson === null ? null : prepareCustomCohortGroupSelectionCommandOriginal(commandJson);
+  if (command) check(command.selection_revision === revision
+    && json(command.included_recorded_group_ids) === json(selectedIds), 'command_mismatch');
   check(catalog?.catalog_version === 3 && catalog.status === 'review_only' && catalog.catalog_complete === true
     && catalog.authority === 'not_established' && catalog.apply?.status === 'blocked'
     && catalog.presentation?.membership_complete === true && catalog.unresolved_membership === null
@@ -103,7 +134,8 @@ export async function prepareCustomCohortRecordedGroupSelection({ scopeJson, con
   descriptors.sort((a, b) => compare(a.id, b.id));
   const catalog_original_json = json({ selection_catalog_version: 1, usage: 'retained_recorded_group_membership_digests',
     scope, context_ref, catalog_version: 3, original_catalog_sha256: hash(catalogJson),
-    original_roster_sha256: hash(rosterJson), groups: descriptors });
+    original_roster_sha256: hash(rosterJson), groups: descriptors,
+    ...(command ? { selection_command: command } : {}) });
   const catalog_ref = blob(catalog_original_json), selected = new Set(selectedIds);
   const metadata_json = json({ selection_version: 1, usage: 'retained_group_selection_only',
     scope, context_ref, catalog_ref, revision, groups: descriptors.filter(g => selected.has(g.id)) });

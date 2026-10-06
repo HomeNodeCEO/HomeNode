@@ -1,4 +1,5 @@
 import { performance } from 'node:perf_hooks';
+import { setImmediate as yieldToRequests } from 'node:timers/promises';
 import { CUSTOM_COHORT_OPERATION_LIMITS } from './customCohortOperationLimits.js';
 import { createCustomCapturePhaseTiming, createCustomReportPhaseTiming, createCustomPreviewPhaseTiming,
   createCustomCatalogPhaseTiming, createCustomPreparedCatalogPhaseTiming,
@@ -19,6 +20,7 @@ import { createCustomCohortSubjectRepository } from './customCohortSubjectReposi
 import { createCustomCohortContextRepository } from './customCohortContextRepository.js';
 import { createCustomCohortCaptureJobRepository, prepareCustomCohortCaptureJobClaim } from './customCohortCaptureJobRepository.js';
 import { loadCurrentCustomCohortJobActor } from './customCohortJobActor.js';
+import { createCustomCohortRecordedGroupSelectionOwner } from './customCohortRecordedGroupSelectionOwner.js';
 import { resumeCustomCohortSubjectCheckpoint } from './customCohortCaptureSubjectCheckpoint.js';
 import { resumeCustomCohortPreparationCheckpoint } from './customCohortCapturePreparationCheckpoint.js';
 import { prepareCustomCohortContextReference, prepareCustomCohortContextHeader } from './customCohortContextContract.js';
@@ -49,7 +51,8 @@ import { buildCustomCohortMapManifest } from './customCohortMapManifest.js';
 import { prepareCustomCohortViewport, projectCustomCohortViewportMap } from './customCohortViewportMap.js';
 import { presentCustomCohortPreview, inspectCustomCohortPreviewMembers, customCohortPreviewBinding } from './customCohortPreviewPresentation.js';
 import { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog, CUSTOM_COHORT_POCKET_CATALOG_LIMITS,
-  CUSTOM_COHORT_DENSE_CATALOG_VERSION, customCohortCatalogGroupLimit } from './customCohortPocketCatalog.js';
+  CUSTOM_COHORT_DENSE_CATALOG_VERSION, customCohortCatalogGroupLimit,
+  customCohortPocketCatalogBatches } from './customCohortPocketCatalog.js';
 import { buildCustomCohortPocketRecommendationPresentationBatched,
   CUSTOM_COHORT_DENSE_RECOMMENDATION_PRESENTATION_BYTES } from './customCohortPocketRecommendationPresentation.js';
 import { deriveCustomCohortRecordedProximity } from './customCohortRecordedProximity.js';
@@ -462,14 +465,14 @@ async function resolveTarget(client, input, locked, permission = 'write', lockRe
   [input.assignmentFileId, input.accountId, assignment.organization_id]));
   return freeze({ ...Object.fromEntries(TARGET_FIELDS.filter(key => key !== 'report_file_id').map(key => [key, assignment[key]])), ...report });
 }
-async function privateCaptureWorkfile(client, input) {
+async function privateCaptureWorkfile(client, input, { permission = 'write', writeLock = true } = {}) {
   // The upload/review and signing owners lock the workfile before assignment
   // rows. Follow that same order for this additive private-capture write path.
-  await resolveTarget(client, input, false);
+  await resolveTarget(client, input, false, permission);
   return one(await client.query(`/* custom-cohort-capture:private-workfile */
     SELECT status,signed_at,EXISTS (SELECT 1 FROM app.custom_appraisal_signed_snapshots s
       WHERE s.assignment_file_id=w.assignment_file_id) AS has_signed_snapshot
-    FROM app.custom_appraisal_workfiles w WHERE assignment_file_id=$1::bigint FOR UPDATE NOWAIT`, [input.assignmentFileId]));
+    FROM app.custom_appraisal_workfiles w WHERE assignment_file_id=$1::bigint FOR ${writeLock ? 'UPDATE' : 'SHARE'} NOWAIT`, [input.assignmentFileId]));
 }
 function privateDraft(workfile) {
   if (workfile.status !== 'draft' || workfile.signed_at !== null || workfile.has_signed_snapshot !== false) fail('private_source_read_only');
@@ -640,8 +643,10 @@ async function authorizedRetainedInputs(client, { scopeJson, reference, input, a
     retained, ...(beforeLoad === null ? {} : { beforeLoadResult }) };
 }
 
-/** Executable, Custom-only acquisition owner. No HTTP route, current-head
- * change, report publication, Apply or signing occurs here. The internal
+/** Executable, Custom-only acquisition owner. No HTTP route, report
+ * publication, Apply or signing occurs here. Internal recorded-group methods
+ * retain only context-bound selection intent, not report/workspace sections.
+ * The internal
  * prepareReviewedInputs method computes exact retained/reviewed inputs only;
  * no route may expose its source-bearing result under a retention-only grant.
  * The review method retains exact authenticated reviewer commands only; stored
@@ -676,6 +681,70 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if (!same(decision, loaded.privateAuthorization.decision)) fail('market_policy_changed');
     }
   }
+  const recordedGroupSelection = createCustomCohortRecordedGroupSelectionOwner({ identityOf,
+    execute: async (originalInput, options, writing, work) => {
+      const budget = operationBudget(options), permission = writing ? 'write' : 'read';
+      return transaction(pool, 'READ COMMITTED', budget, async client => {
+        const initial = await resolveTarget(client, originalInput, false, permission);
+        const auth = await loadCurrentCustomCohortJobActor(client, originalInput.auth.userId, initial.organization_id);
+        const input = { ...originalInput, auth };
+        assertTarget(await resolveTarget(client, input, false, permission), initial);
+        // Match upload/signing lock order. A saved selection may never mutate a
+        // signed workfile or its accepted report. Reads remain current-authorized.
+        const workfile = await privateCaptureWorkfile(client, input, { permission, writeLock: writing });
+        if (writing) privateDraft(workfile);
+        const target = await resolveTarget(client, input, true, permission);
+        assertTarget(target, initial);
+        const scopeJson = canonicalAssessmentJson(Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])));
+        const licensed = await authorizedRetainedInputs(client, { scopeJson, reference: input.contextRef, input,
+          authorizeMarketData, authorizePrivateSales, budget, exposure: 'report_observation_catalog', loadInputs: false });
+        let catalog, roster, retained = null;
+        if (!licensed.privateAuthorization) {
+          const cached = await createCustomCohortPreparedCatalogRepository(client, scopeJson, input.contextRef).read();
+          const prepared = cached ? await createCustomCohortPreparedPreviewRepository(client, scopeJson, input.contextRef)
+            .read({ includeMap: false, useVerifiedPreviewCache: true }) : null;
+          if (prepared) {
+            if (!same(prepared.preview.observation_period, licensed.observationPeriod)
+              || prepared.preview.effective_date !== licensed.context.effective_date) fail('operation_conflict');
+            catalog = rebindCustomCohortPreparedCatalog(cached, 1).catalog;
+            roster = prepared.preview.all.account_ids;
+          }
+        }
+        if (!catalog) {
+          // Source rights were checked before these original row pages. Private
+          // data still retains its own purpose/review; no shared-only cache may
+          // stand in for a private-source capture.
+          retained = await loadCustomCohortCaptureInputs(client, scopeJson,
+            Object.fromEntries(DEPENDENCIES.map(key => [key, licensed.header.body[key]])));
+          const preview = await buildCustomCohortIndexedObservationPreviewBatched({ context_ref: input.contextRef,
+            retained_inputs: retained.retained_inputs, selection: { revision: 1, pockets: [] } }, { check: budget.check });
+          const expected = { context_ref: input.contextRef, selection_revision: 1 };
+          const batches = customCohortPocketCatalogBatches({ retained_inputs: retained.retained_inputs, preview, catalog_version: 3 });
+          let step;
+          do { budget.check(); step = batches.next(); if (!step.done) await yieldToRequests(); } while (!step.done);
+          budget.check();
+          catalog = presentCustomCohortPocketCatalog({ catalog: step.value, preview, expected });
+          roster = retained.retained_inputs.spatial.account_ids;
+        }
+        const result = await work({ client, auth, scopeJson, catalogJson: JSON.stringify(catalog),
+          rosterJson: JSON.stringify({ account_ids: roster }), budget,
+          blobs: createNeighborhoodCohortBlobRepository(client, target.organization_id) });
+        // Refresh request-time role claims again before COMMIT/delivery; original
+        // actor receipts, cached facts and integrity hashes establish no grant.
+        const finalAuth = await loadCurrentCustomCohortJobActor(client, input.auth.userId, target.organization_id);
+        const finalInput = { ...input, auth: finalAuth };
+        assertTarget(await resolveTarget(client, finalInput, true, permission), target);
+        if ((await createCustomCohortSubjectRepository(client, scopeJson)
+          .compareCurrent(licensed.subjectReference)).status !== 'matched') fail('subject_changed');
+        const decision = await boundedPolicy(authorizeMarketData, client, finalAuth, licensed.context,
+          licensed.purpose, budget, 'report_observation_catalog');
+        if (!same(decision, licensed.decision)) fail('market_policy_changed');
+        const privateCapture = retained?.retained_inputs.private_sales?.capture;
+        if (privateCapture) await recheckAssignmentSalesCsvCapture(client.query.bind(client), privateCapture);
+        await recheckPrivatePolicy(client, finalInput, licensed, budget, ['report_observation_catalog']);
+        budget.check(); return result;
+      });
+    } });
   function reportPurpose(input, retained) {
     const privatePurpose = retained.privateAuthorization?.purpose;
     return { kind: 'custom_reported_observations_v2', context_ref: input.contextRef,
@@ -1159,6 +1228,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     return response;
   }
   return Object.freeze({
+    ...recordedGroupSelection,
     // These are intentionally not exposed by the HTTP router until a worker
     // can process queued jobs. Queue admission is not a source grant; every
     // operation rechecks current assignment access and the worker must recheck

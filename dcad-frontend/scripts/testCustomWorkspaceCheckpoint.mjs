@@ -195,7 +195,7 @@ test('admission copies and deeply freezes intent without sorting or removing sel
   assert.equal(ready.active.selection.included_recorded_group_ids.length, 3); assert.equal(ready.pending_capture.operation_id, OTHER_UUID);
 });
 for (const [name, mutate] of [
-  ['unsupported version', v => { v.workspace_version = 7; }],
+  ['unsupported version', v => { v.workspace_version = 8; }],
   ['string version', v => { v.workspace_version = '1'; }],
   ['missing pending field', v => { delete v.pending_capture; }],
   ['root geometry injection', v => { v.geometry = { type: 'Polygon' }; }],
@@ -233,6 +233,18 @@ for (const [name, mutate] of [
   assert.deepEqual(read(section(raw)), serverRead(section(raw)));
   assert.equal(restore(section(raw), catalog()).status, 'invalid');
 });
+test('internal v7 checkpoint is recognized by the server but not silently activated or reset by the legacy browser', () => {
+  const raw = { workspace_version: 7, active: { context_ref: fixture().active.context_ref, observation_period: period(),
+    selection_ref: { selection_version: 1, selection_revision: 9, selection_sha256: 'b'.repeat(64),
+      manifest_ref: { content_sha256: 'c'.repeat(64), canonical_utf8_bytes: '1200' } } }, pending_capture: null };
+  const before = structuredClone(raw);
+  assert.deepEqual(serverPrepare(raw), raw); assert.equal(serverRead(section(raw)).status, 'restored');
+  assert.throws(() => prepare(raw));
+  assert.deepEqual(read(section(raw)), { status: 'invalid', section_revision: null, checkpoint: null, reason: 'workspace_version' });
+  assert.equal(restore(section(raw), catalog()).status, 'invalid');
+  assert.deepEqual(raw, before, 'unsupported browser intent is never rewritten to an empty/default selection');
+});
+
 test('section envelope enforces exact key, int32 revision and known optional metadata', () => {
   for (const mutate of [s => { s.key = 'neighborhood_assessment'; }, s => { s.revision = '13'; },
     s => { s.revision = 0; }, s => { s.revision = 2_147_483_648; }, s => { s.updated_by = null; },

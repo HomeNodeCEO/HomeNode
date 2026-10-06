@@ -454,6 +454,48 @@ its legacy path until exact-reference workspace save and coherent Apply are
 implemented together. Partial source paging, complete >50k numeric studies and
 realistic live acceptance remain separate unfinished roadmap items.
 
+### Exact-reference workspace save (internal, not UI activation)
+
+`selectAndSaveRecordedGroups` introduces an explicit owner transaction for the
+selection head and workspace checkpoint. It freshly reloads the current actor,
+assignment and source grants, locks the writable workfile before its assignment
+and context, and verifies the saved study and expected workspace revision before
+opening prepared catalog/roster facts. The complete original selection is staged
+and reopened before a version-7 checkpoint is written through the existing
+quota, revision-CAS and immutable-history writer. Cancellation, history failure
+or a final source/current-role refusal rolls back pages, head, checkpoint and
+history together. Nothing is saved to the accepted neighborhood section.
+
+V7 contains only the exact context, period, retained discovery and selection
+reference. It contains no parcel/member array, computed statistic, source grant,
+or acceptance. V1-v6 canonical meanings and browser defaults remain unchanged;
+there is no implicit upgrade. The new original command version 2 binds the
+expected workspace section revision as well as its exact selection predecessor,
+operation, current reviewer and group IDs. A lost COMMIT acknowledgment can reuse
+only that exact operation while its exact checkpoint is the immediate saved
+successor and the same selection remains current. Replay adds neither another
+history row nor a new head and never rewinds later choices.
+
+Ordinary/manual/autosave entry points cannot write V7, including through a
+caller-supplied owner-looking field. Their locked stored-version check also
+prevents an older browser from downgrading an existing V7 checkpoint. Independent
+legacy head writes are refused once a file has V7, so the two cannot drift apart.
+The dedicated internal transaction helper is a structural writer only, not an
+authorization, registration or COMMIT capability. There is no new public route,
+browser activation, source-capacity increase or live SLA in this slice.
+
+Native assertions run only in a separate synthetic organization/actor/report
+inside the existing migrated disposable database, preserving the coordinator's
+independent cold-start checkpoint fixture: actual
+post-section cancellation, history-write failure, final source/current-role
+refusal, lost COMMIT acknowledgment, downgrade refusal, explicit empty selection
+and two concurrent CAS operations. Accepted sections/receipts, report content and
+assignment geography remain unchanged. These assertions must pass in CI before
+merge; local recording doubles are not claimed as PostgreSQL proof. Coherent
+exact-reference report proposal/Apply and its browser consumer still have to
+land together before any genuine file transitions to V7. Partial source pages,
+complete >50k numeric studies and realistic live acceptance remain unfinished.
+
 The worker CLI validates its database URL before constructing the pool and
 requires certificate-verified TLS for every non-loopback host, including internal
 hosts. Only literal localhost/127.0.0.1/::1 development connections may be

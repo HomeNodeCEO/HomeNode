@@ -5,13 +5,45 @@ import { createCustomCohortContextCapture } from '../../src/services/neighborhoo
 import { createCustomNeighborhoodCohortRouter } from '../../src/modules/accounts/customNeighborhoodCohortRouter.js';
 import { runCustomCohortPreparedViewportTileJob } from '../../src/services/neighborhoodAssessment/customCohortPreparedViewportTileJob.js';
 import { customCohortOpeningSelection } from '../../src/services/neighborhoodAssessment/customCohortOpeningPreview.js';
+import { saveCustomAppraisalWorkfileSectionInTransaction } from '../../src/services/customAppraisalWorkfiles.js';
 
 /** Invoked only by the verified disposable PostgreSQL fixture. No live accounts,
  * source provider, user report choices, accepted sections or shared database.
  */
-export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, auth, scope, grant, observationPeriod }) {
+export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, scope: sourceScope, grant, observationPeriod }) {
+  // This suite intentionally commits workspace/head changes. Give it its own
+  // actor, organization and report so the coordinator's subsequent cold-start
+  // checkpoint checks still exercise an actually untouched assignment.
+  const organization = randomUUID(), actor = randomUUID(), caseId = randomUUID(), snapshot = randomUUID(), report = randomUUID();
+  await pool.query("INSERT INTO app_auth.organizations(id,legal_name,display_name) VALUES($1,'Synthetic group workspace','Synthetic group workspace')", [organization]);
+  await pool.query("INSERT INTO app_auth.users(id,email,display_name) VALUES($1,$2,'Synthetic group workspace actor')", [actor, `${actor}@example.test`]);
+  await pool.query('INSERT INTO app_auth.organization_memberships(organization_id,user_id) VALUES($1,$2)', [organization, actor]);
+  await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')", [organization, actor]);
+  const copiedCase = await pool.query(`INSERT INTO app.appraisal_cases(id,organization_id,account_id,effective_date)
+    SELECT $1,$2,r.account_id,c.effective_date FROM app.report_files r
+    JOIN app.appraisal_cases c ON c.id=r.appraisal_case_id
+    WHERE r.id=$3 AND r.organization_id=$4 AND r.custom_assignment_file_id=$5 AND r.account_id=$6`,
+  [caseId, organization, sourceScope.report_file_id, sourceScope.organization_id, sourceScope.assignment_file_id, sourceScope.account_id]);
+  assert.equal(copiedCase.rowCount, 1, 'only copy the exact verified synthetic owner fixture');
+  const copiedSnapshot = await pool.query(`INSERT INTO app.appraisal_subject_snapshots(id,appraisal_case_id,snapshot_version,effective_date,subject_data)
+    SELECT $1,$2,1,s.effective_date,s.subject_data FROM app.report_files r
+    JOIN app.appraisal_subject_snapshots s ON s.id=r.subject_snapshot_id
+    WHERE r.id=$3 AND r.organization_id=$4 AND r.custom_assignment_file_id=$5 AND r.account_id=$6`,
+  [snapshot, caseId, sourceScope.report_file_id, sourceScope.organization_id, sourceScope.assignment_file_id, sourceScope.account_id]);
+  assert.equal(copiedSnapshot.rowCount, 1);
+  const assignment = (await pool.query(`INSERT INTO app.assignment_files(organization_id,account_id,file_number,created_by_user_id,assigned_appraiser_user_id)
+    VALUES($1,$2,$3,$4,$4) RETURNING id::text`, [organization, sourceScope.account_id, `GROUP-${randomUUID()}`, actor])).rows[0].id;
+  await pool.query(`INSERT INTO app.report_files(id,organization_id,account_id,workflow_type,file_number,custom_assignment_file_id,appraisal_case_id,subject_snapshot_id)
+    VALUES($1,$2,$3,'custom_appraisal',$4,$5,$6,$7)`, [report, organization, sourceScope.account_id, `GROUP-${randomUUID()}`, assignment, caseId, snapshot]);
+  await pool.query('INSERT INTO app.custom_appraisal_workfiles(assignment_file_id,canonical_file_name) VALUES($1,$2)', [assignment, `group-workspace-${randomUUID()}`]);
+  const scope = { organization_id: organization, report_file_id: report, assignment_file_id: assignment, account_id: sourceScope.account_id };
+  const auth = { userId: actor, organizations: [{ organizationId: organization, roles: ['appraiser'] }] };
+  const coordinatorWorkspace = () => pool.query(`SELECT to_jsonb(s) AS value FROM app.custom_appraisal_workfile_sections s
+    WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`, [sourceScope.assignment_file_id]);
+  const coordinatorBefore = (await coordinatorWorkspace()).rows;
   const calls = [], checks = [];
   let loseCommitAck = false, cancelAtHead = null, revokeAtHead = false, revokeAtRead = false;
+  let cancelAtWorkspace = null, revokeAtWorkspace = false, failWorkspaceHistory = false;
   let denyPolicy = false, denyFinalPolicy = false, denySummary = false, denyFinalSummary = false;
   let denyMembers = false, denyFinalMembers = false;
   let policyCalls = 0, summaryPolicyCalls = 0, memberPolicyCalls = 0,
@@ -23,6 +55,15 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
     return { release: error => client.release(error), async query(config) {
       calls.push(config.text);
       const result = await client.query(config);
+      if (config.values?.[1] === 'neighborhood_workspace') {
+        if (config.text.includes('INSERT INTO app.custom_appraisal_workfile_sections (')) {
+          cancelAtWorkspace?.abort(); cancelAtWorkspace = null;
+          if (revokeAtWorkspace) { revokeAtWorkspace = false; await suspend('suspended'); }
+        }
+        if (failWorkspaceHistory && config.text.includes('INSERT INTO app.custom_appraisal_workfile_section_history (')) {
+          failWorkspaceHistory = false; throw new Error('synthetic workspace history write acknowledgment failure');
+        }
+      }
       // Inject only a cache-miss boundary after the real SQL query. All fallback
       // context/source/membership rows are read from actual PostgreSQL originals;
       // immutable cache/source/history triggers remain enabled and untouched.
@@ -368,5 +409,97 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
   } finally {
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   }
+  // Explicit QA-only conversion after the unchanged-report legacy tests above.
+  // Use the existing schema/writer and exact retained context, not fabricated
+  // context pages or a production file. The browser has no v7 activation yet.
+  const currentRef = (await owner.readRecordedGroupSelection(read)).selection_ref;
+  const seedValue = { workspace_version: 6, active: { context_ref: read.contextRef, observation_period: observationPeriod,
+    selection: { revision: currentRef.selection_revision, included_recorded_group_ids: [...ids].sort() } }, pending_capture: null };
+  const seedClient = await pool.connect(); let seeded;
+  try {
+    await seedClient.query('BEGIN');
+    const old = (await seedClient.query(`SELECT revision FROM app.custom_appraisal_workfile_sections
+      WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`, [scope.assignment_file_id])).rows[0];
+    seeded = await saveCustomAppraisalWorkfileSectionInTransaction(seedClient, {
+      accountId: scope.account_id, assignmentFileId: scope.assignment_file_id, sectionKey: 'neighborhood_workspace',
+      sectionValue: seedValue, expectedRevision: old?.revision ?? 0, saveReason: 'manual_save', reviewer: auth.userId,
+    });
+    await seedClient.query('COMMIT');
+  } catch (error) { await seedClient.query('ROLLBACK'); throw error; }
+  finally { seedClient.release(); }
+  const workspaceState = async () => ({
+    section: (await pool.query(`SELECT revision,section_value FROM app.custom_appraisal_workfile_sections
+      WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`, [scope.assignment_file_id])).rows[0],
+    history: (await pool.query(`SELECT count(*)::int AS n FROM app.custom_appraisal_workfile_section_history
+      WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`, [scope.assignment_file_id])).rows[0].n,
+    head: await head(), blobs: await blobs(),
+  });
+  const protectedOther = async () => {
+    const state = await protectedState(); state.sections = state.sections.filter(row => row.value.section_key !== 'neighborhood_workspace');
+    return state;
+  };
+  const otherBefore = await protectedOther();
+  const atomicInput = { ...select, operationId: randomUUID(), expectedSelectionRef: currentRef,
+    expectedWorkspaceRevision: seeded.revision };
+  const unchanged = await workspaceState();
+  const failNext = () => ({ ...atomicInput, operationId: randomUUID() });
+  const afterWorkspaceCancel = new AbortController(); cancelAtWorkspace = afterWorkspaceCancel;
+  await assert.rejects(owner.selectAndSaveRecordedGroups(failNext(), { signal: afterWorkspaceCancel.signal }), /cancelled/);
+  assert.deepEqual(await workspaceState(), unchanged, 'head, pages, workspace and history roll back after the actual section write');
+  failWorkspaceHistory = true;
+  await assert.rejects(owner.selectAndSaveRecordedGroups(failNext()), /history write acknowledgment failure/);
+  assert.deepEqual(await workspaceState(), unchanged, 'history failure rolls back head and workspace together');
+  policyCalls = 0; denyFinalPolicy = true;
+  try { await assert.rejects(owner.selectAndSaveRecordedGroups(failNext()), /market_data_access_denied/); }
+  finally { denyFinalPolicy = false; }
+  assert.deepEqual(await workspaceState(), unchanged);
+  revokeAtWorkspace = true;
+  try { await assert.rejects(owner.selectAndSaveRecordedGroups(failNext()), /job_actor_access_revoked/); }
+  finally { await suspend('active'); }
+  assert.deepEqual(await workspaceState(), unchanged);
+  checks.push('native exact-reference workspace transaction rolls back staged pages, head, section and history after section cancellation, history failure, final source refusal or current-role revocation');
+
+  loseCommitAck = true;
+  await assert.rejects(owner.selectAndSaveRecordedGroups(atomicInput), error => error.outcome_unknown === true);
+  const committed = await workspaceState();
+  assert.equal(committed.section.revision, seeded.revision + 1); assert.equal(committed.history, unchanged.history + 1);
+  const atomic = await owner.selectAndSaveRecordedGroups(atomicInput);
+  assert.equal(atomic.status, 'reused'); assert.equal(atomic.workspace.revision, seeded.revision + 1);
+  assert.equal(atomic.workspace.value.workspace_version, 7);
+  assert.deepEqual(atomic.workspace.value.active.selection_ref, atomic.selection_ref);
+  assert.equal(committed.head, atomic.selection_ref.selection_revision);
+  assert.deepEqual(await workspaceState(), committed, 'lost-ACK replay produces neither another history row nor another head');
+  await assert.rejects(owner.selectRecordedGroups({ ...select, operationId: randomUUID(), expectedSelectionRef: atomic.selection_ref }),
+    /selection_workspace_workflow_required/);
+  const downgradeClient = await pool.connect();
+  try {
+    await downgradeClient.query('BEGIN');
+    await assert.rejects(saveCustomAppraisalWorkfileSectionInTransaction(downgradeClient, {
+      accountId: scope.account_id, assignmentFileId: scope.assignment_file_id, sectionKey: 'neighborhood_workspace',
+      sectionValue: seedValue, expectedRevision: atomic.workspace.revision, saveReason: 'autosave', reviewer: auth.userId,
+    }), /selection_workspace_workflow_required/);
+  } finally { await downgradeClient.query('ROLLBACK'); downgradeClient.release(); }
+  assert.deepEqual(await workspaceState(), committed);
+
+  const emptyAtomicInput = { ...atomicInput, operationId: randomUUID(), expectedSelectionRef: atomic.selection_ref,
+    expectedWorkspaceRevision: atomic.workspace.revision, includedRecordedGroupIds: [] };
+  const atomicEmpty = await owner.selectAndSaveRecordedGroups(emptyAtomicInput);
+  assert.equal(atomicEmpty.status, 'stored'); assert.deepEqual(atomicEmpty.included_recorded_group_ids, []);
+  assert.deepEqual(atomicEmpty.workspace.value.active.selection_ref, atomicEmpty.selection_ref);
+  assert.equal((await owner.previewRecordedGroupSelection({ ...read, selectionRef: atomicEmpty.selection_ref })).summary.selected.account_count, 0);
+  await assert.rejects(owner.selectAndSaveRecordedGroups(atomicInput), /revision_changed/);
+  const ready = await workspaceState();
+  const contentionInput = { ...atomicInput, expectedSelectionRef: atomicEmpty.selection_ref,
+    expectedWorkspaceRevision: atomicEmpty.workspace.revision };
+  const outcomes = await Promise.allSettled([1, 2].map(() => owner.selectAndSaveRecordedGroups({ ...contentionInput, operationId: randomUUID() })));
+  assert.equal(outcomes.filter(item => item.status === 'fulfilled').length, 1);
+  assert.equal(outcomes.filter(item => item.status === 'rejected').length, 1);
+  const winner = outcomes.find(item => item.status === 'fulfilled').value, afterRace = await workspaceState();
+  assert.equal(afterRace.section.revision, ready.section.revision + 1); assert.equal(afterRace.history, ready.history + 1);
+  assert.deepEqual(afterRace.section.section_value.active.selection_ref, winner.selection_ref);
+  assert.equal(afterRace.head, winner.selection_ref.selection_revision);
+  assert.deepEqual(await protectedOther(), otherBefore, 'no accepted section, receipt, assignment geography or report content changes');
+  assert.deepEqual((await coordinatorWorkspace()).rows, coordinatorBefore, 'the separate coordinator cold-start assignment remains untouched');
+  checks.push('native exact workspace/head COMMIT loss replays once, generic autosave and legacy head writes cannot downgrade or detach it, explicit empty stays empty, stale replay cannot rewind, and competing CAS operations commit one coherent winner without changing accepted reports');
   return { checks };
 }

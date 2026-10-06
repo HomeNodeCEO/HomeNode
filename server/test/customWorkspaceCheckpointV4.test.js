@@ -195,7 +195,7 @@ test('v4 retains private-import exact revision, operation UUID, group and sectio
   value.pending_capture.operation_id = OPERATION;
   for (const revision of [0, '1', 2147483648]) assert.equal(read({ revision, value }).status, 'invalid');
 });
-for (const version of [0, 7, '4', null]) test(`v4 does not admit unsupported version ${String(version)}`, () => {
+for (const version of [0, 8, '4', null]) test(`v4 does not admit unsupported version ${String(version)}`, () => {
   const value = fixture(); value.workspace_version = version; invalid(value, 'workspace_version');
 });
 
@@ -210,7 +210,7 @@ function writer({ revision = 2, status = 'draft', account = true } = {}) {
       assert.deepEqual(values, ['41', 'synthetic-account']); return { rows: account ? [{ id: '41', file_number: 'Synthetic 41' }] : [] };
     }
     if (sql.startsWith('SELECT status FROM app.custom_appraisal_workfiles')) return { rows: [{ status }] };
-    if (sql.startsWith('SELECT revision FROM app.custom_appraisal_workfile_sections')) return { rows: [{ revision }] };
+    if (sql.startsWith("SELECT revision, section_value->>'workspace_version' AS workspace_version FROM app.custom_appraisal_workfile_sections")) return { rows: [{ revision }] };
     if (sql.startsWith('INSERT INTO app.custom_appraisal_workfile_sections (')) {
       writes.push({ sql, values: copy(values) }); return { rows: [{ section_key: values[1], section_value: JSON.parse(values[2]),
         revision: values[3], updated_by: values[4], updated_at: '2026-09-10T00:00:00.000Z' }] };

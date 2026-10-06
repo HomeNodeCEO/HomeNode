@@ -60,9 +60,10 @@ async function headOriginal(owned, selectionRef) {
 export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, execute } = {}) {
   if (typeof identityOf !== 'function' || typeof execute !== 'function') fail('dependencies_required');
   function inputOf(value, write, projection = 'intent') {
-    const preview = projection !== 'intent';
+    const preview = ['summary', 'viewport', 'members'].includes(projection), workspace = projection === 'workspace';
     const v = admit(value, ['auth', 'accountId', 'assignmentFileId', 'contextRef',
       ...(write ? ['operationId', 'expectedSelectionRef', 'includedRecordedGroupIds'] : []),
+      ...(workspace ? ['expectedWorkspaceRevision'] : []),
       ...(preview ? ['selectionRef'] : []), ...(projection === 'viewport' ? ['viewport'] : []),
       ...(projection === 'members' ? ['population', 'page'] : [])]);
     const identity = identityOf(v);
@@ -77,9 +78,12 @@ export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, exec
     const expectedSelectionRef = v.expectedSelectionRef === null ? null
       : prepareCustomCohortGroupSelectionReference(v.expectedSelectionRef);
     if (expectedSelectionRef?.selection_revision === 2147483647) fail('revision_exhausted');
+    if (workspace && (!Number.isInteger(v.expectedWorkspaceRevision) || v.expectedWorkspaceRevision < 1
+      || v.expectedWorkspaceRevision >= 2147483647)) fail('invalid_workspace_revision');
     const includedRecordedGroupIds = Object.freeze([...prepareCustomNeighborhoodRecordedGroupIds(v.includedRecordedGroupIds, 3)].sort());
     return Object.freeze({ ...identity, contextRef, operationId: v.operationId,
-      expectedSelectionRef, includedRecordedGroupIds });
+      expectedSelectionRef, includedRecordedGroupIds,
+      ...(workspace ? { expectedWorkspaceRevision: v.expectedWorkspaceRevision } : {}) });
   }
   async function derive(owned, input, commandJson, catalogIdentityVersion) {
     const command = prepareCustomCohortGroupSelectionCommandOriginal(commandJson);
@@ -114,16 +118,17 @@ export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, exec
     // Only after the final original and whole union match may a consumer see it.
     return { accounts: Object.freeze(accounts), reference: opened.selection_ref };
   }
-  return Object.freeze({
-    async selectRecordedGroups(value, options = {}) {
-      const input = inputOf(value, true);
+  async function select(value, options, workspace) {
+      const input = inputOf(value, true, workspace ? 'workspace' : 'intent');
       return execute(input, options, true, async owned => {
+        if (workspace && typeof owned.selectionWorkspace?.save !== 'function') fail('workspace_owner_required');
         // The transaction owner supplies its CURRENT authenticated actor; never
         // accept actor_user_id or request-time role claims as reviewer authority.
-        const commandJson = json({ command_version: 1, actor_user_id: owned.auth.userId,
+        const commandJson = json({ command_version: workspace ? 2 : 1, actor_user_id: owned.auth.userId,
           operation_id: input.operationId, expected_selection_ref: input.expectedSelectionRef,
           included_recorded_group_ids: input.includedRecordedGroupIds,
-          selection_revision: (input.expectedSelectionRef?.selection_revision ?? 0) + 1 });
+          selection_revision: (input.expectedSelectionRef?.selection_revision ?? 0) + 1,
+          ...(workspace ? { expected_workspace_revision: input.expectedWorkspaceRevision } : {}) });
         const repository = createCustomCohortGroupSelectionRepository(owned.client, owned.scopeJson,
           json(input.contextRef), { signal: owned.budget.signal, checkBudget: owned.budget.check });
         const { selection_ref: current } = await repository.peekCurrent();
@@ -144,9 +149,18 @@ export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, exec
         const result = await repository.put({
           operationId: input.operationId, expectedSelectionRef: input.expectedSelectionRef,
           metadataJson: derived.metadata_json, manifestRef: staged.manifest_ref });
-        return Object.freeze({ ...result, context_ref: input.contextRef,
+        const selected = Object.freeze({ ...result, context_ref: input.contextRef,
           included_recorded_group_ids: derived.included_recorded_group_ids });
-      });
+        const saved = workspace ? await owned.selectionWorkspace.save(selected) : null;
+        return saved ? Object.freeze({ ...selected, workspace: saved }) : selected;
+      }, workspace ? 'workspace' : 'intent');
+  }
+  return Object.freeze({
+    async selectRecordedGroups(value, options = {}) {
+      return select(value, options, false);
+    },
+    async selectAndSaveRecordedGroups(value, options = {}) {
+      return select(value, options, true);
     },
     async readRecordedGroupSelection(value, options = {}) {
       const input = inputOf(value, false);

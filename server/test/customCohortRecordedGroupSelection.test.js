@@ -138,6 +138,27 @@ test('reviewer command grammar, revision/predecessor and selected-group binding 
   assert.throws(() => commandOriginal('x'.repeat(262_145)), /invalid_command/);
 });
 
+test('v2 workspace command binds exact prior section revision without changing v1 lineage or analytical selection digest', async () => {
+  const f = fixture(), v1 = { command_version: 1, actor_user_id: scope.organization_id, operation_id: context.context_id,
+    expected_selection_ref: null, included_recorded_group_ids: [A, B].sort(), selection_revision: 1 };
+  const v2 = { ...v1, command_version: 2, expected_workspace_revision: 12 };
+  assert.deepEqual(commandOriginal(json(v1)), v1); assert.deepEqual(commandOriginal(json(v2)), v2);
+  const requests = [v1, v2, { ...v2, expected_workspace_revision: 13 }];
+  const manifests = [];
+  for (const command of requests) {
+    const prepared = await prepare({ ...f.input, includedGroupIds: [A, B], revision: 1, commandJson: json(command) });
+    manifests.push(await memoryStore().store.stage({ metadataJson: prepared.metadata_json, membershipPages: prepared.membershipPages() }));
+  }
+  assert.equal(new Set(manifests.map(m => m.selection_sha256)).size, 1, 'selected observations are the same');
+  assert.equal(new Set(manifests.map(m => m.manifest_ref.content_sha256)).size, 3, 'different CAS intent cannot share an immutable operation original');
+  for (const revision of [0, -1, 1.5, '12', null, 2147483647]) {
+    assert.throws(() => commandOriginal(json({ ...v2, expected_workspace_revision: revision })), /invalid_command/);
+  }
+  const missing = { ...v2 }; delete missing.expected_workspace_revision;
+  assert.throws(() => commandOriginal(json(missing)), /invalid_command/);
+  assert.throws(() => commandOriginal(json({ ...v1, expected_workspace_revision: 12 })), /invalid_command/);
+});
+
 test('a selected subset cannot conceal partial, conflicting or altered unselected catalog membership', async () => {
   const f = fixture();
   const replacements = [

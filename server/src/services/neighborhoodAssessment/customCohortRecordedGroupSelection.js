@@ -47,11 +47,13 @@ export function prepareCustomCohortGroupSelectionCommandOriginal(text) {
   let value;
   try { value = JSON.parse(text); check(json(value) === text, 'invalid_command'); } catch { fail('invalid_command'); }
   const keys = ['command_version', 'actor_user_id', 'operation_id', 'expected_selection_ref',
-    'included_recorded_group_ids', 'selection_revision'];
+    'included_recorded_group_ids', 'selection_revision', ...(value?.command_version === 2 ? ['expected_workspace_revision'] : [])];
   check(value && Object.getPrototypeOf(value) === Object.prototype
     && Object.keys(value).length === keys.length && keys.every(k => Object.hasOwn(value, k))
-    && value.command_version === 1 && typeof value.actor_user_id === 'string' && UUID.test(value.actor_user_id)
+    && [1, 2].includes(value.command_version) && typeof value.actor_user_id === 'string' && UUID.test(value.actor_user_id)
     && typeof value.operation_id === 'string' && UUID.test(value.operation_id), 'invalid_command');
+  if (value.command_version === 2) check(Number.isInteger(value.expected_workspace_revision)
+    && value.expected_workspace_revision >= 1 && value.expected_workspace_revision < 2147483647, 'invalid_command');
   let expected;
   try { expected = value.expected_selection_ref === null ? null
     : prepareCustomCohortGroupSelectionReference(value.expected_selection_ref); } catch { fail('invalid_command'); }

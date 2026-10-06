@@ -15,7 +15,7 @@ const actor = randomUUID(), otherActor = randomUUID();
 function fixture(extraAccounts = []) {
   const data = new Map(), revisions = new Map(), operations = new Map(), calls = [];
   const state = { head: null, actor, allowed: true, finalAllowed: true, summaryAllowed: true,
-    missing: null, before: null, summaryInputs: [], viewportInputs: [], memberInputs: [] };
+    missing: null, before: null, summaryInputs: [], viewportInputs: [], memberInputs: [], workspaceInputs: [] };
   const row = value => ({ rowCount: value ? 1 : 0, rows: value ? [{ ...value }] : [] });
   const client = { release() { assert.fail('caller owns release'); }, async query(sql, args = []) {
     const tag = /\/\* ([^*]+) \*\//.exec(sql)?.[1]; calls.push(tag); await state.before?.(tag);
@@ -61,6 +61,11 @@ function fixture(extraAccounts = []) {
       const result = await work({ client, auth: { userId: state.actor }, scopeJson: json(scope),
         catalogJson: JSON.stringify(catalog), rosterJson: JSON.stringify(roster),
         blobs: createNeighborhoodCohortBlobRepository(client, scope.organization_id),
+        ...(projection === 'workspace' ? { selectionWorkspace: { async save(selected) {
+          state.workspaceInputs.push(selected); calls.push('workspace_saved');
+          return { revision: input.expectedWorkspaceRevision + 1,
+            value: { workspace_version: 7, active: { context_ref: input.contextRef, selection_ref: selected.selection_ref }, pending_capture: null } };
+        } } } : {}),
         presentSelectionSummary: (accounts, reference) => {
           assert.equal(projection, 'summary'); assert.ok(Object.isFrozen(accounts));
           state.summaryInputs.push({ accounts, reference });
@@ -176,6 +181,24 @@ test('explicit empty remains empty; stale operations cannot rewind or supply rep
   assert.deepEqual((await f.owner.readRecordedGroupSelection(f.read)).included_recorded_group_ids, []);
   await assert.rejects(f.owner.selectRecordedGroups(f.select), /selection_changed/);
   assert.equal(f.state.head, 2); assert.equal(f.revisions.size, 2);
+});
+
+test('workspace intent binds its expected section revision into the original command and stays in the same owner transaction', async () => {
+  const f = fixture(), request = { ...f.select, expectedWorkspaceRevision: 9 };
+  const saved = await f.owner.selectAndSaveRecordedGroups(request);
+  assert.equal(saved.workspace.revision, 10); assert.equal(saved.workspace.value.workspace_version, 7);
+  assert.deepEqual(saved.workspace.value.active.selection_ref, saved.selection_ref);
+  assert.equal(f.state.workspaceInputs.length, 1);
+  assert.ok(f.calls.indexOf('workspace_saved') < f.calls.lastIndexOf('committed'));
+  const command = [...f.data.values()].map(row => JSON.parse(row.canonical_utf8)).find(value => value.selection_command).selection_command;
+  assert.equal(command.command_version, 2); assert.equal(command.expected_workspace_revision, 9); assert.equal(command.actor_user_id, actor);
+  await assert.rejects(f.owner.selectAndSaveRecordedGroups({ ...request, expectedWorkspaceRevision: 10 }), /operation_conflict/);
+  assert.equal(f.revisions.size, 1, 'changed expected workspace revision cannot reuse the operation original');
+  for (const bad of [undefined, 0, -1, 1.5, '9', 2147483647]) {
+    await assert.rejects(f.owner.selectAndSaveRecordedGroups({ ...request, expectedWorkspaceRevision: bad }), /invalid_workspace_revision/);
+  }
+  await assert.rejects(f.owner.selectAndSaveRecordedGroups({ ...request, workspace: {} }), /invalid_input/);
+  assert.equal(f.state.workspaceInputs.length, 1);
 });
 
 test('no authority/catalog/members/actor body fields, accessors, proxies or invalid operations reach the owner transaction', async () => {

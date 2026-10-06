@@ -2,6 +2,8 @@ import { assessmentDate, canonicalAssessmentJson } from './contract.js';
 import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
 import { normalizeCustomAppraisalSectionValue } from '../customAppraisalSectionValue.js';
 import { prepareNeighborhoodDiscoveryChoice } from './selectorInputProfile.js';
+import { prepareCustomCohortGroupSelectionReference } from './customCohortGroupSelectionRepository.js';
+import { types } from 'node:util';
 
 // Editor navigation intent only. This is deliberately NOT the reserved accepted
 // neighborhood_assessment section, an acquisition receipt or a source grant.
@@ -16,7 +18,7 @@ export const CUSTOM_NEIGHBORHOOD_V6_WORKSPACE_CHECKPOINT_LIMITS = Object.freeze(
   canonical_utf8_bytes: 262_144, group_ids: 2049, recorded_group_ids: 2048,
 });
 export function customWorkspaceCatalogVersion(checkpoint) {
-  return checkpoint.workspace_version === 6 ? 3 : checkpoint.workspace_version === 5 ? 2 : 1;
+  return [6, 7].includes(checkpoint.workspace_version) ? 3 : checkpoint.workspace_version === 5 ? 2 : 1;
 }
 export function customWorkspaceVersionForCatalog(version) {
   if (![1, 2, 3].includes(version)) fail('catalog_version');
@@ -38,7 +40,7 @@ function fail(reason) {
   });
 }
 function closed(value, required, name, optional = []) {
-  if (!value || Object.getPrototypeOf(value) !== Object.prototype) fail(name);
+  if (!value || types.isProxy(value) || Object.getPrototypeOf(value) !== Object.prototype) fail(name);
   const allowed = [...required, ...optional], keys = Reflect.ownKeys(value);
   if (required.some(key => !Object.hasOwn(value, key)) || keys.some(key => !allowed.includes(key))) fail(name);
   for (const key of keys) {
@@ -100,6 +102,16 @@ function discovery(value, version) {
 }
 function active(value, version) {
   if (value === null) return null;
+  if (version === 7) {
+    closed(value, ['context_ref', 'observation_period', 'selection_ref'], 'active', ['discovery']);
+    closed(value.selection_ref, ['selection_version', 'selection_revision', 'selection_sha256', 'manifest_ref'], 'selection_ref');
+    closed(value.selection_ref.manifest_ref, ['content_sha256', 'canonical_utf8_bytes'], 'selection_ref.manifest_ref');
+    let selection_ref;
+    try { selection_ref = prepareCustomCohortGroupSelectionReference(value.selection_ref); }
+    catch { fail('selection_ref'); }
+    return { context_ref: context(value.context_ref), observation_period: period(value.observation_period), selection_ref,
+      ...(Object.hasOwn(value, 'discovery') ? { discovery: discovery(value.discovery, version) } : {}) };
+  }
   closed(value, ['context_ref', 'observation_period', 'selection'], 'active', version >= 3 ? ['discovery'] : []);
   closed(value.selection, ['revision', 'included_recorded_group_ids'], 'selection');
   if (!Number.isSafeInteger(value.selection.revision) || value.selection.revision < 1) fail('selection.revision');
@@ -138,7 +150,7 @@ function freeze(value) {
  */
 export function prepareCustomNeighborhoodWorkspaceCheckpoint(value) {
   closed(value, ['workspace_version', 'active', 'pending_capture'], 'checkpoint');
-  if (![1, 2, 3, 4, 5, 6].includes(value.workspace_version)) fail('workspace_version');
+  if (![1, 2, 3, 4, 5, 6, 7].includes(value.workspace_version)) fail('workspace_version');
   const result = { workspace_version: value.workspace_version, active: active(value.active, value.workspace_version),
     pending_capture: pending(value.pending_capture, value.workspace_version) };
   // Actual capture registers context_id = operationId and rejects changed study

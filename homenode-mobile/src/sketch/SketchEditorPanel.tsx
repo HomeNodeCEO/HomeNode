@@ -35,7 +35,6 @@ import {
   resizeSketchWall,
   sketchClosureTargets,
   sketchBounds,
-  SKETCH_CLASSIFICATIONS,
   SKETCH_ROOM_TYPES,
   sketchReadyForConfirmation,
   sketchRoomRef,
@@ -46,25 +45,9 @@ import {
   type SketchRoomType,
   type SketchPoint,
 } from "./model";
+import { SketchClassificationSelect } from "./SketchClassificationSelect";
+import { SketchDirectionPad, SketchDrawingControls } from "./SketchDrawingControls";
 import { useSketchSync } from "./sync";
-
-const DIRECTION_PAD = Object.freeze([
-  [
-    { symbol: "↖", label: "Northwest, 135 degrees", bearing: 135 },
-    { symbol: "↑", label: "North, 90 degrees", bearing: 90 },
-    { symbol: "↗", label: "Northeast, 45 degrees", bearing: 45 },
-  ],
-  [
-    { symbol: "←", label: "West, 180 degrees", bearing: 180 },
-    null,
-    { symbol: "→", label: "East, 0 degrees", bearing: 0 },
-  ],
-  [
-    { symbol: "↙", label: "Southwest, 225 degrees", bearing: 225 },
-    { symbol: "↓", label: "South, 270 degrees", bearing: 270 },
-    { symbol: "↘", label: "Southeast, 315 degrees", bearing: 315 },
-  ],
-]);
 
 export type SelectedSketchRoom = Readonly<{
   id: string;
@@ -106,34 +89,6 @@ function Choice({ label, selected, onPress }: { label: string; selected: boolean
   return (
     <Pressable onPress={onPress} style={[styles.choice, selected && styles.choiceSelected]}>
       <Text style={[styles.choiceText, selected && styles.choiceSelectedText]}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function DirectionButton({ symbol, label, selected, compact = false, onPress }: {
-  symbol: string;
-  label: string;
-  selected: boolean;
-  compact?: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityLabel={label}
-      accessibilityRole="button"
-      accessibilityState={{ selected }}
-      onPress={(event) => {
-        event.stopPropagation();
-        onPress();
-      }}
-      style={({ pressed }) => [
-        styles.directionButton,
-        compact && styles.directionButtonCompact,
-        selected && styles.directionButtonSelected,
-        pressed && styles.pressed,
-      ]}
-    >
-      <Text style={[styles.directionSymbol, compact && styles.directionSymbolCompact, selected && styles.directionSymbolSelected]}>{symbol}</Text>
     </Pressable>
   );
 }
@@ -646,23 +601,7 @@ function SketchCanvas({ areas, selectedAreaId, rooms, closureTargets, bearing, p
       {placingGarage ? <Text style={styles.placementBanner}>Tap a corner or anywhere along a solid exterior wall</Text> : null}
       {placingRoom ? <Text style={styles.roomPlacementBanner}>Tap inside the sketch to place this room</Text> : null}
       <View style={styles.canvasDirectionPanel}>
-        <Text style={styles.canvasDirectionTitle}>Wall direction</Text>
-        <View style={styles.canvasDirectionPad}>{DIRECTION_PAD.map((row, rowIndex) => (
-          <View key={rowIndex} style={styles.canvasDirectionRow}>{row.map((direction, columnIndex) => direction ? (
-            <DirectionButton
-              compact
-              key={direction.bearing}
-              symbol={direction.symbol}
-              label={direction.label}
-              selected={normalizeSketchBearing(bearing) === direction.bearing}
-              onPress={() => onSetBearing(direction.bearing)}
-            />
-          ) : (
-            <View key={`canvas-center-${columnIndex}`} style={styles.canvasBearingCenter}>
-              <Text style={styles.canvasBearingValue}>{normalizeSketchBearing(bearing)}°</Text>
-            </View>
-          ))}</View>
-        ))}</View>
+        <SketchDirectionPad bearing={bearing} onSelectBearing={onSetBearing} />
       </View>
     </Pressable>
   );
@@ -1133,56 +1072,50 @@ export function SketchEditorPanel({
       ))}</View>
       <TextInput onChangeText={(value) => changeArea((area) => ({ ...area, label: value }))} placeholder="Area label" style={styles.input} value={selectedArea.label} />
       <TextInput onChangeText={(value) => changeArea((area) => ({ ...area, levelLabel: value }))} placeholder="Level label" style={styles.input} value={selectedArea.levelLabel} />
-      {selectedArea.glaTreatment === "deduction" ? (
-        <Text style={styles.deductionNotice}>Dotted garage cutout · its closed area is deducted from the main GLA.</Text>
-      ) : <>
-        <Text style={styles.label}>Area classification</Text>
-        <View style={styles.choices}>{SKETCH_CLASSIFICATIONS.map(([value, label]) => (
-          <Choice key={value} label={label} selected={selectedArea.classification === value} onPress={() => setAreaClassification(value)} />
-        ))}</View>
-      </>}
-
-      <View style={styles.measureRow}>
-        <TextInput keyboardType="decimal-pad" onChangeText={setWallLength} placeholder="Length ft" style={[styles.input, styles.measureInput]} value={wallLength} />
-        <TextInput keyboardType="decimal-pad" onChangeText={setBearing} placeholder="Bearing°" style={[styles.input, styles.measureInput]} value={bearing} />
-      </View>
-      <Text style={styles.help}>Use the directional arrows inside the sketch or enter an exact bearing above.</Text>
-      <View style={styles.angleAdjustments}>
-        <Choice label="↶ 5°" selected={false} onPress={() => adjustBearing(5)} />
-        <Choice label="↶ 1°" selected={false} onPress={() => adjustBearing(1)} />
-        <Choice label="↷ 1°" selected={false} onPress={() => adjustBearing(-1)} />
-        <Choice label="↷ 5°" selected={false} onPress={() => adjustBearing(-5)} />
+      {selectedArea.glaTreatment === "deduction" ? <Text style={styles.deductionNotice}>Dotted garage cutout · its closed area is deducted from the main GLA.</Text> : null}
+      <View style={styles.sketchWorkspace}>
+        <SketchClassificationSelect
+          key={selectedArea.id}
+          value={selectedArea.classification}
+          disabled={selectedArea.glaTreatment === "deduction"}
+          onChange={setAreaClassification}
+        />
+        <SketchCanvas
+          areas={draft.areas}
+          selectedAreaId={selectedArea.id}
+          rooms={draft.rooms}
+          closureTargets={closureTargets}
+          bearing={Number(bearing)}
+          placingGarage={placingGarage}
+          placingRoom={placingRoom}
+          selectedRoomId={selectedRoomId}
+          selectedWall={selectedWall}
+          onLabelDragActiveChange={handleLabelDragActiveChange}
+          onSelectRoom={selectRoom}
+          onMoveRoom={moveRoom}
+          onPlaceRoom={placeRoom}
+          onMoveAreaLabel={moveAreaLabel}
+          onMoveDimension={moveDimension}
+          onSelectWall={selectWall}
+          onConnectTarget={connectTarget}
+          onSetBearing={setNormalizedBearing}
+          onStartGarage={startGarageCutout}
+        />
+        <SketchDrawingControls
+          wallLength={wallLength}
+          bearing={bearing}
+          onChangeLength={setWallLength}
+          onChangeBearing={setBearing}
+          onAdjustBearing={adjustBearing}
+          onAddWall={addWall}
+        />
       </View>
       <View style={styles.actionsRow}>
-        <Action title="Add wall" onPress={addWall} />
         <Action title="Undo" secondary disabled={selectedArea.vertices.length < 2} onPress={undoWall} />
         <Action title="Close to start" secondary disabled={selectedArea.vertices.length < 3} onPress={closeOutline} />
-      </View>
-      <View style={styles.labelSelectorRow}>
         <Action title={`Select Labels${areaRooms.length ? ` (${areaRooms.length})` : ""}`} secondary onPress={() => setRoomModalOpen(true)} />
-        <Text numberOfLines={1} style={styles.selectedRoomSummary}>{selectedRoom ? `Photo label: ${selectedRoom.label}` : "No room selected"}</Text>
       </View>
-      <SketchCanvas
-        areas={draft.areas}
-        selectedAreaId={selectedArea.id}
-        rooms={draft.rooms}
-        closureTargets={closureTargets}
-        bearing={Number(bearing)}
-        placingGarage={placingGarage}
-        placingRoom={placingRoom}
-        selectedRoomId={selectedRoomId}
-        selectedWall={selectedWall}
-        onLabelDragActiveChange={handleLabelDragActiveChange}
-        onSelectRoom={selectRoom}
-        onMoveRoom={moveRoom}
-        onPlaceRoom={placeRoom}
-        onMoveAreaLabel={moveAreaLabel}
-        onMoveDimension={moveDimension}
-        onSelectWall={selectWall}
-        onConnectTarget={connectTarget}
-        onSetBearing={setNormalizedBearing}
-        onStartGarage={startGarageCutout}
-      />
+      {selectedRoom ? <Text numberOfLines={1} style={styles.selectedRoomSummary}>Photo label: {selectedRoom.label}</Text> : null}
       <Text style={styles.canvasHelp}>{placingRoom
         ? "Tap inside the selected closed area to place the room label."
         : "Drag measurements, room labels, or the area label throughout the workspace. Tap a wall to edit its measured length."}</Text>
@@ -1320,18 +1253,8 @@ const styles = StyleSheet.create({
   rowBetween: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" },
   measureRow: { flexDirection: "row", gap: 8 },
   measureInput: { flex: 1 },
-  directionPad: { alignSelf: "center", gap: 6 },
-  directionRow: { flexDirection: "row", gap: 6 },
-  directionButton: { alignItems: "center", backgroundColor: COLORS.surface, borderColor: COLORS.borderStrong, borderRadius: 10, borderWidth: 1, height: 52, justifyContent: "center", width: 58 },
-  directionButtonCompact: { borderRadius: 6, height: 29, width: 29 },
-  directionButtonSelected: { backgroundColor: COLORS.violet, borderColor: COLORS.violet },
-  directionSymbol: { color: COLORS.deepPurple, fontSize: 27, fontWeight: "800" },
-  directionSymbolCompact: { fontSize: 17 },
-  directionSymbolSelected: { color: COLORS.white },
-  bearingCenter: { alignItems: "center", backgroundColor: COLORS.goldSoft, borderColor: COLORS.gold, borderRadius: 10, borderWidth: 1, height: 52, justifyContent: "center", width: 58 },
-  bearingValue: { color: COLORS.goldInk, fontSize: 13, fontWeight: "800" },
-  angleAdjustments: { alignSelf: "center", flexDirection: "row", gap: 7 },
-  actionsRow: { flexDirection: "row", gap: 7 },
+  sketchWorkspace: { gap: 6 },
+  actionsRow: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
   action: { alignItems: "center", backgroundColor: COLORS.violet, borderRadius: 10, justifyContent: "center", minHeight: 45, paddingHorizontal: 14 },
   actionSecondary: { backgroundColor: COLORS.surface, borderColor: COLORS.gold, borderWidth: 1 },
   actionDanger: { borderColor: COLORS.danger },
@@ -1343,11 +1266,6 @@ const styles = StyleSheet.create({
   canvasPlacing: { backgroundColor: COLORS.goldSoft, borderColor: COLORS.gold, borderWidth: 2 },
   canvasPlacingRoom: { backgroundColor: COLORS.violetSoft, borderColor: COLORS.violet, borderWidth: 2 },
   canvasDirectionPanel: { backgroundColor: "rgba(255,255,255,0.92)", borderColor: COLORS.borderStrong, borderRadius: 9, borderWidth: 1, bottom: 8, padding: 5, position: "absolute", right: 8 },
-  canvasDirectionTitle: { color: COLORS.deepPurple, fontSize: 8, fontWeight: "800", marginBottom: 3, textAlign: "center" },
-  canvasDirectionPad: { gap: 2 },
-  canvasDirectionRow: { flexDirection: "row", gap: 2 },
-  canvasBearingCenter: { alignItems: "center", backgroundColor: COLORS.goldSoft, borderColor: COLORS.gold, borderRadius: 6, borderWidth: 1, height: 29, justifyContent: "center", width: 29 },
-  canvasBearingValue: { color: COLORS.goldInk, fontSize: 8, fontWeight: "800" },
   canvasHelp: { color: COLORS.muted, fontSize: 11, lineHeight: 16, textAlign: "center" },
   canvasEmpty: { color: COLORS.mutedSoft, left: 30, position: "absolute", right: 30, textAlign: "center", top: 115 },
   wallTouch: { backgroundColor: "transparent", height: 22, position: "absolute" },
@@ -1386,8 +1304,7 @@ const styles = StyleSheet.create({
   roomPinSelected: { backgroundColor: COLORS.violet },
   roomPinText: { color: COLORS.violet, fontSize: 9, fontWeight: "800" },
   roomPinTextSelected: { color: COLORS.white },
-  labelSelectorRow: { alignItems: "center", flexDirection: "row", gap: 9 },
-  selectedRoomSummary: { color: COLORS.muted, flex: 1, fontSize: 11 },
+  selectedRoomSummary: { color: COLORS.muted, fontSize: 11 },
   status: { borderRadius: 8, fontSize: 12, fontWeight: "700", padding: 9 },
   statusReady: { backgroundColor: COLORS.successSoft, color: COLORS.success },
   statusPending: { backgroundColor: COLORS.warningSoft, color: COLORS.warning },

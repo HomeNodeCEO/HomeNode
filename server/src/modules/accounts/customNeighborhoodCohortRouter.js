@@ -127,7 +127,7 @@ function publicFailure(error) {
  * The owner resolves and rechecks the exact organization/assignment in the DB.
  * Never supply its internal raw `.preview` method as `.present` here.
  */
-export function createCustomNeighborhoodCohortRouter({ cohortService, logger = console,
+export function createCustomNeighborhoodCohortRouter({ cohortService, marketAnalysis, logger = console,
   recordedGroupWorkspaceTransitions = false } = {}) {
   if (['capture', 'present', 'inspect', 'catalog'].some(key => typeof cohortService?.[key] !== 'function')) {
     throw new TypeError('custom_neighborhood_cohort_router_dependencies_required');
@@ -328,6 +328,9 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, logger = c
   route('members', ['assignment_file_id', 'context_ref', 'selection', 'population', 'page'], (identity, body, options) =>
     cohortService.inspect({ ...identity, contextRef: body.context_ref, selection: body.selection },
       { population: body.population, page: body.page }, options));
+  if (typeof marketAnalysis === 'function') route('market-analysis',
+    ['assignment_file_id', 'context_ref', 'selection', 'selection_sha256', 'area_keys', 'as_of', 'period_months', 'context_override'],
+    (identity, body, options) => marketAnalysis(identity, body, options));
   route('catalog', ['assignment_file_id', 'context_ref', 'selection'], (identity, body, options) => {
     const versioned = Object.hasOwn(body, 'catalog_version');
     if (versioned && ![1, 2, 3].includes(body.catalog_version)) invalid();

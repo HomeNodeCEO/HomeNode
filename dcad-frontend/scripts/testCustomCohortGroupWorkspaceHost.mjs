@@ -230,9 +230,11 @@ test('read-only closes retained read/action/report callbacks while an admitted p
 });
 
 test('independent subset inspections use original preview/members ports, never the main exact-reference population', async t => {
-  const db = await server(), h = harness(t, db); await h.settle(); const exact = h.workspace().exact;
+  const db = await server(), h = harness(t, db); await h.settle(); h.select([]); await h.settle();
+  const exact = h.workspace().exact;
+  assert.equal(exact.display.active.selection_ref.selection_revision, 2, 'inspection must still work after changing the main selection');
   const input = { accountId: db.target.accountId, assignmentFileId: db.target.assignmentFileId, contextRef: exact.display.active.context_ref, include_map: false,
-    selection: catalog.selectionFromRecordedGroups(exact.display.catalog, [catalog.CUSTOM_COHORT_UNASSIGNED_GROUP], exact.display.active.selection_ref.selection_revision) };
+    selection: catalog.selectionFromRecordedGroups(exact.display.catalog, [catalog.CUSTOM_COHORT_UNASSIGNED_GROUP], 1) };
   await exact.inspectionPreview(input, { signal: new AbortController().signal });
   await exact.inspectionMembers(input, { group: 'selected', kind: 'stock' }, PAGE, { signal: new AbortController().signal });
   assert.deepEqual(actions(db).slice(-2), ['preview', 'members']);
@@ -240,6 +242,18 @@ test('independent subset inspections use original preview/members ports, never t
   const before = db.calls.length;
   await assert.rejects(exact.inspectionPreview({ ...input, contextRef: { ...input.contextRef, context_sha256: 'b'.repeat(64) } }, io()), /context_changed/);
   assert.equal(db.calls.length, before); assert.equal(h.workspace().exact.display, exact.display); assert.equal(db.maxOpen, 1);
+});
+
+test('independent subset revision remains validated without substituting the saved main revision', async t => {
+  const db = await server(), h = harness(t, db); await h.settle(); const exact = h.workspace().exact, before = db.calls.length;
+  for (const revision of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    const input = { accountId: db.target.accountId, assignmentFileId: db.target.assignmentFileId,
+      contextRef: exact.display.active.context_ref, include_map: false,
+      selection: { ...catalog.selectionFromRecordedGroups(exact.display.catalog, [], 1), revision } };
+    await assert.rejects(exact.inspectionPreview(input, io()), /context_changed/);
+  }
+  assert.equal(db.calls.length, before); assert.equal(h.workspace().exact.display, exact.display);
+  assert.equal(db.keys, 0); assert.equal(await h.controls.flush(), true);
 });
 
 test('deadline quarantine needs actual settlement and explicit fresh recovery, never an automatic retry', async t => {

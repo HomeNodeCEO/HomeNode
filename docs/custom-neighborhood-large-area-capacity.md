@@ -385,6 +385,9 @@ authorized source graph. Missing geometry remains unavailable. No hull, sampled
 parcel, replacement source snapshot or viewport-limited statistical union is
 substituted. The public display projection admits only the closed parcel fields
 and exact retained coordinates, preserving the existing browser coordinate cap.
+Its frozen public response is detached only after the existing byte and complete
+visible-geometry checks, so it cannot freeze or retain mutable legacy identity,
+feature or coordinate aliases. The legacy projection path remains unchanged.
 
 The optional `selection-viewport` POST accepts only assignment/context identity,
 the exact selection reference and finite viewport bounds. Its request retains
@@ -688,6 +691,18 @@ context/runtime bounds and no provider/source recapture or report writes. The
 new checksummed migration retains a new immutable derivative; it does not edit
 any original, tile, selection, accepted report or historical migration.
 
+The map-opening CLI reuses the reviewed certificate-verifying remote database
+URL boundary, retains one connection and its 120-second statement timeout, and
+sanitizes both idle connection failures and unknown worker errors. This does
+not alter runtime trust stores, production settings or the worker schedule.
+
+Preview format and source catalog format are independent. Each derivative is
+keyed and foreign-keyed to its exact catalog format (1 or 2), and preparation
+and reads choose the same latest supported original as the catalog repository.
+A newer catalog can receive a new immutable derivative without overwriting its
+predecessor. Until that derivative exists, the normal full-map fallback remains;
+an older derivative is never relabelled as the newer catalog's opening.
+
 The manifest is selection-neutral. It preserves the original exact parcel
 bounds/counts, one retained exterior-ring anchor per named group, and retained
 subject anchors. Neither a label nor a viewport defines a legal subdivision
@@ -868,10 +883,13 @@ only checked binding and retained map/manifest fields; a deferred viewport or
 missing complete geometry cannot claim verified whole-family location coverage.
 No viewport fragment is reused as population evidence or averaged into statistics.
 
-Actual retained producers and checked display/transport fixtures feed eight new
+Actual retained producers and checked display/transport fixtures feed nine new
 existing hook-harness tests for coherent composition, ID-only intent, empty
 successor, repeated renders, stale/read-only closure, independent subset reads,
-foreign/cloned targets and legacy/exact owner separation. Existing legacy,
+foreign/cloned targets, legacy/exact owner separation and refusing to fabricate a
+legacy market-analysis membership request from an exact display. That legacy
+callback stays null in exact mode; reference-aware analysis needs its own adapter.
+Existing legacy,
 subdivision, recorded-housing/proximity and boundary tests remain in force.
 These are not a live browser, native PostgreSQL, performance or >50k acceptance
 claim. The production host still uses the legacy path; V7 host current-read,
@@ -905,12 +923,15 @@ A committed successor or post-ACK projection failure reopens, not another save.
 The old map/numerical pair remains together and stale until the complete
 successor. An explicit empty selection stays empty. Independent subset ports
 are named separately from exact-reference ports and recheck file/context even
-after queuing. Report adoption uses only its two existing API ports; retained
+after queuing. Their positive safe-integer subset revision is independent of the
+saved main selection revision; changing the main selection does not break the
+workspace's neutral revision-1 inspector. The owning current display is still
+required at click and actual queued admission. Report adoption uses only its two existing API ports; retained
 stale-head callbacks are refused while same Apply/reopen recovery remains
 available. All report publication/current-role/source rights checks remain in
 the server owner; the host supplies no permission or accepted-report authority.
 
-Twenty-two new deterministic existing-style hook/SSR harness tests use actual
+Twenty-three new deterministic existing-style hook/SSR harness tests use actual
 retained row/numeric/opening/member producers, checked API transports and atomic
 wire receipts over an injected HTTP/storage boundary. They cover fresh locks,
 read failure, empty successor, both lost-ACK outcomes, post-ACK failure, shared
@@ -923,3 +944,12 @@ capacity or an instant-map SLA. No production page mounts this host; deliberate
 legacy migration/QA activation, compact/paged catalog and partial source/spatial
 recovery, complete >50k statistics/publication and real 5/10-mile/retrospective
 and live acceptance still remain.
+
+The worker CLI validates its database URL before constructing the pool and
+requires certificate-verified TLS for every non-loopback host, including internal
+hosts. Only literal localhost/127.0.0.1/::1 development connections may be
+plaintext. Admitted TLS query options are stripped before pg receives the URL;
+duplicate, conflicting, insecure remote, and driver-setting overrides are refused.
+The runtime trust store must contain the provider's trusted certificate chain.
+There is no fallback that disables verification, no raw driver error logging,
+and no automatic worker schedule or production environment change from this fix.

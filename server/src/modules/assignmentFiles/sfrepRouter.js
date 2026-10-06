@@ -2,16 +2,19 @@ import express from 'express';
 import { resolveCanonicalAccountId } from '../../services/accountQuality.js';
 import { logBoundedFailure, knownErrorCode } from '../../security/boundedRouteErrors.js';
 import { sfrepTransferInput, readSfrepDocuments, previewSfrepDocuments, packageSfrepDocuments } from '../../services/sfrepDocumentTransfer.js';
+import { readSfrepPhotos, addSfrepPhotoViewUrls } from '../../services/sfrepPhotoTransfer.js';
 
 const CLIENT_ERRORS = new Set(['invalid_sfrep_request', 'assignment_file_required', 'invalid_sfrep_document_selection',
   'sfrep_preview_required', 'sfrep_document_not_found', 'sfrep_evidence_limit', 'sfrep_document_integrity_failed',
-  'sfrep_package_too_large', 'sfrep_preview_changed', 'account_not_found']);
+  'sfrep_package_too_large', 'sfrep_preview_changed', 'account_not_found',
+  'sfrep_photo_integrity_failed', 'sfrep_photo_storage_unavailable']);
 
 export function createSfrepDocumentRouter({ pool, objectStorage, ensureAvailable, requireWorkflowAccess, requireAssignmentAccess,
-  resolveAccountId = resolveCanonicalAccountId, readDocuments = readSfrepDocuments, buildPreview = previewSfrepDocuments,
+  resolveAccountId = resolveCanonicalAccountId, readDocuments = readSfrepDocuments, readPhotos = readSfrepPhotos,
+  buildPreview = previewSfrepDocuments,
   buildPackage = packageSfrepDocuments, logger = console } = {}) {
   if (!pool || typeof pool.query !== 'function' || [ensureAvailable, requireWorkflowAccess, requireAssignmentAccess,
-    resolveAccountId, readDocuments, buildPreview, buildPackage].some(value => typeof value !== 'function')) {
+    resolveAccountId, readDocuments, readPhotos, buildPreview, buildPackage].some(value => typeof value !== 'function')) {
     throw new TypeError('sfrep_router_dependencies_required');
   }
   const router = express.Router();
@@ -59,10 +62,13 @@ export function createSfrepDocumentRouter({ pool, objectStorage, ensureAvailable
         }, 60_000);
         const documents = await readDocuments(pool, input);
         controller.signal.throwIfAborted();
-        const preview = buildPreview(documents, input);
+        const photos = await readPhotos(pool, input);
+        controller.signal.throwIfAborted();
+        const preview = buildPreview(documents, input, photos);
         if (action === 'preview') {
-          const { reportXml: _xml, pdfAddenda: _pdfs, ...publicPreview } = preview;
-          return res.json({ ok: true, ...publicPreview });
+          const { reportXml: _xml, pdfAddenda: _pdfs, imageAddenda: _images, ...publicPreview } = preview;
+          return res.json({ ok: true, ...publicPreview,
+            photos: addSfrepPhotoViewUrls(preview.photos || [], preview.imageAddenda || [], objectStorage) });
         }
         const result = await buildPackage(pool, objectStorage, documents, preview, input, { signal: controller.signal });
         controller.signal.throwIfAborted();
@@ -72,7 +78,8 @@ export function createSfrepDocumentRouter({ pool, objectStorage, ensureAvailable
       } catch (error) {
         const code = knownErrorCode(error, CLIENT_ERRORS);
         const status = code === 'sfrep_document_not_found' || code === 'account_not_found' ? 404
-          : code === 'sfrep_preview_changed' || code === 'sfrep_document_integrity_failed' ? 409
+          : code === 'sfrep_preview_changed' || code === 'sfrep_document_integrity_failed' || code === 'sfrep_photo_integrity_failed' ? 409
+          : code === 'sfrep_photo_storage_unavailable' ? 503
           : code === 'sfrep_package_too_large' || code === 'sfrep_evidence_limit' ? 413 : 400;
         if (code) return res.status(status).json({ error: code });
         logBoundedFailure(logger, 'SFREP document transfer failed', error);

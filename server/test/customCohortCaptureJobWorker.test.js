@@ -98,6 +98,14 @@ test('a cancelled lease does not start a capture and settles as cancelled', asyn
   assert.equal(deps.events.find(event => event[0] === 'fail')[2], 'cancelled');
 });
 
+test('an initial heartbeat failure is not mistaken for a successful capture', async () => {
+  const deps = fixture({ heartbeatAction: async () => { throw new Error('synthetic heartbeat failure'); } });
+  assert.deepEqual(await runCustomCohortCaptureJobOnce(deps), {
+    status: 'retry', operation_id: operation, reason: 'capture_failed',
+  });
+  assert.equal(deps.events.some(event => Array.isArray(event) && event[0] === 'capture'), false);
+});
+
 test('revoked roles are never replaced by stale queue-time claims', async () => {
   const deps = fixture({ actorError: new TypeError('custom_cohort_job_actor_access_revoked') });
   const result = await runCustomCohortCaptureJobOnce(deps);
@@ -202,12 +210,13 @@ test('a lost registration acknowledgment cannot downgrade an already committed j
 });
 
 test('capture failure retains the old study and retries only the fenced job', async () => {
-  const deps = fixture({ captureError: Object.assign(new Error('denied'), {
-    reason: 'market_policy_changed' }) });
-  const result = await runCustomCohortCaptureJobOnce(deps);
-  assert.equal(result.status, 'retry');
-  assert.equal(result.reason, 'market_policy_changed');
-  assert.deepEqual(deps.events.find(event => event[0] === 'fail')[1], claim);
+  for (const reason of ['cancelled', 'deadline_exceeded', 'subject_changed', 'market_policy_changed']) {
+    const deps = fixture({ captureError: Object.assign(new Error('synthetic capture failure'), { reason }) });
+    const result = await runCustomCohortCaptureJobOnce(deps);
+    assert.equal(result.status, 'retry');
+    assert.equal(result.reason, reason);
+    assert.deepEqual(deps.events.find(event => event[0] === 'fail')[1], claim);
+  }
 });
 
 test('a malformed success acknowledgment cannot be presented as complete', async () => {
@@ -220,7 +229,13 @@ test('a malformed success acknowledgment cannot be presented as complete', async
 
 test('invalid timing bounds fail before claiming a job', async () => {
   const deps = fixture();
-  await assert.rejects(runCustomCohortCaptureJobOnce({ ...deps,
-    leaseSeconds: 30, heartbeatSeconds: 10 }), /invalid_input/);
+  for (const timing of [{ leaseSeconds: 14 }, { leaseSeconds: 901 }, { leaseSeconds: 15.5 },
+    { leaseSeconds: 30, heartbeatSeconds: 10 }]) {
+    await assert.rejects(runCustomCohortCaptureJobOnce({ ...deps, ...timing }), /invalid_input/);
+  }
   assert.deepEqual(deps.events, []);
+  for (const leaseSeconds of [15, 900]) {
+    assert.equal((await runCustomCohortCaptureJobOnce({ ...fixture({ due: [] }),
+      leaseSeconds, heartbeatSeconds: 1 })).status, 'idle');
+  }
 });

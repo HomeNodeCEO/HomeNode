@@ -7,6 +7,7 @@ const SHA = /^[a-f0-9]{64}$/;
 const ACCOUNT_CONTROL = /[\u0000-\u001f\u007f]/;
 const PHASES = new Set(['subject', 'spatial', 'source', 'preparation', 'registration']);
 const STATUSES = new Set(['queued', 'running', 'retry', 'succeeded', 'failed', 'cancelled']);
+export const CAPTURE_JOB_LEASE_SECONDS = Object.freeze({ min: 15, max: 900 });
 function fail(reason) { throw new TypeError(`custom_cohort_capture_job_${reason}`); }
 function exact(value, keys) {
   if (!value || Object.getPrototypeOf(value) !== Object.prototype
@@ -56,7 +57,8 @@ function claimOf(value) {
   return [uuid(value.operation_id), uuid(value.claim_token), value.attempts];
 }
 function lease(value) {
-  if (!Number.isInteger(value) || value < 15 || value > 900) fail('invalid_lease');
+  if (!Number.isInteger(value) || value < CAPTURE_JOB_LEASE_SECONDS.min
+    || value > CAPTURE_JOB_LEASE_SECONDS.max) fail('invalid_lease');
   return value;
 }
 function checkpointOf(value) {

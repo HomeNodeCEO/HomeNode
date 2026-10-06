@@ -169,6 +169,19 @@ test('Custom capture honors pre-abort and expired aggregate deadline before conn
   await assert.rejects(setup().capture(input(), { deadline: performance.now() }), /deadline_exceeded/);
 });
 
+test('capture budget owns option validation after separating the internal worker claim', async () => {
+  const captureJobClaim = { operation_id: input().operationId,
+    claim_token: '33333333-3333-4333-8333-333333333333', attempts: 1 };
+  for (const options of [null, [], Object.create({ signal: undefined }),
+    { captureJobClaim, extra: true }, { captureJobClaim, signal: {} },
+    { captureJobClaim, deadline: NaN }]) {
+    await assert.rejects(setup().capture(input(), options), /invalid_options/);
+  }
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(setup().capture(input(), { captureJobClaim, signal: controller.signal }), /cancelled/);
+  await assert.rejects(setup().capture(input(), { captureJobClaim, deadline: performance.now() }), /deadline_exceeded/);
+});
+
 test('large capture has a bounded extended aggregate but respects earlier caller deadlines', async t => {
   let clock = 10_000;
   t.mock.method(performance, 'now', () => clock);

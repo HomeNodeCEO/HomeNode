@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCustomCohortCaptureJobRepository }
+import { CAPTURE_JOB_LEASE_SECONDS, createCustomCohortCaptureJobRepository }
   from '../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
 import { assessmentEvidenceDigest } from '../src/services/neighborhoodAssessment/contract.js';
 
@@ -13,6 +13,26 @@ const scope = { organization_id: organization, report_file_id: report,
   assignment_file_id: '17', account_id: 'SYNTHETIC-ACCOUNT' };
 const request = { operation_id: operation, observation_period: {
   start_date: '2024-01-01', end_date: '2024-12-31' } };
+
+test('shared lease bounds remain inclusive and invalid values never reach PostgreSQL', async () => {
+  assert.deepEqual(CAPTURE_JOB_LEASE_SECONDS, { min: 15, max: 900 });
+  assert.equal(Object.isFrozen(CAPTURE_JOB_LEASE_SECONDS), true);
+  const values = [];
+  const repository = createCustomCohortCaptureJobRepository({ async query(_sql, parameters) {
+    values.push(parameters);
+    return { rowCount: 1, rows: [{ cancellation_requested_at: null }] };
+  } });
+  const claim = { operation_id: operation, claim_token: token, attempts: 1 };
+  for (const leaseSeconds of [14, 901, 15.5, '15']) {
+    await assert.rejects(repository.heartbeat(claim, { leaseSeconds }), /invalid_lease/);
+    await assert.rejects(repository.claimDue({ leaseSeconds }), /invalid_lease/);
+  }
+  assert.deepEqual(values, []);
+  for (const leaseSeconds of [15, 900]) {
+    assert.equal((await repository.heartbeat(claim, { leaseSeconds })).cancellation_requested, false);
+  }
+  assert.deepEqual(values.map(parameters => parameters[3]), [15, 900]);
+});
 
 test('queue request retains only admitted data, with exact scope and replay digest', async () => {
   const calls = [];

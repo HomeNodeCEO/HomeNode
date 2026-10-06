@@ -1,5 +1,9 @@
-import { createCustomCohortCaptureJobRepository } from './customCohortCaptureJobRepository.js';
+import { CAPTURE_JOB_LEASE_SECONDS, createCustomCohortCaptureJobRepository }
+  from './customCohortCaptureJobRepository.js';
 import { loadCurrentCustomCohortJobActor } from './customCohortJobActor.js';
+
+const PASSTHROUGH_FAILURE_REASONS = new Set(['cancelled', 'deadline_exceeded',
+  'subject_changed', 'market_policy_changed']);
 
 async function transaction(pool, action) {
   const client = await pool.connect();
@@ -33,10 +37,7 @@ function captureInput(row, auth) {
 function failureReason(error) {
   if (error?.message === 'custom_cohort_job_actor_access_revoked'
     || error?.reason === 'assignment_access_denied') return 'access_revoked';
-  if (error?.reason === 'cancelled') return 'cancelled';
-  if (error?.reason === 'deadline_exceeded') return 'deadline_exceeded';
-  if (error?.reason === 'subject_changed') return 'subject_changed';
-  if (error?.reason === 'market_policy_changed') return 'market_policy_changed';
+  if (PASSTHROUGH_FAILURE_REASONS.has(error?.reason)) return error.reason;
   return 'capture_failed';
 }
 
@@ -53,7 +54,8 @@ export async function runCustomCohortCaptureJobOnce({ pool, cohortService,
   leaseSeconds = 300, heartbeatSeconds = 15 } = {}) {
   if (typeof pool?.connect !== 'function' || typeof cohortService?.capture !== 'function'
     || typeof repositoryFactory !== 'function' || typeof loadActor !== 'function'
-    || !Number.isInteger(leaseSeconds) || leaseSeconds < 15 || leaseSeconds > 900
+    || !Number.isInteger(leaseSeconds) || leaseSeconds < CAPTURE_JOB_LEASE_SECONDS.min
+    || leaseSeconds > CAPTURE_JOB_LEASE_SECONDS.max
     || !Number.isInteger(heartbeatSeconds) || heartbeatSeconds < 1
     || heartbeatSeconds * 3 >= leaseSeconds) {
     throw new TypeError('custom_cohort_capture_job_worker_invalid_input');
@@ -64,12 +66,14 @@ export async function runCustomCohortCaptureJobOnce({ pool, cohortService,
   const claim = claimIdentity(row);
   const controller = new AbortController();
   let timer, heartbeatPromise, stopping = false;
+  const checkHeartbeat = async () => {
+    const state = await transaction(pool, client => repositoryFactory(client)
+      .heartbeat(claim, { leaseSeconds }));
+    if (state.cancellation_requested) controller.abort();
+  };
   const heartbeat = () => {
     if (stopping) return;
-    heartbeatPromise = transaction(pool, client => repositoryFactory(client)
-      .heartbeat(claim, { leaseSeconds })).then(state => {
-      if (state.cancellation_requested) controller.abort();
-    }).catch(() => controller.abort()).finally(() => {
+    heartbeatPromise = checkHeartbeat().catch(() => controller.abort()).finally(() => {
       if (!stopping) timer = setTimeout(heartbeat, heartbeatSeconds * 1000);
     });
   };
@@ -77,9 +81,7 @@ export async function runCustomCohortCaptureJobOnce({ pool, cohortService,
     // The row contains a user ID, never a saved token or role claims.
     const auth = await transaction(pool, client =>
       loadActor(client, row.actor_user_id, row.organization_id));
-    const first = await transaction(pool, client => repositoryFactory(client)
-      .heartbeat(claim, { leaseSeconds }));
-    if (first.cancellation_requested) controller.abort();
+    await checkHeartbeat();
     if (controller.signal.aborted) throw Object.assign(new Error('cancelled'), { reason: 'cancelled' });
     timer = setTimeout(heartbeat, heartbeatSeconds * 1000);
     const result = await cohortService.capture(captureInput(row, auth), {

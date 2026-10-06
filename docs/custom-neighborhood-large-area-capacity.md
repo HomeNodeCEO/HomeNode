@@ -912,12 +912,12 @@ recorded-ID policy. Existing pending attempts are not silently resumed.
 
 Atomic commands, capture/catalog/head reads and the whole numeric-plus-opening
 composition use that same lane. Exact viewport leaves and selected member
-pages, independent original-subset inspections and report operations also
+pages and independent original-subset inspection ports also
 belong to it. Display callbacks require this owner's current immutable display
 at click AND actual queued admission. Signing quiescence closes new read/action
 admission; already admitted work remains owned until actual settlement, even if
 it ignores cancellation. Save Everything cannot report success while a lane,
-owner, pending capture, uncertain write/Apply or failed fresh read is unresolved.
+owner, pending capture, uncertain selection write or failed fresh read is unresolved.
 A detail deadline quarantines the lane and exposes explicit checked recovery,
 never an automatic retry or a claim that the remote lock has been released.
 
@@ -930,17 +930,19 @@ are named separately from exact-reference ports and recheck file/context even
 after queuing. Their positive safe-integer subset revision is independent of the
 saved main selection revision; changing the main selection does not break the
 workspace's neutral revision-1 inspector. The owning current display is still
-required at click and actual queued admission. Report adoption uses only its two existing API ports; retained
-stale-head callbacks are refused while same Apply/reopen recovery remains
-available. All report publication/current-role/source rights checks remain in
-the server owner; the host supplies no permission or accepted-report authority.
+required at click and actual queued admission. The removed production Review/Apply
+panel is not mounted by this opt-in host either. Its UI-only task/recovery state
+is absent; the independent report API/controller/server-owner implementation and
+its lost-acknowledgment, publication, current-role and source-rights tests remain
+intact. This host supplies no permission or accepted-report authority.
 
 Twenty-three new deterministic existing-style hook/SSR harness tests use actual
 retained row/numeric/opening/member producers, checked API transports and atomic
 wire receipts over an injected HTTP/storage boundary. They cover fresh locks,
 read failure, empty successor, both lost-ACK outcomes, post-ACK failure, shared
 lane/cancellation, queued stale/mutated input, quiescence, independent subsets,
-deadline settlement, report recovery, pending set-aside, StrictMode replay,
+deadline settlement, absent report-adoption UI across successor selections,
+pending set-aside, StrictMode replay,
 changed sessions, first capture and source denial. Existing legacy host,
 workspace, subdivision and report-adoption tests remain unchanged. This is not
 native SQL authorization, a concurrent renderer, live deployment, larger

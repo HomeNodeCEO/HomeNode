@@ -81,6 +81,51 @@ test("neighborhood readiness waits for local schemas and preserves county select
   ]);
 });
 
+test('optional summary school lookup uses assignment read scope before and after public work', async context => {
+  const calls = [];
+  const server = await startRouter(createNeighborhoodRouter(options({
+    requireCustomAccountScope: async (_req, _res, account, file, mode) => { calls.push([account, file, mode]); return true; },
+    nearbySchool: async input => { calls.push(input); return { status: 'unavailable', reason: 'no_nearby_school' }; },
+  })));
+  context.after(server.close);
+  const response = await fetch(`${server.baseUrl}/api/accounts/42/neighborhood-summary-school?assignment_file_id=7&url=http://localhost`);
+  assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await response.json(), { account_id: 'canonical-42', assignment_file_id: 'file-7', status: 'unavailable', reason: 'no_nearby_school' });
+  assert.deepEqual(calls, [['canonical-42', 'file-7', 'read'], { accountId: 'canonical-42' }, ['canonical-42', 'file-7', 'read']]);
+});
+
+test('summary school missing-file and cross-organization denial never contact the public lookup', async context => {
+  let calls = 0;
+  const server = await startRouter(createNeighborhoodRouter(options({
+    requireCustomAccountScope: async (_req, res) => { res.status(403).json({ error: 'forbidden' }); return false; },
+    nearbySchool: async () => { calls++; return {}; },
+  })));
+  context.after(server.close);
+  assert.equal((await fetch(`${server.baseUrl}/api/accounts/42/neighborhood-summary-school`)).status, 400);
+  assert.equal((await fetch(`${server.baseUrl}/api/accounts/42/neighborhood-summary-school?assignment_file_id=7`)).status, 403);
+  assert.equal(calls, 0);
+});
+
+test('summary school access revoked while looking up public data cannot publish the result', async context => {
+  let scopes = 0;
+  const server = await startRouter(createNeighborhoodRouter(options({
+    requireCustomAccountScope: async (_req, res) => {
+      if (++scopes === 1) return true;
+      res.status(403).json({ error: 'forbidden' }); return false;
+    }, nearbySchool: async () => ({ status: 'available', school: { name: 'Not published' } }),
+  })));
+  context.after(server.close);
+  const response = await fetch(`${server.baseUrl}/api/accounts/42/neighborhood-summary-school?assignment_file_id=7`);
+  assert.equal(response.status, 403); assert.deepEqual(await response.json(), { error: 'forbidden' });
+});
+
+test('summary school failure is optional and does not expose source or database diagnostics', async context => {
+  const server = await startRouter(createNeighborhoodRouter(options({ nearbySchool: async () => { throw new Error('PRIVATE diagnostic'); } })));
+  context.after(server.close);
+  const response = await fetch(`${server.baseUrl}/api/accounts/42/neighborhood-summary-school?assignment_file_id=7`);
+  assert.equal(response.status, 503); assert.deepEqual(await response.json(), { error: 'neighborhood_summary_school_unavailable' });
+});
+
 test("neighborhood readiness maps unsupported counties and hides diagnostics", async (context) => {
   const logs = [];
   const server = await startRouter(createNeighborhoodRouter(options({

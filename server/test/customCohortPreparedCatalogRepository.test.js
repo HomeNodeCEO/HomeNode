@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { gzipSync } from 'node:zlib';
 import { canonicalAssessmentJson } from '../src/services/neighborhoodAssessment/contract.js';
 import { createCustomCohortPreparedCatalogRepository,
   rebindCustomCohortPreparedCatalog } from '../src/services/neighborhoodAssessment/customCohortPreparedCatalogRepository.js';
@@ -22,10 +23,13 @@ test('prepared catalog is immutable, selection-neutral, and rebinds a later work
   let row = null;
   const client = { async query(sql, parameters) {
     assert.deepEqual(parameters.slice(0, 3), [scope.organization_id, contextRef.context_id, contextRef.context_sha256]);
+    if (sql.includes(':exists')) assert.match(sql, /format_version IN \(1,2\)[\s\S]*LIMIT 1/);
+    if (sql.includes(':read')) assert.match(sql, /format_version IN \(1,2\)[\s\S]*ORDER BY format_version DESC LIMIT 1/);
     if (sql.includes(':exists')) return { rowCount: Number(Boolean(row)), rows: row ? [{ '?column?': 1 }] : [] };
     if (sql.includes(':insert')) {
+      assert.match(sql, /\$3,2,3,\$4/);
       assert.equal(row, null);
-      row = { payload_sha256: parameters[3], payload_utf8_bytes: parameters[4], compressed_payload: parameters[5] };
+      row = { format_version: 2, payload_sha256: parameters[3], payload_utf8_bytes: parameters[4], compressed_payload: parameters[5] };
       return { rowCount: 1, rows: [{ payload_sha256: row.payload_sha256 }] };
     }
     if (sql.includes(':read')) return { rowCount: Number(Boolean(row)), rows: row ? [{ ...row }] : [] };
@@ -52,4 +56,40 @@ test('prepared catalog rejects selected-pocket bindings and private data', async
   const selected = payload(2);
   selected.catalog.binding.selection_sha256 = hash(JSON.stringify({ pockets: [{ id: 'one' }], revision: 2 }));
   await assert.rejects(repository.put(selected), /invalid_payload/);
+});
+
+test('only old scoreless catalogs miss the cache; working v1 maps and complete v2 dispositions are reusable', async () => {
+  const old = payload(1);
+  let version = 1;
+  const client = { async query(sql) {
+    assert.match(sql, /ORDER BY format_version DESC LIMIT 1/);
+    const bytes = Buffer.from(JSON.stringify(old));
+    return { rowCount: 1, rows: [{ format_version: version, payload_sha256: hash(bytes), payload_utf8_bytes: bytes.length,
+      compressed_payload: gzipSync(bytes) }] };
+  } };
+  const repository = createCustomCohortPreparedCatalogRepository(client, canonicalAssessmentJson(scope), contextRef);
+  assert.deepEqual(await repository.read(), old, 'existing recommendations do not pay for a rebuild');
+  delete old.recommendation;
+  assert.equal(await repository.read(), null, 'a scoreless v1 snapshot is replayed once into v2');
+  version = 2;
+  assert.deepEqual(await repository.read(), old, 'intentional v2 omissions do not cause endless replay');
+  old.prepared_secondary_map = { version: 2, basis: 'current_retained_cad_snapshot_diagnostic_only', groups: [] };
+  assert.deepEqual(await repository.read(), old);
+  assert.deepEqual(rebindCustomCohortPreparedCatalog(await repository.read(), 8).prepared_secondary_map,
+    old.prepared_secondary_map, 'color scores remain selection-neutral on rebind');
+});
+
+test('the read-path existence probe admits working v1 while write-through only checks the current format', async () => {
+  const queries = [];
+  const client = { async query(sql, parameters) {
+    queries.push(sql);
+    assert.deepEqual(parameters, [scope.organization_id, contextRef.context_id, contextRef.context_sha256]);
+    assert.match(sql, /LIMIT 1/, 'two immutable format versions must still return one existence row');
+    const found = sql.includes('format_version IN (1,2)');
+    return { rowCount: found ? 1 : 0, rows: found ? [{}] : [] };
+  } };
+  const repository = createCustomCohortPreparedCatalogRepository(client, canonicalAssessmentJson(scope), contextRef);
+  assert.equal(await repository.exists(), true, 'v1 is available for checked read reuse');
+  assert.equal(await repository.exists({ currentOnly: true }), false, 'scoreless v1 can still upgrade into v2');
+  assert.match(queries[1], /format_version=2/);
 });

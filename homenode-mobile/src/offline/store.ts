@@ -32,6 +32,7 @@ import {
   type OfflineDatabaseSnapshot,
 } from "./databaseEncryption";
 import { DatabaseActivityGate } from "./databaseActivityGate";
+import { runKeyedTransaction } from "./databaseTransactions";
 import { isUnreadableSqliteDatabaseError, offlineDatabasePolicy } from "./databaseRecovery";
 import {
   retryDelayMs,
@@ -872,6 +873,12 @@ export class OfflineStore {
     return this.connection.activityGate.pause();
   }
 
+  private async withKeyedTransaction(task: (transaction: SQLite.SQLiteDatabase) => Promise<void>) {
+    const databaseName = await storedDatabaseName(ACTIVE_DATABASE_NAME_KEY) || DATABASE_NAME;
+    if (!databaseFileExists(databaseName)) throw new Error("mobile_offline_database_missing");
+    await runKeyedTransaction(() => openKeyedDatabase(databaseName), task);
+  }
+
   async prepareForExternalActivity() {
     if (this.connection.repair) await this.connection.repair;
     if (this.connection.pendingClose) return this.connection.pendingClose;
@@ -1117,7 +1124,7 @@ export class OfflineStore {
   async markUadEntityProposalsUploading(operationIds: string[]) {
     if (!operationIds.length) return;
     const now = Date.now();
-    await this.database.withExclusiveTransactionAsync(async (transaction) => {
+    await this.withKeyedTransaction(async (transaction) => {
       for (const operationId of operationIds) {
         await transaction.runAsync(
           `UPDATE uad_entity_proposal_queue
@@ -1451,7 +1458,7 @@ export class OfflineStore {
       });
     }
     const now = Date.now();
-    await this.database.withExclusiveTransactionAsync(async (transaction) => {
+    await this.withKeyedTransaction(async (transaction) => {
       for (const item of prepared) {
         await transaction.runAsync(
           `INSERT INTO sync_queue (
@@ -1521,7 +1528,7 @@ export class OfflineStore {
   async markUploading(operationIds: string[]) {
     if (!operationIds.length) return;
     const now = Date.now();
-    await this.database.withExclusiveTransactionAsync(async (transaction) => {
+    await this.withKeyedTransaction(async (transaction) => {
       for (const operationId of operationIds) {
         await transaction.runAsync(
           `UPDATE sync_queue SET state = 'uploading', attempts = attempts + 1, updated_at = ?
@@ -1535,7 +1542,7 @@ export class OfflineStore {
 
   async recordFailure(rows: QueueRow[], errorCode: string) {
     const now = Date.now();
-    await this.database.withExclusiveTransactionAsync(async (transaction) => {
+    await this.withKeyedTransaction(async (transaction) => {
       for (const row of rows) {
         const attempt = Number(row.attempts) + 1;
         await transaction.runAsync(
@@ -1553,7 +1560,7 @@ export class OfflineStore {
 
   async applySyncResponse(ownerUserId: string, response: InspectionSyncResponse) {
     const now = Date.now();
-    await this.database.withExclusiveTransactionAsync(async (transaction) => {
+    await this.withKeyedTransaction(async (transaction) => {
       for (const operation of response.operations) {
         const state = operation.status === "applied" ? "synchronized" : operation.status;
         await transaction.runAsync(
@@ -1668,7 +1675,7 @@ export class OfflineStore {
 
   async applySnapshot(ownerUserId: string, snapshot: InspectionSnapshot) {
     const now = Date.now();
-    await this.database.withExclusiveTransactionAsync(async (transaction) => {
+    await this.withKeyedTransaction(async (transaction) => {
       await transaction.runAsync(
         `UPDATE cached_inspections SET session_json = ?, server_revision = ?, status = ?, updated_at = ?
           WHERE owner_user_id = ? AND session_id = ?`,
@@ -1873,12 +1880,13 @@ export class OfflineStore {
     );
     const existing = new Set(existingIds.map((row) => row.client_photo_id));
     const newPhotos = photos.filter((photo) => !existing.has(photo.clientPhotoId));
+    if (!newPhotos.length) return;
     if (Number(capacity?.count || 0) + newPhotos.length > 100) throw new Error("mobile_photo_limit_conflict");
     const availablePositions = availablePhotoPositions(
       occupiedRows.map((row) => Number(row.position)),
     );
     const now = Date.now();
-    await this.database.withExclusiveTransactionAsync(async (transaction) => {
+    await this.withKeyedTransaction(async (transaction) => {
       for (const photo of newPhotos) {
         const original = photo.objects.find((object) => object.variant === "original");
         const display = photo.objects.find((object) => object.variant === "display");

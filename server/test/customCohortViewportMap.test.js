@@ -23,8 +23,18 @@ test('new exact-selection projection freezes only its own public path and refuse
   assert.equal(isCustomCohortPresentedSelectionViewport(structuredClone(result)), false);
   assert.ok(Object.isFrozen(result.geojson.features[0].properties));
   assert.ok(Object.isFrozen(result.geojson.features[0].geometry.coordinates[0]));
+  assert.equal(Object.isFrozen(own.target), false, 'caller identity is not frozen');
+  assert.equal(Object.isFrozen(own.context_ref), false, 'caller context is not frozen');
+  assert.equal(Object.isFrozen(own.parcel_map.geojson.features[0]), false, 'actual supplied legacy feature is not frozen');
+  assert.equal(Object.isFrozen(own.parcel_map.geojson.features[0].geometry.coordinates[0]), false, 'actual supplied legacy ring is not frozen');
+  const expected = structuredClone(result);
+  own.target.account_id = 'changed'; own.context_ref.context_sha256 = 'e'.repeat(64);
+  own.parcel_map.geojson.features[0].properties.selected = false;
+  own.parcel_map.geojson.features[0].geometry.coordinates[0][0][0] -= .001;
+  assert.deepEqual(result, expected, 'later source mutation cannot change the witnessed public response');
   assert.equal(Object.isFrozen(preview.parcel_map.geojson.features[0]), false, 'legacy source remains mutable');
-  for (const change of [v => { v.parcel_map.geojson.features[0].properties.raw = 'PRIVATE'; },
+  for (const change of [v => { v.target.raw = 'PRIVATE'; }, v => { v.context_ref.raw = 'PRIVATE'; },
+    v => { v.parcel_map.geojson.features[0].properties.raw = 'PRIVATE'; },
     v => { v.parcel_map.geojson.features[0].geometry.raw = 'PRIVATE'; },
     v => { v.parcel_map.geojson.features[0].geometry.coordinates[0][4] = [-96.799, 32]; },
     v => { v.parcel_map.geojson.features.push(structuredClone(v.parcel_map.geojson.features[0])); }]) {

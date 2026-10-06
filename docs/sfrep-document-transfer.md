@@ -205,8 +205,9 @@ organizations, UAD workfiles, and Property Tax files are never included.
 Verified JPEG/PNG display copies are preferred, with a verified compatible original
 as fallback. Photos without a checksum-verified compatible copy are visibly excluded.
 The package contains actual image bytes at `Images/photo-UUID.jpg` or `.png`, not
-URLs, and editable native `GeneralPhotos-4x6` addenda with image, label, and caption
-fields (three photos per page). These IDs were checked against the installed SFREP
+URLs, and editable native `GeneralPhotos-4x6` addenda with image and label fields
+(up to three photos per repeatable addendum). Manual captions are the display label,
+not a duplicate second description line. These IDs were checked against the installed SFREP
 dictionary. This adds photo pages without replacing existing primary-form photo
 slots. The same download carries the existing mapped fields and selected original
 PDFs, subject to the shared 50 MiB budget. Upload verification is not appraiser

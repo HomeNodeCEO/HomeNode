@@ -64,6 +64,7 @@ test('photos retain labels and captions and use native repeatable SFREP photo fi
   assert.match(xml, /North &quot;wall&quot;&#10;&lt;roof &amp; trim&gt;/);
   assert.match(xml, /GeneralPhotos-4x6/);
   assert.doesNotMatch(xml, /Data=""/);
+  assert.doesNotMatch(xml, /GeneralPhoto\dDescription/, 'Do not duplicate the existing display label as a second description line.');
   assert.equal(projectSfrepPhotos([photo(1, { caption: null, room_label: 'Kitchen / first floor' })], options()).photos[0].label, 'Kitchen / first floor');
   assert.equal(projectSfrepPhotos([photo(1, { caption: null })], options()).photos[0].label, 'Front');
   assert.equal(projectSfrepPhotos(Array.from({ length: 100 }, (_, index) => photo(index + 1)), options()).imageAddenda.length, 100);

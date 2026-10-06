@@ -95,7 +95,7 @@ export function projectSfrepPhotos(rows, input) {
       const slot = index + 1;
       formXml.push(`        <ImageField Id="GeneralPhoto${slot}Image" Data="${attribute(image.fileName)}" />`,
         `        <TextField Id="GeneralPhoto${slot}Label" Data="${attribute(image.label)}" />`);
-      if (image.caption) formXml.push(`        <TextField Id="GeneralPhoto${slot}Description" Data="${attribute(image.caption)}" />`);
+      if (image.caption && image.caption !== image.label) formXml.push(`        <TextField Id="GeneralPhoto${slot}Description" Data="${attribute(image.caption)}" />`);
     });
     formXml.push('      </Fields>', '    </Form>');
   }

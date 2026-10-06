@@ -24,7 +24,7 @@ function fixture({ due = [row], cancelled = false, actorError = null,
   let heartbeatCalls = 0;
   const pool = { async connect() {
     events.push('connect');
-    return { async query(sql) { events.push(sql); }, release() { events.push('release'); } };
+    return { async query(config) { events.push(config.text); }, release() { events.push('release'); } };
   } };
   const repositoryFactory = () => ({
     async claimDue(options) { events.push(['claim', options]); return due; },
@@ -207,6 +207,16 @@ test('a lost registration acknowledgment cannot downgrade an already committed j
   });
   assert.deepEqual(deps.events.filter(event => Array.isArray(event) && event[0] === 'fail'),
     [['fail', claim, 'capture_failed']]);
+});
+
+test('an uncertain failure transition is returned as an unknown job outcome', async () => {
+  const deps = fixture({
+    captureError: new Error('synthetic capture failed'),
+    failureAction: async () => { throw Object.assign(new Error('synthetic lost transition'), { outcome_unknown: true }); },
+  });
+  assert.deepEqual(await runCustomCohortCaptureJobOnce(deps), {
+    status: 'outcome_unknown', operation_id: operation,
+  });
 });
 
 test('capture failure retains the old study and retries only the fenced job', async () => {

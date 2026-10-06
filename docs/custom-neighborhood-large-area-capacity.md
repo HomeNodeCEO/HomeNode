@@ -129,3 +129,12 @@ This worker is not yet scheduled or exposed through HTTP and still enforces the
 installed 50,000-account ceiling. The remaining phase checkpoints, paged source
 capture, larger-area statistics/map/publication contracts and live acceptance
 must land before this path can serve a 5- or 10-mile study.
+
+Short job-ledger and actor transactions use `customCohortJobTransaction.js`,
+with a five-second checkout bound, six-second driver query bound, five-second
+server statement timeout, one-second lock/rollback bounds and checked-out
+socket-error ownership. Failed connections are discarded; an uncertain COMMIT
+or post-COMMIT release is not described as a successful acknowledgment or a
+known rollback. These short transactions do not replace the capture
+coordinator's aggregate-budget, source-acquisition transaction owner. Neither
+helper widens a source grant or makes a queued request eligible for publication.

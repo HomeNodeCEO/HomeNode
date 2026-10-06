@@ -1,22 +1,10 @@
 import { CAPTURE_JOB_LEASE_SECONDS, createCustomCohortCaptureJobRepository }
   from './customCohortCaptureJobRepository.js';
 import { loadCurrentCustomCohortJobActor } from './customCohortJobActor.js';
+import { withCustomCohortJobTransaction as transaction } from './customCohortJobTransaction.js';
 
 const PASSTHROUGH_FAILURE_REASONS = new Set(['cancelled', 'deadline_exceeded',
   'subject_changed', 'market_policy_changed']);
-
-async function transaction(pool, action) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const result = await action(client);
-    await client.query('COMMIT');
-    return result;
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => {});
-    throw error;
-  } finally { client.release(); }
-}
 
 function claimIdentity(row) {
   return Object.freeze({ operation_id: row.operation_id,
@@ -104,7 +92,7 @@ export async function runCustomCohortCaptureJobOnce({ pool, cohortService,
     } catch (failure) {
       // The original operation may have committed while its acknowledgment
       // was lost, or another worker may now own the lease. Do not overwrite it.
-      if (failure?.message === 'custom_cohort_capture_job_claim_lost')
+      if (failure?.message === 'custom_cohort_capture_job_claim_lost' || failure?.outcome_unknown)
         return Object.freeze({ status: 'outcome_unknown', operation_id: row.operation_id });
       throw failure;
     }

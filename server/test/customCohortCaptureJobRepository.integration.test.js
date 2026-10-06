@@ -8,12 +8,14 @@ import { createCustomCohortCaptureJobRepository }
   from '../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
 import { createNeighborhoodCohortBlobRepository }
   from '../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
+import { withCustomCohortJobTransaction }
+  from '../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
 
 test('Custom capture jobs fence retries, cancellation and atomic context completion in PostgreSQL', {
   skip: !process.env.DATABASE_URL, timeout: 180_000,
 }, async () => {
   const target = await prepareNeighborhoodCiDatabase();
-  const { Client } = createRequire(import.meta.url)('pg');
+  const { Client, Pool } = createRequire(import.meta.url)('pg');
   const client = new Client({ connectionString: target.connectionString,
     connectionTimeoutMillis: 3000, statement_timeout: 8000,
     application_name: 'custom_cohort_capture_job_ci_test' });
@@ -128,5 +130,44 @@ test('Custom capture jobs fence retries, cancellation and atomic context complet
     assert.deepEqual((await client.query(`SELECT status,last_error_code FROM
       app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1`,
     [corruptOperation])).rows[0], { status: 'failed', last_error_code: 'job_corrupt' });
+
+    // Exercise the actual short-transaction owner against this verified,
+    // isolated CI database; never against a production appraisal database.
+    const jobPool = new Pool({ connectionString: target.connectionString, max: 1,
+      connectionTimeoutMillis: 3000, statement_timeout: 8000,
+      application_name: 'custom_cohort_job_transaction_ci_test' });
+    try {
+      const probe = await jobPool.connect();
+      try {
+        verifyNeighborhoodCiConnection((await probe.query(NEIGHBORHOOD_CI_IDENTITY_SQL)).rows[0],
+          probe.connection?.stream?.remoteAddress, target.databaseName);
+      } finally { probe.release(); }
+      const ownedOperation = randomUUID();
+      await withCustomCohortJobTransaction(jobPool, ownedClient =>
+        createCustomCohortCaptureJobRepository(ownedClient).enqueue({ scope,
+          actorUserId: actor, request: makeRequest(ownedOperation) }));
+      const rollback = new Error('synthetic owned rollback');
+      await assert.rejects(withCustomCohortJobTransaction(jobPool, async ownedClient => {
+        const [owned] = await createCustomCohortCaptureJobRepository(ownedClient).claimDue();
+        assert.equal(owned.operation_id, ownedOperation);
+        throw rollback;
+      }), rollback);
+      assert.deepEqual((await client.query(`SELECT status,attempts FROM
+        app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1`,
+      [ownedOperation])).rows[0], { status: 'queued', attempts: 0 });
+      const ownedClaim = await withCustomCohortJobTransaction(jobPool, async ownedClient => {
+        const settings = (await ownedClient.query(`SELECT current_setting('statement_timeout') AS statement_limit,
+          current_setting('lock_timeout') AS lock_limit`)).rows[0];
+        assert.deepEqual(settings, { statement_limit: '5s', lock_limit: '1s' });
+        const [owned] = await createCustomCohortCaptureJobRepository(ownedClient).claimDue();
+        assert.equal(owned.operation_id, ownedOperation);
+        return { operation_id: owned.operation_id, claim_token: owned.claim_token, attempts: owned.attempts };
+      });
+      await withCustomCohortJobTransaction(jobPool, async ownedClient => {
+        const owned = createCustomCohortCaptureJobRepository(ownedClient);
+        assert.equal((await owned.cancel(scope, ownedOperation)).status, 'running');
+        assert.equal((await owned.failClaim(ownedClaim, 'cancelled')).status, 'cancelled');
+      });
+    } finally { await jobPool.end(); }
   } finally { await client.end(); }
 });

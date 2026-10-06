@@ -19,4 +19,9 @@ try {
   // Job status only. Do not log private source rows, tokens or actor details.
   console.log(JSON.stringify(result));
   if (result.status === 'outcome_unknown') process.exitCode = 1;
+} catch (error) {
+  // Never print driver messages, connection details or source-row values.
+  console.error('[neighborhood-capture-jobs] failed',
+    error?.outcome_unknown ? 'outcome_unknown' : 'job_failed');
+  process.exitCode = 1;
 } finally { await pool.end(); }

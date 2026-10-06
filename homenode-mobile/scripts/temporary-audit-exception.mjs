@@ -6,9 +6,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url));
 const deadline = '2026-10-19';
-const reviewedLockfileSha256 = '24aa5dede3605d5dbf38609153f1984188c8299218f2c864a3f406a13efe90c1';
-const auditArgs = ['audit', '--fetch-timeout=300000', '--audit-level=moderate'];
-const exceptionArgs = ['--ignore', 'GHSA-86w9-cpqp-85rv', '--ignore', 'GHSA-vfj7-8cjw-p6xm'];
+const reviewedLockfileSha256 = '0155ed6bfd92df1c836a2c9b4c6813bcf6fd2f07868820b38ae1507f646b49da';
+const auditArgs = ['audit', '--fetch-timeout=300000', '--audit-level=moderate', '--json'];
+const reviewedAdvisories = new Map([
+  ['GHSA-86w9-cpqp-85rv', 'node-forge'],
+  ['GHSA-vfj7-8cjw-p6xm', 'braces'],
+]);
 
 const allowedFiles = new Map([
   [1130, new Set([
@@ -40,6 +43,8 @@ const allowedFiles = new Map([
     '.github/workflows/dependency-security.yml',
     'dcad-frontend/package-lock.json',
     'homenode-mobile/package.json',
+    'homenode-mobile/pnpm-lock.yaml',
+    'homenode-mobile/pnpm-workspace.yaml',
     'homenode-mobile/scripts/temporary-audit-exception.mjs',
     'homenode-mobile/test/dependency-security.test.ts',
     'homenode-mobile/test/temporary-audit-exception.test.mjs',
@@ -67,15 +72,41 @@ export function evaluateTemporaryAuditException({
 }
 
 export function runAudits(contextProvider, auditRunner) {
-  // Always show the full, unfiltered finding list before considering scope.
-  if (auditRunner(auditArgs) === 0) return;
+  // One unfiltered JSON response is the source of truth. pnpm's --ignore flag
+  // returned success while a third, unignored advisory was present, so never
+  // infer safety from a second filtered command's exit status.
+  const result = auditRunner(auditArgs);
+  let report;
+  try {
+    report = JSON.parse(result.stdout);
+  } catch {
+    throw new Error('Unparseable raw audit response or registry failure');
+  }
+  if (!report || typeof report.advisories !== 'object' || report.advisories === null ||
+      Array.isArray(report.advisories) || typeof report.metadata?.vulnerabilities !== 'object') {
+    throw new Error('Incomplete raw audit response or registry failure');
+  }
+  const advisories = Object.values(report.advisories);
+  const counts = report.metadata.vulnerabilities;
+  const total = ['moderate', 'high', 'critical'].reduce((sum, severity) => sum + counts[severity], 0);
+  if (!Number.isInteger(total) || total !== advisories.length ||
+      advisories.some((item) => !item || !['moderate', 'high', 'critical'].includes(item.severity) ||
+        !Array.isArray(item.findings) || item.findings.length === 0)) {
+    throw new Error('Raw audit counts or findings are inconsistent');
+  }
+  if (advisories.length === 0) {
+    if (result.status !== 0) throw new Error('Raw audit failed without findings');
+    return;
+  }
+  if (result.status === 0) throw new Error('Raw audit reported findings but exited successfully');
+  const unknown = advisories.filter((item) => reviewedAdvisories.get(item.github_advisory_id) !== item.module_name);
+  if (unknown.length) {
+    throw new Error(`Unreviewed advisories remain: ${unknown.map((item) => item.github_advisory_id || item.module_name).join(', ')}`);
+  }
   const context = typeof contextProvider === 'function' ? contextProvider() : contextProvider;
   const refusal = evaluateTemporaryAuditException(context);
   if (refusal) throw new Error(refusal);
-  console.warn(`::warning::Temporary exception for only two reviewed Expo/Metro advisories; expires ${deadline}.`);
-  if (auditRunner([...auditArgs, ...exceptionArgs]) !== 0) {
-    throw new Error('Unignored vulnerability or audit registry failure remains');
-  }
+  console.warn(`::warning::Temporary exception for ${advisories.length} reviewed Expo/Metro advisories; expires ${deadline}.`);
 }
 
 function collectContext() {
@@ -103,9 +134,13 @@ function collectContext() {
 
 function main() {
   runAudits(collectContext, (args) => {
-    const result = spawnSync('pnpm', args, { cwd: path.join(repositoryRoot, 'homenode-mobile'), stdio: 'inherit' });
+    const result = spawnSync('pnpm', args, {
+      cwd: path.join(repositoryRoot, 'homenode-mobile'), encoding: 'utf8', maxBuffer: 10 * 1024 * 1024,
+    });
     if (result.error) throw result.error;
-    return result.status ?? 1;
+    if (result.stdout) process.stdout.write(result.stdout);
+    if (result.stderr) process.stderr.write(result.stderr);
+    return { status: result.status ?? 1, stdout: result.stdout || '' };
   });
 }
 

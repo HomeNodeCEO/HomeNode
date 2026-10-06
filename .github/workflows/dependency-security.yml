@@ -93,8 +93,8 @@ jobs:
       - name: Verify reviewed Expo toolchain patches and behavior
         run: pnpm run verify:toolchain
       - name: Reject moderate, high, or critical known vulnerabilities
-        # Keep the unfiltered audit visible. The two exact, locally patched
-        # Expo/Metro toolchain advisories have no published fixed versions.
+        # Parse and show one unfiltered JSON audit. Only the two exact, locally
+        # patched Expo/Metro toolchain advisories have no published fixes.
         # This temporary exception expires after 2026-10-19; every other
         # Moderate/High/Critical advisory remains blocking. Review the
         # recorded scope and decision on PR #1131 before changing this gate.

@@ -223,7 +223,10 @@ test('dependency security gates reject moderate or higher findings', () => {
   );
   assert.match(exception, /2026-10-19/);
   assert.match(exception, /'--audit-level=moderate'/);
-  assert.match(exception, /'--ignore', 'GHSA-86w9-cpqp-85rv', '--ignore', 'GHSA-vfj7-8cjw-p6xm'/);
+  assert.match(exception, /\['GHSA-86w9-cpqp-85rv', 'node-forge'\]/);
+  assert.match(exception, /\['GHSA-vfj7-8cjw-p6xm', 'braces'\]/);
+  assert.match(exception, /'--json'/);
+  assert.doesNotMatch(exception, /'--ignore'/);
   assert.doesNotMatch(workflow, /--ignore-unfixable|--ignore-registry-errors/);
   assert.doesNotMatch(workflow, /audit-level=high|fail-on-severity:\s*high/);
 });

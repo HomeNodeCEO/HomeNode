@@ -39,11 +39,19 @@ test('recorded-group selection refreshes current roles before retained facts or 
   const read = { auth: { ...base.auth, organizations: [{ organizationId: organization, roles: ['appraiser'] }] },
     accountId: base.accountId, assignmentFileId: base.assignmentFileId,
     contextRef: { context_id: base.operationId, context_revision: '1', context_sha256: 'c'.repeat(64) } };
-  for (const method of ['readRecordedGroupSelection', 'selectRecordedGroups', 'selectAndSaveRecordedGroups', 'previewRecordedGroupSelection']) {
-    const writing = ['selectRecordedGroups', 'selectAndSaveRecordedGroups'].includes(method);
-    const value = writing ? { ...read,
+  const checkpoint = { workspace_version: 7, active: null, pending_capture: null };
+  const pendingCapture = { operation_id: base.operationId, observation_period: base.observationPeriod };
+  for (const method of ['readRecordedGroupSelection', 'selectRecordedGroups', 'selectAndSaveRecordedGroups',
+    'previewRecordedGroupSelection', 'startRecordedGroupCapture', 'cancelRecordedGroupCapture', 'completeRecordedGroupCapture']) {
+    const writing = !['readRecordedGroupSelection', 'previewRecordedGroupSelection'].includes(method);
+    const transition = ['startRecordedGroupCapture', 'cancelRecordedGroupCapture'].includes(method);
+    const value = transition ? { auth: read.auth, accountId: read.accountId, assignmentFileId: read.assignmentFileId,
+      expectedWorkspaceRevision: 1, expectedWorkspaceCheckpoint: { ...checkpoint,
+        pending_capture: method === 'cancelRecordedGroupCapture' ? pendingCapture : null },
+      ...(method === 'startRecordedGroupCapture' ? { pendingCapture } : {}) } : writing ? { ...read,
       operationId: report, expectedSelectionRef: null, includedRecordedGroupIds: [],
-      ...(method === 'selectAndSaveRecordedGroups' ? { expectedWorkspaceRevision: 1 } : {}) }
+      ...(['selectAndSaveRecordedGroups', 'completeRecordedGroupCapture'].includes(method) ? { expectedWorkspaceRevision: 1 } : {}),
+      ...(method === 'completeRecordedGroupCapture' ? { expectedWorkspaceCheckpoint: { ...checkpoint, pending_capture: pendingCapture } } : {}) }
       : method === 'previewRecordedGroupSelection' ? { ...read, selectionRef: { selection_version: 1,
         selection_revision: 1, selection_sha256: 'a'.repeat(64),
         manifest_ref: { content_sha256: 'b'.repeat(64), canonical_utf8_bytes: '100' } } } : read;

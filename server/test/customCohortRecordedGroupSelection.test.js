@@ -159,6 +159,29 @@ test('v2 workspace command binds exact prior section revision without changing v
   assert.throws(() => commandOriginal(json({ ...v1, expected_workspace_revision: 12 })), /invalid_command/);
 });
 
+test('v3 completion command binds exact prior V7 capture intent while v1/v2 originals remain unchanged', async () => {
+  const f = fixture(), checkpoint = { workspace_version: 7, active: null, pending_capture: {
+    operation_id: context.context_id, observation_period: { start_date: '2023-01-01', end_date: '2024-12-31' } } };
+  const command = { command_version: 3, actor_user_id: scope.organization_id, operation_id: scope.report_file_id,
+    expected_selection_ref: null, included_recorded_group_ids: [A], selection_revision: 1,
+    expected_workspace_revision: 2, expected_workspace_checkpoint: checkpoint };
+  assert.deepEqual(commandOriginal(json(command)), command);
+  const input = { ...f.input, includedGroupIds: [A], revision: 1, commandJson: json(command), catalogIdentityVersion: 2 };
+  const first = await prepare(input), altered = structuredClone(command);
+  altered.expected_workspace_checkpoint.pending_capture.observation_period.start_date = '2022-01-01';
+  assert.notEqual((await prepare({ ...input, commandJson: json(altered) })).catalog_original_json, first.catalog_original_json);
+  for (const mutate of [x => { x.expected_workspace_checkpoint.pending_capture = null; },
+    x => { x.expected_workspace_checkpoint.workspace_version = 6; },
+    x => { x.expected_workspace_checkpoint.authority = 'accepted'; },
+    x => { x.expected_selection_ref = { selection_version: 1, selection_revision: 1, selection_sha256: 'a'.repeat(64),
+      manifest_ref: { content_sha256: 'b'.repeat(64), canonical_utf8_bytes: '100' } }; x.selection_revision = 2; },
+    x => { delete x.expected_workspace_checkpoint; }]) {
+    const bad = structuredClone(command); mutate(bad); assert.throws(() => commandOriginal(json(bad)), /invalid_command/);
+  }
+  const other = structuredClone(command); other.expected_workspace_checkpoint.pending_capture.operation_id = scope.organization_id;
+  await assert.rejects(prepare({ ...input, commandJson: json(other) }), /command_mismatch/);
+});
+
 test('a selected subset cannot conceal partial, conflicting or altered unselected catalog membership', async () => {
   const f = fixture();
   const replacements = [

@@ -61,7 +61,7 @@ function fixture(extraAccounts = []) {
       const result = await work({ client, auth: { userId: state.actor }, scopeJson: json(scope),
         catalogJson: JSON.stringify(catalog), rosterJson: JSON.stringify(roster),
         blobs: createNeighborhoodCohortBlobRepository(client, scope.organization_id),
-        ...(projection === 'workspace' ? { selectionWorkspace: { async save(selected) {
+        ...(['workspace', 'complete'].includes(projection) ? { selectionWorkspace: { async save(selected) {
           state.workspaceInputs.push(selected); calls.push('workspace_saved');
           return { revision: input.expectedWorkspaceRevision + 1,
             value: { workspace_version: 7, active: { context_ref: input.contextRef, selection_ref: selected.selection_ref }, pending_capture: null } };
@@ -199,6 +199,38 @@ test('workspace intent binds its expected section revision into the original com
   }
   await assert.rejects(f.owner.selectAndSaveRecordedGroups({ ...request, workspace: {} }), /invalid_input/);
   assert.equal(f.state.workspaceInputs.length, 1);
+});
+
+test('capture completion binds detached prior V7 intent and fresh server actor into command v3', async () => {
+  const f = fixture(), checkpoint = { workspace_version: 7, active: null, pending_capture: {
+    operation_id: context.context_id, observation_period: { start_date: '2023-01-01', end_date: '2024-12-31' } } };
+  const request = { ...f.select, expectedWorkspaceRevision: 9, expectedWorkspaceCheckpoint: checkpoint };
+  const before = structuredClone(request);
+  const saved = await f.owner.completeRecordedGroupCapture(request);
+  assert.equal(saved.workspace.revision, 10); assert.deepEqual(request, before);
+  const command = [...f.data.values()].map(row => JSON.parse(row.canonical_utf8)).find(value => value.selection_command).selection_command;
+  assert.equal(command.command_version, 3); assert.deepEqual(command.expected_workspace_checkpoint, checkpoint);
+  assert.equal(command.actor_user_id, actor); assert.equal(command.expected_selection_ref, null);
+  await assert.rejects(f.owner.completeRecordedGroupCapture({ ...request, expectedWorkspaceRevision: 10 }), /operation_conflict/);
+  const altered = structuredClone(checkpoint); altered.pending_capture.observation_period.start_date = '2022-01-01';
+  await assert.rejects(f.owner.completeRecordedGroupCapture({ ...request, expectedWorkspaceCheckpoint: altered }), /operation_conflict/);
+  assert.equal(f.revisions.size, 1);
+});
+
+test('transition requests reject injected data, missing intent and nonfresh context before transaction work', async () => {
+  const f = fixture(), prior = { workspace_version: 7, active: null, pending_capture: null },
+    pendingCapture = { operation_id: context.context_id, observation_period: { start_date: '2023-01-01', end_date: '2024-12-31' } };
+  const identity = { auth: f.read.auth, accountId: f.read.accountId, assignmentFileId: f.read.assignmentFileId,
+    expectedWorkspaceRevision: 1, expectedWorkspaceCheckpoint: prior };
+  for (const key of ['authority', 'contextRef', 'actor_user_id', 'account_ids'])
+    await assert.rejects(f.owner.startRecordedGroupCapture({ ...identity, pendingCapture, [key]: 'untrusted' }), /invalid_input/);
+  await assert.rejects(f.owner.startRecordedGroupCapture({ ...identity, pendingCapture: null }), /invalid_transition/);
+  await assert.rejects(f.owner.cancelRecordedGroupCapture(identity), /invalid_transition/);
+  await assert.rejects(f.owner.startRecordedGroupCapture({ ...identity, pendingCapture,
+    expectedWorkspaceCheckpoint: { ...prior, pending_capture: pendingCapture } }), /invalid_transition/);
+  await assert.rejects(f.owner.completeRecordedGroupCapture({ ...f.select, expectedWorkspaceRevision: 1,
+    expectedWorkspaceCheckpoint: prior }), /invalid_transition/);
+  assert.equal(f.calls.length, 0);
 });
 
 test('no authority/catalog/members/actor body fields, accessors, proxies or invalid operations reach the owner transaction', async () => {

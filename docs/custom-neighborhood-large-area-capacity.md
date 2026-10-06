@@ -526,3 +526,49 @@ or history. These assertions must pass actual CI; local SQL recording tests are
 not PostgreSQL proof. This slice does not add a public atomic save route, switch
 the browser, implement V7 context/period transitions, raise source/publication
 capacity, schedule partial source capture or establish a production speed SLA.
+
+## Exact-reference study transitions (internal, not browser activation)
+
+`startRecordedGroupCapture` and `cancelRecordedGroupCapture` change only V7's
+pending intent through the existing quota/CAS/history writer. They require an
+exact prior checkpoint and section revision, freshly reload current database
+actor/assignment write permission before and after the write, and retain the
+workfile-before-assignment/context lock order and draft/signed protections.
+The old active context and registered selection remain untouched. A scoped
+metadata-only head check refuses a detached active selection; it opens no old
+catalog/source facts and is not a license grant. An expired old source grant
+does not prevent an authorized appraiser from setting aside unfinished intent.
+Exact immediate-successor retries add no history and cannot rewind later edits.
+
+`completeRecordedGroupCapture` requires the new capture to be fully registered
+and independently authorized. Its context UUID must equal the pending capture
+operation, and its immutable observation period, discovery and optional private
+CSV batch/review must exactly match that pending intent. It derives the explicit
+chosen group IDs from that new study's complete catalog and independent roster,
+then registers a fresh selection and replaces active/pending in one transaction.
+No automatic recommendation, partial capture or viewport/member-page prefix is
+substituted. On any failure the old active selection and pending study remain.
+The existing current subject, final source/private-review, current actor and
+workspace/history rollback fences still apply; no accepted report is changed.
+
+New selection command version 3 binds the tiny exact prior V7 checkpoint and its
+section revision, along with the operation, current reviewer and explicit group
+IDs. It starts the new context's selection with a null predecessor. The shared
+original verifier can reopen these receipts; v1/v2 command meanings and retained
+v1/v2 catalog identity semantics are unchanged. An exact lost COMMIT
+acknowledgment reuses only the current new head and immediate exact checkpoint
+successor; it cannot erase a subsequent empty selection or replay changed study
+intent under the same operation.
+
+Additional native assertions run within the selection owner's separate
+synthetic organization/report in the migrated disposable fixture. They perform
+real old/new captures, start/cancel/complete writes, changed period/discovery/
+private-purpose refusals, actual post-section cancellation/history failure,
+initial/final role and source refusal, lost acknowledgments and v3 original
+reopening. They retain the coordinator's cold-start assignment and accepted
+sections, receipts, report and geography unchanged. These assertions must pass
+actual CI; local recording doubles are not claimed as PostgreSQL proof.
+Public save/transition HTTP routes and the complete V7 browser lifecycle are
+still unactivated. Installed source/numerical limits, release policy, background
+schedules and production speed claims are unchanged; partial source paging,
+complete >50k studies and 5-/10-mile/retrospective live acceptance remain open.

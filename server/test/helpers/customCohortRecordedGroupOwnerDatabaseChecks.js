@@ -502,5 +502,112 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, sc
   assert.deepEqual(await protectedOther(), otherBefore, 'no accepted section, receipt, assignment geography or report content changes');
   assert.deepEqual((await coordinatorWorkspace()).rows, coordinatorBefore, 'the separate coordinator cold-start assignment remains untouched');
   checks.push('native exact workspace/head COMMIT loss replays once, generic autosave and legacy head writes cannot downgrade or detach it, explicit empty stays empty, stale replay cannot rewind, and competing CAS operations commit one coherent winner without changing accepted reports');
+
+  const nextPeriod = { start_date: observationPeriod.start_date === '2020-01-01' ? '2019-01-01' : '2020-01-01',
+    end_date: observationPeriod.end_date };
+  const pendingCapture = { operation_id: randomUUID(), observation_period: nextPeriod };
+  const start = { ...identity, expectedWorkspaceRevision: winner.workspace.revision,
+    expectedWorkspaceCheckpoint: winner.workspace.value, pendingCapture };
+  const pendingBefore = await workspaceState(), transitionFrom = calls.length;
+  policyCalls = 0; denyPolicy = true;
+  let started;
+  try {
+    loseCommitAck = true;
+    await assert.rejects(owner.startRecordedGroupCapture(start), error => error.outcome_unknown === true);
+    const afterStart = await workspaceState();
+    started = await owner.startRecordedGroupCapture(start);
+    assert.equal(started.status, 'reused'); assert.deepEqual(await workspaceState(), afterStart);
+    assert.equal(afterStart.section.revision, pendingBefore.section.revision + 1);
+    assert.equal(afterStart.history, pendingBefore.history + 1); assert.equal(afterStart.head, pendingBefore.head);
+    assert.equal(afterStart.blobs, pendingBefore.blobs);
+    assert.deepEqual(started.workspace.value.active, winner.workspace.value.active);
+    assert.deepEqual(started.workspace.value.pending_capture, pendingCapture);
+    assert.equal(policyCalls, 0, 'pending intent needs current assignment write access, not an old source grant');
+    assert.ok(!calls.slice(transitionFrom).some(sql => /neighborhood-cohort-blob:|prepared-catalog:read|prepared-preview:read/.test(sql)),
+      'start/replay must not open source/cached facts');
+    const cancel = { ...identity, expectedWorkspaceRevision: started.workspace.revision,
+      expectedWorkspaceCheckpoint: started.workspace.value };
+    const unchangedPending = await workspaceState();
+    const cancelled = new AbortController(); cancelAtWorkspace = cancelled;
+    await assert.rejects(owner.cancelRecordedGroupCapture(cancel, { signal: cancelled.signal }), /cancelled/);
+    assert.deepEqual(await workspaceState(), unchangedPending);
+    revokeAtWorkspace = true;
+    try { await assert.rejects(owner.cancelRecordedGroupCapture(cancel), /job_actor_access_revoked/); }
+    finally { await suspend('active'); }
+    assert.deepEqual(await workspaceState(), unchangedPending, 'final role refusal rolls back cancellation history and preserves pending');
+    loseCommitAck = true;
+    await assert.rejects(owner.cancelRecordedGroupCapture(cancel), error => error.outcome_unknown === true);
+    const canceledState = await workspaceState(), canceled = await owner.cancelRecordedGroupCapture(cancel);
+    assert.equal(canceled.status, 'reused'); assert.deepEqual(await workspaceState(), canceledState);
+    assert.deepEqual(canceled.workspace.value.active, winner.workspace.value.active);
+    assert.equal(canceled.workspace.value.pending_capture, null);
+    await assert.rejects(owner.startRecordedGroupCapture(start), /revision_changed/);
+    started = await owner.startRecordedGroupCapture({ ...start, expectedWorkspaceRevision: canceled.workspace.revision,
+      expectedWorkspaceCheckpoint: canceled.workspace.value });
+  } finally { denyPolicy = false; }
+  checks.push('native pending start/cancel preserves the old active head and accepted report, opens no old source facts, reloads current roles, rolls back actual post-section failures, and replays lost COMMIT acknowledgments once without extra history');
+
+  const uncaptured = { ...identity, contextRef: { context_id: pendingCapture.operation_id, context_revision: '1',
+    context_sha256: 'a'.repeat(64) }, operationId: randomUUID(), expectedSelectionRef: null,
+    expectedWorkspaceRevision: started.workspace.revision, expectedWorkspaceCheckpoint: started.workspace.value,
+    includedRecordedGroupIds: [] };
+  const beforeCapture = await workspaceState();
+  await assert.rejects(owner.completeRecordedGroupCapture(uncaptured));
+  assert.deepEqual(await workspaceState(), beforeCapture, 'a registered original new context is required before completion');
+  const captured = await owner.capture({ ...identity, operationId: pendingCapture.operation_id, observationPeriod: nextPeriod });
+  const newRead = { ...identity, contextRef: captured.context_ref };
+  const newCatalog = await owner.catalog({ ...newRead, selection: { revision: 1, pockets: [] }, catalogVersion: 3 });
+  assert.equal(newCatalog.catalog.catalog_complete, true);
+  const newIds = newCatalog.catalog.pockets.map(p => p.id);
+  if (newCatalog.catalog.unassigned.member_count) newIds.push('discovery:unassigned');
+  const finish = { ...uncaptured, contextRef: captured.context_ref, includedRecordedGroupIds: newIds };
+  const newHead = async () => (await pool.query(`SELECT selection_revision FROM app.neighborhood_custom_cohort_group_selection_heads
+    WHERE organization_id=$1 AND context_id=$2`, [scope.organization_id, captured.context_ref.context_id])).rows;
+  const transitionState = async () => ({ workspace: await workspaceState(), newHead: await newHead() });
+  const beforeFinish = await transitionState(); assert.deepEqual(beforeFinish.newHead, []);
+  for (const mutate of [x => { x.pending_capture.observation_period.start_date = '2018-01-01'; },
+    x => { x.pending_capture.discovery = { profile_id: 'custom-suburban-radius-v2', radius_metres: '8046.72' }; },
+    x => { x.pending_capture.private_sales_import = { batch_id: randomUUID(), expected_review_revision: 1 }; }]) {
+    const checkpoint = structuredClone(finish.expectedWorkspaceCheckpoint); mutate(checkpoint);
+    await assert.rejects(owner.completeRecordedGroupCapture({ ...finish, expectedWorkspaceCheckpoint: checkpoint }), /study_changed/);
+    assert.deepEqual(await transitionState(), beforeFinish, 'mismatched new study cannot detach original active/pending choices');
+  }
+  const failFinish = () => ({ ...finish, operationId: randomUUID() });
+  failWorkspaceHistory = true;
+  await assert.rejects(owner.completeRecordedGroupCapture(failFinish()), /history write acknowledgment failure/);
+  assert.deepEqual(await transitionState(), beforeFinish, 'new head, pages, checkpoint and history roll back together');
+  const afterCompletionCancel = new AbortController(); cancelAtWorkspace = afterCompletionCancel;
+  await assert.rejects(owner.completeRecordedGroupCapture(failFinish(), { signal: afterCompletionCancel.signal }), /cancelled/);
+  assert.deepEqual(await transitionState(), beforeFinish);
+  policyCalls = 0; denyFinalPolicy = true;
+  try { await assert.rejects(owner.completeRecordedGroupCapture(failFinish()), /market_data_access_denied/); }
+  finally { denyFinalPolicy = false; }
+  assert.deepEqual(await transitionState(), beforeFinish);
+  revokeAtWorkspace = true;
+  try { await assert.rejects(owner.completeRecordedGroupCapture(failFinish()), /job_actor_access_revoked/); }
+  finally { await suspend('active'); }
+  assert.deepEqual(await transitionState(), beforeFinish);
+  loseCommitAck = true;
+  await assert.rejects(owner.completeRecordedGroupCapture(finish), error => error.outcome_unknown === true);
+  const committedFinish = await transitionState(), finished = await owner.completeRecordedGroupCapture(finish);
+  assert.equal(finished.status, 'reused'); assert.deepEqual(await transitionState(), committedFinish);
+  assert.equal(finished.workspace.revision, started.workspace.revision + 1);
+  assert.deepEqual(finished.workspace.value.active.context_ref, captured.context_ref);
+  assert.deepEqual(finished.workspace.value.active.observation_period, nextPeriod);
+  assert.deepEqual(finished.workspace.value.active.selection_ref, finished.selection_ref);
+  assert.equal(finished.workspace.value.pending_capture, null); assert.equal(finished.selection_ref.selection_revision, 1);
+  assert.equal(committedFinish.workspace.head, winner.selection_ref.selection_revision, 'old immutable context selection is not rewritten');
+  assert.deepEqual((await owner.readRecordedGroupSelection(newRead)).selection_ref, finished.selection_ref,
+    'the shared original verifier reopens command v3 and its complete memberships');
+  await assert.rejects(owner.cancelRecordedGroupCapture({ ...identity, expectedWorkspaceRevision: started.workspace.revision,
+    expectedWorkspaceCheckpoint: started.workspace.value }), /study_changed|revision_changed/);
+  const later = await owner.selectAndSaveRecordedGroups({ ...newRead, operationId: randomUUID(),
+    expectedSelectionRef: finished.selection_ref, expectedWorkspaceRevision: finished.workspace.revision,
+    includedRecordedGroupIds: [] });
+  assert.equal(later.workspace.value.active.selection_ref.selection_revision, 2);
+  await assert.rejects(owner.completeRecordedGroupCapture(finish), /revision_changed/);
+  assert.deepEqual(await protectedOther(), otherBefore);
+  assert.deepEqual((await coordinatorWorkspace()).rows, coordinatorBefore);
+  checks.push('native V7 study transition requires a registered exact period/discovery/private-purpose context, atomically publishes its fresh complete selection with pending cleared, rolls new pages/head/history back on failures, reopens v3 originals, and cannot rewind later edits or alter accepted reports');
   return { checks };
 }

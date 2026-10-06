@@ -32,6 +32,7 @@ import { runCustomCohortSubjectCheckpointDatabaseChecks } from './customCohortSu
 import { runCohortPagedGroupSelectionDatabaseChecks } from './cohortPagedGroupSelectionDatabaseChecks.js';
 import { runCustomCohortGroupSelectionHeadDatabaseChecks } from './customCohortGroupSelectionHeadDatabaseChecks.js';
 import { runCustomCohortRecordedGroupOwnerDatabaseChecks } from './customCohortRecordedGroupOwnerDatabaseChecks.js';
+import { buildMarketConditionsAnalyses } from '../../src/services/marketConditions.js';
 
 /** New disposable migrated test database only; no cleanup of shared tables,
  * fake CI, external provider, live organization, or production credentials. */
@@ -46,6 +47,15 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     try { verifyNeighborhoodCiConnection((await probe.query(NEIGHBORHOOD_CI_IDENTITY_SQL)).rows[0],
       probe.connection?.stream?.remoteAddress, target.databaseName); } finally { probe.release(); }
     await pool.query(NEIGHBORHOOD_CACHED_SOURCE_SCHEMA);
+    // The UAD bootstrap intentionally creates only minimal location columns.
+    // Exercise market SQL against the remaining production location projection.
+    await pool.query(`ALTER TABLE core.account_locations
+      ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'matched',
+      ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'synthetic_fixture',
+      ADD COLUMN IF NOT EXISTS precision text,
+      ADD COLUMN IF NOT EXISTS confidence text,
+      ADD COLUMN IF NOT EXISTS review_required boolean NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS review_reason text`);
     const organization = randomUUID(), actor = randomUUID(), appraisalCase = randomUUID(), snapshot = randomUUID(), report = randomUUID();
     const account = 'CAPTURE-COORD-SUBJECT', other = 'CAPTURE-COORD-OTHER', linked = 'CAPTURE-COORD-LINKED';
     await pool.query("INSERT INTO app_auth.organizations(id,legal_name,display_name) VALUES($1,'Synthetic Custom capture','Synthetic Custom capture')", [organization]);
@@ -75,6 +85,28 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     await pool.query("INSERT INTO core.sales(id,source_record_id,account_id,closing_date,sale_price,source,loaded_at) VALUES(100,10,$1,'2024-03-01',300000,'Synthetic',now())", [account]);
     await pool.query(`INSERT INTO core.sale_parcels(id,source_record_id,source_position,parcel_sequence,account_id,is_resolved,loaded_at)
       VALUES(11,10,1,1,$1,true,now()),(12,10,1,2,$2,true,now())`, [account, linked]);
+    // Synthetic projection for executing the real market SQL. The retained
+    // membership tests below do not depend on this view or change their rows.
+    await pool.query(`CREATE VIEW core.v_sales_enriched AS SELECT
+      sale.id AS sale_id, source.id AS source_record_id, source.primary_account_id,
+      source.record_type, sale.closing_date, sale.sale_price, sale.days_on_market,
+      NULL::text AS address, NULL::text AS city, NULL::text AS zip,
+      NULL::numeric AS ratio_close_price_by_list_price, source.living_area AS mls_living_area,
+      NULL::numeric AS cad_living_area_sqft, source.year_built AS mls_year_built,
+      NULL::integer AS cad_effective_year_built, NULL::integer AS cad_year_built, source.housing_type
+      FROM core.sales sale JOIN core.sales_source_records source ON source.id=sale.source_record_id`);
+    const marketInput = { subjectAccountId: account, accountIdAllowed: id => [account, other, linked].includes(id),
+      areaKeys: ['exploration'], asOfDate: '2024-06-30', periodMonths: 12 };
+    for (const [selected, expected] of [[[account], 1], [[linked], 1], [[account, linked], 1], [[other], 0], [[], 0]]) {
+      const study = await buildMarketConditionsAnalyses(pool, { ...marketInput, explorationAccountIds: selected });
+      assert.equal(study.analyses[0].market.label, 'Exploration Map Area');
+      assert.equal(study.analyses[0].population.eligible_sale_count, expected);
+      assert.equal(study.analyses[0].market.includes_subject, selected.includes(account));
+    }
+    const historical = await buildMarketConditionsAnalyses(pool, { ...marketInput,
+      asOfDate: '2023-06-30', explorationAccountIds: [account] });
+    assert.equal(historical.analyses[0].population.eligible_sale_count, 0, 'future sales cannot enter a retrospective study');
+    checks.push('exact exploration market roster, linked-sale deduplication, empty selection and retrospective cutoff');
     const auth = { userId: actor, organizations: [{ organizationId: organization, roles: ['appraiser'] }] };
     const makeInput = () => ({ auth, accountId: account, assignmentFileId: assignment, operationId: randomUUID(),
       observationPeriod: { start_date: '2023-07-01', end_date: '2024-06-30' } });
@@ -1187,6 +1219,24 @@ async function checkHistoricalStockGuard(pool, checks, { account, sourceSnapshot
   } catch (error) { await client.query('ROLLBACK'); throw error; }
   finally { client.release(); }
   const request = { ...target, auth, contextRef: captured.context_ref, expectedWorkspaceRevision: 1, expectedReviewGeneration: '0' };
+  const mapCatalogRequest = { ...target, auth, contextRef: captured.context_ref,
+    selection: { revision: 1, pockets: [] }, catalogVersion: 3, includeRecommendation: true,
+    initialPreviewMode: 'all_catalog_groups', initialMapMode: 'manifest' };
+  const mapFrom = base.calls.length;
+  const mapCatalog = await base.owner.catalog(mapCatalogRequest);
+  assert.equal(mapCatalog.recommendation, undefined, 'historical auto ranking stays disabled');
+  assert.equal(mapCatalog.prepared_secondary_map.version, 2);
+  assert.equal(mapCatalog.prepared_secondary_map.authority, 'not_established');
+  assert.equal(mapCatalog.prepared_secondary_map.retained_capture_at, retainedCaptureAt);
+  assert.equal(mapCatalog.prepared_secondary_map.groups.reduce((n, group) => n + group.member_count, 0),
+    mapCatalog.catalog.coverage.discovery_member_count);
+  assert.ok(!base.calls.slice(mapFrom).some(sql => /neighborhood-(cache|membership|closure):/.test(sql)),
+    'restoring colors must not reacquire current source data');
+  const preparedMapFrom = base.calls.length;
+  assert.deepEqual(await base.owner.catalog(mapCatalogRequest), mapCatalog);
+  assert.ok(base.calls.slice(preparedMapFrom).some(sql => sql.includes('custom-cohort-prepared-catalog:read')));
+  assert.ok(!base.calls.slice(preparedMapFrom).some(sql => sql.includes('neighborhood-cohort-blob:read-batch')),
+    'subsequent map openings reuse compact prepared colors, without dense replay');
   const protectedState = async () => (await pool.query(`SELECT
     (SELECT to_jsonb(a) FROM app.assignment_files a WHERE id=$1 AND organization_id=$2) AS assignment,
     (SELECT to_jsonb(r) FROM app.report_files r WHERE id=$3 AND organization_id=$2) AS report,

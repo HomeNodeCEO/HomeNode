@@ -1,6 +1,6 @@
 export interface CheckedPreparedSecondaryMap {
-  readonly version: 1;
-  readonly basis: 'prepared_current_cad_snapshot_diagnostic_only';
+  readonly version: 1 | 2;
+  readonly basis: 'prepared_current_cad_snapshot_diagnostic_only' | 'current_retained_cad_snapshot_diagnostic_only';
   readonly source_observed_at: string;
   readonly retained_capture_at: string;
   readonly groups: readonly { readonly id: string; readonly member_count: number;
@@ -27,11 +27,14 @@ const count = (value: unknown): number => { ensure(Number.isSafeInteger(value) &
 export function checkCustomCohortPreparedSecondaryMap(value: unknown,
   groups: readonly { readonly id: string; readonly member_count: number }[]): CheckedPreparedSecondaryMap {
   const raw = keys(value, ['version', 'basis', 'authority', 'generation_id', 'source_observed_at', 'retained_capture_at', 'groups']);
-  ensure(raw.version === 1 && raw.basis === 'prepared_current_cad_snapshot_diagnostic_only'
-    && raw.authority === 'not_established' && typeof raw.generation_id === 'string'
-    && /^[a-f0-9-]{36}$/i.test(raw.generation_id));
+  const retained = raw.version === 2 && raw.basis === 'current_retained_cad_snapshot_diagnostic_only'
+    && raw.generation_id === null;
+  ensure(raw.authority === 'not_established' && (retained
+    || (raw.version === 1 && raw.basis === 'prepared_current_cad_snapshot_diagnostic_only'
+      && typeof raw.generation_id === 'string' && /^[a-f0-9-]{36}$/i.test(raw.generation_id))));
   const observed = date(raw.source_observed_at), captured = date(raw.retained_capture_at);
-  ensure(observed <= captured && Array.isArray(raw.groups) && raw.groups.length === groups.length && raw.groups.length <= 2049);
+  ensure(observed <= captured && (!retained || observed === captured)
+    && Array.isArray(raw.groups) && raw.groups.length === groups.length && raw.groups.length <= 2049);
   const expected = new Map(groups.map(group => [group.id, group.member_count])), seen = new Set<string>();
   const checked = raw.groups.map(value => {
     const row = keys(value, ['id', 'member_count', 'supported_member_count', 'lower', 'upper']);
@@ -42,6 +45,6 @@ export function checkCustomCohortPreparedSecondaryMap(value: unknown,
     ensure(member_count ? lower! <= upper! : row.lower === null && row.upper === null);
     return Object.freeze({ id: row.id as string, member_count, supported_member_count, lower, upper });
   });
-  return Object.freeze({ version: 1, basis: 'prepared_current_cad_snapshot_diagnostic_only',
+  return Object.freeze({ version: raw.version as 1 | 2, basis: raw.basis as CheckedPreparedSecondaryMap['basis'],
     source_observed_at: observed, retained_capture_at: captured, groups: Object.freeze(checked) });
 }

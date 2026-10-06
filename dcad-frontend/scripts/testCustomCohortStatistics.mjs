@@ -23,6 +23,25 @@ const statistics = loadTrustedRepositoryCommonJs(new URL('../src/features/neighb
 });
 const Component = statistics.default;
 const render = (group, props = {}) => renderToStaticMarkup(React.createElement(Component, { group, freshness: 'current', ...props }));
+const renderCompact = (group, props = {}) => renderToStaticMarkup(React.createElement(statistics.CustomCohortCompactStatistics,
+  { group, freshness: 'current', ...props }));
+
+test('map strip shows five horizontal metrics and prominent live counts without the capture paragraph', () => {
+  const group = fixture(), before = JSON.stringify(group);
+  const html = renderCompact(group, { mapStrip: true });
+  assert.match(html, /lg:grid-cols-5/);
+  assert.match(html, /text-lg font-bold[^>]*aria-live="polite"/);
+  for (const label of ['Living area', 'Year built', 'Site area', 'Recorded transaction total', 'Source-reported marketing days']) {
+    assert.ok(html.includes(label), label);
+  }
+  assert.match(html, /1 selected CAD accounts/);
+  assert.match(html, /40 recorded transactions/);
+  assert.doesNotMatch(html, /CAD characteristics were captured|different evidence bases/);
+  assert.match(renderCompact(group), /CAD characteristics were captured/,
+    'the full source disclosure is retained outside the map strip');
+  assert.equal(JSON.stringify(group), before);
+  assert.match(renderCompact(group, { mapStrip: true, freshness: 'stale' }), /still match the previous map/);
+});
 
 // Real v2 source mappings, observation calculator and public formatter feed the
 // renderer. Synthetic evidence tests representation, not live provider coverage.

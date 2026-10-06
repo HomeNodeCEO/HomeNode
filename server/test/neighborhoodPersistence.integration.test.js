@@ -12,6 +12,9 @@ import { checkedNeighborhoodDatabaseUrl as checkedDatabaseUrl, neighborhoodCiDat
   verifyNeighborhoodCiConnection, prepareNeighborhoodCiDatabase, NEIGHBORHOOD_CI_IDENTITY_SQL } from "./helpers/neighborhoodCiDatabase.js";
 import { devNull } from "node:os";
 import { checkNeighborhoodCohortBlobDatabase } from "./helpers/neighborhoodCohortBlobDatabaseChecks.js";
+import { checkExactPagedObservationRunDatabase } from "./helpers/exactPagedObservationRunDatabaseChecks.js";
+import { checkCustomCohortOriginalMetricRunDatabase } from "./helpers/customCohortOriginalMetricRunDatabaseChecks.js";
+import { checkCustomCohortCompleteMetricGroupDatabase } from "./helpers/customCohortCompleteMetricGroupDatabaseChecks.js";
 import { checkNeighborhoodCohortCompactAckDatabase } from "./helpers/neighborhoodCohortCompactAckDatabaseChecks.js";
 import { checkCustomCohortSubjectDatabase } from "./helpers/customCohortSubjectDatabaseChecks.js";
 import { checkCustomCohortSelectionDatabase } from "./helpers/customCohortSelectionDatabaseChecks.js";
@@ -386,6 +389,12 @@ test("neighborhood persistence: real PostgreSQL canonical identities, publicatio
 
     await t.test("required prerequisite fails before DDL; optional GIS absent/empty/populated remains independent", () => privateAbsenceProbes(pool, sql));
     await t.test("cohort blobs retain exact tenant-private bytes, reject mutation and honor caller transactions", () => checkNeighborhoodCohortBlobDatabase(pool));
+    await t.test("bounded retained Number runs reopen exact distributions, preserve signed zero and honor tenant/binding/rollback fences", () =>
+      checkExactPagedObservationRunDatabase(pool));
+    await t.test("synthetic issued original member metrics bind exact selection/period/null witnesses and reopen through actual scoped SQL", () =>
+      checkCustomCohortOriginalMetricRunDatabase(pool));
+    await t.test("synthetic complete fifteen-metric group retains every original and reopens coherently through actual scoped SQL", () =>
+      checkCustomCohortCompleteMetricGroupDatabase(pool));
     await t.test("cohort compact acknowledgments verify exact bytes and concurrent replay without returning evidence text", async () => {
       const result = await checkNeighborhoodCohortCompactAckDatabase(pool);
       t.diagnostic(JSON.stringify(result));

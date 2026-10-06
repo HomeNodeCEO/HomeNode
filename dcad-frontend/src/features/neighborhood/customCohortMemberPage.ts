@@ -1,4 +1,4 @@
-import { checkCustomCohortPrivateSales } from './customCohortPrivateSales.ts';
+import { checkCustomCohortPrivateSalesBinding } from './customCohortPrivateSales.ts';
 import type { CheckedPrivateSalesObservations } from './customCohortPrivateSales';
 import type { CustomCohortContextRef, CustomCohortPreviewBinding, CustomCohortPreviewInput } from './customCohortPreviewController';
 
@@ -202,11 +202,33 @@ export function checkCustomCohortMemberPage(value: unknown, inputValue: CustomCo
   const input = inputOf(inputValue); pattern(selectionSha256, HASH);
   const expected = populationOf(copyJson(expectedPopulation, 4096), true) as CustomCohortMemberExpectation;
   if (expected.group === 'pocket') check(input.selection.pockets.some(p => p.id === expected.pocket_id));
+  const accounts = expected.group === 'all' ? null : new Set(input.selection.pockets
+    .filter(p => expected.group !== 'pocket' || p.id === expected.pocket_id).flatMap(p => [...p.account_ids]));
+  return checkCustomCohortBoundMemberPage(value, { accountId: input.accountId, assignmentFileId: input.assignmentFileId,
+    contextRef: input.contextRef, selectionRevision: input.selection.revision, selectionFingerprint: selectionSha256 },
+  expected, expectedPage, previousPage, accounts);
+}
+
+/** Shared closed page decoder with explicit immutable identity. Exact-reference
+ * callers supply their already checked whole population; they must not invent
+ * an empty legacy pocket request just to reach the presentation checks. */
+export function checkCustomCohortBoundMemberPage(value: unknown, identity: CustomCohortPreviewBinding,
+  expectedPopulation: CustomCohortMemberExpectation, expectedPage: CustomCohortMemberPageRequest,
+  previousPage?: CheckedCustomCohortMemberPage | CustomCohortMemberContinuation,
+  stockAccounts: ReadonlySet<string> | null = null): CheckedCustomCohortMemberPage {
+  const input = exact(copyJson(identity, 2048), ['accountId', 'assignmentFileId', 'contextRef',
+    'selectionRevision', 'selectionFingerprint']) as unknown as CustomCohortPreviewBinding;
+  text(input.accountId, 100); const file = pattern(input.assignmentFileId, /^[1-9]\d{0,18}$/);
+  check(BigInt(file) <= 9223372036854775807n && count(input.selectionRevision, Number.MAX_SAFE_INTEGER) > 0);
+  sameContext(input.contextRef, input.contextRef); const selectionSha256 = pattern(input.selectionFingerprint, HASH);
+  const expected = populationOf(copyJson(expectedPopulation, 4096), true) as CustomCohortMemberExpectation;
+  check(expected.group === 'all' || stockAccounts !== null);
+  if (stockAccounts !== null) { check(stockAccounts.size <= 50000); for (const account of stockAccounts) text(account, 400); }
   const request = exact(copyJson(expectedPage, 1024), ['limit', 'after_member_id']); check(count(request.limit, L.pageMembers) > 0);
   if (request.after_member_id !== null) pattern(request.after_member_id, MEMBER);
   const response = exact(copyJson(value, L.pageBytes + 2 * 1024 * 1024 + 4096),
     ['status', 'target', 'context_ref', 'selection_revision', 'subject_freshness', 'page', 'apply'], ['private_sales']);
-  check(response.status === 'members' && response.subject_freshness === 'matched' && response.selection_revision === input.selection.revision);
+  check(response.status === 'members' && response.subject_freshness === 'matched' && response.selection_revision === input.selectionRevision);
   const target = exact(response.target, ['account_id', 'assignment_file_id']);
   check(target.account_id === input.accountId && target.assignment_file_id === input.assignmentFileId); sameContext(response.context_ref, input.contextRef);
   const outerApply = exact(response.apply, ['status', 'reasons']);
@@ -219,7 +241,7 @@ export function checkCustomCohortMemberPage(value: unknown, inputValue: CustomCo
     && raw.authority === 'not_established' && raw.provider_coverage === 'not_established' && raw.historical_applicability === 'not_established'
     && raw.metric_readiness === 'descriptive_calculation_only_not_report_readiness');
   const binding = exact(raw.binding, ['context_ref', 'selection_revision', 'selection_sha256']); sameContext(binding.context_ref, input.contextRef);
-  check(binding.selection_revision === input.selection.revision && binding.selection_sha256 === selectionSha256);
+  check(binding.selection_revision === input.selectionRevision && binding.selection_sha256 === selectionSha256);
   const period = exact(raw.observation_period, ['start_date', 'end_date']);
   check(date(period.start_date) <= date(period.end_date) && String(period.end_date) <= date(raw.effective_date));
   const captured = pattern(raw.captured_at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}(?:\d{3})?Z$/);
@@ -242,7 +264,7 @@ export function checkCustomCohortMemberPage(value: unknown, inputValue: CustomCo
     check(prior && prior.hasMore && prior.next === request.after_member_id && prior.end === start
       && prior.populationId === page.population_id && prior.total === total && prior.shared.population === populationKey(page.population)
       && prior.shared.binding.accountId === input.accountId && prior.shared.binding.assignmentFileId === input.assignmentFileId
-      && prior.shared.binding.selectionRevision === input.selection.revision && prior.shared.binding.selectionFingerprint === selectionSha256
+      && prior.shared.binding.selectionRevision === input.selectionRevision && prior.shared.binding.selectionFingerprint === selectionSha256
       && prior.shared.header === stableHeader(page)); sameContext(prior.shared.binding.contextRef, input.contextRef);
     // A chain retains only opaque IDs, not prior observation payloads. At most
     // 100000 admitted member identities can precede this bounded page.
@@ -253,17 +275,16 @@ export function checkCustomCohortMemberPage(value: unknown, inputValue: CustomCo
     const accounts = (page.members as readonly CustomCohortStockMember[]).map(row => row.account_id);
     check(accounts.every((id, index) => index === 0 || accounts[index - 1] < id));
     if (prior?.lastAccount !== null && prior?.lastAccount !== undefined && accounts.length) check(prior.lastAccount < accounts[0]);
-    if (expected.group !== 'all') {
-      const chosen = new Set(input.selection.pockets.filter(p => expected.group !== 'pocket' || p.id === expected.pocket_id).flatMap(p => [...p.account_ids]));
-      check(total === chosen.size && accounts.every(id => chosen.has(id)));
+    if (stockAccounts !== null) {
+      check(total === stockAccounts.size && accounts.every(id => stockAccounts.has(id)));
     }
   }
-  const privateSales = Object.hasOwn(response, 'private_sales') ? checkCustomCohortPrivateSales(response.private_sales, input, selectionSha256) : undefined;
+  const privateSales = Object.hasOwn(response, 'private_sales') ? checkCustomCohortPrivateSalesBinding(response.private_sales, input) : undefined;
   if (privateSales) check(privateSales.effective_date === page.effective_date && privateSales.observation_period.start_date === page.observation_period.start_date
     && privateSales.observation_period.end_date === page.observation_period.end_date);
   const privateSignature = JSON.stringify(privateSales); if (prior) check(prior.shared.privateSales === privateSignature);
   const result = freeze({ binding: { accountId: input.accountId, assignmentFileId: input.assignmentFileId, contextRef: input.contextRef,
-    selectionRevision: input.selection.revision, selectionFingerprint: selectionSha256 }, page,
+    selectionRevision: input.selectionRevision, selectionFingerprint: selectionSha256 }, page,
     apply: outerApply as unknown as CheckedCustomCohortMemberPage['apply'], ...(privateSales ? { private_sales: privateSales } : {}) });
   admitted.set(result, { shared: prior?.shared ?? { binding: result.binding, population: populationKey(page.population),
     header: stableHeader(page), privateSales: privateSignature }, populationId: page.population_id, total, end,

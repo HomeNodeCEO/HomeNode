@@ -407,6 +407,53 @@ the workspace UI, saves an accepted report, changes installed source capacity or
 proves live speed. Exact-reference member/workspace/Apply consumers, partial
 page capture, >50k exact numeric studies and live acceptance still remain.
 
+### Exact-reference member inspection (existing capacity)
+
+`inspectRecordedGroupSelection` reopens the same complete original selection as
+the summary and viewport before producing a member page. A cursor bounds
+delivery, never the analytical union. Shared prepared indexed observations and
+private retained observations use the existing individual-observation kernel and
+closed member presenter; they do not transfer map geometry or raw source rows.
+The new consumer inspects the `all` or `selected` populations for stock,
+transactions, omitted transactions and source-record observations. Group-specific
+detail remains on its existing catalog path; caller-defined pockets cannot be
+injected into this route. An explicit empty selection remains an empty selected
+page, not a restart at the whole study area.
+
+Catalog and member exposures are independently authorized before any prepared
+facts or original selection pages are opened and again before delivery. Current
+database actor, assignment, subject and private CSV review fences remain in the
+owning transaction. An intent receipt, original digest or prepared cache is not
+source permission. The optional private aggregate additionally retains its own
+initial/final summary-purpose grant; member permission alone cannot disclose it.
+The page presenter retains an in-process receipt for its exact
+limit and prior cursor; another genuine page, a serialized clone, or raw rows
+cannot be substituted into the transport envelope.
+
+The optional `selection-members` route accepts only assignment/context identity,
+an exact current selection reference, a closed population descriptor and bounded
+page request. The request remains capped at 262,144 bytes, each public page at
+256,000 bytes and 50 members, and each optional private summary at its existing
+2MiB ceiling. The complete decoded envelope is capped separately at 2,360,000
+bytes. Neither declared nor compressed wire sizes widen these limits. Existing
+authentication/CSRF, no-store, cancellation, execution gate and deadline remain
+in place. No automatic retry or cursor reset is introduced.
+
+The browser reuses the closed legacy member-page decoder through explicit
+identity rather than fabricated legacy member arrays. Its expected total comes
+from the checked summary; stock membership additionally matches the accepted
+receipt's whole population in the checked catalog. Subsequent pages require the
+actual checked page or compact continuation, as well as the same exact selection
+reference. Foreign context, changed headers/private capture, totals, duplicates,
+replayed cursors and unknown accounts refuse instead of replacing a population.
+Legacy decoding and private-summary checks remain unchanged in meaning.
+
+Small synthetic and disposable PostgreSQL assertions are not live capacity,
+speed, historical-stock or report-readiness claims. The workspace UI remains on
+its legacy path until exact-reference workspace save and coherent Apply are
+implemented together. Partial source paging, complete >50k numeric studies and
+realistic live acceptance remain separate unfinished roadmap items.
+
 The worker CLI validates its database URL before constructing the pool and
 requires certificate-verified TLS for every non-loopback host, including internal
 hosts. Only literal localhost/127.0.0.1/::1 development connections may be

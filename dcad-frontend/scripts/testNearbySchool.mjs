@@ -87,6 +87,9 @@ test('summary hook retains exact-file provenance even for a reused public cache 
     fn => { draft = fn(draft); writes++; }, draft, () => {});
     assert.equal(draft.subject_neighborhood_summary_school.assignment_file_id, '2'); assert.equal(writes, 1);
     assert.equal(draft.subject_neighborhood_summary, 'My description.');
-    assert.equal(result.summaryInput.nearbySchool, year === '2026' ? 'Nearby Example School' : null);
+    assert.equal(result.summaryInput.nearbySchool, 'Nearby Example School');
+    assert.equal(result.summaryInput.nearbySchoolSourceEndYear, 2025);
+    const generated = neighborhoodSummaryTemplate(result.summaryInput, null);
+    assert.match(generated, year === '2026' ? /schooling such as Nearby Example School/ : /\[nearby school — verify\]/);
   }
 });

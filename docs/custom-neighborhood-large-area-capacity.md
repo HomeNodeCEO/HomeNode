@@ -368,3 +368,12 @@ stale references, injected members, current role and independent summary-purpose
 refusal, and actual private CSV projection parity. These are CI assertions, not
 live latency or greater-than-50k acceptance. The workspace UI still needs a
 coherent exact-reference map/member/save/Apply integration before activation.
+
+The worker CLI validates its database URL before constructing the pool and
+requires certificate-verified TLS for every non-loopback host, including internal
+hosts. Only literal localhost/127.0.0.1/::1 development connections may be
+plaintext. Admitted TLS query options are stripped before pg receives the URL;
+duplicate, conflicting, insecure remote, and driver-setting overrides are refused.
+The runtime trust store must contain the provider's trusted certificate chain.
+There is no fallback that disables verification, no raw driver error logging,
+and no automatic worker schedule or production environment change from this fix.

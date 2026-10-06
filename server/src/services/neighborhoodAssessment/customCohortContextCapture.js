@@ -1597,7 +1597,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const current = customCohortCurrentStockSupport({ effective_date: retained_inputs.subject.effective_date,
           retained_capture_at: retained_inputs.acquisition.capture_result.captured_at });
         if (!catalog.catalog_complete || current.status === 'historical_stock_evidence_required') {
-          if (catalog.catalog_complete) response.prepared_secondary_map = await timed('map_scores', () =>
+          if (catalog.catalog_complete) response.prepared_secondary_map = await timed('retained_map_scores', () =>
             buildCustomCohortMapScoresBatched({ context_ref: expected.context_ref, retained_inputs,
               catalog_version: catalogVersion, observation_preview: catalogVersion >= 2 ? preview : undefined,
               selection: { revision: expected.selection_revision, included_recorded_group_ids: [] } }, { checkBudget }));

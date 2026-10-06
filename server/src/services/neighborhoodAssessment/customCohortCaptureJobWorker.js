@@ -31,7 +31,8 @@ function captureInput(row, auth) {
 }
 
 function failureReason(error) {
-  if (error?.message === 'custom_cohort_job_actor_access_revoked') return 'access_revoked';
+  if (error?.message === 'custom_cohort_job_actor_access_revoked'
+    || error?.reason === 'assignment_access_denied') return 'access_revoked';
   if (error?.reason === 'cancelled') return 'cancelled';
   if (error?.reason === 'deadline_exceeded') return 'deadline_exceeded';
   if (error?.reason === 'subject_changed') return 'subject_changed';

@@ -29,6 +29,7 @@ import { runCustomCohortWitness2OwnerDatabaseChecks } from './customCohortWitnes
 import { runCustomCohortSubjectCheckpointDatabaseChecks } from './customCohortSubjectCheckpointDatabaseChecks.js';
 import { runCohortPagedGroupSelectionDatabaseChecks } from './cohortPagedGroupSelectionDatabaseChecks.js';
 import { runCustomCohortGroupSelectionHeadDatabaseChecks } from './customCohortGroupSelectionHeadDatabaseChecks.js';
+import { runCustomCohortRecordedGroupOwnerDatabaseChecks } from './customCohortRecordedGroupOwnerDatabaseChecks.js';
 import { buildMarketConditionsAnalyses } from '../../src/services/marketConditions.js';
 
 /** New disposable migrated test database only; no cleanup of shared tables,
@@ -1091,6 +1092,9 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     checks.push(...(await runCustomCohortGroupSelectionHeadDatabaseChecks({ pool,
       scope: { organization_id: organization, report_file_id: report, assignment_file_id: assignment, account_id: account },
       contextRef: result.context_ref })).checks);
+    checks.push(...(await runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, auth, grant,
+      scope: { organization_id: organization, report_file_id: report, assignment_file_id: assignment, account_id: account },
+      observationPeriod: request.observationPeriod })).checks);
     assert.equal(pool.waitingCount, 0);
     return { checks };
   } finally { await pool.end(); }

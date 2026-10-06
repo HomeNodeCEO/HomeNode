@@ -216,6 +216,81 @@ enumerate all job/context/selection/accepted-report roots, preserve shared
 immutable originals and honor the applicable retention policy before deleting
 anything; job termination is not evidence that a blob is unreferenced.
 
+### Original recorded-group selection bridge (not installed in the live owner)
+
+`customCohortRecordedGroupSelection.js` derives the selection metadata and a
+repeatable ordered membership stream from an owner-authorized JSON-encoded v3
+catalog and its independently retained complete roster. Every group, including
+unselected groups and unresolved membership, must match that roster exactly.
+Existing v3 catalogs are partitions; overlap in this producer is refused rather
+than silently given a new meaning. The generic paged selection contract still
+supports explicitly versioned overlapping membership.
+
+A small canonical original binds the complete catalog/roster digests, exact
+scope/context and per-group ordered membership digests. Selected memberships
+are retained separately in their complete original pages. A bounded heap merges
+those ordered groups without flattening and sorting every membership into a
+second giant array. Explicit empty selection remains empty, and the existing
+disjoint-group selection hash is unchanged. A synthetic 60,000-account test
+exercises many interleaved groups, and a 120,000-account fixture exceeds both
+legacy whole-blob byte/node ceilings; neither is live capacity or load acceptance.
+
+The original catalog identity is explicitly versioned. Retained v1 originals
+keep their exact full read-model byte digests and are never rewritten or given
+new semantics. New internal-owner selections use v2, which binds the sorted
+complete independent roster and every group ID/count/ordered membership digest;
+display labels, explanation text, presentation and JSON key/group/roster order
+are not population identity. Full catalog completeness, scope/context, coverage,
+partition and source-rights validation still apply before deriving either version.
+The v2 roster digest is incremental and budget-checked, including the 120k fixture.
+Reopening and exact current-head lost-ACK replay use the retained producer version.
+
+The read-model inputs preserve their exact compact JSON round trip under a
+separate four-megabyte ceiling. They are not forced through the legacy
+1.5-megabyte/100k-node source-blob canonicalizer. Raw source evidence retains
+its original existing validation and limits; this bridge does not bypass them.
+
+The bridge does not read a source, authorize a request, save a workspace, move a
+selection head or publish statistics. Its strings must come from freshly
+authorized originals, never a browser body. An optional closed command original
+binds the server-authenticated reviewer, operation, exact predecessor and sorted
+group choices inside the same immutable catalog/selection graph. This retained
+actor stamp is intent, not a current permission or statistical certification.
+
+### Internal recorded-group selection owner (HTTP/consumers not activated)
+
+`customCohortRecordedGroupSelectionOwner.js` supplies additive internal methods
+on the existing Custom capture owner. Requests contain only context/group IDs,
+an operation UUID and the exact expected prior selection reference. The owner
+reloads current database roles and assignment access, then checks the original
+shared/private source purposes before reading prepared catalog/roster facts or
+original source pages. Shared prepared reads do not transfer parcel geometry;
+private captures cannot silently use a shared-only cache. Complete membership,
+command original, paged union and head update share one bounded transaction.
+The workfile/assignment/batch lock order matches signing and private review.
+Read owners take the workfile `FOR UPDATE NOWAIT` at that first parent lock
+because their later subject-freshness fence requires the same mode. Read
+permission stays read: this does not authorize a write or mutate the report.
+Concurrent owner reads therefore refuse one competitor before source facts,
+instead of both acquiring SHARE and failing a later NOWAIT lock upgrade.
+
+Before commit/delivery the owner again checks current actor/assignment, subject
+and source rights and the exact private CSV review when present. Reopening
+re-derives metadata from the freshly authorized original catalog/roster and
+verifies every retained membership/union original and the current head. Missing
+originals, stale predecessors, changed operations or expired/revoked rights do
+not become an empty or broader successful selection. Absent and explicitly
+empty selections are distinct. Only selected IDs and their bounded reference
+leave these methods; membership arrays, source rows and raw failure details do
+not. Existing report/workspace/accepted sections and Apply remain unchanged.
+
+These methods are not exposed by HTTP or installed in browser/statistics/map
+consumers. Their guarded database tests require the disposable migrated CI
+database; local unit/SQL-double passes are not a substitute for that run or live
+load acceptance. Server-owned public commands, exact statistics/publication
+consumers, partial acquisition-page recovery and greater-than-50k capture/load
+acceptance remain outstanding. Existing installed source limits stay unchanged.
+
 The worker CLI validates its database URL before constructing the pool and
 requires certificate-verified TLS for every non-loopback host, including internal
 hosts. Only literal localhost/127.0.0.1/::1 development connections may be

@@ -33,6 +33,35 @@ test('Custom capture requires an explicit server market policy, without default 
   assert.throws(() => createCustomCohortContextCapture({ pool: { connect() {} } }), /dependencies_required/);
 });
 
+test('recorded-group selection refreshes current roles before retained facts or head reads/writes', async () => {
+  const base = input(), organization = '11111111-1111-4111-8111-111111111111';
+  const report = '22222222-2222-4222-8222-222222222222';
+  const read = { auth: { ...base.auth, organizations: [{ organizationId: organization, roles: ['appraiser'] }] },
+    accountId: base.accountId, assignmentFileId: base.assignmentFileId,
+    contextRef: { context_id: base.operationId, context_revision: '1', context_sha256: 'c'.repeat(64) } };
+  for (const method of ['readRecordedGroupSelection', 'selectRecordedGroups']) {
+    const value = method === 'readRecordedGroupSelection' ? read : { ...read,
+      operationId: report, expectedSelectionRef: null, includedRecordedGroupIds: [] };
+    for (const currentRoles of [null, ...(method === 'selectRecordedGroups' ? [['read_only']] : [])]) {
+      const queries = [];
+      const service = setup(async () => ({ release() {}, async query({ text }) {
+        queries.push(text);
+        if (text.includes('custom-cohort-capture:assignment')) return { rowCount: 1, rows: [{
+          assignment_file_id: base.assignmentFileId, account_id: base.accountId, organization_id: organization,
+          assigned_appraiser_user_id: base.auth.userId, supervisory_appraiser_user_id: null }] };
+        if (text.includes('custom-cohort-capture:report')) return { rowCount: 1, rows: [{
+          report_file_id: report, appraisal_case_id: null, subject_snapshot_id: null }] };
+        if (text.includes('custom-cohort-job:current-actor')) return currentRoles === null ? { rowCount: 0, rows: [] }
+          : { rowCount: 1, rows: [{ user_id: base.auth.userId, organization_id: organization, roles: currentRoles }] };
+        return { rowCount: 0, rows: [] };
+      } }));
+      await assert.rejects(service[method](value), currentRoles === null ? /job_actor_access_revoked/ : /assignment_access_denied/);
+      assert.ok(queries.includes('ROLLBACK')); assert.ok(!queries.includes('COMMIT'));
+      assert.ok(!queries.some(sql => sql.includes('blob:') || sql.includes('group-selection:') || sql.includes('private-workfile')));
+    }
+  }
+});
+
 test('a worker claim must bind the capture operation and is detached before any database wait', async () => {
   const base = input(), claim = { operation_id: base.operationId,
     claim_token: '33333333-3333-4333-8333-333333333333', attempts: 1 };

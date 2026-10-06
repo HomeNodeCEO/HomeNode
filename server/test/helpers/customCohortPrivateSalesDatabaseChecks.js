@@ -517,6 +517,28 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
     makeOwner, captureInput, appendReview: () => append(null, [decision(original[0], 'exclude')]),
     revokeRights: () => writeRights({ ...rights, revoked_at: times.past }), restoreRights: () => writeRights(rights) });
   checks.push(...checkpointChecks.checks);
+  // The checkpoint helper installs the CURRENT actor membership and restores
+  // private rights. Use a NEW context at the current exact CSV review revision;
+  // old captures are never relabeled by changed review heads.
+  const groupContext = await owner.capture(captureInput());
+  const groupRead = { auth, accountId: account, assignmentFileId: assignment, contextRef: groupContext.context_ref };
+  const groupCatalog = await owner.catalog({ ...groupRead, selection: { revision: 1, pockets: [] }, catalogVersion: 3 });
+  const groupIds = groupCatalog.catalog.pockets.map(p => p.id);
+  if (groupCatalog.catalog.unassigned.member_count) groupIds.push('discovery:unassigned');
+  const groupSaved = await owner.selectRecordedGroups({ ...groupRead, operationId: randomUUID(),
+    expectedSelectionRef: null, includedRecordedGroupIds: groupIds });
+  assert.deepEqual((await owner.readRecordedGroupSelection(groupRead)).selection_ref, groupSaved.selection_ref);
+  await writeRights({ ...rights, revoked_at: times.past });
+  const groupDeniedFrom = calls.length;
+  try { await assert.rejects(owner.readRecordedGroupSelection(groupRead), reason('market_data_access_denied')); }
+  finally { await writeRights(rights); }
+  assert.ok(!calls.slice(groupDeniedFrom).some(sql => sql.includes('neighborhood-cohort-blob:read-batch')
+    || sql.includes('custom-cohort-group-selection:head')), 'private denial precedes original row pages and saved selection lookup');
+  await append(null, [decision(original[0], 'exclude')]);
+  await assert.rejects(owner.readRecordedGroupSelection(groupRead), /capture_changed/);
+  assert.equal((await pool.query(`SELECT selection_revision FROM app.neighborhood_custom_cohort_group_selection_heads
+    WHERE organization_id=$1 AND context_id=$2`, [organization, groupContext.context_ref.context_id])).rows[0].selection_revision, 1);
+  checks.push('native recorded-group selection keeps independent private source rights and workfile-before-batch review fences; revoked rights and changed CSV review refuse without replacing the saved selection');
   assert.deepEqual(await protectedState(), afterCheckpoint);
   assert.equal(pool.waitingCount, 0);
   checks.push('actual durable context COMMIT with lost acknowledgment recovers once by exact batch/review operation; original CSV/shared sales/report/accepted/signing rows remain unchanged');

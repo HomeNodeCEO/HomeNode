@@ -1009,7 +1009,7 @@ export function weightedCompositeDispersion(factors, measure) {
     const rawValue =
       key === "housing_type" ? factor?.dispersion : factor?.[measure];
     const value = numberOrNull(rawValue);
-    if (value === null || Number(factor?.count || 0) <= 0) continue;
+    if (value === null || value < 0 || Number(factor?.count || 0) <= 0) continue;
     weightedTotal += value * weight;
     availableWeight += weight;
   }
@@ -1056,7 +1056,6 @@ function calendarMonthIndex(value) {
 export function calculateMarketStudyStatistics({
   monthlySeries,
   eligibleSaleCount,
-  periodMonths,
   congruencyFactors,
 }) {
   const validMonthly = [...(monthlySeries || [])]
@@ -1098,23 +1097,15 @@ export function calculateMarketStudyStatistics({
     compositeCod.available_weight,
     compositeCv.available_weight,
   );
-  const sampleScore = Math.min(Number(eligibleSaleCount || 0) / 100, 1);
-  const coverageScore = Math.min(
-    validMonthly.length / Math.max(Number(periodMonths || 0), 1),
-    1,
-  );
-  const meanDispersion =
-    compositeCod.value !== null && compositeCv.value !== null
-      ? (compositeCod.value + compositeCv.value) / 2
-      : compositeCod.value ?? compositeCv.value;
-  const congruencyScore =
-    meanDispersion === null ? 0 : 1 / (1 + Math.max(meanDispersion, 0) / 100);
-  const reliabilityScore =
-    (sampleScore * 0.35 +
-      coverageScore * 0.2 +
-      congruencyScore * 0.35 +
-      availableWeight * 0.1) *
-    100;
+  const meanDispersion = compositeMeanDispersion({
+    composite_cod: compositeCod.value,
+    composite_cv: compositeCv.value,
+  });
+  // This is a population-consistency index, not a confidence probability or
+  // similarity to the subject. Counts and coverage remain separate evidence.
+  // Missing COD/CV must not masquerade as a perfectly consistent population.
+  const reliabilityScore = meanDispersion === null
+    ? null : 100 / (1 + meanDispersion / 100);
   return {
     annualized_change_percent: rounded(annualizedChange, 2),
     trend_start_period: first?.period_start || null,
@@ -1130,6 +1121,13 @@ export function calculateMarketStudyStatistics({
   };
 }
 
+function compositeMeanDispersion(statistics) {
+  const cod = numberOrNull(statistics?.composite_cod);
+  const cv = numberOrNull(statistics?.composite_cv);
+  return cod !== null && cv !== null && cod >= 0 && cv >= 0
+    ? (cod + cv) / 2 : null;
+}
+
 export function buildMarketTrendRecommendation(analyses) {
   const rankedStudies = (analyses || [])
     .filter(
@@ -1137,15 +1135,11 @@ export function buildMarketTrendRecommendation(analyses) {
         numberOrNull(analysis?.statistics?.annualized_change_percent) !== null,
     )
     .sort((left, right) => {
-      if (
-        left.statistics.sample_sufficient !==
-        right.statistics.sample_sufficient
-      ) {
-        return left.statistics.sample_sufficient ? -1 : 1;
-      }
       return (
         Number(right.statistics.reliability_score || 0) -
           Number(left.statistics.reliability_score || 0) ||
+        (compositeMeanDispersion(left.statistics) ?? Infinity) -
+          (compositeMeanDispersion(right.statistics) ?? Infinity) ||
         Number(right.population?.eligible_sale_count || 0) -
           Number(left.population?.eligible_sale_count || 0)
       );
@@ -1200,7 +1194,7 @@ export function buildMarketTrendRecommendation(analyses) {
           ? "increasing"
           : "decreasing";
   return {
-    methodology_version: 2,
+    methodology_version: 3,
     weighting_method: rankedStudies.some(
       (analysis) => analysis.market.key === "custom",
     )

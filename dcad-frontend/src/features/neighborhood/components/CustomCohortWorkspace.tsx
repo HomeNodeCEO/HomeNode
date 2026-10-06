@@ -237,7 +237,8 @@ function WorkspaceSession(props: Props) {
     const selected = new Set(included);
     return groups.every(pocket => selected.has(pocket.id));
   }, [groups, included]);
-  const scoreBandSelector = <CustomCohortScoreBandSelector recommendation={recommendation} included={included}
+  const scoreBandSelector = <CustomCohortScoreBandSelector recommendation={recommendation}
+    preparedMap={catalog?.prepared_secondary_map} included={included}
     minimum={minimumScoreBand} onMinimumChange={setMinimumScoreBand}
     subjectGroupId={catalog?.subject_membership.assigned_pocket_id ?? null} disabled={selectionDisabled}
     allGroupsIncluded={Boolean(current && allGroupsIncluded)}

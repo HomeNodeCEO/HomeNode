@@ -1126,6 +1126,24 @@ async function checkHistoricalStockGuard(pool, checks, { account, sourceSnapshot
   } catch (error) { await client.query('ROLLBACK'); throw error; }
   finally { client.release(); }
   const request = { ...target, auth, contextRef: captured.context_ref, expectedWorkspaceRevision: 1, expectedReviewGeneration: '0' };
+  const mapCatalogRequest = { ...target, auth, contextRef: captured.context_ref,
+    selection: { revision: 1, pockets: [] }, catalogVersion: 3, includeRecommendation: true,
+    initialPreviewMode: 'all_catalog_groups', initialMapMode: 'manifest' };
+  const mapFrom = base.calls.length;
+  const mapCatalog = await base.owner.catalog(mapCatalogRequest);
+  assert.equal(mapCatalog.recommendation, undefined, 'historical auto ranking stays disabled');
+  assert.equal(mapCatalog.prepared_secondary_map.version, 2);
+  assert.equal(mapCatalog.prepared_secondary_map.authority, 'not_established');
+  assert.equal(mapCatalog.prepared_secondary_map.retained_capture_at, retainedCaptureAt);
+  assert.equal(mapCatalog.prepared_secondary_map.groups.reduce((n, group) => n + group.member_count, 0),
+    mapCatalog.catalog.coverage.discovery_member_count);
+  assert.ok(!base.calls.slice(mapFrom).some(sql => /neighborhood-(cache|membership|closure):/.test(sql)),
+    'restoring colors must not reacquire current source data');
+  const preparedMapFrom = base.calls.length;
+  assert.deepEqual(await base.owner.catalog(mapCatalogRequest), mapCatalog);
+  assert.ok(base.calls.slice(preparedMapFrom).some(sql => sql.includes('custom-cohort-prepared-catalog:read')));
+  assert.ok(!base.calls.slice(preparedMapFrom).some(sql => sql.includes('neighborhood-cohort-blob:read-batch')),
+    'subsequent map openings reuse compact prepared colors, without dense replay');
   const protectedState = async () => (await pool.query(`SELECT
     (SELECT to_jsonb(a) FROM app.assignment_files a WHERE id=$1 AND organization_id=$2) AS assignment,
     (SELECT to_jsonb(r) FROM app.report_files r WHERE id=$3 AND organization_id=$2) AS report,

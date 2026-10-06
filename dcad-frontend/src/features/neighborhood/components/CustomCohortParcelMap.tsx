@@ -583,7 +583,9 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
       </ul>
       <p className="text-xs text-slate-600">Fill reflects recorded-group similarity to the subject, not an individual parcel score or statistical reliability. Missing observations remain unknown.</p>
       {scoreBandSelector}
-      {catalog.prepared_secondary_map && <p className="text-xs text-slate-600">Map colors include up to 10% supporting bedroom, bath, garage, pool and outbuilding similarity from the prepared CAD snapshot observed {new Date(catalog.prepared_secondary_map.source_observed_at).toLocaleString()}. This is current-recorded review support, not historical condition or a change to the report statistics.</p>}
+      {catalog.prepared_secondary_map && <p className="text-xs text-slate-600">{catalog.prepared_secondary_map.version === 2
+        ? `Similarity colors use CAD observations captured ${new Date(catalog.prepared_secondary_map.retained_capture_at).toLocaleDateString()}.`
+        : `Map colors include supporting bedroom, bath, garage, pool and outbuilding similarity from the prepared CAD snapshot observed ${new Date(catalog.prepared_secondary_map.source_observed_at).toLocaleDateString()}.`}</p>}
       {matches && hasMap && !subjectMarkers.features.length && <p className="text-xs text-slate-600">Subject pointer unavailable because captured subject geometry is missing.</p>}
       {matches && hasMap && presentation?.status !== 'available' && <p role="status" className="text-xs text-amber-800">Recorded labels and similarity colors are unavailable for this checked preview. The parcel selection is unchanged.</p>}
       {presentation?.unlabelled_group_ids.length ? <p className="text-xs text-slate-600">{presentation.unlabelled_group_ids.length} recorded groups have no retained parcel anchor for a label.</p> : null}

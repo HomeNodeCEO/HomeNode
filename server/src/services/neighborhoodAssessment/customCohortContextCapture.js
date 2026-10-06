@@ -48,6 +48,7 @@ import { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog, CUSTO
   CUSTOM_COHORT_DENSE_CATALOG_VERSION, customCohortCatalogGroupLimit } from './customCohortPocketCatalog.js';
 import { buildCustomCohortPocketRecommendationPresentationBatched,
   CUSTOM_COHORT_DENSE_RECOMMENDATION_PRESENTATION_BYTES } from './customCohortPocketRecommendationPresentation.js';
+import { buildCustomCohortMapScoresBatched } from './customCohortPocketRecommendation.js';
 import { deriveCustomCohortRecordedProximity } from './customCohortRecordedProximity.js';
 import { prepareCohortDecisionCommandV1 } from './cohortDecisionCommand.js';
 import { createCustomCohortReviewRepository } from './customCohortReviewRepository.js';
@@ -1589,11 +1590,17 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         if (!include && opening) response.initial_preview = await timed('opening', () => presentOpening(customCohortOpeningSelection(catalog,
           groups ?? customCohortOpeningGroupIds(catalog), expected.selection_revision)));
         if (!include) return response;
-        // Do not spend native work on an unresolved catalog or pretend current
-        // parcel locations establish a retrospective housing population.
+        // Ranking/report safeguards stay separate from display-only colors.
+        // Current retained CAD can inform manual map review without pretending
+        // it establishes a retrospective housing population. Reuse the same
+        // preview/kernel and prepared catalog, never a fresh source capture.
         const current = customCohortCurrentStockSupport({ effective_date: retained_inputs.subject.effective_date,
           retained_capture_at: retained_inputs.acquisition.capture_result.captured_at });
         if (!catalog.catalog_complete || current.status === 'historical_stock_evidence_required') {
+          if (catalog.catalog_complete) response.prepared_secondary_map = await timed('map_scores', () =>
+            buildCustomCohortMapScoresBatched({ context_ref: expected.context_ref, retained_inputs,
+              catalog_version: catalogVersion, observation_preview: catalogVersion >= 2 ? preview : undefined,
+              selection: { revision: expected.selection_revision, included_recorded_group_ids: [] } }, { checkBudget }));
           if (opening) response.initial_preview = await timed('opening', () => presentOpening(customCohortOpeningSelection(catalog,
             groups ?? customCohortOpeningGroupIds(catalog), expected.selection_revision)));
           return response;

@@ -18,6 +18,7 @@ import { createNeighborhoodCohortBlobRepository } from './cohortEvidenceBlobRepo
 import { createCustomCohortSubjectRepository } from './customCohortSubjectRepository.js';
 import { createCustomCohortContextRepository } from './customCohortContextRepository.js';
 import { createCustomCohortCaptureJobRepository } from './customCohortCaptureJobRepository.js';
+import { loadCurrentCustomCohortJobActor } from './customCohortJobActor.js';
 import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
 import { captureNeighborhoodSpatialMembershipCompact } from './cachedSpatialMembership.js';
 import { readCustomCohortPreparedSecondaryFacts } from './customCohortPreparedSecondaryMap.js';
@@ -1186,8 +1187,19 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     if (!options || Object.getPrototypeOf(options) !== Object.prototype
       || Object.keys(options).some(key => !['signal', 'deadline', 'captureJobClaim'].includes(key)))
       fail('invalid_options');
-    const input = inputOf(value), budget = operationBudget({ signal: options.signal,
+    let input = inputOf(value);
+    const budget = operationBudget({ signal: options.signal,
       deadline: options.deadline }, LIMITS.capture_duration_ms);
+    async function refreshJobActor(client, organizationId) {
+      if (!options.captureJobClaim) return;
+      // A worker can run long enough for its initial roles to be revoked. The
+      // assignment and source checks in each transaction must use today's
+      // database identity, including the final registration and replay paths.
+      budget.check();
+      const auth = await loadCurrentCustomCohortJobActor(client, input.auth.userId, organizationId);
+      budget.check();
+      input = freeze({ ...input, auth });
+    }
     budget.check();
     const phase = createCustomCapturePhaseTiming();
     const study = freeze({ profile_id: input.discovery?.profile_id ?? NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1,
@@ -1196,6 +1208,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     const phaseOne = await phase('subject', () => transaction(pool, 'READ COMMITTED', budget, async client => {
       const privateWorkfile = input.privateSalesImport ? await privateCaptureWorkfile(client, input) : null;
       const target = await resolveTarget(client, input, true);
+      await refreshJobActor(client, target.organization_id);
+      if (options.captureJobClaim) assertTarget(await resolveTarget(client, input, true), target);
       const scope = Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]]));
       const scopeJson = canonicalAssessmentJson(scope);
       const repository = createCustomCohortSubjectRepository(client, scopeJson);
@@ -1249,6 +1263,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     const context = contextOf(subject);
     let purpose, decision;
     const read = await transaction(pool, 'REPEATABLE READ READ ONLY', budget, async client => {
+      await refreshJobActor(client, scope.organization_id);
       assertTarget(await resolveTarget(client, input, false), subject.target);
       authorizePublicCadastralCatalogRead(input.auth, input.accountId, { workflows: ['custom_appraisal'],
         permissionChecker: (auth, workflow, permission) => hasApplicationPermission(auth, workflow, permission, scope.organization_id) });
@@ -1317,6 +1332,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         ...(read.privateSales ? { private_sales: read.privateSales } : {}) }, { check: budget.check });
     });
     return transaction(pool, 'READ COMMITTED', budget, async client => {
+      await refreshJobActor(client, scope.organization_id);
       if (read.privateSales) privateDraft(await privateCaptureWorkfile(client, input));
       assertTarget(await resolveTarget(client, input, true), subject.target);
       const subjects = createCustomCohortSubjectRepository(client, scopeJson);

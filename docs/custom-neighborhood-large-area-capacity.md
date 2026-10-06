@@ -118,7 +118,10 @@ terminal job without altering its outcome.
 The first worker pass is available through the separate
 `maintenance:neighborhood-capture-jobs` command. It claims one due operation,
 reloads the actor's *current* active membership/roles, polls cancellation and
-renews a fenced lease, then invokes the existing bounded capture. The final
+renews a fenced lease, then invokes the existing bounded capture. The
+capture coordinator reloads that database identity again in each subject,
+source-read and registration transaction; worker-start roles are not reused
+to authorize a later publication or a committed-context replay. The final
 context registration and job success share a transaction; a lost lease or
 cancellation rolls back that registration. A committed context whose response
 was lost is replayed under current rights before the matching job is completed.

@@ -33,6 +33,40 @@ test('Custom capture requires an explicit server market policy, without default 
   assert.throws(() => createCustomCohortContextCapture({ pool: { connect() {} } }), /dependencies_required/);
 });
 
+test('worker capture refreshes current roles before subject evidence or replay lookup', async () => {
+  const base = input(), organization = '11111111-1111-4111-8111-111111111111';
+  const report = '22222222-2222-4222-8222-222222222222';
+  const authorized = { ...base, auth: { ...base.auth, organizations: [{ organizationId: organization,
+    roles: ['appraiser'] }] } };
+  const captureJobClaim = { operation_id: base.operationId,
+    claim_token: '33333333-3333-4333-8333-333333333333', attempts: 1 };
+  for (const currentRoles of [null, ['read_only']]) {
+    const queries = [], releases = [];
+    const service = setup(async () => ({ async query({ text, values }) {
+      queries.push(text);
+      if (text.includes('custom-cohort-capture:assignment')) return { rowCount: 1, rows: [{
+        assignment_file_id: base.assignmentFileId, account_id: base.accountId,
+        organization_id: organization, assigned_appraiser_user_id: base.auth.userId,
+        supervisory_appraiser_user_id: null }] };
+      if (text.includes('custom-cohort-capture:report')) return { rowCount: 1, rows: [{
+        report_file_id: report, appraisal_case_id: null, subject_snapshot_id: null }] };
+      if (text.includes('custom-cohort-job:current-actor')) {
+        assert.deepEqual(values, [base.auth.userId, organization]);
+        return currentRoles === null ? { rowCount: 0, rows: [] } : { rowCount: 1, rows: [{
+          user_id: base.auth.userId, organization_id: organization, roles: currentRoles }] };
+      }
+      return { rowCount: 0, rows: [] };
+    }, release(error) { releases.push(error); } }));
+    await assert.rejects(service.capture(authorized, { captureJobClaim }),
+      currentRoles === null ? /job_actor_access_revoked/ : /assignment_access_denied/);
+    assert.ok(queries.some(text => text.includes('custom-cohort-job:current-actor')));
+    assert.ok(queries.includes('ROLLBACK'));
+    assert.ok(!queries.includes('COMMIT'));
+    assert.ok(!queries.some(text => text.includes('existing-context') || text.includes('subject:capture')));
+    assert.equal(releases.length, 1);
+  }
+});
+
 test('job status and cancellation recheck exact current assignment access', async () => {
   const base = input(), organization = '11111111-1111-4111-8111-111111111111';
   const report = '22222222-2222-4222-8222-222222222222';

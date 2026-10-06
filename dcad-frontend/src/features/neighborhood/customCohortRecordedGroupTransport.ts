@@ -1,6 +1,9 @@
 import { createCustomCohortJsonTransport } from './customCohortPreviewTransport.ts';
 import { checkCustomCohortBoundSummaryResponse } from './customCohortPreviewController.ts';
 import type { CustomCohortContextRef } from './customCohortPreviewController';
+import { checkCustomCohortBoundViewportResponse } from './customCohortViewportClient.ts';
+import type { CustomCohortViewportBounds } from './customCohortViewportClient';
+import type { CheckedPocketCatalog } from './customCohortPocketCatalog';
 
 export interface CustomCohortGroupSelectionRef {
   readonly selection_version: 1; readonly selection_revision: number; readonly selection_sha256: string;
@@ -15,6 +18,9 @@ export interface CustomCohortRecordedGroupWrite extends CustomCohortRecordedGrou
 }
 export interface CustomCohortRecordedGroupSummary extends CustomCohortRecordedGroupRead {
   readonly selectionRef: CustomCohortGroupSelectionRef;
+}
+export interface CustomCohortRecordedGroupViewport extends CustomCohortRecordedGroupSummary {
+  readonly viewport: CustomCohortViewportBounds;
 }
 export type CustomCohortRecordedGroupReceipt = {
   readonly status: 'stored' | 'reused' | 'selected'; readonly authority: 'not_established';
@@ -106,6 +112,42 @@ function checkedSummary(value: unknown, request: CustomCohortRecordedGroupSummar
   });
   return Object.freeze({ ...accepted, selection_ref: r });
 }
+function viewportBounds(value: unknown): CustomCohortViewportBounds {
+  const v = closed(value, ['west', 'south', 'east', 'north']);
+  const { west, south, east, north } = v;
+  if (typeof west !== 'number' || typeof south !== 'number' || typeof east !== 'number' || typeof north !== 'number'
+    || ![west, south, east, north].every(Number.isFinite) || west < -180 || east > 180 || south < -90 || north > 90
+    || east <= west || north <= south || east - west > 1 || north - south > 1) fail();
+  return Object.freeze({ west, south, east, north });
+}
+function viewportInput(value: CustomCohortRecordedGroupViewport) {
+  const v = closed(value, ['accountId', 'assignmentFileId', 'contextRef', 'selectionRef', 'viewport']);
+  const request = input({ accountId: v.accountId, assignmentFileId: v.assignmentFileId,
+    contextRef: v.contextRef, selectionRef: v.selectionRef }, false, true) as CustomCohortRecordedGroupSummary;
+  return Object.freeze({ ...request, viewport: viewportBounds(v.viewport) });
+}
+function viewportPopulation(request: CustomCohortRecordedGroupSummary, saved: CustomCohortRecordedGroupReceipt,
+  catalog: CheckedPocketCatalog) {
+  const writing = Object.hasOwn(saved, 'operation_id');
+  const v = closed(saved, ['status', 'authority', 'context_ref', 'selection_ref', 'included_recorded_group_ids',
+    ...(writing ? ['operation_id'] : [])]);
+  if (writing && (!['stored', 'reused'].includes(String(v.status))
+    || typeof v.operation_id !== 'string' || !UUID.test(v.operation_id))) fail();
+  // The previously accepted write receipt carries the same exact reference/IDs
+  // as a read receipt. This is not a new save or predecessor validation.
+  const current = receipt({ status: writing ? 'selected' : v.status, authority: v.authority,
+    context_ref: v.context_ref, selection_ref: v.selection_ref,
+    included_recorded_group_ids: v.included_recorded_group_ids }, request, false);
+  if (current.status === 'absent' || JSON.stringify(current.selection_ref) !== JSON.stringify(request.selectionRef)
+    || JSON.stringify(catalog.binding.context_ref) !== JSON.stringify(request.contextRef)) fail();
+  const choices = new Set(current.included_recorded_group_ids), members = new Set<string>(), selected = new Set<string>();
+  for (const group of [...catalog.pockets, { id: 'discovery:unassigned', account_ids: catalog.unassigned.account_ids }]) {
+    for (const account of group.account_ids) { members.add(account); if (choices.has(group.id)) selected.add(account); }
+    choices.delete(group.id);
+  }
+  if (choices.size) fail();
+  return { members, selected };
+}
 function receipt(value: unknown, request: CustomCohortRecordedGroupRead | CustomCohortRecordedGroupWrite,
   writing: boolean): CustomCohortRecordedGroupReceipt {
   const v = closed(value, ['status', 'authority', 'context_ref', 'selection_ref', 'included_recorded_group_ids',
@@ -133,7 +175,8 @@ function receipt(value: unknown, request: CustomCohortRecordedGroupRead | Custom
 /** One authenticated, bounded request. No independent timer, automatic retry,
  * implicit all-groups selection, source facts or reviewer identity in its body.
  * The caller owns a finite signal and any explicit lost-acknowledgment recovery.
- * Preview returns only an exact-bound public summary, never parcel/member facts.
+ * Numeric preview returns only an exact-bound public summary. The separately
+ * bounded viewport contains captured display geometry, never raw source rows.
  * The workspace UI, map publication and Apply are not activated here.
  */
 export function createCustomCohortRecordedGroupTransport(options: Parameters<typeof createCustomCohortJsonTransport>[0]) {
@@ -154,6 +197,19 @@ export function createCustomCohortRecordedGroupTransport(options: Parameters<typ
       const r = input(value, false, true) as CustomCohortRecordedGroupSummary;
       return checkedSummary(await post(r.accountId, 'selection-preview', { assignment_file_id: r.assignmentFileId,
         context_ref: r.contextRef, selection_ref: r.selectionRef }, io), r);
+    },
+    async viewport(value: CustomCohortRecordedGroupViewport, saved: CustomCohortRecordedGroupReceipt,
+      catalog: CheckedPocketCatalog, capturedParcels: number | null, io: { signal: AbortSignal }) {
+      const r = viewportInput(value), population = viewportPopulation(r, saved, catalog);
+      const v = closed(await post(r.accountId, 'selection-viewport', { assignment_file_id: r.assignmentFileId,
+        context_ref: r.contextRef, selection_ref: r.selectionRef, viewport: r.viewport }, io),
+      ['status', 'authority', 'selection_ref', 'viewport_map']);
+      const ref = selection(v.selection_ref);
+      if (v.status !== 'viewport' || v.authority !== 'not_established' || JSON.stringify(ref) !== JSON.stringify(r.selectionRef)) fail();
+      return Object.freeze({ selection_ref: ref, map: checkCustomCohortBoundViewportResponse(v.viewport_map, {
+        accountId: r.accountId, assignmentFileId: r.assignmentFileId, contextRef: r.contextRef,
+        selectionRevision: ref.selection_revision, selectionFingerprint: ref.selection_sha256,
+      }, capturedParcels, population, r.viewport) });
     },
   });
 }

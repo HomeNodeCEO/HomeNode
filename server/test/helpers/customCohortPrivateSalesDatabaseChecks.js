@@ -550,6 +550,18 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
     const result = await response.json(); assert.deepEqual(result, groupSummary);
     assert.ok(result.private_sales); assert.equal(Object.hasOwn(result.private_sales, 'rows'), false);
     checks.push('native exact-reference HTTP summary keeps independently authorized private CSV aggregates with the same dates/digest and no raw row disclosure');
+    const viewport = { west: -97.2, south: 32.3, east: -96.4, north: 33.1 };
+    const mapResponse = await fetch(`http://127.0.0.1:${server.address().port}/api/accounts/${encodeURIComponent(account)}/neighborhood-cohort/selection-viewport`,
+      { method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(15_000),
+        body: JSON.stringify({ assignment_file_id: assignment, context_ref: groupRead.contextRef,
+          selection_ref: groupSaved.selection_ref, viewport }) });
+    assert.equal(mapResponse.status, 200);
+    const mapResult = await mapResponse.json();
+    assert.deepEqual(mapResult.viewport_map, await owner.viewport({ ...groupRead,
+      selection: customCohortOpeningSelection(groupCatalog.catalog, groupIds, 1) }, viewport));
+    assert.deepEqual(mapResult.selection_ref, groupSaved.selection_ref);
+    assert.equal(Object.hasOwn(mapResult, 'private_sales'), false);
+    checks.push('native private-source exact-reference viewport preserves original geometry parity and selection identity without disclosing CSV rows or silently replacing private authorization');
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
   // Keep the recorded catalog decision unchanged to reach the INDEPENDENT
   // summary grant. Mutating the rights metadata also changes its fingerprint
@@ -558,6 +570,8 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
     ? { allowed: false } : authorizeCustomNeighborhoodPrivateSales(...args) });
   await assert.rejects(deniedSummary.owner.previewRecordedGroupSelection({ ...groupRead,
     selectionRef: groupSaved.selection_ref }), reason('market_data_access_denied'));
+  await assert.rejects(deniedSummary.owner.viewportRecordedGroupSelection({ ...groupRead,
+    selectionRef: groupSaved.selection_ref, viewport: { west: -97.2, south: 32.3, east: -96.4, north: 33.1 } }), reason('market_data_access_denied'));
   assert.ok(!deniedSummary.calls.some(sql => sql.includes('neighborhood-cohort-blob:read-batch')
     || sql.includes('custom-cohort-group-selection:head')), 'private catalog grant is not permission to expose numeric facts');
   let selectionSummaryCalls = 0;
@@ -579,6 +593,8 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
   await append(null, [decision(original[0], 'exclude')]);
   await assert.rejects(owner.readRecordedGroupSelection(groupRead), /capture_changed/);
   await assert.rejects(owner.previewRecordedGroupSelection({ ...groupRead, selectionRef: groupSaved.selection_ref }), /capture_changed/);
+  await assert.rejects(owner.viewportRecordedGroupSelection({ ...groupRead, selectionRef: groupSaved.selection_ref,
+    viewport: { west: -97.2, south: 32.3, east: -96.4, north: 33.1 } }), /capture_changed/);
   assert.equal((await pool.query(`SELECT selection_revision FROM app.neighborhood_custom_cohort_group_selection_heads
     WHERE organization_id=$1 AND context_id=$2`, [organization, groupContext.context_ref.context_id])).rows[0].selection_revision, 1);
   checks.push('native recorded-group selection keeps independent private source rights and workfile-before-batch review fences; revoked rights and changed CSV review refuse without replacing the saved selection');

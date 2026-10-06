@@ -48,7 +48,8 @@ import { createCustomCohortPreparedPreviewRepository, selectCustomCohortPrepared
 import { createCustomCohortPreparedCatalogRepository, rebindCustomCohortPreparedCatalog } from './customCohortPreparedCatalogRepository.js';
 import { buildCustomCohortParcelMapBatched } from './customCohortParcelMap.js';
 import { buildCustomCohortMapManifest } from './customCohortMapManifest.js';
-import { prepareCustomCohortViewport, projectCustomCohortViewportMap } from './customCohortViewportMap.js';
+import { prepareCustomCohortViewport, projectCustomCohortViewportMap,
+  presentCustomCohortSelectionViewportMap } from './customCohortViewportMap.js';
 import { presentCustomCohortPreview, inspectCustomCohortPreviewMembers, customCohortPreviewBinding } from './customCohortPreviewPresentation.js';
 import { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog, CUSTOM_COHORT_POCKET_CATALOG_LIMITS,
   CUSTOM_COHORT_DENSE_CATALOG_VERSION, customCohortCatalogGroupLimit,
@@ -684,8 +685,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
   }
   const recordedGroupSelection = createCustomCohortRecordedGroupSelectionOwner({ identityOf,
     execute: async (originalInput, options, writing, work, projection = 'intent') => {
-      if (!['intent', 'summary'].includes(projection) || (writing && projection !== 'intent')) fail('invalid_input');
-      const additionalExposures = projection === 'summary' ? ['report_observation_summary'] : [];
+      if (!['intent', 'summary', 'viewport'].includes(projection) || (writing && projection !== 'intent')) fail('invalid_input');
+      // Geometry uses the existing viewport's summary exposure, in addition to
+      // catalog rights needed to re-derive the exact server-owned selection.
+      const additionalExposures = projection !== 'intent' ? ['report_observation_summary'] : [];
       const budget = operationBudget(options), permission = writing ? 'write' : 'read';
       return transaction(pool, 'READ COMMITTED', budget, async client => {
         const initial = await resolveTarget(client, originalInput, false, permission);
@@ -749,9 +752,36 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             ...(observations ? { private_sales: presentCustomCohortPrivateSalesObservations({ observations, binding }) } : {}) };
           budget.check(); return content;
         } : undefined;
+        const presentSelectionViewport = projection === 'viewport' ? async (accounts, selectionRef, viewport) => {
+          budget.check();
+          let map;
+          if (!licensed.privateAuthorization) {
+            const repository = createCustomCohortPreparedPreviewRepository(client, scopeJson, input.contextRef);
+            const tileMap = await repository.readViewportTiles(viewport, indexedPreview);
+            if (tileMap) map = selectCustomCohortPreparedTileViewportMap(tileMap, accounts, roster);
+            else {
+              const prepared = await repository.read({ includeMap: true, useVerifiedPreviewCache: true });
+              if (prepared) map = selectCustomCohortPreparedParcelViewportMap(prepared.parcel_map, accounts, viewport);
+            }
+          }
+          if (!map) {
+            if (!retained) retained = await loadCustomCohortCaptureInputs(client, scopeJson,
+              Object.fromEntries(DEPENDENCIES.map(key => [key, licensed.header.body[key]])));
+            map = await buildCustomCohortParcelMapBatched({ retained_inputs: retained.retained_inputs,
+              selected_account_ids: accounts }, { check: budget.check });
+          }
+          budget.check();
+          // No numeric recomputation and no viewport-filtered analytical union.
+          // Membership comes from the complete verified original selection.
+          return presentCustomCohortSelectionViewportMap({ status: 'preview',
+            target: { account_id: input.accountId, assignment_file_id: input.assignmentFileId },
+            context_ref: input.contextRef, selection_revision: selectionRef.selection_revision,
+            summary: { binding: { selection_sha256: selectionRef.selection_sha256 } }, parcel_map: map }, viewport);
+        } : undefined;
         const result = await work({ client, auth, scopeJson, catalogJson: JSON.stringify(catalog),
           rosterJson: JSON.stringify({ account_ids: roster }), budget,
           ...(presentSelectionSummary ? { presentSelectionSummary } : {}),
+          ...(presentSelectionViewport ? { presentSelectionViewport } : {}),
           blobs: createNeighborhoodCohortBlobRepository(client, target.organization_id) });
         // Refresh request-time role claims again before COMMIT/delivery; original
         // actor receipts, cached facts and integrity hashes establish no grant.

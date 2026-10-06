@@ -11,6 +11,8 @@ import { CUSTOM_COHORT_GROUP_TRANSPORT_BYTES, prepareCustomCohortRecordedGroupTr
   presentCustomCohortRecordedGroupTransportResponse, CUSTOM_COHORT_GROUP_SUMMARY_RESPONSE_BYTES,
   prepareCustomCohortGroupSummaryTransportRequest,
   presentCustomCohortGroupSummaryTransportResponse } from '../../services/neighborhoodAssessment/customCohortRecordedGroupTransport.js';
+import { CUSTOM_COHORT_SELECTION_VIEWPORT_BYTES, prepareCustomCohortGroupViewportTransportRequest,
+  presentCustomCohortGroupViewportTransportResponse } from '../../services/neighborhoodAssessment/customCohortGroupViewportTransport.js';
 
 const BASE = '/api/accounts/:id/neighborhood-cohort';
 const BODY_BYTES = 4_000_000;
@@ -156,15 +158,16 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, logger = c
           if (!controller.signal.aborted && !res.destroyed) return res.type('application/json').send(encoded);
           return;
         }
-        if (action === 'catalog' || action === 'viewport') {
+        if (action === 'catalog' || action === 'viewport' || action === 'selection-viewport') {
           const encoded = JSON.stringify(result);
           const encodedBytes = Buffer.byteLength(encoded, 'utf8');
-          const maximum = action === 'viewport' ? 4_000_000
+          const maximum = action === 'viewport' || action === 'selection-viewport' ? CUSTOM_COHORT_SELECTION_VIEWPORT_BYTES
             : Object.hasOwn(body, 'initial_preview_groups') || Object.hasOwn(body, 'initial_preview_mode')
               ? CUSTOM_COHORT_OPENING_RESPONSE_BYTES : CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes;
           if (encodedBytes > maximum) {
-            throw Object.assign(new Error(action === 'viewport' ? 'viewport_capacity_exceeded' : 'catalog_transport_limit'),
-              { reason: action === 'viewport' ? 'viewport_capacity_exceeded' : 'catalog_transport_limit' });
+            const viewport = action !== 'catalog';
+            throw Object.assign(new Error(viewport ? 'viewport_capacity_exceeded' : 'catalog_transport_limit'),
+              { reason: viewport ? 'viewport_capacity_exceeded' : 'catalog_transport_limit' });
           }
           // Send the exact checked bytes: application-wide JSON indentation or
           // replacers must not expand an otherwise bounded catalog response.
@@ -245,6 +248,15 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, logger = c
         bodyBytes: CUSTOM_COHORT_GROUP_TRANSPORT_BYTES, responseBytes: CUSTOM_COHORT_GROUP_SUMMARY_RESPONSE_BYTES,
         prepareBody: prepareCustomCohortGroupSummaryTransportRequest,
         presentResult: presentCustomCohortGroupSummaryTransportResponse,
+      });
+  }
+  if (typeof cohortService.viewportRecordedGroupSelection === 'function') {
+    route('selection-viewport', ['assignment_file_id', 'context_ref', 'selection_ref', 'viewport'],
+      (identity, body, options) => cohortService.viewportRecordedGroupSelection({ ...identity,
+        contextRef: body.context_ref, selectionRef: body.selection_ref, viewport: body.viewport }, options), [], {
+        bodyBytes: CUSTOM_COHORT_GROUP_TRANSPORT_BYTES,
+        prepareBody: prepareCustomCohortGroupViewportTransportRequest,
+        presentResult: (result, body, accountId) => presentCustomCohortGroupViewportTransportResponse(result, body, accountId),
       });
   }
   route('preview', ['assignment_file_id', 'context_ref', 'selection', 'include_map'], (identity, body, options) => {

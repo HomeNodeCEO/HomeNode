@@ -12,7 +12,7 @@ const actor = randomUUID(), otherActor = randomUUID();
 function fixture(extraAccounts = []) {
   const data = new Map(), revisions = new Map(), operations = new Map(), calls = [];
   const state = { head: null, actor, allowed: true, finalAllowed: true, summaryAllowed: true,
-    missing: null, before: null, summaryInputs: [] };
+    missing: null, before: null, summaryInputs: [], viewportInputs: [] };
   const row = value => ({ rowCount: value ? 1 : 0, rows: value ? [{ ...value }] : [] });
   const client = { release() { assert.fail('caller owns release'); }, async query(sql, args = []) {
     const tag = /\/\* ([^*]+) \*\//.exec(sql)?.[1]; calls.push(tag); await state.before?.(tag);
@@ -50,7 +50,7 @@ function fixture(extraAccounts = []) {
       unassigned_account_count: 0, assigned_account_count: 3 + extraAccounts.length } };
   const identityOf = value => ({ auth: structuredClone(value.auth), accountId: value.accountId, assignmentFileId: value.assignmentFileId });
   const owner = createOwner({ identityOf, execute: async (input, options, write, work, projection = 'intent') => {
-    if (!state.allowed || (projection === 'summary' && !state.summaryAllowed)) throw new Error('current source rights denied');
+    if (!state.allowed || (projection !== 'intent' && !state.summaryAllowed)) throw new Error('current source rights denied');
     calls.push('authorized');
     const snapshot = { head: state.head, data: new Map(data), revisions: new Map(revisions), operations: new Map(operations) };
     try {
@@ -63,6 +63,11 @@ function fixture(extraAccounts = []) {
           return { summary: { selected: { account_count: accounts.length }, binding: {
             context_ref: input.contextRef, selection_sha256: reference.selection_sha256,
             selection_revision: reference.selection_revision } } };
+        },
+        presentSelectionViewport: (accounts, reference, viewport) => {
+          assert.equal(projection, 'viewport'); assert.ok(Object.isFrozen(accounts));
+          state.viewportInputs.push({ accounts, reference, viewport });
+          return { display_only: true, selected_count: accounts.length };
         },
         budget: { signal: options.signal, check() { if (options.signal?.aborted) throw new Error('cancelled'); } } });
       if (!state.finalAllowed) throw new Error('current rights revoked before commit');
@@ -212,4 +217,35 @@ test('summary never emits a verified prefix or raises the installed 50k numeric-
     }
     assert.equal(f.state.head, 1, 'read failure cannot replace intent or report data');
   }
+});
+
+test('exact-reference viewport verifies the whole offscreen union before map work; empty, stale, revoked and missing originals never broaden', async () => {
+  const f = fixture(), first = await f.owner.selectRecordedGroups(f.select);
+  const viewport = { west: -97, south: 32, east: -96.99, north: 32.01 };
+  const request = { ...f.read, selectionRef: first.selection_ref, viewport };
+  const result = await f.owner.viewportRecordedGroupSelection(request);
+  assert.equal(result.status, 'viewport'); assert.equal(result.authority, 'not_established');
+  assert.deepEqual(result.selection_ref, first.selection_ref);
+  assert.deepEqual(f.state.viewportInputs[0].accounts, ['A', 'B', 'C']);
+  assert.equal(f.state.summaryInputs.length, 0, 'a pan does not rerun the numeric kernel');
+  const manifest = JSON.parse(f.data.get(first.selection_ref.manifest_ref.content_sha256).canonical_utf8);
+  f.state.missing = manifest.account_pages[0].page.content_sha256;
+  await assert.rejects(f.owner.viewportRecordedGroupSelection(request), /page_conflict/);
+  assert.equal(f.state.viewportInputs.length, 1); f.state.missing = null;
+  f.state.summaryAllowed = false;
+  await assert.rejects(f.owner.viewportRecordedGroupSelection(request), /rights denied/);
+  assert.equal(f.state.viewportInputs.length, 1); f.state.summaryAllowed = true;
+  f.state.finalAllowed = false;
+  await assert.rejects(f.owner.viewportRecordedGroupSelection(request), /revoked before commit/);
+  f.state.finalAllowed = true;
+  const empty = await f.owner.selectRecordedGroups({ ...f.select, operationId: randomUUID(),
+    expectedSelectionRef: first.selection_ref, includedRecordedGroupIds: [] });
+  await assert.rejects(f.owner.viewportRecordedGroupSelection(request), /selection_changed/);
+  const explicitEmpty = await f.owner.viewportRecordedGroupSelection({ ...request, selectionRef: empty.selection_ref });
+  assert.equal(explicitEmpty.viewport_map.selected_count, 0);
+  assert.deepEqual(f.state.viewportInputs.at(-1).accounts, []);
+  for (const changed of [{ selectionRef: null }, { account_ids: [] }, { includedRecordedGroupIds: [] },
+    { viewport: { ...viewport, east: -98 } }, { viewport: { ...viewport, extra: true } }])
+    await assert.rejects(f.owner.viewportRecordedGroupSelection({ ...request, ...changed }), /invalid_input/);
+  assert.equal(f.state.head, 2); assert.equal(f.revisions.size, 2);
 });

@@ -1,5 +1,5 @@
 import type { CheckedPocketCatalog } from './customCohortPocketCatalog';
-import type { CustomCohortPreviewGroup } from './customCohortPreviewController';
+import type { CustomCohortPreviewGroup, CustomCohortPreviewBinding } from './customCohortPreviewController';
 
 export interface CustomCohortViewportBounds { readonly west: number; readonly south: number; readonly east: number; readonly north: number }
 export interface CheckedViewportMap {
@@ -64,6 +64,15 @@ function polygon(value: unknown, remaining: { count: number }): asserts value is
  * from being painted over a different saved selection. */
 export function checkCustomCohortViewportResponse(value: unknown, group: CustomCohortPreviewGroup,
   catalog: CheckedPocketCatalog, viewport: CustomCohortViewportBounds): CheckedViewportMap {
+  const captured = group.map_manifest?.status === 'available' ? group.map_manifest.counts.captured_parcels : null;
+  return checkCustomCohortBoundViewportResponse(value, group.binding, captured, memberLookups(catalog, group.request), viewport);
+}
+
+/** Explicit immutable identity/membership inputs also support a server-owned
+ * receipt. No fabricated legacy request or viewport-limited selection is needed. */
+export function checkCustomCohortBoundViewportResponse(value: unknown, binding: CustomCohortPreviewBinding,
+  captured: number | null, population: { members: ReadonlySet<string>; selected: ReadonlySet<string> },
+  viewport: CustomCohortViewportBounds): CheckedViewportMap {
   const body = record(value);
   // The authenticated viewport transport enforces 4 MB on the decoded byte
   // stream before JSON.parse. Do not serialize the entire geometry again here.
@@ -72,13 +81,13 @@ export function checkCustomCohortViewportResponse(value: unknown, group: CustomC
   exact(body, required);
   const target = record(body.target); exact(target, ['account_id', 'assignment_file_id']);
   const context = record(body.context_ref); exact(context, ['context_id', 'context_revision', 'context_sha256']);
-  const request = group.request, ref = group.binding.contextRef;
+  const ref = binding.contextRef;
   check(body.display_only === true && body.geometry_semantics === SEMANTICS
-    && target.account_id === request.accountId && target.assignment_file_id === request.assignmentFileId
+    && target.account_id === binding.accountId && target.assignment_file_id === binding.assignmentFileId
     && context.context_id === ref.context_id && context.context_revision === ref.context_revision
     && context.context_sha256 === ref.context_sha256
-    && body.selection_revision === group.binding.selectionRevision
-    && body.selection_sha256 === group.binding.selectionFingerprint);
+    && body.selection_revision === binding.selectionRevision
+    && body.selection_sha256 === binding.selectionFingerprint);
   const extent = record(body.viewport); exact(extent, ['west', 'south', 'east', 'north']);
   check(Object.keys(viewport).every(key => extent[key] === viewport[key as keyof CustomCohortViewportBounds]));
   if (body.status === 'unavailable') {
@@ -90,9 +99,9 @@ export function checkCustomCohortViewportResponse(value: unknown, group: CustomC
   check(geo.type === 'FeatureCollection' && Array.isArray(geo.features) && geo.features.length <= 100_000);
   const counts = record(body.counts); exact(counts, ['visible_parcels', 'captured_parcels']);
   check(counts.visible_parcels === geo.features.length);
-  const captured = group.map_manifest?.status === 'available' ? group.map_manifest.counts.captured_parcels : null;
-  check(captured !== null && counts.captured_parcels === captured && geo.features.length <= captured);
-  const { members, selected } = memberLookups(catalog, request);
+  check(captured !== null && Number.isSafeInteger(captured) && captured > 0 && captured <= 100_000
+    && counts.captured_parcels === captured && geo.features.length <= captured);
+  const { members, selected } = population;
   const ids = new Set<string>(), remaining = { count: 0 };
   const features = geo.features.map(raw => {
     const f = record(raw); exact(f, ['type', 'id', 'properties', 'geometry']);

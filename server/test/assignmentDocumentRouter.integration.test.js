@@ -361,6 +361,7 @@ test("document routes reject mismatched or unjoined assignment accounts", async 
     getDocument: rejectUnexpectedAccess,
     deleteDocument: rejectUnexpectedAccess,
     queueDocument: rejectUnexpectedAccess,
+    confirmDespiteMismatch: rejectUnexpectedAccess,
     confirmCandidates: rejectUnexpectedAccess,
     reviewCandidate: rejectUnexpectedAccess,
   })));
@@ -372,6 +373,7 @@ test("document routes reject mismatched or unjoined assignment accounts", async 
       [`/api/documents/${documentId}/content`, undefined],
       [`/api/documents/${documentId}`, { method: "DELETE" }],
       [`/api/documents/${documentId}/reprocess`, { method: "POST" }],
+      [`/api/documents/${documentId}/subject-address-override`, jsonRequest("POST")],
       [`/api/documents/${documentId}/confirm-all`, jsonRequest("POST")],
       [`/api/documents/${documentId}/candidates/5`, jsonRequest("PATCH", { review_status: "confirmed" })],
     ]) {
@@ -382,7 +384,7 @@ test("document routes reject mismatched or unjoined assignment accounts", async 
     }
   }
   assert.equal(accessed, 0);
-  assert.equal(queries.length, 12);
+  assert.equal(queries.length, 14);
   assert.ok(queries.every((sql) => sql.includes("assignment.account_id = document.account_id")));
 });
 

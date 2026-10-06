@@ -466,7 +466,9 @@ The dedicated internal transaction helper is a structural writer only, not an
 authorization, registration or COMMIT capability. There is no new public route,
 browser activation, source-capacity increase or live SLA in this slice.
 
-Native assertions run only in the existing migrated disposable fixture: actual
+Native assertions run only in a separate synthetic organization/actor/report
+inside the existing migrated disposable database, preserving the coordinator's
+independent cold-start checkpoint fixture: actual
 post-section cancellation, history-write failure, final source/current-role
 refusal, lost COMMIT acknowledgment, downgrade refusal, explicit empty selection
 and two concurrent CAS operations. Accepted sections/receipts, report content and

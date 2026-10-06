@@ -10,7 +10,37 @@ import { saveCustomAppraisalWorkfileSectionInTransaction } from '../../src/servi
 /** Invoked only by the verified disposable PostgreSQL fixture. No live accounts,
  * source provider, user report choices, accepted sections or shared database.
  */
-export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, auth, scope, grant, observationPeriod }) {
+export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, scope: sourceScope, grant, observationPeriod }) {
+  // This suite intentionally commits workspace/head changes. Give it its own
+  // actor, organization and report so the coordinator's subsequent cold-start
+  // checkpoint checks still exercise an actually untouched assignment.
+  const organization = randomUUID(), actor = randomUUID(), caseId = randomUUID(), snapshot = randomUUID(), report = randomUUID();
+  await pool.query("INSERT INTO app_auth.organizations(id,legal_name,display_name) VALUES($1,'Synthetic group workspace','Synthetic group workspace')", [organization]);
+  await pool.query("INSERT INTO app_auth.users(id,email,display_name) VALUES($1,$2,'Synthetic group workspace actor')", [actor, `${actor}@example.test`]);
+  await pool.query('INSERT INTO app_auth.organization_memberships(organization_id,user_id) VALUES($1,$2)', [organization, actor]);
+  await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')", [organization, actor]);
+  const copiedCase = await pool.query(`INSERT INTO app.appraisal_cases(id,organization_id,account_id,effective_date)
+    SELECT $1,$2,r.account_id,c.effective_date FROM app.report_files r
+    JOIN app.appraisal_cases c ON c.id=r.appraisal_case_id
+    WHERE r.id=$3 AND r.organization_id=$4 AND r.custom_assignment_file_id=$5 AND r.account_id=$6`,
+  [caseId, organization, sourceScope.report_file_id, sourceScope.organization_id, sourceScope.assignment_file_id, sourceScope.account_id]);
+  assert.equal(copiedCase.rowCount, 1, 'only copy the exact verified synthetic owner fixture');
+  const copiedSnapshot = await pool.query(`INSERT INTO app.appraisal_subject_snapshots(id,appraisal_case_id,snapshot_version,effective_date,subject_data)
+    SELECT $1,$2,1,s.effective_date,s.subject_data FROM app.report_files r
+    JOIN app.appraisal_subject_snapshots s ON s.id=r.subject_snapshot_id
+    WHERE r.id=$3 AND r.organization_id=$4 AND r.custom_assignment_file_id=$5 AND r.account_id=$6`,
+  [snapshot, caseId, sourceScope.report_file_id, sourceScope.organization_id, sourceScope.assignment_file_id, sourceScope.account_id]);
+  assert.equal(copiedSnapshot.rowCount, 1);
+  const assignment = (await pool.query(`INSERT INTO app.assignment_files(organization_id,account_id,file_number,created_by_user_id,assigned_appraiser_user_id)
+    VALUES($1,$2,$3,$4,$4) RETURNING id::text`, [organization, sourceScope.account_id, `GROUP-${randomUUID()}`, actor])).rows[0].id;
+  await pool.query(`INSERT INTO app.report_files(id,organization_id,account_id,workflow_type,file_number,custom_assignment_file_id,appraisal_case_id,subject_snapshot_id)
+    VALUES($1,$2,$3,'custom_appraisal',$4,$5,$6,$7)`, [report, organization, sourceScope.account_id, `GROUP-${randomUUID()}`, assignment, caseId, snapshot]);
+  await pool.query('INSERT INTO app.custom_appraisal_workfiles(assignment_file_id,canonical_file_name) VALUES($1,$2)', [assignment, `group-workspace-${randomUUID()}`]);
+  const scope = { organization_id: organization, report_file_id: report, assignment_file_id: assignment, account_id: sourceScope.account_id };
+  const auth = { userId: actor, organizations: [{ organizationId: organization, roles: ['appraiser'] }] };
+  const coordinatorWorkspace = () => pool.query(`SELECT to_jsonb(s) AS value FROM app.custom_appraisal_workfile_sections s
+    WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`, [sourceScope.assignment_file_id]);
+  const coordinatorBefore = (await coordinatorWorkspace()).rows;
   const calls = [], checks = [];
   let loseCommitAck = false, cancelAtHead = null, revokeAtHead = false, revokeAtRead = false;
   let cancelAtWorkspace = null, revokeAtWorkspace = false, failWorkspaceHistory = false;
@@ -418,6 +448,7 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
   assert.deepEqual(afterRace.section.section_value.active.selection_ref, winner.selection_ref);
   assert.equal(afterRace.head, winner.selection_ref.selection_revision);
   assert.deepEqual(await protectedOther(), otherBefore, 'no accepted section, receipt, assignment geography or report content changes');
+  assert.deepEqual((await coordinatorWorkspace()).rows, coordinatorBefore, 'the separate coordinator cold-start assignment remains untouched');
   checks.push('native exact workspace/head COMMIT loss replays once, generic autosave and legacy head writes cannot downgrade or detach it, explicit empty stays empty, stale replay cannot rewind, and competing CAS operations commit one coherent winner without changing accepted reports');
   return { checks };
 }

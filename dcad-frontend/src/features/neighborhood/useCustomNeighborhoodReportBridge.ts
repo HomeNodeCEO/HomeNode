@@ -6,19 +6,26 @@ import { loadMapLibreRuntime } from '@/lib/mapLibreRuntime';
 import { editorCredentialForRequest } from '@/lib/editorCredential';
 import { createCustomWorkspaceApi } from './customWorkspaceApi';
 import type { CustomWorkspaceApiRead } from './customWorkspaceApi';
+import { createCustomCohortGroupWorkspaceApi } from './customCohortGroupWorkspaceApi';
+import type { CustomCohortGroupWorkspaceApiRead } from './customCohortGroupWorkspaceApi';
 import type CustomNeighborhoodWorkspaceHost from './components/CustomNeighborhoodWorkspaceHost';
+import type CustomCohortGroupWorkspaceHost from './components/CustomCohortGroupWorkspaceHost';
 import type { CustomNeighborhoodWorkspaceControls } from './components/CustomNeighborhoodWorkspaceHost';
 import type { CustomWorkspaceTarget } from './customWorkspaceLifecycle';
 import type { CustomWorkspacePrivateSalesImport } from './customWorkspaceCheckpoint';
 import { customWorkspaceDefaultObservationPeriod } from './customWorkspaceDefaultPeriod';
 
 export type CustomNeighborhoodReportHostProps = ComponentProps<typeof CustomNeighborhoodWorkspaceHost>;
+export type CustomNeighborhoodReportGroupHostProps = ComponentProps<typeof CustomCohortGroupWorkspaceHost>;
 export interface CustomNeighborhoodReportBridgeInput {
   enabled: boolean; accountId?: string | null; assignmentFileId?: number | null;
   workfileStatus?: 'draft' | 'signed' | 'archived' | null; subjectLabel: string;
   effectiveDate?: string | null;
   auth: { ready: boolean; bootstrapError: string | null; session: Session | null };
   onAccepted?: () => Promise<boolean>;
+  /** Explicit composition only, not an authorization or legacy migration.
+   * Omission preserves the installed legacy owner and its exact checkpoints. */
+  recordedGroupWorkspace?: Pick<CustomNeighborhoodReportGroupHostProps, 'initialGroups'>;
 }
 export interface CustomNeighborhoodReportSaveLease {
   isCurrent(): boolean;
@@ -29,6 +36,7 @@ export interface CustomNeighborhoodReportSaveLease {
 type Status = 'inactive' | 'loading' | 'ready' | 'unavailable' | 'read_only';
 export interface CustomNeighborhoodReportBridge {
   status: Status; message: string | null; hostProps: CustomNeighborhoodReportHostProps | null;
+  groupHostProps: CustomNeighborhoodReportGroupHostProps | null;
   retry(): void;
   useReviewedSales(reference: CustomWorkspacePrivateSalesImport): Promise<boolean>;
   /** Synchronous acquisition pauses the exact mounted workspace before the
@@ -51,8 +59,10 @@ function identity(session: Session | null): string | null {
     .sort((a, b) => String(a[0]).localeCompare(String(b[0])))]);
 }
 interface Runtime {
-  key: string; enabled: boolean; live: boolean; readSettled: boolean; result: CustomWorkspaceApiRead | null;
+  key: string; enabled: boolean; live: boolean; readSettled: boolean; result: CustomWorkspaceApiRead | CustomCohortGroupWorkspaceApiRead | null;
   target: CustomWorkspaceTarget | null; api: ReturnType<typeof createCustomWorkspaceApi> | null;
+  groupApi: ReturnType<typeof createCustomCohortGroupWorkspaceApi> | null;
+  initialGroups: CustomNeighborhoodReportGroupHostProps['initialGroups'] | null;
   controls: CustomNeighborhoodWorkspaceControls | null; lease: CustomNeighborhoodReportSaveLease | null;
   stop: AbortController | null;
   retainedReadOnly: boolean; pendingFlush: boolean; quarantined: boolean;
@@ -73,15 +83,19 @@ export function useCustomNeighborhoodReportBridge(input: CustomNeighborhoodRepor
   const sessionIdentity = identity(input.auth.session), enabled = input.enabled === true;
   const accountId = input.accountId ?? null, assignmentFileId = input.assignmentFileId ?? null;
   const fileStatus = input.workfileStatus ?? null;
+  const groupMode = input.recordedGroupWorkspace !== undefined;
+  const initialGroups = input.recordedGroupWorkspace?.initialGroups ?? null;
+  const validMode = !groupMode || typeof initialGroups === 'function';
   const validTarget = typeof accountId === 'string' && /^[0-9A-Za-z_-]{1,50}$/.test(accountId)
     && Number.isSafeInteger(assignmentFileId) && Number(assignmentFileId) > 0;
-  const eligible = enabled && input.auth.ready && !input.auth.bootstrapError && sessionIdentity !== null && validTarget;
+  const eligible = enabled && input.auth.ready && !input.auth.bootstrapError && sessionIdentity !== null && validTarget && validMode;
   const initialStatus: Status = !enabled ? 'inactive' : !input.auth.ready ? 'loading' : eligible ? 'loading' : 'unavailable';
   const initialMessage = initialStatus === 'unavailable' ? unavailable : null;
   const key = JSON.stringify([enabled, input.auth.ready, Boolean(input.auth.bootstrapError), sessionIdentity,
-    accountId, assignmentFileId, fileStatus, retryRevision]);
+    accountId, assignmentFileId, fileStatus, groupMode, retryRevision]);
   const runtime = useMemo<Runtime>(() => {
     const value: Runtime = { key, enabled, live: false, readSettled: false, result: null, target: null, api: null,
+      groupApi: null, initialGroups,
       controls: null, lease: null, stop: null, retainedReadOnly: false, pendingFlush: false, quarantined: false,
       initialStatus, initialMessage, registerControls: () => {} };
     const isCurrent = () => value.live && latest.current === value;
@@ -89,7 +103,7 @@ export function useCustomNeighborhoodReportBridge(input: CustomNeighborhoodRepor
       try { value.target = Object.freeze({ accountId: accountId!, assignmentFileId: String(assignmentFileId), sessionKey: crypto.randomUUID() }); }
       catch { value.initialStatus = 'unavailable'; value.initialMessage = unavailable; }
     }
-    if (value.target) value.api = createCustomWorkspaceApi({ urlFor: makeUrl,
+    const apiOptions: Parameters<typeof createCustomWorkspaceApi>[0] = { urlFor: makeUrl,
       request: async (url, init) => {
         if (!isCurrent() || init.signal?.aborted) throw cancelled();
         const response = await fetchWithApplicationAuthentication(url, init);
@@ -101,7 +115,11 @@ export function useCustomNeighborhoodReportBridge(input: CustomNeighborhoodRepor
         const credential = editorCredentialForRequest();
         if (!credential) throw new Error('custom_workspace_authentication_required');
         return credential;
-      } });
+      } };
+    if (value.target) {
+      if (groupMode) value.groupApi = createCustomCohortGroupWorkspaceApi(apiOptions);
+      else value.api = createCustomWorkspaceApi(apiOptions);
+    }
     value.registerControls = controls => {
       if (!isCurrent()) return;
       if (controls && (!value.target || !sameTarget(controls.target, value.target))) return;
@@ -109,7 +127,7 @@ export function useCustomNeighborhoodReportBridge(input: CustomNeighborhoodRepor
       if (controls && (value.lease || value.retainedReadOnly)) controls.setReadOnly(true);
     };
     return value;
-  }, [key, enabled, eligible, initialStatus, initialMessage, accountId, assignmentFileId]);
+  }, [key, enabled, eligible, initialStatus, initialMessage, accountId, assignmentFileId, groupMode, initialGroups]);
   // Render-current identity closes the short interval before old effect cleanup.
   latest.current = runtime;
 
@@ -120,12 +138,13 @@ export function useCustomNeighborhoodReportBridge(input: CustomNeighborhoodRepor
     let timedOut = false;
     const current = () => runtime.live && latest.current === runtime;
     setBootstrap({ runtime, status: runtime.initialStatus, message: runtime.initialMessage });
-    if (!runtime.target || !runtime.api) {
+    const api = runtime.groupApi ?? runtime.api;
+    if (!runtime.target || !api) {
       runtime.readSettled = true;
       return () => { runtime.live = false; runtime.controls = null; runtime.lease = null; abort.abort(); };
     }
     const timeout = setTimeout(() => { timedOut = true; abort.abort(); }, DEADLINE_MS);
-    void runtime.api.read(runtime.target, { signal: abort.signal, deadline: performance.now() + DEADLINE_MS }).then(result => {
+    void api.read(runtime.target, { signal: abort.signal, deadline: performance.now() + DEADLINE_MS }).then(result => {
       if (!current() || abort.signal.aborted) return;
       runtime.result = result;
       // Start the same-origin map bundle while the saved catalog is loading.
@@ -196,17 +215,28 @@ export function useCustomNeighborhoodReportBridge(input: CustomNeighborhoodRepor
   const state = bootstrap?.runtime === runtime ? bootstrap : { status: runtime.initialStatus, message: runtime.initialMessage };
   const result = bootstrap?.runtime === runtime ? runtime.result : null;
   const checkpoint = result?.section?.value;
-  const hostProps: CustomNeighborhoodReportHostProps | null = enabled && result && runtime.target && runtime.api ? {
-    enabled: true, target: runtime.target, subjectLabel: input.subjectLabel, initialSection: result.section,
+  const onAccepted = async () => {
+    if (!runtime.live || latest.current !== runtime || runtime.stop?.signal.aborted) return false;
+    const restored = await acceptedCallback.current?.();
+    return restored === true && runtime.live && latest.current === runtime && !runtime.stop?.signal.aborted;
+  };
+  const hostProps: CustomNeighborhoodReportHostProps | null = enabled && result && runtime.target && runtime.api
+    && (!checkpoint || checkpoint.workspace_version !== 7) ? {
+    enabled: true, target: runtime.target, subjectLabel: input.subjectLabel,
+    initialSection: checkpoint && result.section ? { revision: result.section.revision, value: checkpoint } : undefined,
     initialPeriod: checkpoint?.active?.observation_period ?? checkpoint?.pending_capture?.observation_period ?? null,
     defaultPeriod: customWorkspaceDefaultObservationPeriod(input.effectiveDate),
     workfileStatus: fileStatus === 'signed' || fileStatus === 'archived' ? fileStatus : result.status,
     api: runtime.api, registerControls: runtime.registerControls,
-    onAccepted: async () => {
-      if (!runtime.live || latest.current !== runtime || runtime.stop?.signal.aborted) return false;
-      const restored = await acceptedCallback.current?.();
-      return restored === true && runtime.live && latest.current === runtime && !runtime.stop?.signal.aborted;
-    },
+    onAccepted,
+  } : null;
+  const groupHostProps: CustomNeighborhoodReportGroupHostProps | null = enabled && result && runtime.target && runtime.groupApi
+    && runtime.initialGroups && (!checkpoint || checkpoint.workspace_version === 7) ? {
+    enabled: true, target: runtime.target, subjectLabel: input.subjectLabel,
+    initialPeriod: checkpoint?.active?.observation_period ?? checkpoint?.pending_capture?.observation_period ?? null,
+    defaultPeriod: customWorkspaceDefaultObservationPeriod(input.effectiveDate),
+    workfileStatus: fileStatus === 'signed' || fileStatus === 'archived' ? fileStatus : result.status,
+    api: runtime.groupApi, initialGroups: runtime.initialGroups, registerControls: runtime.registerControls, onAccepted,
   } : null;
   const useReviewedSales = async (reference: CustomWorkspacePrivateSalesImport): Promise<boolean> => {
     const controls = runtime.controls;
@@ -215,5 +245,5 @@ export function useCustomNeighborhoodReportBridge(input: CustomNeighborhoodRepor
       || runtime.pendingFlush || fileStatus !== 'draft' || runtime.result?.status !== 'draft' || !controls.useReviewedSales) return false;
     return controls.useReviewedSales(reference);
   };
-  return { status: state.status, message: state.message, hostProps, retry, beginSaveBarrier, useReviewedSales };
+  return { status: state.status, message: state.message, hostProps, groupHostProps, retry, beginSaveBarrier, useReviewedSales };
 }

@@ -28,7 +28,7 @@ const row = value => ({ rows: value ? [structuredClone(value)] : [], rowCount: v
 // Actual application boundary, session authenticator, policy, coordinator and
 // cohort router; only bearer verification and SQL results are synthetic here.
 // This is not a PostgreSQL isolation/locking or provider-authorization test.
-async function start(t, { enabled = false, sourceMode, authenticationRequired = true, principal = identity, cohortPool } = {}) {
+async function start(t, { enabled = false, sourceMode, groupWorkspace = false, authenticationRequired = true, principal = identity, cohortPool } = {}) {
   const app = express(), state = {
     sessionQueries: 0,
     preAuthenticationPaths: [],
@@ -52,6 +52,7 @@ async function start(t, { enabled = false, sourceMode, authenticationRequired = 
   const configuration = createCustomNeighborhoodConfiguration(enabled ? {
     CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED: 'true', CUSTOM_NEIGHBORHOOD_SOURCE_PROFILE_JSON: JSON.stringify(PROFILE),
     ...(sourceMode === undefined ? {} : { CUSTOM_NEIGHBORHOOD_SOURCE_MODE: sourceMode }),
+    ...(groupWorkspace ? { CUSTOM_NEIGHBORHOOD_GROUP_WORKSPACE_ENABLED: 'true' } : {}),
   } : {});
   mountApplicationRouteBoundary(app, {
     authenticationPolicy: { authenticationRequired, mode: authenticationRequired ? 'enforced' : 'development_legacy' },
@@ -187,6 +188,41 @@ test('enabled mount does not expose internal raw preview, review or accepted App
     assert.equal(response.status, 404); assert.equal(response.headers.get('cache-control'), 'no-store');
   }
   assert.equal(server.state.cohortConnections, 0);
+});
+
+test('application mounts all four V7 commands only under the explicit separate composition option', async t => {
+  const legacy = await start(t, { enabled: true }), exact = await start(t, { enabled: true, groupWorkspace: true });
+  for (const action of ['save-groups', 'start-group-capture', 'cancel-group-capture', 'complete-group-capture']) {
+    const response = await legacy.request(`${base}/${action}`, { body: {} });
+    assert.equal(response.status, 404); assert.equal(response.headers.get('cache-control'), 'no-store');
+    await responseIs(await exact.request(`${base}/${action}`, { body: {} }), 400, 'invalid_neighborhood_request');
+    await responseIs(await exact.request(`${base}/${action}`, { body: {}, headers: {} }), 401, 'authentication_required');
+  }
+  assert.equal(legacy.state.cohortConnections, 0); assert.equal(exact.state.cohortConnections, 0);
+});
+
+test('V7 composition preserves application session CSRF, rate and finite body admission ahead of cohort dependencies', async t => {
+  const s = await start(t, { enabled: true, groupWorkspace: true });
+  for (const action of ['save-groups', 'start-group-capture', 'cancel-group-capture', 'complete-group-capture']) {
+    await responseIs(await s.request(`${base}/${action}`, { body: '{',
+      headers: { ...cookieHeaders, origin: 'https://hostile.example.test' } }), 403, 'csrf_origin_denied');
+    await responseIs(await s.request(`${base}/${action}`, { body: '{' }), 400, 'invalid_neighborhood_request');
+    await responseIs(await s.request(`${base}/${action}`, { body: { payload: 'x'.repeat(262_144) } }), 413, 'neighborhood_request_too_large');
+  }
+  assert.equal(s.state.sessionQueries, 0); assert.equal(s.state.cohortConnections, 0);
+  assert.equal(s.state.preAuthenticationPaths.length, 12); assert.equal(s.state.ratePaths.length, 8);
+});
+
+test('explicit V7 command reaches the real current-owner service and retains sanitized dependency failure', async t => {
+  const s = await start(t, { enabled: true, groupWorkspace: true });
+  await responseIs(await s.request(`${base}/start-group-capture`, { body: {
+    assignment_file_id: '10', expected_workspace_revision: 0,
+    expected_workspace_checkpoint: { workspace_version: 7, active: null, pending_capture: null },
+    pending_capture: { operation_id: '60000000-0000-4000-8000-000000000001',
+      observation_period: { start_date: '2024-01-01', end_date: '2024-12-31' } },
+  } }), 500, 'neighborhood_request_failed');
+  assert.equal(s.state.cohortConnections, 1);
+  assert.equal(s.state.ratePaths.length, 1);
 });
 
 function installedGrant(organizationId, purpose) {

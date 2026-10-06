@@ -951,6 +951,55 @@ legacy migration/QA activation, compact/paged catalog and partial source/spatial
 recovery, complete >50k statistics/publication and real 5/10-mile/retrospective
 and live acceptance still remain.
 
+## Explicit report/application composition (defaults remain legacy)
+
+The existing report bridge can now accept an explicitly supplied
+`recordedGroupWorkspace.initialGroups` policy. Omission preserves the installed
+legacy API/host and the exact V1-6 decoder; the V7 option uses the checked V7 API
+and supplies only `groupHostProps`. Missing policy, legacy/corrupt/future data,
+and absence are not collapsed into a successful empty migration. The
+characteristics section mounts exactly one chosen lazy host in the existing
+layout. Both modes preserve the protected appraiser UI cleanup: no duplicate
+interactive applied-neighborhood panel; previously accepted outline/statistics
+remain in a print-only container. The composition renderer tests both absent
+and accepted evidence in both modes. The production page has not been changed
+to opt into this mode.
+
+Both modes retain the same current session/file generation, fresh workfile
+read, accepted-refetch callback and synchronous Save Everything/signing lease.
+A changed mode or initial policy invalidates old controls, held reads, leases
+and callbacks before effect cleanup. Already owned host flush remains finite;
+deadline failure keeps it quiesced until actual settlement and explicit reload.
+The bridge performs no capture, selection mutation, generic V7 section save,
+accepted-report write, implicit recommendation or guessed date. The V7 host
+still performs its own fresh draft read before acquiring its lifecycle owner.
+
+The application configuration separately recognizes the trusted, default-off
+`CUSTOM_NEIGHBORHOOD_GROUP_WORKSPACE_ENABLED` switch. It mounts all four atomic
+command routes together only while the main workspace is enabled. The absent
+or disabled switch retains the exact old configuration shape and default
+route surface; disabled workspace configuration ignores the unused switch.
+Malformed direct-factory configuration refuses before resources. Enabling this
+switch does not grant source or assignment rights, remove CSRF/rate/finite-body
+admission, change global middleware or convert existing checkpoints. The
+actual current-role/source/workfile owners still authorize each command.
+
+Eleven new report-bridge/element-SSR tests and five application configuration/
+HTTP composition tests retain all prior assertions. Checked V7 fixtures test
+empty/absent drafts, signed/archived reads, incompatible checkpoints, stale
+mode/policy generations, signing flush and deadline settlement. The HTTP tests
+use the actual application boundary/session authenticator/router/service
+composition with synthetic credential/SQL boundaries. The renderer test uses
+actual React elements with lazy visual children stubbed. These are not native
+SQL locking, concurrent browser, live QA or larger-area performance acceptance.
+
+No deployed environment or production page mode was changed. A deliberately
+designated QA draft and whole browser/server deployment must be verified before
+enabling V7 there; genuine legacy appraisal choices and accepted reports stay
+unchanged. Legacy migration, compact/paged catalogs, stable partial source/
+spatial recovery, complete >50k numerical/publication budgets and real 5/10-mile,
+retrospective and live acceptance remain unfinished.
+
 The worker CLI validates its database URL before constructing the pool and
 requires certificate-verified TLS for every non-loopback host, including internal
 hosts. Only literal localhost/127.0.0.1/::1 development connections may be

@@ -33,7 +33,8 @@ test('new exact-selection projection freezes only its own public path and refuse
   own.parcel_map.geojson.features[0].geometry.coordinates[0][0][0] -= .001;
   assert.deepEqual(result, expected, 'later source mutation cannot change the witnessed public response');
   assert.equal(Object.isFrozen(preview.parcel_map.geojson.features[0]), false, 'legacy source remains mutable');
-  for (const change of [v => { v.parcel_map.geojson.features[0].properties.raw = 'PRIVATE'; },
+  for (const change of [v => { v.target.raw = 'PRIVATE'; }, v => { v.context_ref.raw = 'PRIVATE'; },
+    v => { v.parcel_map.geojson.features[0].properties.raw = 'PRIVATE'; },
     v => { v.parcel_map.geojson.features[0].geometry.raw = 'PRIVATE'; },
     v => { v.parcel_map.geojson.features[0].geometry.coordinates[0][4] = [-96.799, 32]; },
     v => { v.parcel_map.geojson.features.push(structuredClone(v.parcel_map.geojson.features[0])); }]) {

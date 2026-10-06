@@ -385,6 +385,9 @@ authorized source graph. Missing geometry remains unavailable. No hull, sampled
 parcel, replacement source snapshot or viewport-limited statistical union is
 substituted. The public display projection admits only the closed parcel fields
 and exact retained coordinates, preserving the existing browser coordinate cap.
+Its frozen public response is detached only after the existing byte and complete
+visible-geometry checks, so it cannot freeze or retain mutable legacy identity,
+feature or coordinate aliases. The legacy projection path remains unchanged.
 
 The optional `selection-viewport` POST accepts only assignment/context identity,
 the exact selection reference and finite viewport bounds. Its request retains

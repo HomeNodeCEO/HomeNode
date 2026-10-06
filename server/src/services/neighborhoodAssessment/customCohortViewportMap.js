@@ -220,6 +220,9 @@ export function presentCustomCohortSelectionViewportMap(preview, viewport) {
   // the browser's existing complete-visible coordinate budget; never truncate.
   const exact = (value, keys) => value && Object.getPrototypeOf(value) === Object.prototype
     && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+  if (!exact(output.target, ['account_id', 'assignment_file_id'])
+    || !exact(output.context_ref, ['context_id', 'context_revision', 'context_sha256'])
+    || output.geometry_semantics !== 'current_observed_cached_parcels_not_legal_subdivision_boundary') invalid();
   let points = 0;
   const capacity = () => { throw Object.assign(new TypeError('viewport_capacity_exceeded'), { reason: 'viewport_capacity_exceeded' }); };
   const polygon = value => {

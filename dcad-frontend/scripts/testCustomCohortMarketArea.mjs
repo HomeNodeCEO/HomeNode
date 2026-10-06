@@ -76,7 +76,7 @@ const deferred = () => { let resolve; const promise = new Promise(done => { reso
 const completeResult = () => ({ ...result(), unavailable_areas: [],
   analyses: [{ market: { key: 'exploration', scope: 'exploration', label: 'Exploration Map Area' },
     population: { eligible_sale_count: 50, mapped_sale_count: 50 }, summary: {}, statistics: {} }],
-  recommendation: { conclusion: 'stable', ranked_studies: [], recommended_change_percent: null } });
+  recommendation: { methodology_version: 3, conclusion: 'stable', ranked_studies: [], recommended_change_percent: null } });
 const draft = response => ({ version: 3, accountId: 'A', assignmentFileId: 15, savedAt: '2026-10-06T00:00:00Z',
   asOfDate: request.asOf, periodMonths: 24, selectedAreaKeys: ['exploration'], contextOverride: null,
   response, reconciliation: { trendConclusion: 'stable', reliedUponAreaKeys: ['exploration'], explanation: '' } });
@@ -266,6 +266,42 @@ test('split response reconciliation exactly matches the existing server recommen
         reliability_score: 50 + index, composite_cod: 15, composite_cv: 20 } }));
     const response = f.api.mergeMarketStudyResponses([{ ...completeResult(), analyses: analyses.slice(0, 2) }, { ...completeResult(), analyses: analyses.slice(2) }]);
     assert.deepEqual(response.recommendation, buildMarketTrendRecommendation(analyses));
+  }
+});
+
+test('split exploration and ordinary studies rank by COD/CV consistency, not sample sufficiency', async () => {
+  const { calculateMarketStudyStatistics, buildMarketTrendRecommendation } = await import('../../server/src/services/marketConditions.js');
+  const f = fixture();
+  const study = (key, cod, cv, count) => ({ market: { key, label: key }, population: { eligible_sale_count: count },
+    statistics: calculateMarketStudyStatistics({ monthlySeries: [
+      { period_start: '2025-01-01', median_sale_price: 100 }, { period_start: '2025-12-01', median_sale_price: 110 },
+    ], eligibleSaleCount: count, periodMonths: 12, congruencyFactors: { living_area: { count, cod, cv } } }) });
+  for (const analyses of [
+    [study('radius_2', 24, 30, 1000), study('zip', 18, 24, 400), study('radius_1', 21, 27, 250), study('exploration', 10, 14, 80)],
+    [study('zip', 10.01, 14, 1000), study('exploration', 10, 14, 20)],
+    [study('zip', null, 14, 1000), study('exploration', 100, 140, 20)],
+    [study('zip', null, null, 1000), study('exploration', null, null, 20)],
+  ]) {
+    const merged = f.api.mergeMarketStudyResponses([
+      { ...completeResult(), analyses: analyses.filter(a => a.market.key !== 'exploration') },
+      { ...completeResult(), analyses: analyses.filter(a => a.market.key === 'exploration') },
+    ]);
+    assert.deepEqual(merged.recommendation, buildMarketTrendRecommendation(analyses));
+    assert.equal(merged.recommendation.methodology_version, 3);
+  }
+  const earlier = { ...completeResult(), recommendation: { ...completeResult().recommendation, methodology_version: 2 } };
+  assert.equal(f.api.mergeMarketStudyResponses([earlier, completeResult()]).recommendation.methodology_version, 2,
+    'Mixed-version results cannot claim the new scoring method');
+});
+
+test('the recommendation describes consistency scoring and flags older saved scores', async t => {
+  for (const version of [2, 3]) {
+    const value = completeResult(); value.recommendation.methodology_version = version;
+    const h = marketComponent({ initialDraft: draft(value) }); t.after(h.dispose); await h.settle();
+    const node = walk(h.render()).find(n => typeof n.type === 'function' && n.type.name === 'RecommendedDetermination');
+    const rendered = text(node.type(node.props));
+    assert.match(rendered, version === 3 ? /Lower average COD\/CV ranks higher/ : /Rerun market studies for COD\/CV ranking/);
+    assert.doesNotMatch(rendered, /ranked by sample sufficiency/);
   }
 });
 

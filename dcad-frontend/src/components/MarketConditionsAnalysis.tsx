@@ -531,7 +531,7 @@ function StudyStatistics({
                     ? ` (${summary.congruency_factors.housing_type.dominant_type})`
                     : ''}
                 </td>
-                <td className="px-2 py-1.5 text-right">10.0%</td>
+                <td className="px-2 py-1.5 text-right">20.0%</td>
                 <td className="px-2 py-1.5 text-right">
                   {summary.congruency_factors.housing_type.count.toLocaleString()}
                 </td>
@@ -546,6 +546,11 @@ function StudyStatistics({
           </table>
         </div>
       </details>
+      <div className="mt-2 flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs text-slate-600">
+        <span>{statistics.monthly_observation_count ?? 0} monthly observations</span>
+        <span>Characteristic coverage: {percentText(statistics.characteristic_weight_available * 100)}</span>
+        {statistics.reliability_score == null ? <span className="font-semibold text-amber-800">COD/CV score unavailable</span> : null}
+      </div>
     </div>
   );
 }
@@ -594,9 +599,10 @@ function RecommendedDetermination({
           </div>
         </div>
       </div>
-      <p className={`${compact ? 'hidden' : 'mt-2 leading-5'} text-xs text-slate-600`}>
-        Studies are ranked by sample sufficiency, monthly coverage, composite
-        COD/CV congruency, and characteristic coverage. A reconciled change
+      <p className={`${compact && recommendation.methodology_version >= 3 ? 'hidden' : 'mt-2 leading-5'} text-xs text-slate-600`}>
+        {recommendation.methodology_version >= 3
+          ? 'Lower average COD/CV ranks higher. Sales count and data coverage are reviewed separately; the score is not a confidence probability.'
+          : 'Saved scores use the earlier method. Rerun market studies for COD/CV ranking.'}{' '}A reconciled change
         within ±{numberText(recommendation.stable_threshold_percent, 1)}% is
         classified as stable. The appraiser may override this recommendation.
       </p>

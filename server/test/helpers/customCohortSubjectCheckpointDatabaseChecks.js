@@ -45,8 +45,9 @@ export async function runCustomCohortSubjectCheckpointDatabaseChecks({ pool,
   };
   const owner = createCustomCohortContextCapture({ pool: observed, authorizeMarketData: policy });
   const worker = () => runCustomCohortCaptureJobOnce({ pool, cohortService: owner });
-  const input = operationId => ({ auth, accountId: scope.account_id,
-    assignmentFileId: scope.assignment_file_id, operationId, observationPeriod });
+  const identity = operationId => ({ auth, accountId: scope.account_id,
+    assignmentFileId: scope.assignment_file_id, operationId });
+  const input = operationId => ({ ...identity(operationId), observationPeriod });
   const job = async operation => (await pool.query(`SELECT status,attempts,checkpoint,context_sha256
     FROM app.neighborhood_custom_cohort_capture_jobs WHERE organization_id=$1 AND operation_id=$2`,
   [organization, operation])).rows[0];
@@ -137,7 +138,7 @@ export async function runCustomCohortSubjectCheckpointDatabaseChecks({ pool,
   } finally {
     assert.equal((await pool.query('UPDATE app.appraisal_subject_snapshots SET subject_data=$2::jsonb WHERE id=$1',
       [snapshotId, json(snapshot)])).rowCount, 1);
-    assert.equal((await owner.cancelCaptureJob(input(changed.operation))).status, 'cancelled');
+    assert.equal((await owner.cancelCaptureJob(identity(changed.operation))).status, 'cancelled');
   }
 
   const revoked = await interrupted();
@@ -159,7 +160,7 @@ export async function runCustomCohortSubjectCheckpointDatabaseChecks({ pool,
     await noContext(revoked.operation);
   } finally {
     allowSource = true;
-    assert.equal((await owner.cancelCaptureJob(input(revoked.operation))).status, 'cancelled');
+    assert.equal((await owner.cancelCaptureJob(identity(revoked.operation))).status, 'cancelled');
   }
   assert.deepEqual(await protectedState(), before,
     'successful or refused job retries never apply/change accepted boundaries or report sections');

@@ -319,9 +319,13 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     assert.ok(!calls.slice(compactFrom).some(sql => sql.includes('neighborhood-cohort-blob:read-batch')),
       'the manifest opening must stay on the prepared authorized read path');
     const preparedOpenings = await runCustomCohortPreparedMapOpeningJob(pool, { maximumContexts: 100, maximumRuntimeMinutes: 1, logger: {} });
-    assert.ok(preparedOpenings.completed > 0);
-    assert.equal((await pool.query(`SELECT status FROM app.neighborhood_custom_cohort_prepared_map_openings
-      WHERE organization_id=$1 AND context_id=$2`, [organization, result.context_ref.context_id])).rows[0].status, 'available');
+    assert.ok(preparedOpenings.completed > 0, JSON.stringify(preparedOpenings));
+    const openingRow = (await pool.query(`SELECT status, source_catalog_format_version
+      FROM app.neighborhood_custom_cohort_prepared_map_openings
+      WHERE organization_id=$1 AND context_id=$2`, [organization, result.context_ref.context_id])).rows[0];
+    assert.equal(openingRow.status, 'available');
+    assert.equal(openingRow.source_catalog_format_version, 2,
+      'preview format one independently references the current immutable catalog format two');
     const cachedOpeningFrom = calls.length;
     const cachedOpening = await capture.catalog({ ...preparedCatalogInput, initialMapMode: 'manifest' });
     assert.deepEqual(cachedOpening, compactOpening, 'offline compact metadata preserves the whole original opening exactly');

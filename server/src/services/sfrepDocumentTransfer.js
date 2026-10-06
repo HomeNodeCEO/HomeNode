@@ -6,6 +6,7 @@ import { sfrepSubjectContext, sfrepWorkfileDocumentRoles } from './sfrepSubjectC
 import { savedSfrepSubjectFields } from './sfrepSavedReport.js';
 import { filterSubjectEvidenceDocuments } from './customSubjectApplication.js';
 import { customSubjectCensusSql } from './customSubjectCensus.js';
+import { projectSfrepPhotos, loadSfrepPhotoBytes } from './sfrepPhotoTransfer.js';
 
 export const SFREP_TRANSFER_LIMITS = Object.freeze({ documents: 10, bytes: 50 * 1024 * 1024, candidatesPerDocument: 200 });
 const MAX_EVIDENCE_BYTES = 8 * 1024 * 1024;
@@ -15,16 +16,18 @@ const record = value => value !== null && typeof value === 'object' && !Array.is
 
 export function sfrepTransferInput(body, { exporting = false } = {}) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) fail('invalid_sfrep_request');
-  const allowed = ['assignment_file_id', 'document_ids', 'include_documents', 'form_id', ...(exporting ? ['preview_digest'] : [])];
+  const allowed = ['assignment_file_id', 'document_ids', 'include_documents', 'include_photos', 'form_id', ...(exporting ? ['preview_digest'] : [])];
   if (Object.keys(body).some(key => !allowed.includes(key))) fail('invalid_sfrep_request');
   if (!Number.isSafeInteger(body.assignment_file_id) || body.assignment_file_id < 1) fail('assignment_file_required');
   if (!Array.isArray(body.document_ids) || body.document_ids.length > SFREP_TRANSFER_LIMITS.documents
     || body.document_ids.some(id => !Number.isSafeInteger(id) || id < 1)
     || new Set(body.document_ids).size !== body.document_ids.length) fail('invalid_sfrep_document_selection');
   if (typeof body.include_documents !== 'boolean' || !SFREP_SUPPORTED_FORM_IDS.includes(body.form_id)) fail('invalid_sfrep_request');
+  if (body.include_photos !== undefined && typeof body.include_photos !== 'boolean') fail('invalid_sfrep_request');
   if (exporting && (typeof body.preview_digest !== 'string' || !/^[a-f0-9]{64}$/.test(body.preview_digest))) fail('sfrep_preview_required');
   return { assignmentFileId: body.assignment_file_id, documentIds: [...body.document_ids].sort((a, b) => a - b),
-    includeDocuments: body.include_documents, formId: body.form_id, previewDigest: body.preview_digest };
+    includeDocuments: body.include_documents, includePhotos: body.include_photos === true,
+    formId: body.form_id, previewDigest: body.preview_digest };
 }
 
 // One statement and one shared snapshot: reject oversized evidence in PostgreSQL
@@ -146,7 +149,7 @@ export async function readSfrepDocuments(pool, { accountId, assignmentFileId, do
   return documents;
 }
 
-export function previewSfrepDocuments(documents, input) {
+export function previewSfrepDocuments(documents, input, photoRows = []) {
   const bytes = documents.reduce((total, document) => total + document.file_size_bytes, 0);
   if (input.includeDocuments && bytes > SFREP_TRANSFER_LIMITS.bytes) fail('sfrep_package_too_large');
   const pdfAddenda = input.includeDocuments ? documents.map(document => ({
@@ -164,10 +167,21 @@ export function previewSfrepDocuments(documents, input) {
     mapped.warnings.push(...canonical.warnings);
     mapped.knownMissing.push(...canonical.knownMissing);
   }
+  const photoProjection = projectSfrepPhotos(photoRows, input);
+  if (photoProjection.formXml.length) {
+    mapped.reportXml = mapped.reportXml.replace('  </Forms>', `${photoProjection.formXml.join('\n')}\n  </Forms>`);
+  }
+  if (photoProjection.photos.some(photo => !photo.included)) {
+    mapped.warnings.push('Some inspection photos are not verified and will not be exported. Wait for uploads to finish, then preview again.');
+  }
+  const photoBytes = photoProjection.imageAddenda.reduce((total, image) => total + image.byteSize, 0);
+  if ((input.includeDocuments ? bytes : 0) + photoBytes + Buffer.byteLength(mapped.reportXml) > SFREP_TRANSFER_LIMITS.bytes) fail('sfrep_package_too_large');
   // A re-read during download must match the review the user actually saw.
   const previewDigest = digest(JSON.stringify({ accountId: input.accountId, assignmentFileId: input.assignmentFileId,
-    documents, saved, subjectContext, includeDocuments: input.includeDocuments, formId: input.formId, reportXml: mapped.reportXml }));
+    documents, saved, subjectContext, includeDocuments: input.includeDocuments, includePhotos: input.includePhotos === true,
+    photos: photoProjection.photos, imageAddenda: photoProjection.imageAddenda, formId: input.formId, reportXml: mapped.reportXml }));
   return { ...mapped, preview_digest: previewDigest,
+    photos: photoProjection.photos, imageAddenda: photoProjection.imageAddenda,
     filename: `HomeNode-SFREP-${input.formId === 'FNMA-2055-0911' ? '2055-' : ''}file-${input.assignmentFileId}.rpti`,
     ...(saved ? { savedReport: { assignmentFileId: saved.assignmentFileId, assignmentRevision: saved.assignmentRevision,
       subjectRevision: Number(saved.subject?.revision || 0), sourceDocumentIds: saved.documents.map(document => document.id) } } : {}),
@@ -198,6 +212,13 @@ export async function packageSfrepDocuments(pool, storage, documents, preview, i
     totalBytes += source.content.length;
     if (totalBytes > SFREP_TRANSFER_LIMITS.bytes) fail('sfrep_package_too_large');
     files.push({ path: `Pdf/${addendum.fileName}`, body: source.content });
+  }
+  for (const image of preview.imageAddenda || []) {
+    const content = await loadSfrepPhotoBytes(storage, image, { signal,
+      maxBytes: SFREP_TRANSFER_LIMITS.bytes - totalBytes });
+    totalBytes += content.length;
+    if (totalBytes > SFREP_TRANSFER_LIMITS.bytes) fail('sfrep_package_too_large');
+    files.push({ path: `Images/${image.fileName}`, body: content });
   }
   signal.throwIfAborted();
   return buildDeterministicZip(files);

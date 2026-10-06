@@ -286,12 +286,12 @@ function AddressHero({
       const workfileResult = await loadCustomAppraisalWorkfile(accountId, selectedFile.id);
       if (isCancelled()) return;
       const neighborhoodSection = workfileResult.workfile.sections.neighborhood_assessment;
-      // Server-check absent sections: acceptance history does not mean a legacy file.
+      // Check absent sections; history does not imply legacy.
       if (workfileResult.workfile.status === "signed") {
         if (acceptedReadGeneration.current === acceptedRead) setAcceptedNeighborhood({ accountId, assignmentFileId: selectedFile.id, status: "signed", assessment: null,
           message: "This is a signed file. View the signed PDF for its immutable neighborhood analysis." });
       } else {
-        // Independent read: never block sales/market hydration or file selection.
+        // Independent read; never block sales/market hydration.
         // Even network failures resolve a checked state.
         void loadCustomNeighborhoodAccepted(accountId, selectedFile.id, neighborhoodSection).then(restored => {
           if (!isCancelled() && acceptedReadGeneration.current === acceptedRead) setAcceptedNeighborhood(restored);
@@ -700,8 +700,8 @@ function AddressHero({
   const subjectYearBuilt = parseNumber(
     improvement?.effective_year_built ?? improvement?.year_built,
   );
-  useSubjectSummary(accountId, activeAssignmentFile, detail?.property_location,
-    parseNumber(improvement?.year_built), housing?.housing_type, setAssignmentDraft);
+  const neighborhoodSummaryProps = useSubjectSummary(accountId, activeAssignmentFile, detail?.property_location,
+    parseNumber(improvement?.year_built), housing?.housing_type, setAssignmentDraft, assignmentDraft, setAssignmentDirty);
   const subjectAge = reportedSubjectAge ?? (
     subjectYearBuilt !== null
       ? Math.max(0, new Date().getFullYear() - subjectYearBuilt)
@@ -3060,9 +3060,10 @@ function AddressHero({
           {CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED ? (
             <div className="order-3">
               <Suspense fallback={<LazyReportContent label="neighborhood characteristics" />}>
-                <CustomNeighborhoodCharacteristicsSection
+                <CustomNeighborhoodCharacteristicsSection key={`${accountId}:${activeAssignmentFile?.id}`}
                   neighborhoodSummary={assignmentDraft.subject_neighborhood_summary || ''}
                   onNeighborhoodSummaryChange={value => updateAssignment('subject_neighborhood_summary', value)}
+                  {...neighborhoodSummaryProps}
                   workspace={neighborhoodWorkspace}
                   acceptedNeighborhood={currentAcceptedNeighborhood}
                   assignmentFilesError={Boolean(assignmentFilesError)}

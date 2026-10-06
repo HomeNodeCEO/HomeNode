@@ -102,10 +102,11 @@ export function checkCustomCohortPocketCatalog(value: unknown, expected: CustomC
     limitations: catalog.limitations.map(v => text(v, 200)) };
   const recommendation = Object.hasOwn(response, 'recommendation')
     ? checkCustomCohortPocketRecommendation(response.recommendation, checked, binding.selection_sha256) : null;
-  const preparedSecondary = recommendation && Object.hasOwn(response, 'prepared_secondary_map')
+  const preparedSecondary = Object.hasOwn(response, 'prepared_secondary_map')
     ? checkCustomCohortPreparedSecondaryMap(response.prepared_secondary_map,
       [...pockets, ...(unassignedAccounts.length ? [{ id: UNASSIGNED, member_count: unassignedAccounts.length }] : [])]) : null;
   ensure(!Object.hasOwn(response, 'prepared_secondary_map') || preparedSecondary !== null);
+  ensure(!preparedSecondary || preparedSecondary.version === 2 || recommendation !== null);
   const privateSales = Object.hasOwn(response, 'private_sales')
     ? checkCustomCohortPrivateSales(response.private_sales, expected, text(binding.selection_sha256, 64)) : null;
   const discovery = Object.hasOwn(response, 'discovery') ? prepareCustomWorkspaceDiscovery(response.discovery) : undefined;

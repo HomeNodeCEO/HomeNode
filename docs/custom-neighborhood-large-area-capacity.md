@@ -968,3 +968,24 @@ enabling V7 there; genuine legacy appraisal choices and accepted reports stay
 unchanged. Legacy migration, compact/paged catalogs, stable partial source/
 spatial recovery, complete >50k numerical/publication budgets and real 5/10-mile,
 retrospective and live acceptance remain unfinished.
+
+## Migrated V7 HTTP command acceptance (not live activation)
+
+The guarded disposable-PostgreSQL fixture now executes all four explicitly
+enabled workspace command routes through the actual finite router and closed
+presenters, not direct method calls alone. Nonempty source capture, immutable
+context registration, atomic head/workspace/history changes and original
+numeric/opening/member reads execute against the migrated database. Exact
+COMMIT-loss retries must acknowledge one successor for save, start, cancel and
+completion; stale requests cannot rewind later choices. Explicit empty remains
+empty. Anonymous/injected-body admission precedes SQL, and actual current DB
+role, source denial and signed-workfile refusals preserve the old state.
+
+The middleware principal and source-policy decisions are explicit synthetic
+fixture ports. This does not establish live browser/session authentication,
+application-wide middleware, a deployed V7 switch, larger capacity or latency.
+Accepted/report/assignment rows and the separate cold-start fixture remain
+byte-identical. Native execution must pass on the exact published head before
+this fixture constitutes evidence; syntax/local recording tests are not that
+proof. Production QA activation, complete paged capture/catalog/statistics/
+publication, legacy migration and real large-area/live Apply acceptance remain.

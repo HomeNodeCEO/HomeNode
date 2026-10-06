@@ -71,7 +71,7 @@ test('v1 original checked DTO hash is unchanged and does not invent recorded pro
   assert.deepEqual(Object.keys(f.response.recommendation.unavailable_factors), ['housing_type', 'proximity', 'sale_price']);
 });
 
-for (const radius of [undefined, '4828.032', '8046.72', '16093.44']) test(`original ${radius ?? 'legacy 3-mile'} capture -> real derivation/kernel/presenter -> checked v2`, async () => {
+for (const radius of [undefined, '1609.344', '3218.688', '4828.032', '8046.72', '16093.44']) test(`original ${radius ?? 'legacy 3-mile'} capture -> real derivation/kernel/presenter -> checked v2`, async () => {
   const f = await fixture({ radius }), value = f.checked.recommendation;
   assert.equal(f.calls.length, 1); assert.equal(value.policy.id, 'custom-current-observation-review-v2'); assert.equal(value.policy.revision, 2);
   assert.equal(value.recorded_proximity.radius_metres, radius ?? '4828.032');

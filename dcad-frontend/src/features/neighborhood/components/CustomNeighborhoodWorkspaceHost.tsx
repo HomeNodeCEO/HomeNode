@@ -53,11 +53,11 @@ function appraisalMessage(code: unknown): string {
   if (code === 'city_source_unavailable') return 'That city area is currently unavailable. Choose a different area.';
   return 'The neighborhood could not be updated. Try again.';
 }
-const RADII = { '3': '4828.032', '5': '8046.72', '10': '16093.44' } as const;
+const RADII = { '1': '1609.344', '2': '3218.688', '3': '4828.032', '5': '8046.72', '10': '16093.44' } as const;
 type RadiusMiles = keyof typeof RADII;
 const scopeKey = (discovery?: CustomWorkspaceDiscovery): string => discovery?.profile_id === 'custom-city-polygon-v1'
   ? `city:${discovery.city.geoid}:${discovery.city.vintage}:${discovery.city.asset_sha256}`
-  : discovery?.radius_metres === RADII['10'] ? '10' : discovery?.radius_metres === RADII['5'] ? '5' : '3';
+  : (Object.keys(RADII) as RadiusMiles[]).find(miles => RADII[miles] === discovery?.radius_metres) ?? '3';
 const CITIES = cityCatalog.cities.map(city => ({ name: city.name, discovery: { profile_id: 'custom-city-polygon-v1' as const,
   city: { geoid: city.geoid, vintage: cityCatalog.vintage, asset_sha256: city.sha256 } } }));
 const scopeLabel = (discovery?: CustomWorkspaceDiscovery): string => discovery?.profile_id === 'custom-city-polygon-v1'
@@ -328,7 +328,8 @@ function HostSession(props: Props) {
           if (!choice) return;
           scopeRef.current = choice; setScope(choice);
         }}>
-        <optgroup label="Radius"><option value="3">3 miles — default</option><option value="5">5 miles</option><option value="10">10 miles</option></optgroup>
+        <optgroup label="Radius"><option value="1">1 mile</option><option value="2">2 miles</option>
+          <option value="3">3 miles — default</option><option value="5">5 miles</option><option value="10">10 miles</option></optgroup>
         <optgroup label="Installed city polygons">{CITIES.map(entry => <option key={entry.discovery.city.geoid} value={scopeKey(entry.discovery)}>
           {entry.name} — {entry.discovery.city.vintage} polygon</option>)}</optgroup>
         {!installedScope && <option value={scopeKey(scope)} disabled>{scopeLabel(scope)} — retained; not installed for new capture</option>}

@@ -58,7 +58,7 @@ function proximitySummary(value, all, pockets) {
   check(value && Object.keys(value).sort().join(',') === 'authority,basis,counts,proximity_version,radius_metres,reason,status'
     && value.proximity_version === 1 && value.basis === CUSTOM_COHORT_RECORDED_PROXIMITY_BASIS
     && value.authority === 'not_established' && ['available', 'unavailable'].includes(value.status)
-    && ['4828.032', '8046.72', '16093.44'].includes(value.radius_metres), 'proximity');
+    && ['1609.344', '3218.688', '4828.032', '8046.72', '16093.44'].includes(value.radius_metres), 'proximity');
   check(value.status === 'available' ? value.reason === null : CUSTOM_COHORT_RECORDED_PROXIMITY_REASONS.includes(value.reason), 'proximity_reason');
   check(value.counts && Object.keys(value.counts).sort().join(',') === 'accounts,observed_accounts,parcels,unknown_accounts', 'proximity_counts');
   const counts = Object.fromEntries(Object.entries(value.counts).map(([key, amount]) => [key, count(amount)]));

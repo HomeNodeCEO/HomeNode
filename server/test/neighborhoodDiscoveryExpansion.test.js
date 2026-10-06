@@ -46,8 +46,8 @@ function deepFrozen(value) {
   if (value && typeof value === 'object') { assert.ok(Object.isFrozen(value)); Object.values(value).forEach(deepFrozen); }
 }
 
-test('exact three installed radius choices are detached and frozen without authority fields', () => {
-  assert.deepEqual(RADII, ['4828.032', '8046.72', '16093.44']); assert.ok(Object.isFrozen(RADII));
+test('exact five installed radius choices are detached and frozen without authority fields', () => {
+  assert.deepEqual(RADII, ['1609.344', '3218.688', '4828.032', '8046.72', '16093.44']); assert.ok(Object.isFrozen(RADII));
   for (const radius of RADII) {
     const original = choice(radius), checked = prepareNeighborhoodDiscoveryChoice(original);
     assert.deepEqual(checked, original); assert.notEqual(checked, original); deepFrozen(checked);
@@ -93,9 +93,9 @@ test('v2 selector binds profile/radius while preserving exact fixed spatial sema
     assert.equal(JSON.stringify(input), before); deepFrozen(result); hashes.add(result.selection_binding_sha256);
     assert.equal(prepareNeighborhoodSelectorInputV1(input).status, 'unsupported');
   }
-  assert.equal(hashes.size, 3);
-  assert.notEqual(prepareNeighborhoodSelectorInput(selectorInput(V1, RADII[0])).selection_binding_sha256,
-    prepareNeighborhoodSelectorInput(selectorInput(V2, RADII[0])).selection_binding_sha256);
+  assert.equal(hashes.size, 5);
+  assert.notEqual(prepareNeighborhoodSelectorInput(selectorInput(V1, '4828.032')).selection_binding_sha256,
+    prepareNeighborhoodSelectorInput(selectorInput(V2, '4828.032')).selection_binding_sha256);
 });
 test('v2 does not loosen selector geometry, roster, profile or discovery admission', () => {
   for (const mutate of [
@@ -135,7 +135,7 @@ test('new spatial domain separates all radii and v1 even for exactly the same pa
     assert.ok(client.calls.every(q => !/\b(BEGIN|COMMIT|ROLLBACK|SET LOCAL)\b/.test(q.text)));
   }
   values.push((await captureNeighborhoodSpatialMembership(spatialClient(), geometry())).membership_sha256);
-  assert.equal(new Set(values).size, 4);
+  assert.equal(new Set(values).size, 6);
 });
 test('v2 snapshot and capacity failures remain whole-result failures without partial memberships', async () => {
   for (const [limits, options, reason] of [
@@ -165,13 +165,14 @@ test('v1 full retained fixture, selector, spatial result and exact context retai
   assert.equal(hash(i.selector), 'c960b3f1f15aecbbb0962135bc7b3d95a1f683a8f0e6a307cada9c099613ef88');
   assert.equal(hash(i.spatial), '936391bbad1f0da05bc204e9b70c61370823775da518e92d580afd409c987a39');
   assert.equal(hash(f.input.expected.context_ref), 'abe2c69087ad176d9821e96c4bfef3216ab0c26cd5601e4c7f290e45156e2906');
-  const input = selectorInput(V1, RADII[0]); assert.deepEqual(prepareNeighborhoodSelectorInput(input), prepareNeighborhoodSelectorInputV1(input));
+  const input = selectorInput(V1, '4828.032'); assert.deepEqual(prepareNeighborhoodSelectorInput(input), prepareNeighborhoodSelectorInputV1(input));
 });
-for (const [index, radius] of RADII.entries()) for (const privateSales of [false, true]) {
+for (const radius of RADII) for (const privateSales of [false, true]) {
   test(`genuine ${radius} acquisition persists/reopens every original row${privateSales ? ' and private supplement' : ''}`, async () => {
     const f = await customCohortDiscoveryExpansionFixture({ radius, privateSales });
     assert.deepEqual(f.reopened.retained_inputs, f.input); assert.equal(f.reopened.summary.radius_metres, radius);
-    assert.equal(f.reopened.summary.account_count, index + 2); assert.deepEqual(f.reopened.study.discovery, choice(radius));
+    const expectedCount = radius === '16093.44' ? 4 : radius === '8046.72' ? 3 : 2;
+    assert.equal(f.reopened.summary.account_count, expectedCount); assert.deepEqual(f.reopened.study.discovery, choice(radius));
     assert.equal(f.reopened.study.profile_id, V2); assert.equal(f.reopened.study.knowledge_cutoff, null);
     assert.deepEqual(f.input.subject, f.previous.subject); assert.equal(f.input.acquisition_intent.body.intent_version, privateSales ? 2 : 1);
     assert.equal(Object.hasOwn(f.reopened.retained_inputs, 'private_sales'), privateSales);
@@ -180,7 +181,7 @@ for (const [index, radius] of RADII.entries()) for (const privateSales of [false
     const header = prepareCustomCohortContextHeader(json({ ...JSON.parse(f.originalContextHeaderJson), ...f.refs }));
     const preview = buildCustomCohortObservationPreview({ context_ref: header.context_ref,
       retained_inputs: f.reopened.retained_inputs, selection: { revision: 7, pockets: [] } });
-    assert.equal(preview.all.stock.member_count, index + 2);
+    assert.equal(preview.all.stock.member_count, expectedCount);
     assert.equal(preview.all.stock.temporal_basis, 'current_mirror_observation');
     assert.equal(preview.all.stock.assessment_tax_year, null); assert.equal(preview.apply.status, 'blocked');
     assert.equal(preview.all.transactions.member_count, 1); // The original 2024 closing remains observed.

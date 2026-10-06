@@ -32,7 +32,7 @@ export async function customCohortDiscoveryExpansionFixture({ radius = '8046.72'
     groups.parcels.push({ ...groups.parcels[0], account_id, object_id });
     groups.accounts.push({ account_id, county: 'Dallas', subdivision: `Synthetic radius band ${index + 1}` });
   }
-  const size = city ? 4 : radius === '4828.032' ? 2 : radius === '8046.72' ? 3 : 4;
+  const size = city ? 4 : radius === '16093.44' ? 4 : radius === '8046.72' ? 3 : 2;
   const parcels = spatialRows.slice(0, size), accounts = parcels.map(p => p.account_id).sort();
   const snapshot = previous.spatial.snapshot, queryCalls = [];
   const cacheClient = { release() { assert.fail('caller owns transaction'); }, async query(config) {

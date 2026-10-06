@@ -59,7 +59,7 @@ const semantic = result => { const { counts, ...rest } = result; return { ...res
 
 test('compact acquisition preserves literal rows, snapshot and canonical membership at all installed radii', async () => {
   const rows = [parcel(-7), parcel(1), parcel(2, '0001'), parcel(9007199254740993n)];
-  for (const radius of [undefined, '4828.032', '8046.72', '16093.44']) {
+  for (const radius of [undefined, '1609.344', '3218.688', '4828.032', '8046.72', '16093.44']) {
     const choice = radius === undefined ? undefined : { profile_id: 'custom-suburban-radius-v2', radius_metres: radius };
     const reference = await stream(clientFor(rows), geometry, { page_size: 2 }, choice);
     const result = await compact(clientFor([...rows].reverse()), geometry, { page_size: 2 }, choice);

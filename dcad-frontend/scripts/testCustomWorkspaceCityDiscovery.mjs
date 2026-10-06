@@ -194,7 +194,7 @@ for (const privateInput of [undefined, PRIVATE]) for (const previous of [undefin
     } finally { h.owner.dispose(); }
   });
 }
-for (const metres of ['4828.032', '8046.72', '16093.44']) test(`city -> ${metres} preserves v4 pending then activates v6 with radius scope`, async () => {
+for (const metres of ['1609.344', '3218.688', '4828.032', '8046.72', '16093.44']) test(`city -> ${metres} preserves v4 pending then activates v6 with radius scope`, async () => {
   const initial = section(CITY), h = harness({ initialSection: initial });
   try { await h.owner.reopen(); assert.deepEqual(h.owner.getState().selection.pockets, []);
     await h.owner.start(PERIOD, undefined, radius(metres));

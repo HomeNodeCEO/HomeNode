@@ -193,7 +193,7 @@ function harness(t, db, initialSection, overrides = {}) {
         'Capture a new 3-mile study': 'Explore a new 3-mile area',
         'Update grouping from saved capture': 'Refresh subdivision grouping',
       })[label] ?? label;
-      visibleLabel = visibleLabel.replace(/^Capture a new (5|10)-mile study$/, 'Explore a new $1-mile area')
+      visibleLabel = visibleLabel.replace(/^Capture a new (1|2|5|10)-mile study$/, 'Explore a new $1-mile area')
         .replace(/^Capture (.+ city polygon \(.+\)) study$/, 'Explore $1');
       return walk(tree).find(node => node.type === 'button' && text(node) === visibleLabel);
     },
@@ -607,6 +607,27 @@ test('radius chooser is intent-only until capture and then persists the exact ex
   assert.equal(db.calls.filter(call => call.kind === 'capture').at(-1).body.discovery.radius_metres, '4828.032');
   assert.deepEqual(db.file(TARGET).accepted, before);
 });
+
+for (const [miles, metres] of [['1', '1609.344'], ['2', '3218.688']]) {
+  test(`${miles}-mile chooser captures, retains and reopens its exact study without changing accepted observations`, async t => {
+    const initial = activeSection(), db = server(initial), h = harness(t, db, initial); await h.settle();
+    const before = copy(db.file(TARGET).accepted);
+    h.radius(miles); await h.settle();
+    assert.deepEqual(kinds(db), ['catalog']);
+    assert.match(h.html(), /Displayed study: 3-mile radius/);
+    h.click(`Capture a new ${miles}-mile study`); await h.settle();
+    const discovery = { profile_id: 'custom-suburban-radius-v2', radius_metres: metres };
+    assert.deepEqual(db.calls.find(call => call.kind === 'capture').body.discovery, discovery);
+    assert.deepEqual(db.file(TARGET).section.value.active.discovery, discovery);
+    assert.match(h.html(), new RegExp(`Displayed study: ${miles}-mile radius`));
+    assert.deepEqual(db.file(TARGET).accepted, before);
+    h.unmount();
+    const reopened = harness(t, db, copy(db.file(TARGET).section)); await reopened.settle();
+    assert.match(reopened.html(), new RegExp(`Displayed study: ${miles}-mile radius`));
+    assert.ok(reopened.button(`Capture a new ${miles}-mile study`));
+    assert.deepEqual(db.file(TARGET).accepted, before);
+  });
+}
 
 test('larger capture failure retains the displayed area and exact pending radius for retry', async t => {
   const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();

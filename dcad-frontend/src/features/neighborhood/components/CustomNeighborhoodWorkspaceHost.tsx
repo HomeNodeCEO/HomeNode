@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { createCustomWorkspaceLifecycle } from '../customWorkspaceLifecycle';
-import type { CustomWorkspaceLifecycleState, CustomWorkspaceOperationOptions, CustomWorkspaceTarget } from '../customWorkspaceLifecycle';
+import type { CustomWorkspaceLifecycleState, CustomWorkspaceTarget } from '../customWorkspaceLifecycle';
 import type { CustomWorkspaceObservationPeriod, CustomWorkspacePrivateSalesImport, CustomWorkspaceDiscovery } from '../customWorkspaceCheckpoint';
 import { hasValidCustomWorkspaceObservationPeriod } from '../customWorkspaceCheckpoint';
 import { createCustomWorkspaceRequestLane, CUSTOM_WORKSPACE_CAPTURE_TIMEOUT_MS } from '../customWorkspaceRequestLane';
 import type { createCustomWorkspaceApi } from '../customWorkspaceApi';
-import type { CustomCohortPreviewRequest } from '../customCohortPreviewController';
+import type { CustomCohortPreviewRequest, CustomCohortPreviewGroup } from '../customCohortPreviewController';
 import type { CustomCohortMemberTransport } from '../customCohortPreviewTransport';
 import CustomCohortWorkspace from './CustomCohortWorkspace';
-import CustomReportedObservationAdoption from './CustomReportedObservationAdoption';
 import cityCatalog from '../../../data/neighborhoodCityBoundaries.json';
 
 export interface CustomNeighborhoodWorkspaceControls {
@@ -30,6 +29,7 @@ interface Props {
   api: ReturnType<typeof createCustomWorkspaceApi>;
   registerControls?: (controls: CustomNeighborhoodWorkspaceControls | null) => void;
   onAccepted?: () => Promise<boolean>;
+  onAnalysisSelection?: (group: CustomCohortPreviewGroup | null, includesTownhomes?: boolean) => void;
 }
 const button = 'hn-action-secondary btn btn-sm normal-case';
 const PERIOD_GUIDANCE = 'Choose valid observation start and end dates, with the start on or before the end. No study has been requested for these dates.';
@@ -90,11 +90,6 @@ function HostSession(props: Props) {
   const [locked, setLocked] = useState(false);
   const [actionPending, setActionPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [reportEpoch, setReportEpoch] = useState(0);
-  const [reportUncertain, setReportUncertain] = useState(false);
-  const reportUncertainRef = useRef(false);
-  const [reportRecovery, setReportRecovery] = useState(false);
-  const reportRecoveryRef = useRef(false);
   const owner = useRef<ReturnType<typeof createCustomWorkspaceLifecycle> | null>(null);
   const lane = useRef<ReturnType<typeof createCustomWorkspaceRequestLane> | null>(null);
   const currentAction = useRef<Promise<unknown> | null>(null);
@@ -104,7 +99,6 @@ function HostSession(props: Props) {
   const live = useRef(false);
   const generation = useRef(0);
   const reloadAbort = useRef<AbortController | null>(null);
-  const reportAbort = useRef<AbortController | null>(null);
   const period = useRef({ start_date: start, end_date: end }); period.current = { start_date: start, end_date: end };
   const validPeriod = hasValidCustomWorkspaceObservationPeriod(period.current);
 
@@ -131,9 +125,8 @@ function HostSession(props: Props) {
   // page-wide assignment autosave state. Invalid/uncertain saves stay visible.
   /** Serialize a workspace action and convert internal failures into bounded,
    * appraiser-facing state without exposing provider or database diagnostics. */
-  function act(action: () => Promise<unknown>, report = false) {
+  function act(action: () => Promise<unknown>) {
     if (!live.current || readonlyRef.current || lockedRef.current || currentAction.current) return Promise.resolve(false);
-    if (!report && (reportUncertainRef.current || reportRecoveryRef.current)) return Promise.resolve(false);
     const epoch = generation.current;
     actionFailed.current = false; setMessage(null); setActionPending(true);
     const task = Promise.resolve().then(() => {
@@ -141,10 +134,9 @@ function HostSession(props: Props) {
       return false;
     }).catch(error => {
       if (live.current && generation.current === epoch) {
-        if (report) { reportRecoveryRef.current = true; setReportRecovery(true); }
-        else { actionFailed.current = true;
-          const code = error instanceof Error && 'workspaceCode' in error ? error.workspaceCode : null;
-          setMessage(appraisalMessage(code)); }
+        actionFailed.current = true;
+        const code = error instanceof Error && 'workspaceCode' in error ? error.workspaceCode : null;
+        setMessage(appraisalMessage(code));
       }
       return false;
     }).finally(() => {
@@ -171,7 +163,7 @@ function HostSession(props: Props) {
     owner.current = lifecycle; restoreScope(lifecycle.getState()); setState(lifecycle.getState());
     initial.registerControls?.({ target: initial.target,
       useReviewedSales: reference => {
-        if (!live.current || generation.current !== epoch || reportUncertainRef.current || reportRecoveryRef.current || !hasValidCustomWorkspaceObservationPeriod(period.current))
+        if (!live.current || generation.current !== epoch || !hasValidCustomWorkspaceObservationPeriod(period.current))
           return Promise.resolve(false);
         return act(() => lifecycle.start(period.current, reference, captureDiscovery()));
       },
@@ -182,7 +174,7 @@ function HostSession(props: Props) {
           await currentAction.current; await requests.flush();
           const current = lifecycle.getState();
           return live.current && generation.current === epoch && !currentAction.current && !lockedRef.current && !actionFailed.current
-            && !reportUncertainRef.current && !reportRecoveryRef.current && lifecycle.isSettled() && requests.isIdle() && !current.recovery
+            && lifecycle.isSettled() && requests.isIdle() && !current.recovery
             && !current.checkpoint?.pending_capture && ['idle', 'ready'].includes(current.status);
         } catch { return false; }
       } });
@@ -194,7 +186,7 @@ function HostSession(props: Props) {
     else if (first.status === 'idle' && !first.checkpoint?.pending_capture && hasValidCustomWorkspaceObservationPeriod(initial.initialPeriod)) act(() => lifecycle.start(initial.initialPeriod!));
     return () => {
       live.current = false; generation.current = epoch + 1; currentAction.current = null;
-      reloadAbort.current?.abort(); reportAbort.current?.abort(); lifecycle.dispose(); requests.dispose();
+      reloadAbort.current?.abort(); lifecycle.dispose(); requests.dispose();
       owner.current = null; lane.current = null; initial.registerControls?.(null);
     };
   }, [initial]);
@@ -206,7 +198,7 @@ function HostSession(props: Props) {
     // Quiescence must close read admission too: an inspector or a previously
     // debounced preview must not acquire new locks after finalization flushed.
     // Already admitted lane work remains owned and is awaited by flush().
-    if (!live.current || readonlyRef.current || lockedRef.current || reportUncertainRef.current || reportRecoveryRef.current)
+    if (!live.current || readonlyRef.current || lockedRef.current)
       return Promise.reject(new Error('custom_workspace_read_only'));
     if (!requests || input.accountId !== initial.target.accountId || input.assignmentFileId !== initial.target.assignmentFileId)
       return Promise.reject(new Error('custom_workspace_target_changed'));
@@ -216,7 +208,7 @@ function HostSession(props: Props) {
     const requests = lane.current, current = owner.current?.getState();
     // Completed pages may stay visible while saving, but new inspection work
     // cannot compete with mutation or reopen a lane already quiesced for signing.
-    if (!live.current || readonlyRef.current || lockedRef.current || reportUncertainRef.current || reportRecoveryRef.current
+    if (!live.current || readonlyRef.current || lockedRef.current
       || currentAction.current || actionFailed.current || current?.status !== 'ready' || current.recovery || current.checkpoint?.pending_capture)
       return Promise.reject(new Error('custom_workspace_read_only'));
     if (!requests || input.accountId !== initial.target.accountId || input.assignmentFileId !== initial.target.assignmentFileId)
@@ -238,42 +230,9 @@ function HostSession(props: Props) {
       || (state?.recovery && state.recovery !== 'resume_pending') ? 'reload_required'
     : state?.checkpoint?.pending_capture || state?.recovery === 'resume_pending' ? 'pending_capture'
     : state?.status !== 'ready' && state?.status !== 'idle' ? 'reload_required' : null;
-  const explorationBlocked = blockedReason ?? (reportUncertain || reportRecovery ? 'reload_required' : null);
+  const explorationBlocked = blockedReason;
   const active = lastReady?.checkpoint?.active;
   const installedScope = scope?.profile_id !== 'custom-city-polygon-v1' || CITIES.some(entry => scopeKey(entry.discovery) === scopeKey(scope));
-  function reportOutcome(uncertain: boolean) {
-    if (!live.current) return;
-    reportUncertainRef.current = uncertain; setReportUncertain(uncertain);
-  }
-  function runReportTask(task: (io: CustomWorkspaceOperationOptions) => Promise<void>) {
-    // A report deadline is not a failed workspace save. Keep the mounted
-    // proposal/Apply UUID and allow only its explicit retry (or accepted read),
-    // once the previous underlying lane operation has actually settled.
-    const state = owner.current?.getState();
-    if (actionFailed.current || state?.status !== 'ready' || state.recovery || state.checkpoint?.pending_capture
-      || (reportRecoveryRef.current && !lane.current?.isIdle())) return Promise.resolve(false);
-    return act(async () => {
-      const requests = lane.current, lifecycle = owner.current;
-      const current = lifecycle?.getState();
-      if (!requests || !lifecycle || !lifecycle.isSettled() || current?.status !== 'ready'
-        || current.recovery || current.checkpoint?.pending_capture)
-        throw new Error('custom_workspace_busy');
-      if (reportRecoveryRef.current) {
-        if (!requests.isIdle()) throw new Error('custom_workspace_busy');
-        requests.recover();
-      }
-      await requests.flush();
-      const abort = new AbortController(); reportAbort.current = abort;
-      const epoch = generation.current;
-      const deadline = performance.now() + 65_000;
-      const timeout = setTimeout(() => abort.abort(), 65_000);
-      try {
-        await requests.run(({ signal }) => task({ signal, deadline }), { signal: abort.signal });
-        if (live.current && generation.current === epoch) { reportRecoveryRef.current = false; setReportRecovery(false); }
-      }
-      finally { clearTimeout(timeout); if (reportAbort.current === abort) reportAbort.current = null; }
-    }, true);
-  }
   async function reload() {
     const requests = lane.current, lifecycle = owner.current;
     if (!requests || !lifecycle || !lifecycle.isSettled()) throw new Error('custom_workspace_busy');
@@ -289,7 +248,6 @@ function HostSession(props: Props) {
       if (!live.current || abort.signal.aborted) return;
       if (fresh.status !== 'draft') { lockedRef.current = true; setLocked(true); setLastReady(null); return; }
       await lifecycle.reload({ target: fresh.target, section: fresh.section });
-      if (live.current && !abort.signal.aborted) setReportEpoch(value => value + 1);
     } finally { clearTimeout(timeout); if (reloadAbort.current === abort) reloadAbort.current = null; }
   }
   /** Refresh authoritative workfile state, then continue the exact recorded
@@ -343,17 +301,17 @@ function HostSession(props: Props) {
         type="button" className={button} disabled={busy || Boolean(explorationBlocked)}
         title="Refresh the subdivision grouping without changing the selected area."
         onClick={() => { if (!explorationBlocked) act(() => owner.current!.upgradeGrouping()); }}>Refresh subdivision grouping</button>}
-      {recoveryNeeded && <button type="button" className={button} disabled={busy || reportUncertain || reportRecovery}
-        onClick={() => { if (!reportUncertainRef.current && !reportRecoveryRef.current) act(recoverNeighborhood); }}>Try again</button>}
+      {recoveryNeeded && <button type="button" className={button} disabled={busy}
+        onClick={() => { act(recoverNeighborhood); }}>Try again</button>}
       {recoveryNeeded && (state?.checkpoint?.pending_capture || state?.recovery === 'resume_pending') && <button type="button" className={button}
-        disabled={busy || reportUncertain || reportRecovery}
+        disabled={busy}
         title="Keep the last completed neighborhood and clear only the incomplete attempt."
-        onClick={() => { if (!reportUncertainRef.current && !reportRecoveryRef.current) act(chooseDifferentArea); }}>Choose a different area</button>}
+        onClick={() => { act(chooseDifferentArea); }}>Choose a different area</button>}
       {/* These hidden single-step controls retain direct lifecycle coverage for
           failure-injection tests. Appraisers use the combined actions above. */}
       <span hidden aria-hidden="true">
-        <button type="button" disabled={busy || reportUncertain || reportRecovery}
-          onClick={() => { if (!reportUncertainRef.current && !reportRecoveryRef.current) act(reload); }}>Reload saved choices</button>
+        <button type="button" disabled={busy}
+          onClick={() => { act(reload); }}>Reload saved choices</button>
         {(state?.checkpoint?.pending_capture || state?.recovery === 'resume_pending') && <button type="button"
           disabled={busy || blockedReason === 'reload_required' || (state.recovery !== null && state.recovery !== 'resume_pending')}
           onClick={() => { if (blockedReason !== 'reload_required') act(() => owner.current!.resumePending()); }}>Resume saved capture</button>}
@@ -374,16 +332,13 @@ function HostSession(props: Props) {
       {message ?? (recoverablePendingSave
         ? 'The neighborhood update was interrupted. Try again.'
         : 'The neighborhood could not be loaded. Try again.')}</p>}
-    {reportRecovery && <p role="alert" className="text-sm">The report did not finish updating. Try again.</p>}
     {active && lastReady?.catalog && <CustomCohortWorkspace accountId={initial.target.accountId} assignmentFileId={initial.target.assignmentFileId}
       sessionKey={initial.target.sessionKey} contextRef={active.context_ref} subjectLabel={initial.subjectLabel} enabled={!locked}
+      onAnalysisSelection={props.onAnalysisSelection}
       workspace={{ catalog: lastReady.catalog, selection: active.selection, saving, blockedReason: explorationBlocked, previewTransport, memberTransport,
         initialPreview: lastReady.initial_preview,
         onSelectionIntent: ids => { if (!explorationBlocked) act(() => owner.current!.setGroups(ids)); } }} />}
-    {active && state?.status === 'ready' && state.section_revision !== null && <CustomReportedObservationAdoption
-      key={JSON.stringify([active.context_ref, state.section_revision, reportEpoch])}
-      target={initial.target} contextRef={active.context_ref} workspaceRevision={state.section_revision}
-      api={initial.api} disabled={busy || Boolean(blockedReason)} run={runReportTask}
-      onOutcomeUncertain={reportOutcome} onAccepted={initial.onAccepted} />}
+    {/* Selection persists as workfile exploration; report adoption remains a
+        separate contract, not an extra panel or automatic report write. */}
   </section>;
 }

@@ -392,12 +392,18 @@ test('characteristics mounts one chosen host inside the existing layout, not bot
   const runtime = createRequire(new URL('../package.json', import.meta.url)), jsx = runtime('react/jsx-runtime');
   const { renderToStaticMarkup } = runtime('react-dom/server');
   const Section = compile('components/CustomNeighborhoodCharacteristicsSection.tsx', {
-    react: { useMemo: fn => fn(), Suspense: ({ children }) => children, lazy: loader => {
+    react: { useMemo: fn => fn(), useState: value => [typeof value === 'function' ? value() : value, () => {}],
+      useCallback: fn => fn, useEffect() {}, Suspense: ({ children }) => children, lazy: loader => {
       const match = /(?:import|require)\(['"](.+?)['"]\)/.exec(String(loader)); assert.ok(match);
       const name = match[1].split('/').at(-1);
       return function Stub() { return jsx.jsx('div', { 'data-host': name }); };
     } }, 'react/jsx-runtime': jsx,
     '@/components/PropertyReportControls': { SummarySection: ({ children }) => jsx.jsx('section', { children }) },
+    '@/lib/neighborhoodSummaryTemplate': {
+      neighborhoodSummaryTemplate() { assert.fail('render-only host selection must not generate a summary'); },
+      refreshNeighborhoodSummaryTemplate() { assert.fail('render-only host selection must not refresh a summary'); },
+      NEIGHBORHOOD_TEMPLATE_REVIEW_ITEMS: [],
+    },
   }).default;
   const props = { neighborhoodSummary: '', onNeighborhoodSummaryChange() {}, acceptedNeighborhood: null,
     assignmentFilesLoaded: false, assignmentFilesError: false, hasActiveAssignmentFile: false,
@@ -408,5 +414,18 @@ test('characteristics mounts one chosen host inside the existing layout, not bot
   const exact = renderToStaticMarkup(jsx.jsx(Section, { ...props, workspace: { ...props.workspace, groupHostProps: {} } }));
   assert.match(exact, /data-host="CustomCohortGroupWorkspaceHost"/);
   assert.doesNotMatch(exact, /data-host="CustomNeighborhoodWorkspaceHost"/);
-  assert.match(exact, /Neighborhood summary/); assert.match(exact, /Applied neighborhood characteristics and market observations/);
+  assert.match(exact, /Neighborhood summary/);
+  for (const html of [legacy, exact]) {
+    assert.doesNotMatch(html, /Applied neighborhood characteristics and market observations|Applying the reviewed neighborhood/);
+    assert.doesNotMatch(html, /data-host="CustomNeighborhoodAccepted(?:Outline|Summary)"/);
+  }
+  for (const groupHostProps of [null, {}]) {
+    const accepted = renderToStaticMarkup(jsx.jsx(Section, { ...props,
+      acceptedNeighborhood: { status: 'accepted', assessment: { synthetic_accepted: 'retained' } },
+      workspace: { ...props.workspace, groupHostProps } }));
+    assert.match(accepted, /class="hidden print:block"/);
+    assert.match(accepted, /data-host="CustomNeighborhoodAcceptedOutline"/);
+    assert.match(accepted, /data-host="CustomNeighborhoodAcceptedSummary"/);
+    assert.doesNotMatch(accepted, /Applied neighborhood characteristics and market observations|Applying the reviewed neighborhood/);
+  }
 });

@@ -154,6 +154,7 @@ export function createAccountPropertyContextRouter({
         assignmentFileId,
         customGeometry: req.body?.custom_geometry || null,
         geography: req.body?.geography || null,
+        marketStudyContextOnly: req.body?.market_study_context_only === true,
       });
       return res.json({ ok: true, account_id: accountId, assessment });
     } catch (error) {

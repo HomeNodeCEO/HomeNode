@@ -35,3 +35,18 @@ test('missing or insufficient recommendation does not invent score ranges', () =
   assert.deepEqual(customCohortScoreBands(null), []);
   assert.deepEqual(customCohortScoreBands({ status: 'insufficient_observations', pockets: [pocket('a', 95)] }), []);
 });
+
+test('manual bands use the same retained display scores as the map without enabling auto ranking', () => {
+  const map = { version: 2, groups: [
+    { id: 'a', member_count: 12, supported_member_count: 12, lower: 85 },
+    { id: 'unknown', member_count: 3, supported_member_count: 0, lower: 0 },
+    { id: 'discovery:unassigned', member_count: 1, supported_member_count: 1, lower: 95 },
+  ] };
+  const bands = customCohortScoreBands(null, map);
+  assert.deepEqual(bands[1].recorded_group_ids, ['a']);
+  assert.equal(bands[1].account_count, 12);
+  assert.equal(bands.reduce((n, b) => n + b.recorded_group_ids.length, 0), 1);
+  assert.deepEqual(customCohortScoreBands(null, { ...map, version: 1 }), []);
+  const overlay = { version: 1, groups: [{ id: 'a', member_count: 12, supported_member_count: 12, lower: 75 }] };
+  assert.deepEqual(customCohortScoreBands(recommendation([pocket('a', 85, 12)]), overlay)[2].recorded_group_ids, ['a']);
+});

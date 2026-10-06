@@ -5,6 +5,7 @@ export const MARKET_STUDY_PUBLIC_ERRORS = new Set([
   "subject_not_found",
   "invalid_subject_account_id",
   "invalid_market_area",
+  "invalid_exploration_selection",
   "invalid_market_period",
   "invalid_as_of",
   "market_areas_required",

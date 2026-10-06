@@ -1,7 +1,9 @@
 import { types } from 'node:util';
 import { canonicalAssessmentJson as json } from './contract.js';
 import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
-import { prepareCustomNeighborhoodRecordedGroupIds } from './customWorkspaceCheckpoint.js';
+import { prepareCustomNeighborhoodRecordedGroupIds,
+  prepareCustomNeighborhoodWorkspaceCheckpoint } from './customWorkspaceCheckpoint.js';
+import { saveCustomCohortGroupPendingCapture } from './customCohortGroupWorkspaceSave.js';
 import { createCustomCohortGroupSelectionRepository,
   prepareCustomCohortGroupSelectionReference } from './customCohortGroupSelectionRepository.js';
 import { prepareCustomCohortRecordedGroupSelection,
@@ -87,13 +89,15 @@ export async function reopenCustomCohortRecordedGroupSelectionOriginal(owned, in
  * can provide a source roster, catalog, manifest, actor stamp or group members.
  * Selection intent is not an accepted report, legal boundary or reliability.
  */
-export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, execute } = {}) {
+export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, execute, executeWorkspaceTransition } = {}) {
   if (typeof identityOf !== 'function' || typeof execute !== 'function') fail('dependencies_required');
   function inputOf(value, write, projection = 'intent') {
-    const preview = ['summary', 'viewport', 'members'].includes(projection), workspace = projection === 'workspace';
+    const preview = ['summary', 'viewport', 'members'].includes(projection), completing = projection === 'complete';
+    const workspace = projection === 'workspace' || completing;
     const v = admit(value, ['auth', 'accountId', 'assignmentFileId', 'contextRef',
       ...(write ? ['operationId', 'expectedSelectionRef', 'includedRecordedGroupIds'] : []),
       ...(workspace ? ['expectedWorkspaceRevision'] : []),
+      ...(completing ? ['expectedWorkspaceCheckpoint'] : []),
       ...(preview ? ['selectionRef'] : []), ...(projection === 'viewport' ? ['viewport'] : []),
       ...(projection === 'members' ? ['population', 'page'] : [])]);
     const identity = identityOf(v);
@@ -107,13 +111,40 @@ export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, exec
     if (typeof v.operationId !== 'string' || !UUID.test(v.operationId)) fail('invalid_operation');
     const expectedSelectionRef = v.expectedSelectionRef === null ? null
       : prepareCustomCohortGroupSelectionReference(v.expectedSelectionRef);
+    const checkpoint = completing ? prepareCustomNeighborhoodWorkspaceCheckpoint(v.expectedWorkspaceCheckpoint) : null;
+    if (completing && (expectedSelectionRef !== null || checkpoint.workspace_version !== 7
+      || checkpoint.pending_capture === null || checkpoint.pending_capture.operation_id !== contextRef.context_id)) fail('invalid_transition');
     if (expectedSelectionRef?.selection_revision === 2147483647) fail('revision_exhausted');
     if (workspace && (!Number.isInteger(v.expectedWorkspaceRevision) || v.expectedWorkspaceRevision < 1
       || v.expectedWorkspaceRevision >= 2147483647)) fail('invalid_workspace_revision');
     const includedRecordedGroupIds = Object.freeze([...prepareCustomNeighborhoodRecordedGroupIds(v.includedRecordedGroupIds, 3)].sort());
     return Object.freeze({ ...identity, contextRef, operationId: v.operationId,
       expectedSelectionRef, includedRecordedGroupIds,
-      ...(workspace ? { expectedWorkspaceRevision: v.expectedWorkspaceRevision } : {}) });
+      ...(workspace ? { expectedWorkspaceRevision: v.expectedWorkspaceRevision } : {}),
+      ...(completing ? { expectedWorkspaceCheckpoint: checkpoint } : {}) });
+  }
+  function transitionInputOf(value, starting) {
+    const v = admit(value, ['auth', 'accountId', 'assignmentFileId', 'expectedWorkspaceRevision',
+      'expectedWorkspaceCheckpoint', ...(starting ? ['pendingCapture'] : [])]);
+    const identity = identityOf(v), prior = prepareCustomNeighborhoodWorkspaceCheckpoint(v.expectedWorkspaceCheckpoint);
+    if (!UUID.test(identity.auth.userId) || !Number.isInteger(v.expectedWorkspaceRevision)
+      || v.expectedWorkspaceRevision < 0 || v.expectedWorkspaceRevision >= 2147483647
+      || (v.expectedWorkspaceRevision === 0 && (!starting || prior.active !== null || prior.pending_capture !== null))
+      || prior.workspace_version !== 7 || (starting ? prior.pending_capture !== null : prior.pending_capture === null))
+      fail('invalid_transition');
+    const next = prepareCustomNeighborhoodWorkspaceCheckpoint({ ...prior, pending_capture: starting ? v.pendingCapture : null });
+    if (starting && (next.pending_capture === null || next.pending_capture.operation_id === prior.active?.context_ref.context_id))
+      fail('invalid_transition');
+    return Object.freeze({ ...identity, expectedWorkspaceRevision: v.expectedWorkspaceRevision,
+      expectedWorkspaceCheckpoint: prior, pendingCapture: next.pending_capture });
+  }
+  async function pendingTransition(value, options, starting) {
+    const input = transitionInputOf(value, starting);
+    if (typeof executeWorkspaceTransition !== 'function') fail('transition_owner_required');
+    return executeWorkspaceTransition(input, options, owned => saveCustomCohortGroupPendingCapture({
+      client: owned.client, input: { ...input, auth: owned.auth }, scopeJson: owned.scopeJson,
+      pendingCapture: input.pendingCapture, checkBudget: owned.budget.check,
+    }));
   }
   const reopen = reopenCustomCohortRecordedGroupSelectionOriginal;
   async function completeAccounts(owned, input) {
@@ -126,17 +157,19 @@ export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, exec
     // Only after the final original and whole union match may a consumer see it.
     return { accounts: Object.freeze(accounts), reference: opened.selection_ref };
   }
-  async function select(value, options, workspace) {
-      const input = inputOf(value, true, workspace ? 'workspace' : 'intent');
+  async function select(value, options, projection) {
+      const workspace = ['workspace', 'complete'].includes(projection), completing = projection === 'complete';
+      const input = inputOf(value, true, projection);
       return execute(input, options, true, async owned => {
         if (workspace && typeof owned.selectionWorkspace?.save !== 'function') fail('workspace_owner_required');
         // The transaction owner supplies its CURRENT authenticated actor; never
         // accept actor_user_id or request-time role claims as reviewer authority.
-        const commandJson = json({ command_version: workspace ? 2 : 1, actor_user_id: owned.auth.userId,
+        const commandJson = json({ command_version: completing ? 3 : workspace ? 2 : 1, actor_user_id: owned.auth.userId,
           operation_id: input.operationId, expected_selection_ref: input.expectedSelectionRef,
           included_recorded_group_ids: input.includedRecordedGroupIds,
           selection_revision: (input.expectedSelectionRef?.selection_revision ?? 0) + 1,
-          ...(workspace ? { expected_workspace_revision: input.expectedWorkspaceRevision } : {}) });
+          ...(workspace ? { expected_workspace_revision: input.expectedWorkspaceRevision } : {}),
+          ...(completing ? { expected_workspace_checkpoint: input.expectedWorkspaceCheckpoint } : {}) });
         const repository = createCustomCohortGroupSelectionRepository(owned.client, owned.scopeJson,
           json(input.contextRef), { signal: owned.budget.signal, checkBudget: owned.budget.check });
         const { selection_ref: current } = await repository.peekCurrent();
@@ -161,14 +194,23 @@ export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, exec
           included_recorded_group_ids: derived.included_recorded_group_ids });
         const saved = workspace ? await owned.selectionWorkspace.save(selected) : null;
         return saved ? Object.freeze({ ...selected, workspace: saved }) : selected;
-      }, workspace ? 'workspace' : 'intent');
+      }, projection);
   }
   return Object.freeze({
     async selectRecordedGroups(value, options = {}) {
-      return select(value, options, false);
+      return select(value, options, 'intent');
     },
     async selectAndSaveRecordedGroups(value, options = {}) {
-      return select(value, options, true);
+      return select(value, options, 'workspace');
+    },
+    async startRecordedGroupCapture(value, options = {}) {
+      return pendingTransition(value, options, true);
+    },
+    async cancelRecordedGroupCapture(value, options = {}) {
+      return pendingTransition(value, options, false);
+    },
+    async completeRecordedGroupCapture(value, options = {}) {
+      return select(value, options, 'complete');
     },
     async readRecordedGroupSelection(value, options = {}) {
       const input = inputOf(value, false);

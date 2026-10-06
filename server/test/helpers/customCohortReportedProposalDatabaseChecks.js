@@ -18,8 +18,10 @@ import { loadCustomCohortCaptureInputs } from '../../src/services/neighborhoodAs
  * child database. No connection creation, cleanup, external data or mocked SQL.
  */
 export async function checkCustomCohortReportedProposalDatabase({ pool, databaseName, discovery, recordedHousing = false,
-  exactSelectionWorkspace = false }) {
+  exactSelectionWorkspace = false, exactSelectionTransition = false }) {
   assert.equal(typeof recordedHousing, 'boolean'); assert.equal(typeof exactSelectionWorkspace, 'boolean');
+  assert.equal(typeof exactSelectionTransition, 'boolean');
+  if (exactSelectionTransition) assert.equal(exactSelectionWorkspace, true, 'transition case must retain all V7 owner rights checks');
   const choice = discovery === undefined ? null : prepareNeighborhoodDiscoveryChoice(discovery);
   const city = choice?.profile_id === 'custom-city-polygon-v1';
   // The optional case adds a genuinely distant parcel, not a relabeled v1
@@ -123,7 +125,7 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
       if (policyCount === denyAt) return { allowed: false };
       return policyCount === changeAt ? { ...reportDecision, policy_revision: 'changed' } : reportDecision;
     } });
-  const captured = await owner.capture({ ...base, operationId: randomUUID(), observationPeriod: period,
+  let captured = await owner.capture({ ...base, operationId: randomUUID(), observationPeriod: period,
     ...(choice ? { discovery: choice } : {}) });
   assert.equal(captured.status, 'registered');
   if (choice) {
@@ -147,23 +149,63 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
   let checkpoint = { workspace_version: exactSelectionWorkspace ? 6 : city ? 4 : choice ? 3 : 1, pending_capture: null, active: { context_ref: captured.context_ref,
     observation_period: period, selection: { revision: 1, included_recorded_group_ids: groupIds },
     ...(choice ? { discovery: choice } : {}) } };
-  client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const saved = await saveCustomAppraisalWorkfileSectionInTransaction(client, { accountId: account, assignmentFileId: Number(assignment),
-      sectionKey: 'neighborhood_workspace', sectionValue: checkpoint, expectedRevision: 0, saveReason: 'manual_save', reviewer: actor });
-    assert.equal(saved.revision, 1); await client.query('COMMIT');
-  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+  if (!exactSelectionTransition) {
+    client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const saved = await saveCustomAppraisalWorkfileSectionInTransaction(client, { accountId: account, assignmentFileId: Number(assignment),
+        sectionKey: 'neighborhood_workspace', sectionValue: checkpoint, expectedRevision: 0, saveReason: 'manual_save', reviewer: actor });
+      assert.equal(saved.revision, 1); await client.query('COMMIT');
+    } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+  }
   let workspaceRevision = 1, selectionRevision = 1, predecessorSelection = null;
   if (exactSelectionWorkspace) {
-    predecessorSelection = await owner.selectRecordedGroups({ ...base, contextRef: captured.context_ref,
-      operationId: randomUUID(), expectedSelectionRef: null, includedRecordedGroupIds: groupIds });
-    const saved = await owner.selectAndSaveRecordedGroups({ ...base, contextRef: captured.context_ref,
-      operationId: randomUUID(), expectedSelectionRef: predecessorSelection.selection_ref,
-      includedRecordedGroupIds: groupIds, expectedWorkspaceRevision: workspaceRevision });
+    let saved;
+    if (exactSelectionTransition) {
+      const absent = (await pool.query(`SELECT revision FROM app.custom_appraisal_workfile_sections
+        WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`, [assignment])).rows;
+      assert.deepEqual(absent, [], 'new V7 bootstrap must prove the saved workspace is actually absent');
+      const initial = await owner.startRecordedGroupCapture({ ...base, expectedWorkspaceRevision: 0,
+        expectedWorkspaceCheckpoint: { workspace_version: 7, active: null, pending_capture: null },
+        pendingCapture: { operation_id: captured.context_ref.context_id, observation_period: period,
+          ...(choice ? { discovery: choice } : {}) } });
+      assert.equal(initial.workspace.revision, 1); assert.equal(initial.workspace.value.active, null);
+      saved = await owner.completeRecordedGroupCapture({ ...base, contextRef: captured.context_ref,
+        operationId: randomUUID(), expectedSelectionRef: null, includedRecordedGroupIds: groupIds,
+        expectedWorkspaceRevision: initial.workspace.revision, expectedWorkspaceCheckpoint: initial.workspace.value });
+    } else {
+      predecessorSelection = await owner.selectRecordedGroups({ ...base, contextRef: captured.context_ref,
+        operationId: randomUUID(), expectedSelectionRef: null, includedRecordedGroupIds: groupIds });
+      saved = await owner.selectAndSaveRecordedGroups({ ...base, contextRef: captured.context_ref,
+        operationId: randomUUID(), expectedSelectionRef: predecessorSelection.selection_ref,
+        includedRecordedGroupIds: groupIds, expectedWorkspaceRevision: workspaceRevision });
+    }
     checkpoint = saved.workspace.value; workspaceRevision = saved.workspace.revision;
     selectionRevision = saved.selection_ref.selection_revision;
-    assert.equal(checkpoint.workspace_version, 7); assert.equal(workspaceRevision, 2); assert.equal(selectionRevision, 2);
+    assert.equal(checkpoint.workspace_version, 7); assert.equal(workspaceRevision, 2);
+    assert.equal(selectionRevision, exactSelectionTransition ? 1 : 2);
+    if (exactSelectionTransition) {
+      const priorContext = captured.context_ref, operationId = randomUUID();
+      const pending = await owner.startRecordedGroupCapture({ ...base, expectedWorkspaceRevision: workspaceRevision,
+        expectedWorkspaceCheckpoint: checkpoint, pendingCapture: { operation_id: operationId, observation_period: period,
+          ...(choice ? { discovery: choice } : {}) } });
+      assert.deepEqual(pending.workspace.value.active, checkpoint.active, 'original active study stays intact during the real pending capture');
+      captured = await owner.capture({ ...base, operationId, observationPeriod: period,
+        ...(choice ? { discovery: choice } : {}) });
+      assert.notEqual(captured.context_ref.context_id, priorContext.context_id);
+      const currentCatalog = await owner.catalog({ ...base, contextRef: captured.context_ref,
+        selection: { revision: 1, pockets: [] }, catalogVersion: 3 });
+      assert.equal(currentCatalog.catalog.catalog_complete, true);
+      const currentIds = currentCatalog.catalog.pockets.map(p => p.id);
+      if (currentCatalog.catalog.unassigned.member_count) currentIds.push('discovery:unassigned');
+      const completed = await owner.completeRecordedGroupCapture({ ...base, contextRef: captured.context_ref,
+        operationId: randomUUID(), expectedSelectionRef: null, includedRecordedGroupIds: currentIds,
+        expectedWorkspaceRevision: pending.workspace.revision, expectedWorkspaceCheckpoint: pending.workspace.value });
+      checkpoint = completed.workspace.value; workspaceRevision = completed.workspace.revision;
+      selectionRevision = completed.selection_ref.selection_revision;
+      assert.equal(workspaceRevision, 4); assert.equal(selectionRevision, 1);
+      assert.equal(checkpoint.pending_capture, null); assert.deepEqual(checkpoint.active.context_ref, captured.context_ref);
+    }
   }
   const proposalInput = () => ({ ...base, contextRef: captured.context_ref, expectedWorkspaceRevision: workspaceRevision,
     expectedEditorRevision: 0, operationId: randomUUID() });
@@ -228,9 +270,11 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
     // Both revisions have actual retained originals. Fault-inject only the
     // current pointer between owner transactions, keeping workspace bytes and
     // revision identical. Do not rewrite any original, history or acceptance.
-    afterCommit = () => changeHead(predecessorSelection.selection_ref.selection_revision, selectionRevision);
-    try { await assert.rejects(owner.prepareReportedObservations(proposalInput()), /selection_changed/); }
-    finally { await changeHead(selectionRevision, predecessorSelection.selection_ref.selection_revision); }
+    if (!exactSelectionTransition) {
+      afterCommit = () => changeHead(predecessorSelection.selection_ref.selection_revision, selectionRevision);
+      try { await assert.rejects(owner.prepareReportedObservations(proposalInput()), /selection_changed/); }
+      finally { await changeHead(selectionRevision, predecessorSelection.selection_ref.selection_revision); }
+    }
     assert.deepEqual(await protectedState(), before);
     const prepared = await owner.prepareReviewedInputs({ ...base, contextRef: captured.context_ref,
       expectedWorkspaceRevision: workspaceRevision, expectedReviewGeneration: '0' });
@@ -238,7 +282,9 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
     assert.equal(prepared.supported_inputs.selection.revision, selectionRevision);
     assert.deepEqual(await protectedState(), before);
     resetPolicy();
-    checks.push('native V7 full original selection reopen and reviewed-input preparation; initial/final current-role and catalog refusals and a changed current head with identical workspace bytes prevent any proposal publication');
+    checks.push(exactSelectionTransition
+      ? 'native V7 command-v3 completion originals reopen through reviewed-input/proposal owners after a real start/capture/complete transition; all initial/final current-role and catalog refusal fences still execute'
+      : 'native V7 full original selection reopen and reviewed-input preparation; initial/final current-role and catalog refusals and a changed current head with identical workspace bytes prevent any proposal publication');
   }
   if (choice) {
     await rejectChangedDiscovery(() => owner.prepareReportedObservations(proposalInput()), before);
@@ -299,9 +345,11 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
     try { await assert.rejects(owner.applyReportedObservations(applying), /job_actor_access_revoked/); }
     finally { await suspend('active'); }
     assert.deepEqual(await protectedState(), frozen);
-    await changeHead(predecessorSelection.selection_ref.selection_revision, selectionRevision);
-    try { await assert.rejects(owner.applyReportedObservations(applying), /selection_changed/); }
-    finally { await changeHead(selectionRevision, predecessorSelection.selection_ref.selection_revision); }
+    if (!exactSelectionTransition) {
+      await changeHead(predecessorSelection.selection_ref.selection_revision, selectionRevision);
+      try { await assert.rejects(owner.applyReportedObservations(applying), /selection_changed/); }
+      finally { await changeHead(selectionRevision, predecessorSelection.selection_ref.selection_revision); }
+    }
     assert.deepEqual(await protectedState(), frozen);
     catalogPolicyCount = 0; denyCatalogAt = 3;
     const afterApplyFrom = calls.length;
@@ -310,7 +358,9 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
     assert.ok(calls.slice(afterApplyFrom).some(sql => sql.includes('custom-neighborhood-acceptance:insert')),
       'catalog revocation witness must occur after actual coherent acceptance writes');
     assert.deepEqual(await protectedState(), frozen); resetPolicy();
-    checks.push('native V7 Apply reloads current roles, refuses a changed head with identical workspace, and rolls acceptance/section/history back on post-write catalog revocation');
+    checks.push(exactSelectionTransition
+      ? 'native V7 command-v3 transitioned selection reaches coherent Apply with current-role and post-acceptance catalog refusal rolling the complete group/history/receipt back'
+      : 'native V7 Apply reloads current roles, refuses a changed head with identical workspace, and rolls acceptance/section/history back on post-write catalog revocation');
   }
   if (choice) {
     await rejectChangedDiscovery(() => owner.applyReportedObservations(applying), frozen);

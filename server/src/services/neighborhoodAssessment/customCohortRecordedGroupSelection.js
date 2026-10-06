@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { setImmediate as yieldToRequests } from 'node:timers/promises';
 import { canonicalAssessmentJson as json } from './contract.js';
 import { prepareCustomCohortContextScope, prepareCustomCohortContextReference } from './customCohortContextContract.js';
-import { prepareCustomNeighborhoodRecordedGroupIds } from './customWorkspaceCheckpoint.js';
+import { prepareCustomNeighborhoodRecordedGroupIds,
+  prepareCustomNeighborhoodWorkspaceCheckpoint } from './customWorkspaceCheckpoint.js';
 import { prepareCustomCohortGroupSelectionReference } from './customCohortGroupSelectionRepository.js';
 import { prepareNeighborhoodCohortBlob as blob } from './cohortEvidenceBlobRepository.js';
 import { COHORT_PAGED_GROUP_SELECTION_V1_LIMITS as L,
@@ -47,16 +48,25 @@ export function prepareCustomCohortGroupSelectionCommandOriginal(text) {
   let value;
   try { value = JSON.parse(text); check(json(value) === text, 'invalid_command'); } catch { fail('invalid_command'); }
   const keys = ['command_version', 'actor_user_id', 'operation_id', 'expected_selection_ref',
-    'included_recorded_group_ids', 'selection_revision', ...(value?.command_version === 2 ? ['expected_workspace_revision'] : [])];
+    'included_recorded_group_ids', 'selection_revision',
+    ...([2, 3].includes(value?.command_version) ? ['expected_workspace_revision'] : []),
+    ...(value?.command_version === 3 ? ['expected_workspace_checkpoint'] : [])];
   check(value && Object.getPrototypeOf(value) === Object.prototype
     && Object.keys(value).length === keys.length && keys.every(k => Object.hasOwn(value, k))
-    && [1, 2].includes(value.command_version) && typeof value.actor_user_id === 'string' && UUID.test(value.actor_user_id)
+    && [1, 2, 3].includes(value.command_version) && typeof value.actor_user_id === 'string' && UUID.test(value.actor_user_id)
     && typeof value.operation_id === 'string' && UUID.test(value.operation_id), 'invalid_command');
-  if (value.command_version === 2) check(Number.isInteger(value.expected_workspace_revision)
+  if ([2, 3].includes(value.command_version)) check(Number.isInteger(value.expected_workspace_revision)
     && value.expected_workspace_revision >= 1 && value.expected_workspace_revision < 2147483647, 'invalid_command');
   let expected;
   try { expected = value.expected_selection_ref === null ? null
     : prepareCustomCohortGroupSelectionReference(value.expected_selection_ref); } catch { fail('invalid_command'); }
+  if (value.command_version === 3) {
+    try {
+      value.expected_workspace_checkpoint = prepareCustomNeighborhoodWorkspaceCheckpoint(value.expected_workspace_checkpoint);
+      check(value.expected_workspace_checkpoint.workspace_version === 7
+        && value.expected_workspace_checkpoint.pending_capture !== null && expected === null, 'invalid_command');
+    } catch { fail('invalid_command'); }
+  }
   let ids;
   try { ids = prepareCustomNeighborhoodRecordedGroupIds(value.included_recorded_group_ids, 3); } catch { fail('invalid_command'); }
   check(ids.every((id, i) => i === 0 || ids[i - 1] < id) && Number.isInteger(value.selection_revision)
@@ -87,6 +97,8 @@ export async function prepareCustomCohortRecordedGroupSelection({ scopeJson, con
   const command = commandJson === null ? null : prepareCustomCohortGroupSelectionCommandOriginal(commandJson);
   if (command) check(command.selection_revision === revision
     && json(command.included_recorded_group_ids) === json(selectedIds), 'command_mismatch');
+  if (command?.command_version === 3) check(command.expected_workspace_checkpoint.pending_capture.operation_id
+    === context_ref.context_id, 'command_mismatch');
   check(catalog?.catalog_version === 3 && catalog.status === 'review_only' && catalog.catalog_complete === true
     && catalog.authority === 'not_established' && catalog.apply?.status === 'blocked'
     && catalog.presentation?.membership_complete === true && catalog.unresolved_membership === null

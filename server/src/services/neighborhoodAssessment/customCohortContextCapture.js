@@ -24,7 +24,8 @@ import { loadCurrentCustomCohortJobActor } from './customCohortJobActor.js';
 import { createCustomCohortRecordedGroupSelectionOwner,
   reopenCustomCohortRecordedGroupSelectionOriginal } from './customCohortRecordedGroupSelectionOwner.js';
 import { createCustomCohortGroupSelectionRepository } from './customCohortGroupSelectionRepository.js';
-import { prepareCustomCohortGroupWorkspaceSave } from './customCohortGroupWorkspaceSave.js';
+import { prepareCustomCohortGroupWorkspaceSave,
+  prepareCustomCohortGroupCaptureCompletion } from './customCohortGroupWorkspaceSave.js';
 import { resumeCustomCohortSubjectCheckpoint } from './customCohortCaptureSubjectCheckpoint.js';
 import { resumeCustomCohortPreparationCheckpoint } from './customCohortCapturePreparationCheckpoint.js';
 import { prepareCustomCohortContextReference, prepareCustomCohortContextHeader } from './customCohortContextContract.js';
@@ -690,10 +691,31 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     }
   }
   const recordedGroupSelection = createCustomCohortRecordedGroupSelectionOwner({ identityOf,
+    executeWorkspaceTransition: async (originalInput, options, work) => {
+      const budget = operationBudget(options);
+      return transaction(pool, 'READ COMMITTED', budget, async client => {
+        const initial = await resolveTarget(client, originalInput, false, 'write');
+        const auth = await loadCurrentCustomCohortJobActor(client, originalInput.auth.userId, initial.organization_id);
+        const input = { ...originalInput, auth };
+        assertTarget(await resolveTarget(client, input, false, 'write'), initial);
+        privateDraft(await privateCaptureWorkfile(client, input));
+        const target = await resolveTarget(client, input, true, 'write');
+        assertTarget(target, initial);
+        const scopeJson = canonicalAssessmentJson(Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])));
+        // Pending intent reads no old catalog/source facts. Revocation of an
+        // old source license must not prevent setting aside an unfinished study.
+        const result = await work({ client, auth, scopeJson, budget });
+        const finalAuth = await loadCurrentCustomCohortJobActor(client, input.auth.userId, target.organization_id);
+        const finalInput = { ...input, auth: finalAuth };
+        assertTarget(await resolveTarget(client, finalInput, true, 'write'), target);
+        privateDraft(await privateCaptureWorkfile(client, finalInput));
+        budget.check(); return freeze(result);
+      });
+    },
     execute: async (originalInput, options, writing, work, projection = 'intent') => {
-      if (!['intent', 'workspace', 'summary', 'viewport', 'members'].includes(projection)
-        || (writing && !['intent', 'workspace'].includes(projection))
-        || (!writing && projection === 'workspace')) fail('invalid_input');
+      if (!['intent', 'workspace', 'complete', 'summary', 'viewport', 'members'].includes(projection)
+        || (writing && !['intent', 'workspace', 'complete'].includes(projection))
+        || (!writing && ['workspace', 'complete'].includes(projection))) fail('invalid_input');
       // Geometry uses the existing viewport's summary exposure, in addition to
       // catalog rights needed to re-derive the exact server-owned selection.
       const additionalExposures = projection === 'members' ? ['report_observation_members']
@@ -728,6 +750,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const selectionWorkspace = projection === 'workspace' ? await prepareCustomCohortGroupWorkspaceSave({
           client, input, observationPeriod: licensed.observationPeriod, discovery: licensed.discovery,
           checkBudget: budget.check,
+        }) : projection === 'complete' ? await prepareCustomCohortGroupCaptureCompletion({
+          client, input, scopeJson, observationPeriod: licensed.observationPeriod, discovery: licensed.discovery,
+          privateSalesImport: licensed.privateAuthorization ? {
+            batch_id: licensed.privateAuthorization.purpose.batch_id,
+            expected_review_revision: licensed.privateAuthorization.purpose.expected_review_revision,
+          } : null, checkBudget: budget.check,
         }) : null;
         let catalog, roster, indexedPreview, retained = null;
         if (!licensed.privateAuthorization) {

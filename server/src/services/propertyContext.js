@@ -730,6 +730,7 @@ export async function analyzePropertyContext(pool, {
   assignmentFileId = null,
   customGeometry = null,
   geography = null,
+  marketStudyContextOnly = false,
 } = {}) {
   const normalizedAccountId = String(accountId || "").trim();
   if (!/^[0-9A-Za-z]{17}$/.test(normalizedAccountId)) throw new Error("invalid_account_id");
@@ -737,7 +738,7 @@ export async function analyzePropertyContext(pool, {
   const boundary = customGeometry ? validateCustomMarketGeometry(customGeometry) : null;
   const subject = await loadSubject(pool, normalizedAccountId, assignmentFileId);
   const sourceHealth = await getPropertyContextSourceHealth(pool);
-  const spatialContext = await loadSpatialContext(pool, subject, boundary);
+  const spatialContext = await loadSpatialContext(pool, subject, boundary, { includeSiteStatistics: !marketStudyContextOnly });
   const influenceSignature = buildPropertyInfluenceSignature(spatialContext);
   await savePropertyInfluenceContext(pool, {
     accountId: normalizedAccountId,
@@ -745,7 +746,14 @@ export async function analyzePropertyContext(pool, {
     influenceSignature,
     sourceHealth,
   });
-  const peerStatistics = await loadPeerStatistics(
+  // Market-study screening reuses the completed independent populations in the
+  // workfile. Only subject/local influence evidence is needed from this route;
+  // do not quietly substitute a fixed-radius peer population or rerun sales.
+  const peerStatistics = marketStudyContextOnly ? {
+    peer_count: 0, context: "market_studies", radius_miles: null,
+    gla: { count: 0, percentile: null, median: null }, age: { count: 0, percentile: null, median: null },
+    site_area: { count: 0, percentile: null, median: null }, pool_prevalence_percent: null,
+  } : await loadPeerStatistics(
     pool,
     subject,
     boundary,
@@ -895,4 +903,3 @@ export function propertyContextErrorStatus(message) {
   if (PROPERTY_CONTEXT_GEOMETRY_CLIENT_ERRORS.has(message)) return 400;
   return 500;
 }
-

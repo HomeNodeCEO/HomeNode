@@ -41,6 +41,15 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     try { verifyNeighborhoodCiConnection((await probe.query(NEIGHBORHOOD_CI_IDENTITY_SQL)).rows[0],
       probe.connection?.stream?.remoteAddress, target.databaseName); } finally { probe.release(); }
     await pool.query(NEIGHBORHOOD_CACHED_SOURCE_SCHEMA);
+    // The UAD bootstrap intentionally creates only minimal location columns.
+    // Exercise market SQL against the remaining production location projection.
+    await pool.query(`ALTER TABLE core.account_locations
+      ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'matched',
+      ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'synthetic_fixture',
+      ADD COLUMN IF NOT EXISTS precision text,
+      ADD COLUMN IF NOT EXISTS confidence text,
+      ADD COLUMN IF NOT EXISTS review_required boolean NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS review_reason text`);
     const organization = randomUUID(), actor = randomUUID(), appraisalCase = randomUUID(), snapshot = randomUUID(), report = randomUUID();
     const account = 'CAPTURE-COORD-SUBJECT', other = 'CAPTURE-COORD-OTHER', linked = 'CAPTURE-COORD-LINKED';
     await pool.query("INSERT INTO app_auth.organizations(id,legal_name,display_name) VALUES($1,'Synthetic Custom capture','Synthetic Custom capture')", [organization]);

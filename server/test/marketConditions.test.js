@@ -17,6 +17,24 @@ import {
 } from "../src/services/marketConditions.js";
 import { MARKET_SPATIAL_MIGRATION_NAME } from "../src/database/marketSpatialMigration.js";
 
+test('recent marketing windows use the same eligible population and actual trailing medians in one query', async () => {
+  let calculations = 0;
+  const pool = { async query(sql) {
+    if (sql.includes('market_spatial_support_probe')) return { rows: [{ column_present: true, migration_applied: true, index_valid: true }] };
+    if (sql.includes('FROM core.accounts account')) return { rows: [{ account_id: '26355500170360000', postal_code: '75041' }] };
+    calculations++;
+    assert.match(sql, /CROSS JOIN \(VALUES \(3\), \(6\), \(12\)\)/);
+    assert.match(sql, /PERCENTILE_CONT\(0.5\)[\s\S]*eligible.days_on_market/);
+    assert.match(sql, /LEFT JOIN eligible ON eligible.closing_date >=/);
+    return { rows: [{ recent_periods: [{ months: 3, start: '2026-07-01', end: '2026-09-30', sale_count: 5,
+      marketing_observation_count: 4, median_days_on_market: '17.5' }] }] };
+  } };
+  const value = await buildMarketConditionsAnalyses(pool, { subjectAccountId: '26355500170360000', areaKeys: ['zip'], asOfDate: '2026-09-30', periodMonths: 24 });
+  assert.equal(calculations, 1);
+  assert.deepEqual(value.analyses[0].recent_periods, [{ months: 3, start: '2026-07-01', end: '2026-09-30', sale_count: 5,
+    marketing_observation_count: 4, median_days_on_market: 17.5 }]);
+});
+
 test('exact exploration analysis needs neither parcel coordinates nor a fresh CAD lookup', async t => {
   const subjectAccountId = '26355500170360000', calls = [], originalFetch = globalThis.fetch;
   let fetches = 0;

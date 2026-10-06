@@ -32,7 +32,7 @@ export interface SfrepProvenance {
   documentType?: string | null; rule?: string; sourceValue?: string;
   effectiveDate?: string; effectiveDateSource?: SfrepEffectiveDateSource;
   effectiveDateSourceDocumentId?: number | null; windowStart?: string; windowEnd?: string;
-  assignmentFileId?: number; sectionKey?: 'report.subject_identification' | 'report.assignment_details'; revision?: number;
+  assignmentFileId?: number; sectionKey?: 'report.subject_identification' | 'report.assignment_details' | 'market_conditions'; revision?: number;
   origin?: 'appraiser_edit' | 'reviewed_document' | 'derived_reviewed_document' | 'user_default' | 'account_reference';
   sourceDocumentId?: number; sourceCandidateId?: number;
   sourceEvidence?: Array<SfrepListingEvidence | SfrepCensusEvidence | SfrepCountyEvidence>;
@@ -77,7 +77,7 @@ export interface SfrepPreview {
   effectiveDateContext: SfrepEffectiveDateContext;
   assumptions: SfrepAssumption[];
   knownMissing: { fieldId: string; reason: string }[];
-  savedReport?: { assignmentFileId: number; assignmentRevision: number; subjectRevision: number; sourceDocumentIds: number[] };
+  savedReport?: { assignmentFileId: number; assignmentRevision: number; subjectRevision: number; marketRevision?: number; sourceDocumentIds: number[] };
 }
 interface TransportOptions {
   request: (url: string, init: RequestInit) => Promise<Response>;
@@ -285,6 +285,22 @@ function validContractNarrative(value: Record<string, unknown>, provenance: Reco
   return ['Arms length sale', 'Non-arms length sale', 'Sale type requires appraiser review']
     .some(prefix => value.value === prefix + suffix);
 }
+const neighborhoodCheckboxes = ['LocationUrbanCheckBox', 'LocationSuburbanCheckBox', 'LocationRuralCheckBox',
+  'PropertyValuesIncreasingCheckBox', 'PropertyValuesStableCheckBox', 'PropertyValuesDecliningCheckBox',
+  'BuiltUpOver75CheckBox', 'BuiltUp2575CheckBox', 'BuiltUpUnder25CheckBox', 'GrowthRapidCheckBox', 'GrowthStableCheckBox', 'GrowthSlowCheckBox',
+  'DemandSupplyShortageCheckBox', 'DemandSupplyInBalanceCheckBox', 'DemandSupplyOverSupplyCheckBox',
+  'MarketingTimeUnder3MonthsCheckBox', 'MarketingTime36MonthsCheckBox', 'MarketingTimeOver6MonthsCheckBox'];
+const neighborhoodNumbers = ['SingleFamilyHousingPriceLowAmount', 'SingleFamilyHousingPriceHighAmount', 'SingleFamilyHousingPricePredominantAmount',
+  'SingleFamilyHousingAgeLow', 'SingleFamilyHousingAgeHigh', 'SingleFamilyHousingAgePredominant'];
+const neighborhoodPercentages = ['LandUseOneUnitPercentage', 'LandUse24UnitPercentage', 'LandUseMultiFamilyPercentage', 'LandUseCommercialPercentage', 'LandUseOtherPercentage'];
+function validNeighborhoodField(value: Record<string, unknown>) {
+  if (typeof value.value !== 'string' || value.value.length > 16000) return false;
+  if (value.type === 'CheckBoxField') return neighborhoodCheckboxes.includes(String(value.fieldId)) && value.value === 'true';
+  if (value.type !== 'TextField') return false;
+  if (neighborhoodNumbers.includes(String(value.fieldId))) return /^(?:0|[1-9]\d{0,8})$/.test(value.value);
+  if (neighborhoodPercentages.includes(String(value.fieldId))) return /^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(value.value) && Number(value.value) <= 100;
+  return ['NeighborhoodDescription', 'NeighborhoodBoundaries', 'MarketConditions'].includes(String(value.fieldId));
+}
 function validField(value: unknown): value is SfrepField {
   if (!record(value) || !validText(value.sourceField) || !validText(value.fieldId) || !validText(value.value)
     || (value.candidateId !== null && !positiveId(value.candidateId))
@@ -292,9 +308,14 @@ function validField(value: unknown): value is SfrepField {
   const provenance = value.provenance;
   if (provenance.sourceField !== value.sourceField || provenance.documentId !== value.documentId
     || provenance.candidateId !== value.candidateId || !validFormatting(value, provenance)) return false;
+  if (value.sourceField === 'neighborhood' && !validNeighborhoodField(value)) return false;
   if (provenance.kind === 'account_reference') return value.documentId === null && value.candidateId === null
     && positiveId(provenance.assignmentFileId) && positiveId(provenance.revision) && validCountyIdentity(value, provenance);
   if (provenance.kind === 'saved_report') {
+    if (provenance.sectionKey === 'market_conditions') return value.sourceField === 'neighborhood'
+      && value.documentId === null && value.candidateId === null && positiveId(provenance.assignmentFileId)
+      && positiveId(provenance.revision) && provenance.origin === 'appraiser_edit' && onlyKeys(provenance, savedKeys)
+      && validNeighborhoodField(value);
     if (value.documentId !== null || value.candidateId !== null || !positiveId(provenance.assignmentFileId)
       || !positiveId(provenance.revision) || !['report.subject_identification', 'report.assignment_details'].includes(String(provenance.sectionKey))
       || !['appraiser_edit', 'reviewed_document', 'derived_reviewed_document', 'user_default', 'account_reference'].includes(String(provenance.origin))
@@ -412,12 +433,14 @@ export function checkSfrepPreview(value: unknown, selectedDocumentIds?: readonly
   }
   const saved = preview.savedReport;
   if (saved !== undefined && (!record(saved) || !positiveId(saved.assignmentFileId) || !positiveId(saved.assignmentRevision)
+    || (saved.marketRevision !== undefined && !positiveId(saved.marketRevision))
     || !Number.isSafeInteger(saved.subjectRevision) || saved.subjectRevision < 0 || !Array.isArray(saved.sourceDocumentIds)
     || saved.sourceDocumentIds.length > 50 || !saved.sourceDocumentIds.every(positiveId)
     || new Set(saved.sourceDocumentIds).size !== saved.sourceDocumentIds.length)) throw new Error('The saved HomeNode report reference is invalid.');
   if (preview.fields.some(({ provenance }) => (provenance.kind === 'saved_report' || provenance.kind === 'account_reference') && (!saved
     || provenance.assignmentFileId !== saved.assignmentFileId
-    || provenance.revision !== (provenance.sectionKey === 'report.subject_identification' ? saved.subjectRevision : saved.assignmentRevision)
+    || provenance.revision !== (provenance.sectionKey === 'market_conditions' ? saved.marketRevision
+      : provenance.sectionKey === 'report.subject_identification' ? saved.subjectRevision : saved.assignmentRevision)
     || (provenance.sourceDocumentId !== undefined && !saved.sourceDocumentIds.includes(provenance.sourceDocumentId))
     || provenance.sourceEvidence?.some(source => 'documentId' in source && !saved.sourceDocumentIds.includes(source.documentId))))) {
     throw new Error('The SFREP preview does not match the saved HomeNode report.');
@@ -518,7 +541,7 @@ export function sfrepProvenanceText(field: SfrepField): string {
               : source.origin === 'derived_reviewed_document' ? 'Saved MLS listing determination'
           : `Applied from reviewed document ${source.sourceDocumentId}`;
     const formatting = field.formattingRule ? ` Original saved value: ${JSON.stringify(field.sourceValue)}; export ${formattingDescription}.` : '';
-    return `${origin}. HomeNode file ${source.assignmentFileId}, ${source.sectionKey === 'report.subject_identification' ? 'Subject' : 'Assignment'} revision ${source.revision}.${formatting}`;
+    return `${origin}. HomeNode file ${source.assignmentFileId}, ${source.sectionKey === 'market_conditions' ? 'Neighborhood / Market' : source.sectionKey === 'report.subject_identification' ? 'Subject' : 'Assignment'} revision ${source.revision}.${formatting}`;
   }
   if (source.kind === 'account_reference') return `Canonical county-backed subject identity — not PDF evidence. HomeNode file ${source.assignmentFileId}, assignment revision ${source.revision}; used because this report leaf has not been saved.`;
   if (source.rule === contractRule) return 'Legacy Contract narrative assembled from six individually reviewed terms in the subject purchase contract. Sale type follows the saved HomeNode appraiser selection, or is marked for review.';

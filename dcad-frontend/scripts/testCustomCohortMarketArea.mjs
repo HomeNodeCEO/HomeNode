@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createRequire } from 'node:module';
 import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
+import * as reconciliationHelper from '../src/lib/marketStudyReconciliation.ts';
 
 const contextRef = { context_id: '70000000-0000-4000-8000-000000000001', context_revision: '1', context_sha256: 'a'.repeat(64) };
 const group = { binding: { accountId: 'A', assignmentFileId: '15', contextRef, selectionRevision: 7, selectionFingerprint: 'b'.repeat(64) },
@@ -75,7 +76,8 @@ const text = node => typeof node === 'string' || typeof node === 'number' ? Stri
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 const completeResult = () => ({ ...result(), unavailable_areas: [],
   analyses: [{ market: { key: 'exploration', scope: 'exploration', label: 'Exploration Map Area' },
-    population: { eligible_sale_count: 50, mapped_sale_count: 50 }, summary: {}, statistics: {} }],
+    population: { eligible_sale_count: 50, mapped_sale_count: 50 }, summary: {}, statistics: {},
+    period: { start: '2024-09-01', end: '2026-08-31' }, series: { monthly: [] } }],
   recommendation: { methodology_version: 3, conclusion: 'stable', ranked_studies: [], recommended_change_percent: null } });
 const draft = response => ({ version: 3, accountId: 'A', assignmentFileId: 15, savedAt: '2026-10-06T00:00:00Z',
   asOfDate: request.asOf, periodMonths: 24, selectedAreaKeys: ['exploration'], contextOverride: null,
@@ -109,6 +111,15 @@ function marketComponent(overrides = {}) {
     if (dependency === '@/lib/marketConditionsDraft') return { readMarketConditionsDraft: () => null, saveMarketConditionsDraft: () => assert.fail('Unexpected local save') };
     if (dependency === '@/features/neighborhood/customCohortMarketArea') return { ...helper, runMarketStudies: (...args) => { queries.push(args); return operation.promise; } };
     if (dependency === './MarketStudyPropertyContext') return { default: 'MarketStudyPropertyContext' };
+    if (dependency === './ExplorationLandUsePanel') return { default: 'ExplorationLandUsePanel' };
+    if (dependency === './NeighborhoodFormReviewPanel') return { default: 'NeighborhoodFormReviewPanel' };
+    if (dependency === '@/lib/neighborhoodFormReview') return loadTrustedRepositoryCommonJs(new URL('../src/lib/neighborhoodFormReview.ts', import.meta.url), name => assert.fail(`Unexpected form helper import: ${name}`));
+    if (dependency === '@/lib/marketStudyReconciliation') return reconciliationHelper;
+    if (dependency === './MarketStudyDetermination') return loadTrustedRepositoryCommonJs(new URL('../src/components/MarketStudyDetermination.tsx', import.meta.url), name => {
+      if (name === 'react/jsx-runtime') return requireRuntime(name);
+      if (name === '@/lib/marketStudyReconciliation') return reconciliationHelper;
+      assert.fail(`Unexpected determination import: ${name}`);
+    });
     assert.fail(`Unexpected component import: ${dependency}`);
   }).default;
   function render() { let passes = 0; do { dirty = false; cursor = 0; tree = Component(props); while (pending.length) pending.shift()();
@@ -143,11 +154,11 @@ test('all four areas remain visible in conclusion weighting, including fourth-ra
   const h = marketComponent({ initialDraft }); t.after(h.dispose); await h.settle();
   assert.doesNotMatch(h.text, /Study geography and related CAD parcels|Use as a study center|Exact CAD situs address|Reviewable market context override/);
   const tree = h.render(), nodes = walk(tree);
-  const recommendation = nodes.find(n => typeof n.type === 'function' && n.type.name === 'RecommendedDetermination');
+  const recommendation = nodes.find(n => typeof n.type === 'function' && n.type.name === 'MarketStudyDetermination');
   assert.ok(recommendation);
   assert.match(text(recommendation.type(recommendation.props)), /#4 Exploration Map Area/);
   assert.ok(nodes.find(n => n.type === 'MarketStudyPropertyContext'));
-  const weight = nodes.find(n => n.type === 'fieldset' && text(n).includes('Studies given greatest weight'));
+  const weight = walk(recommendation.type(recommendation.props)).find(n => n.type === 'fieldset' && text(n).includes('Studies given greatest weight'));
   assert.equal(walk(weight).filter(n => n.type === 'input' && n.props.type === 'checkbox').length, 4);
   assert.match(text(weight), /Exploration Map Area/);
 });
@@ -298,11 +309,33 @@ test('the recommendation describes consistency scoring and flags older saved sco
   for (const version of [2, 3]) {
     const value = completeResult(); value.recommendation.methodology_version = version;
     const h = marketComponent({ initialDraft: draft(value) }); t.after(h.dispose); await h.settle();
-    const node = walk(h.render()).find(n => typeof n.type === 'function' && n.type.name === 'RecommendedDetermination');
+    const node = walk(h.render()).find(n => typeof n.type === 'function' && n.type.name === 'MarketStudyDetermination');
     const rendered = text(node.type(node.props));
     assert.match(rendered, version === 3 ? /Lower average COD\/CV ranks higher/ : /Rerun market studies for COD\/CV ranking/);
     assert.doesNotMatch(rendered, /ranked by sample sufficiency/);
   }
+});
+
+test('ranked-card selection applies new numbers and explanation without another request or modifying the study results', async t => {
+  const value = completeResult(), keys = ['zip', 'radius_1', 'exploration'];
+  value.analyses = keys.map((key, index) => ({ ...value.analyses[0], market: { key, label: key },
+    statistics: { annualized_change_percent: [10, 80, -20][index] } }));
+  value.recommendation.ranked_studies = value.analyses.map((a, index) => ({ key: a.market.key, label: a.market.label,
+    rank: index + 1, reliability_score: 80, sale_count: 50, annualized_change_percent: a.statistics.annualized_change_percent }));
+  const h = marketComponent({ initialDraft: { ...draft(value), selectedAreaKeys: keys,
+    reconciliation: { trendConclusion: 'increasing', reliedUponAreaKeys: keys, explanation: 'Appraiser original' } } });
+  t.after(h.dispose); await h.settle();
+  const determination = () => walk(h.render()).find(n => typeof n.type === 'function' && n.type.name === 'MarketStudyDetermination');
+  determination().props.onToggle('radius_1'); await h.settle();
+  assert.equal(h.published.at(-1).reconciliation.explanation, 'Appraiser original', 'checkboxes alone do not overwrite an appraiser explanation');
+  determination().props.onApply(); await h.settle();
+  const chosen = h.published.at(-1);
+  assert.deepEqual(chosen.reconciliation.reliedUponAreaKeys, ['zip', 'exploration']);
+  assert.equal(chosen.reconciliation.trendConclusion, 'decreasing');
+  assert.match(chosen.reconciliation.explanation, /-5.0% reconciled annualized/);
+  assert.equal(chosen.response, value);
+  assert.equal(h.queries.length, 0);
+  assert.match(text(determination().type(determination().props)), /-5.0% reconciled annualized change/);
 });
 
 test('an analysis finishing after another map click cannot publish an old selection', async t => {

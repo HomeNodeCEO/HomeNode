@@ -9,6 +9,7 @@ import { createCustomCohortContextCapture } from '../services/neighborhoodAssess
 import { createCustomNeighborhoodSubjectEvidenceRecovery } from '../services/neighborhoodAssessment/customSubjectEvidenceRecovery.js';
 import { createCustomNeighborhoodCohortRouter } from '../modules/accounts/customNeighborhoodCohortRouter.js';
 import { createCustomCohortMarketAnalysis } from '../services/neighborhoodAssessment/customCohortMarketAnalysis.js';
+import { createCustomCohortLandUseAnalysis } from '../services/neighborhoodAssessment/customCohortLandUseAnalysis.js';
 
 export const CUSTOM_NEIGHBORHOOD_SOURCE_PROFILE_MAX_BYTES = 16_384;
 const BASE = '/api/accounts/:id/neighborhood-cohort';
@@ -114,6 +115,7 @@ export function createCustomNeighborhoodApplicationRouter({ pool, configuration 
   });
   if (cohortService) router.use(createCustomNeighborhoodCohortRouter({ cohortService,
     recordedGroupWorkspaceTransitions: configuration.recordedGroupWorkspaceTransitions === true,
+    landUseAnalysis: createCustomCohortLandUseAnalysis({ pool, cohortService }),
     marketAnalysis: createCustomCohortMarketAnalysis({ pool, cohortService }) }));
   return router;
 }

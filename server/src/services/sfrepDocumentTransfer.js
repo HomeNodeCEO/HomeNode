@@ -48,6 +48,8 @@ export async function readSfrepDocuments(pool, { accountId, assignmentFileId, do
            jsonb_build_object('accountId', assignment.account_id, 'assignmentFileId', assignment.id,
              'assignmentRevision', assignment.revision, 'assignmentDetails', assignment.assignment_details,
              'subject', jsonb_build_object('value', saved_subject.section_value, 'revision', saved_subject.revision),
+             'market', jsonb_build_object('value', saved_market.section_value, 'revision', saved_market.revision),
+             'workspace', jsonb_build_object('value', saved_workspace.section_value, 'revision', saved_workspace.revision),
              'evidence', jsonb_build_object('value', saved_evidence.section_value, 'revision', saved_evidence.revision)) AS saved_report
       FROM app.assignment_files assignment
       JOIN core.accounts subject ON subject.account_id = assignment.account_id
@@ -56,6 +58,10 @@ export async function readSfrepDocuments(pool, { accountId, assignmentFileId, do
         ON saved_subject.assignment_file_id = assignment.id AND saved_subject.section_key = 'report.subject_identification'
       LEFT JOIN app.custom_appraisal_sections saved_evidence
         ON saved_evidence.assignment_file_id = assignment.id AND saved_evidence.section_key = 'report.subject_evidence'
+      LEFT JOIN app.custom_appraisal_sections saved_market
+        ON saved_market.assignment_file_id = assignment.id AND saved_market.section_key = 'market_conditions'
+      LEFT JOIN app.custom_appraisal_sections saved_workspace
+        ON saved_workspace.assignment_file_id = assignment.id AND saved_workspace.section_key = 'neighborhood_workspace'
       LEFT JOIN app.report_files report_file
         ON report_file.custom_assignment_file_id = assignment.id
        AND report_file.account_id = assignment.account_id
@@ -162,6 +168,7 @@ export function previewSfrepDocuments(documents, input, photoRows = []) {
     contractSection: true, savedAssignmentDetails: saved?.assignmentDetails,
     savedAssignmentFileId: saved?.assignmentFileId, savedAssignmentRevision: saved?.assignmentRevision,
     contractEvidenceDocuments: saved?.documents,
+    savedNeighborhoodReport: saved,
     ...(canonical ? { savedReportFields: canonical.fields } : {}) });
   if (canonical) {
     mapped.warnings.push(...canonical.warnings);
@@ -184,6 +191,7 @@ export function previewSfrepDocuments(documents, input, photoRows = []) {
     photos: photoProjection.photos, imageAddenda: photoProjection.imageAddenda,
     filename: `HomeNode-SFREP-${input.formId === 'FNMA-2055-0911' ? '2055-' : ''}file-${input.assignmentFileId}.rpti`,
     ...(saved ? { savedReport: { assignmentFileId: saved.assignmentFileId, assignmentRevision: saved.assignmentRevision,
+      ...(Number.isSafeInteger(saved.market?.revision) && saved.market.revision > 0 ? { marketRevision: saved.market.revision } : {}),
       subjectRevision: Number(saved.subject?.revision || 0), sourceDocumentIds: saved.documents.map(document => document.id) } } : {}),
     documents: documents.map(({ id, title, file_name, file_size_bytes, processing_status }) =>
       ({ id, title, file_name, file_size_bytes, processing_status })) };

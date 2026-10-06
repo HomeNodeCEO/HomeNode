@@ -22,6 +22,12 @@ import type { CustomCohortPreviewGroup } from '@/features/neighborhood/customCoh
 import { runMarketStudies, explorationAreaIdentity, marketExplorationIdentity, usableExplorationArea } from '@/features/neighborhood/customCohortMarketArea';
 import MarketStudyPropertyContext from './MarketStudyPropertyContext';
 import type { MarketStudyComplexity } from '@/lib/marketStudyComplexity';
+import { appliedMarketReconciliation } from '@/lib/marketStudyReconciliation';
+import MarketStudyDetermination from './MarketStudyDetermination';
+import ExplorationLandUsePanel from './ExplorationLandUsePanel';
+import type { ExplorationLandUse } from '@/lib/explorationLandUse';
+import { EMPTY_NEIGHBORHOOD_FORM, neighborhoodStudyFigures, type NeighborhoodFormReview } from '@/lib/neighborhoodFormReview';
+import NeighborhoodFormReviewPanel from './NeighborhoodFormReviewPanel';
 
 type TrendInterval = 'monthly' | 'quarterly' | 'semiannual' | 'yearly';
 
@@ -147,13 +153,6 @@ function signedPercentText(value: number | null): string {
   return `${value > 0 ? '+' : ''}${numberText(value, 1)}%`;
 }
 
-function trendLabel(value: MarketTrendConclusion): string {
-  return (
-    TREND_OPTIONS.find((option) => option.value === value)?.label ||
-    'Insufficient evidence'
-  );
-}
-
 function dateText(value: string | null): string {
   if (!value) return 'Not available';
   const parsed = new Date(`${value.slice(0, 10)}T00:00:00`);
@@ -205,39 +204,7 @@ function resultFingerprint(
 function defaultReconciliation(
   response: MarketConditionsResponse,
 ): MarketConditionsReconciliation {
-  const labels = response.analyses.map((analysis) => analysis.market.label);
-  const populations = response.analyses
-    .map((analysis) => analysis.population.eligible_sale_count)
-    .filter((count) => count > 0);
-  const populationText = populations.length
-    ? `${Math.min(...populations).toLocaleString()} to ${Math.max(
-        ...populations,
-      ).toLocaleString()} sales`
-    : 'no eligible sales';
-  const recommendation = response.recommendation;
-  const rankedLabels = recommendation.ranked_studies
-    .map((study) => study.label)
-    .join(', ');
-  return {
-    trendConclusion: recommendation.conclusion,
-    reliedUponAreaKeys: response.analyses.map(
-      (analysis) => analysis.market.key,
-    ),
-    explanation:
-      `The appraiser reviewed ${labels.join(', ') || 'the selected market areas'}. ` +
-      `The independent study populations range from ${populationText}. ` +
-      (recommendation.recommended_change_percent === null
-        ? 'The automated analysis did not have enough complete monthly observations to recommend a market trend. '
-        : `The automated analysis indicates ${trendLabel(
-            recommendation.conclusion,
-          ).toLowerCase()} conditions based on a ${signedPercentText(
-            recommendation.recommended_change_percent,
-          )} reconciled annualized change. `) +
-      (rankedLabels
-        ? `The highest-ranked study populations are ${rankedLabels}. `
-        : '') +
-      'Explain which geography and time interval receive the greatest weight, why that evidence best reflects the subject market, and how the reported trend conclusion was reconciled.',
-  };
+  return appliedMarketReconciliation(response, response.analyses.map(analysis => analysis.market.key));
 }
 
 function MedianPriceBars({
@@ -555,92 +522,6 @@ function StudyStatistics({
   );
 }
 
-function RecommendedDetermination({
-  response,
-  compact = false,
-}: {
-  response: MarketConditionsResponse;
-  compact?: boolean;
-}) {
-  const recommendation = response.recommendation;
-  return (
-    <div className={`${compact ? 'mt-2 p-3' : 'mt-4 p-4'} rounded-xl border border-indigo-200 bg-white`}>
-      <div className={`flex flex-wrap items-start justify-between ${compact ? 'gap-2' : 'gap-3'}`}>
-        <div>
-          <div className="text-xs font-semibold uppercase tracking-wide text-indigo-700">
-            Recommended determination
-          </div>
-          <div className={`${compact ? 'mt-0.5' : 'mt-1'} flex flex-wrap items-baseline gap-2`}>
-            <span className={`${compact ? 'text-lg' : 'text-xl'} font-bold text-slate-950`}>
-              {trendLabel(recommendation.conclusion)}
-            </span>
-            <span className="text-sm font-semibold text-indigo-800">
-              {signedPercentText(recommendation.recommended_change_percent)}
-              {' '}reconciled annualized change
-            </span>
-          </div>
-        </div>
-        <div className="flex gap-5 text-right text-xs text-slate-500">
-          <div>
-            <div>Study average</div>
-            <div className="font-semibold text-slate-900">
-              {signedPercentText(
-                recommendation.average_annualized_change_percent,
-              )}
-            </div>
-          </div>
-          <div>
-            <div>Study median</div>
-            <div className="font-semibold text-slate-900">
-              {signedPercentText(
-                recommendation.median_annualized_change_percent,
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-      <p className={`${compact && recommendation.methodology_version >= 3 ? 'hidden' : 'mt-2 leading-5'} text-xs text-slate-600`}>
-        {recommendation.methodology_version >= 3
-          ? 'Lower average COD/CV ranks higher. Sales count and data coverage are reviewed separately; the score is not a confidence probability.'
-          : 'Saved scores use the earlier method. Rerun market studies for COD/CV ranking.'}{' '}A reconciled change
-        within ±{numberText(recommendation.stable_threshold_percent, 1)}% is
-        classified as stable. The appraiser may override this recommendation.
-      </p>
-      {recommendation.weighting_method === 'appraiser_defined_area_60_percent' ? (
-        <div className={`${compact ? 'mt-1 px-2 py-1.5' : 'mt-2 px-3 py-2'} rounded-lg border border-indigo-200 bg-indigo-50 text-xs font-medium text-indigo-900`}>
-          The appraiser-defined area receives 60% of the reconciliation weight.
-          The remaining 40% is divided among the other studies according to their
-          reliability scores.
-        </div>
-      ) : null}
-      {recommendation.ranked_studies.length > 0 && (
-        <div className={`${compact ? 'mt-2 gap-1.5' : 'mt-3 gap-2'} grid md:grid-cols-3`}>
-          {recommendation.ranked_studies.map((study) => (
-            <div
-              key={study.key}
-              className={`rounded-lg border border-slate-200 bg-slate-50 text-xs ${compact ? 'px-2 py-1.5' : 'px-3 py-2'}`}
-            >
-              <div className="font-semibold text-slate-900">
-                #{study.rank} {study.label}
-              </div>
-              <div className={`${compact ? 'mt-0.5' : 'mt-1'} text-slate-600`}>
-                Score {numberText(study.reliability_score, 1)}/100 ·{' '}
-                {study.sale_count.toLocaleString()} sales ·{' '}
-                {signedPercentText(study.annualized_change_percent)}
-              </div>
-              {study.reconciliation_weight_percent != null ? (
-                <div className={`${compact ? 'mt-0.5' : 'mt-1'} font-semibold text-indigo-700`}>
-                  {numberText(study.reconciliation_weight_percent, 1)}% reconciliation weight
-                </div>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 export default function MarketConditionsAnalysis({
   subjectAccountId,
   assignmentFileId = null,
@@ -681,6 +562,8 @@ export default function MarketConditionsAnalysis({
   const [analysisResult, setAnalysisResult] =
     useState<MarketConditionsResponse | null>(savedDraft?.response || null);
   const [studyComplexity, setStudyComplexity] = useState<MarketStudyComplexity | null>(savedDraft?.propertyComplexity ?? null);
+  const [landUse, setLandUse] = useState<ExplorationLandUse | null>(savedDraft?.landUse ?? null);
+  const [neighborhoodForm, setNeighborhoodForm] = useState<NeighborhoodFormReview>(savedDraft?.neighborhoodForm ?? EMPTY_NEIGHBORHOOD_FORM);
   const [studyRevision, setStudyRevision] = useState(0);
   const draftHydrated = useRef(Boolean(savedDraft));
   const studyEdited = useRef(false);
@@ -692,6 +575,7 @@ export default function MarketConditionsAnalysis({
         explanation: '',
       },
     );
+  const [weightChoices, setWeightChoices] = useState<MarketConditionsAreaKey[]>(savedDraft?.reconciliation.reliedUponAreaKeys || []);
   const [runSignature, setRunSignature] = useState(
     savedDraft
       ? resultFingerprint(
@@ -747,7 +631,10 @@ export default function MarketConditionsAnalysis({
     setPeriodMonths(savedDraft.periodMonths);
     setAnalysisResult(savedDraft.response);
     setReconciliation(savedDraft.reconciliation);
+    setWeightChoices(savedDraft.reconciliation.reliedUponAreaKeys);
     setStudyComplexity(savedDraft.propertyComplexity ?? null);
+    setLandUse(savedDraft.landUse ?? null);
+    setNeighborhoodForm(savedDraft.neighborhoodForm ?? EMPTY_NEIGHBORHOOD_FORM);
     setRunSignature(resultFingerprint(savedDraft.selectedAreaKeys, savedDraft.asOfDate,
       savedDraft.periodMonths, marketExplorationIdentity(savedDraft.response), savedDraft.contextOverride || null));
   }, [savedDraft]);
@@ -794,6 +681,8 @@ export default function MarketConditionsAnalysis({
         response: analysisResult,
         reconciliation,
         propertyComplexity: studyComplexity,
+        landUse: landUse?.explorationIdentity === explorationIdentity ? landUse : null,
+        neighborhoodForm,
       };
       onCompletionChangeRef.current?.(draft);
     } else {
@@ -809,6 +698,9 @@ export default function MarketConditionsAnalysis({
     selectedAreaKeys,
     studyIsCurrent,
     studyComplexity,
+    explorationIdentity,
+    landUse,
+    neighborhoodForm,
     subjectAccountId,
   ]);
 
@@ -866,9 +758,12 @@ export default function MarketConditionsAnalysis({
         response,
         reconciliation: nextReconciliation,
         propertyComplexity: null,
+        landUse: landUse?.explorationIdentity === explorationIdentity ? landUse : null,
+        neighborhoodForm,
       };
       setAnalysisResult(response);
       setReconciliation(nextReconciliation);
+      setWeightChoices(nextReconciliation.reliedUponAreaKeys);
       setRunSignature(signature);
       setStudyComplexity(null);
       setStudyRevision(revision => revision + 1);
@@ -910,6 +805,8 @@ export default function MarketConditionsAnalysis({
       response: analysisResult,
       reconciliation,
       propertyComplexity: studyComplexity,
+      landUse: landUse?.explorationIdentity === explorationIdentity ? landUse : null,
+      neighborhoodForm,
     };
     if (onCompletionChange) onCompletionChange(draft);
     else saveMarketConditionsDraft(draft, applicationSession);
@@ -975,6 +872,12 @@ export default function MarketConditionsAnalysis({
       </div>
 
       <div className={embedded ? 'space-y-2 p-2.5' : 'space-y-5 p-5'}>
+        <ExplorationLandUsePanel group={selectedExploration} value={landUse} onChange={setLandUse} />
+        <NeighborhoodFormReviewPanel value={neighborhoodForm} onChange={setNeighborhoodForm}
+          current={studyIsCurrent && Boolean(selectedExploration && analysisResult?.analyses.some(analysis => analysis.market.key === 'exploration'))}
+          onUseFigures={() => { if (selectedExploration && analysisResult && explorationIdentity) {
+            setNeighborhoodForm(neighborhoodStudyFigures(analysisResult, selectedExploration, explorationIdentity, landUse, neighborhoodForm));
+          } }} />
         <div className={embedded ? 'grid grid-cols-1 gap-1.5 sm:grid-cols-2' : 'grid grid-cols-1 gap-4 sm:grid-cols-2'}>
           <label className="grid gap-1 text-sm text-slate-700">
             <span className="font-medium">Analysis as of</span>
@@ -1323,7 +1226,14 @@ export default function MarketConditionsAnalysis({
                 </p>
               </div>
 
-              <RecommendedDetermination response={analysisResult} compact={embedded} />
+              <MarketStudyDetermination response={analysisResult} compact={embedded} current={studyIsCurrent}
+                appliedKeys={reconciliation.reliedUponAreaKeys} selectedKeys={weightChoices}
+                onToggle={key => setWeightChoices(current => current.includes(key) ? current.filter(value => value !== key) : [...current, key])}
+                onApply={() => {
+                  studyEdited.current = true;
+                  setReconciliation(appliedMarketReconciliation(analysisResult, weightChoices));
+                  setNotice('Selected studies applied. The determination and suggested explanation have been updated.');
+                }} />
 
               <div className={embedded ? 'mt-2 grid grid-cols-1 gap-2 lg:grid-cols-4' : 'mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[240px_1fr]'}>
                 <label className={`grid gap-1 text-sm text-slate-700 ${embedded ? 'lg:col-span-1' : ''}`}>
@@ -1347,48 +1257,6 @@ export default function MarketConditionsAnalysis({
                   </select>
                 </label>
 
-                <fieldset className={embedded ? 'lg:col-span-3' : ''}>
-                  <legend className="text-sm font-medium text-slate-700">
-                    Studies given greatest weight
-                  </legend>
-                  <div className={`${embedded ? 'mt-1 gap-1.5' : 'mt-2 gap-2'} flex flex-wrap`}>
-                    {analysisResult.analyses.map((analysis) => {
-                      const selected =
-                        reconciliation.reliedUponAreaKeys.includes(
-                          analysis.market.key,
-                        );
-                      return (
-                        <label
-                          key={analysis.market.key}
-                          className={`inline-flex cursor-pointer items-center gap-2 rounded-full border px-3 text-xs font-semibold ${embedded ? 'py-1.5' : 'py-2'} ${
-                            selected
-                              ? 'border-indigo-500 bg-indigo-100 text-indigo-950'
-                              : 'border-slate-300 bg-white text-slate-600'
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={selected}
-                            onChange={() =>
-                              setReconciliation((current) => ({
-                                ...current,
-                                reliedUponAreaKeys: selected
-                                  ? current.reliedUponAreaKeys.filter(
-                                      (key) => key !== analysis.market.key,
-                                    )
-                                  : [
-                                      ...current.reliedUponAreaKeys,
-                                      analysis.market.key,
-                                    ],
-                              }))
-                            }
-                          />
-                          {analysis.market.label}
-                        </label>
-                      );
-                    })}
-                  </div>
-                </fieldset>
               </div>
 
               <label className={`${embedded ? 'mt-2' : 'mt-4'} grid gap-1 text-sm text-slate-700`}>
@@ -1417,8 +1285,7 @@ export default function MarketConditionsAnalysis({
                   {savingNarrative ? 'Saving...' : 'Save market reconciliation'}
                 </button>
                 <span className="text-xs text-slate-500">
-                  Choosing a study here documents evidentiary weight only; it
-                  does not filter comparable sales.
+                  Study weighting updates reconciliation, not the comparable-sales inventory.
                 </span>
               </div>
             </div>

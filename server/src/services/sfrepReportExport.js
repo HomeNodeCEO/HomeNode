@@ -3,6 +3,7 @@ import { isUrarPlaceholder, isUrarStateCode } from "../util/urarScalarValidation
 import { formatSubjectPresentationValue } from "../util/subjectPresentation.js";
 import { sfrepDocumentParcelMismatch } from './sfrepSubjectContext.js';
 import { projectSfrepContractSection } from './sfrepContractSection.js';
+import { projectSfrepNeighborhoodSection } from './sfrepNeighborhoodSection.js';
 
 /**
  * Pure, deliberately conservative SFREP RPTI Report.xml projection.
@@ -452,6 +453,7 @@ export function buildSfrepReportExport({
   formId = SFREP_PRIMARY_FORM_ID, application = {}, subjectContext, forReportPersistence = false,
   savedReportFields, subjectOnly = false, contractSection = false, savedAssignmentDetails,
   savedAssignmentFileId, savedAssignmentRevision, contractEvidenceDocuments,
+  savedNeighborhoodReport,
 } = {}) {
   if (!SFREP_SUPPORTED_FORM_IDS.includes(formId)) fail("sfrep_unsupported_form");
   if (!fieldSelections || typeof fieldSelections !== "object" || Array.isArray(fieldSelections)) fail("sfrep_invalid_field_selection");
@@ -736,12 +738,18 @@ export function buildSfrepReportExport({
     supplementalWarnings.push(...contract.warnings);
     knownMissing.push(...contract.knownMissing);
   }
+  if (savedNeighborhoodReport) {
+    const neighborhood = projectSfrepNeighborhoodSection(savedNeighborhoodReport);
+    fields.push(...neighborhood.fields);
+    supplementalWarnings.push(...neighborhood.warnings);
+    knownMissing.push(...neighborhood.knownMissing);
+  }
   fields.sort((a, b) => compare(a.fieldId, b.fieldId));
   conflicts.sort((a, b) => compare(a.sourceField, b.sourceField));
   omitted.sort(sourceOrder);
   const validatedAddenda = validatePdfAddenda(pdfAddenda, selected);
   const warnings = [
-    `This export targets the legacy ${formId === SFREP_2055_FORM_ID ? 'FNMA 2055 exterior-only' : 'FNMA 1004 URAR'} (09/2011) form, not the dynamic UAD 3.6 URAR. Only the Subject and Contract sections are mapped.`,
+    `This export targets the legacy ${formId === SFREP_2055_FORM_ID ? 'FNMA 2055 exterior-only' : 'FNMA 1004 URAR'} (09/2011) form, not the dynamic UAD 3.6 URAR. Subject, Contract, and saved Neighborhood sections are mapped.`,
     "Document-derived fields use explicitly confirmed evidence. Any user-requested defaults are identified separately. Review imported values in Appraise-It Pro before use.",
     ...supplementalWarnings,
   ];

@@ -1431,6 +1431,14 @@ export interface MarketConditionsAnalysis {
     congruency_factors: MarketCongruencyFactors;
   };
   statistics: MarketStudyStatistics;
+  recent_periods?: Array<{
+    months: 3 | 6 | 12;
+    start: string;
+    end: string;
+    sale_count: number;
+    marketing_observation_count: number;
+    median_days_on_market: number | null;
+  }>;
   series: {
     monthly: MarketConditionsSeriesPoint[];
     quarterly: MarketConditionsSeriesPoint[];

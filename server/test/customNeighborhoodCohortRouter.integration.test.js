@@ -20,7 +20,7 @@ const bodies = {
   members: { assignment_file_id: assignment, context_ref: contextRef, selection,
     population: { group: 'selected', kind: 'stock' }, page: { limit: 20, after_member_id: null } },
 };
-async function start(t, { principal = auth, methods = {}, parsed = false, logger, marketAnalysis } = {}) {
+async function start(t, { principal = auth, methods = {}, parsed = false, logger, marketAnalysis, landUseAnalysis } = {}) {
   const calls = [], fallthroughErrors = [];
   const service = Object.fromEntries(['capture', 'present', 'inspect', 'catalog', 'viewport'].map(name => [name, methods[name] ?? (async (...args) => {
     calls.push({ name, args }); return { status: name, marker: 'compact-only' };
@@ -30,6 +30,7 @@ async function start(t, { principal = auth, methods = {}, parsed = false, logger
   app.use((req, _res, next) => { req.mobileAuth = principal; next(); });
   if (parsed) app.use(express.json({ limit: 10_000_000 }));
   app.use(createCustomNeighborhoodCohortRouter({ cohortService: service, logger,
+    landUseAnalysis: landUseAnalysis === true ? async (...args) => { calls.push({ name: 'land-use', args }); return { categories: [] }; } : landUseAnalysis,
     marketAnalysis: marketAnalysis === true ? async (...args) => { calls.push({ name: 'market-analysis', args }); return { analyses: [] }; } : marketAnalysis }));
   app.post('/api/unrelated-report', (_req, res) => res.json({ owner: 'unrelated-report' }));
   app.use((error, req, res, _next) => {
@@ -69,6 +70,24 @@ test('exploration market study is authenticated, exact-file bound, no-store and 
   const denied = await start(t, { marketAnalysis: () => { throw Object.assign(new Error('PRIVATE SQL'), { reason: 'market_data_access_denied' }); } });
   const failure = await denied.request('market-analysis', body);
   assert.equal(failure.status, 403); assert.deepEqual(await failure.json(), { error: 'neighborhood_access_denied' });
+});
+
+test('stored exploration land use uses the protected exact-file cohort route and refuses client rosters or leaked diagnostics', async t => {
+  const body = { assignment_file_id: assignment, context_ref: contextRef, selection, selection_sha256: 'b'.repeat(64) };
+  const h = await start(t, { landUseAnalysis: true });
+  const response = await h.request('land-use', body);
+  assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.equal(h.calls[0].args[0].assignmentFileId, assignment); assert.equal(h.calls[0].args[0].auth, auth);
+  assert.deepEqual(h.calls[0].args[1], body); assert.ok(h.calls[0].args[2].signal instanceof AbortSignal);
+  for (const extra of [{ account_ids: ['forged'] }, { auth: {} }, { geom: {} }, { effective_date: '2000-01-01' }]) {
+    assert.equal((await h.request('land-use', { ...body, ...extra })).status, 400);
+  }
+  assert.equal(h.calls.length, 1);
+  const anonymous = await start(t, { principal: null, landUseAnalysis: true });
+  assert.equal((await anonymous.request('land-use', body)).status, 401); assert.equal(anonymous.calls.length, 0);
+  const denied = await start(t, { landUseAnalysis: () => { throw Object.assign(new Error('PRIVATE SQL'), { reason: 'assignment_access_denied' }); } });
+  const failure = await denied.request('land-use', body); assert.equal(failure.status, 403);
+  assert.deepEqual(await failure.json(), { error: 'neighborhood_access_denied' });
 });
 
 test('viewport is authenticated, assignment-bound, and refuses oversized display results', async t => {

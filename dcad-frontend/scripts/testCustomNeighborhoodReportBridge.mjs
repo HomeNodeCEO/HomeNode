@@ -414,5 +414,18 @@ test('characteristics mounts one chosen host inside the existing layout, not bot
   const exact = renderToStaticMarkup(jsx.jsx(Section, { ...props, workspace: { ...props.workspace, groupHostProps: {} } }));
   assert.match(exact, /data-host="CustomCohortGroupWorkspaceHost"/);
   assert.doesNotMatch(exact, /data-host="CustomNeighborhoodWorkspaceHost"/);
-  assert.match(exact, /Neighborhood summary/); assert.match(exact, /Applied neighborhood characteristics and market observations/);
+  assert.match(exact, /Neighborhood summary/);
+  for (const html of [legacy, exact]) {
+    assert.doesNotMatch(html, /Applied neighborhood characteristics and market observations|Applying the reviewed neighborhood/);
+    assert.doesNotMatch(html, /data-host="CustomNeighborhoodAccepted(?:Outline|Summary)"/);
+  }
+  for (const groupHostProps of [null, {}]) {
+    const accepted = renderToStaticMarkup(jsx.jsx(Section, { ...props,
+      acceptedNeighborhood: { status: 'accepted', assessment: { synthetic_accepted: 'retained' } },
+      workspace: { ...props.workspace, groupHostProps } }));
+    assert.match(accepted, /class="hidden print:block"/);
+    assert.match(accepted, /data-host="CustomNeighborhoodAcceptedOutline"/);
+    assert.match(accepted, /data-host="CustomNeighborhoodAcceptedSummary"/);
+    assert.doesNotMatch(accepted, /Applied neighborhood characteristics and market observations|Applying the reviewed neighborhood/);
+  }
 });

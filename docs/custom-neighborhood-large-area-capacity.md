@@ -959,7 +959,11 @@ legacy API/host and the exact V1-6 decoder; the V7 option uses the checked V7 AP
 and supplies only `groupHostProps`. Missing policy, legacy/corrupt/future data,
 and absence are not collapsed into a successful empty migration. The
 characteristics section mounts exactly one chosen lazy host in the existing
-layout. The production page has not been changed to opt into this mode.
+layout. Both modes preserve the protected appraiser UI cleanup: no duplicate
+interactive applied-neighborhood panel; previously accepted outline/statistics
+remain in a print-only container. The composition renderer tests both absent
+and accepted evidence in both modes. The production page has not been changed
+to opt into this mode.
 
 Both modes retain the same current session/file generation, fresh workfile
 read, accepted-refetch callback and synchronous Save Everything/signing lease.

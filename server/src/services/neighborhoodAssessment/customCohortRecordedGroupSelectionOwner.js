@@ -128,7 +128,8 @@ export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, exec
       'expectedWorkspaceCheckpoint', ...(starting ? ['pendingCapture'] : [])]);
     const identity = identityOf(v), prior = prepareCustomNeighborhoodWorkspaceCheckpoint(v.expectedWorkspaceCheckpoint);
     if (!UUID.test(identity.auth.userId) || !Number.isInteger(v.expectedWorkspaceRevision)
-      || v.expectedWorkspaceRevision < 1 || v.expectedWorkspaceRevision >= 2147483647
+      || v.expectedWorkspaceRevision < 0 || v.expectedWorkspaceRevision >= 2147483647
+      || (v.expectedWorkspaceRevision === 0 && (!starting || prior.active !== null || prior.pending_capture !== null))
       || prior.workspace_version !== 7 || (starting ? prior.pending_capture !== null : prior.pending_capture === null))
       fail('invalid_transition');
     const next = prepareCustomNeighborhoodWorkspaceCheckpoint({ ...prior, pending_capture: starting ? v.pendingCapture : null });

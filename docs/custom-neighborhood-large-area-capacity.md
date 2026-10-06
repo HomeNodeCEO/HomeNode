@@ -539,6 +539,11 @@ metadata-only head check refuses a detached active selection; it opens no old
 catalog/source facts and is not a license grant. An expired old source grant
 does not prevent an authorized appraiser from setting aside unfinished intent.
 Exact immediate-successor retries add no history and cannot rewind later edits.
+For a genuinely new file, start may bootstrap revision zero only with explicit
+empty V7 intent and an actually absent workspace row. A present/invalid/legacy
+checkpoint cannot be overwritten by that bootstrap; no default population or
+implicit upgrade is inferred. The same current-role, draft, quota and final
+transaction fences apply to its initial pending write.
 
 `completeRecordedGroupCapture` requires the new capture to be fully registered
 and independently authorized. Its context UUID must equal the pending capture
@@ -568,8 +573,9 @@ initial/final role and source refusal, lost acknowledgments and v3 original
 reopening. They retain the coordinator's cold-start assignment and accepted
 sections, receipts, report and geography unchanged. These assertions must pass
 actual CI; local recording doubles are not claimed as PostgreSQL proof.
-An additional isolated report fixture performs a real V7 start/capture/complete
-transition and passes its current command-v3 selection directly to reviewed
+An additional isolated report fixture bootstraps an actually absent V7
+workspace, performs a second real start/capture/complete transition, and passes
+its current command-v3 selection directly to reviewed
 inputs, report proposal and coherent Apply/replay. The existing two-revision V7
 fixture still checks actual stale-head swaps with identical checkpoint bytes;
 the fresh one-revision transition case does not fabricate a predecessor for it.

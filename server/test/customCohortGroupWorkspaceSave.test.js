@@ -20,11 +20,12 @@ const v7 = () => ({ workspace_version: 7, active: { context_ref: structuredClone
   selection_ref: structuredClone(ref) }, pending_capture: null });
 const selected = (status = 'stored') => ({ status, authority: 'not_established', operation_id: identity.operationId,
   context_ref: context, selection_ref: ref, included_recorded_group_ids: [] });
-function database({ value = legacy(), revision = 2, status = 'draft', head = ref } = {}) {
+function database({ value = legacy(), revision = 2, status = 'draft', head = ref, absent = false } = {}) {
   const calls = [];
   const client = { release() { assert.fail('caller owns release'); }, async query(text, params = []) {
     const sql = text.replace(/\s+/g, ' ').trim(); calls.push({ sql, params: structuredClone(params) });
-    if (sql.startsWith('/* custom-cohort-group-workspace:read */')) return { rowCount: 1, rows: [{ revision, value }] };
+    if (sql.startsWith('/* custom-cohort-group-workspace:read */')) return absent ? { rowCount: 0, rows: [] }
+      : { rowCount: 1, rows: [{ revision, value }] };
     if (sql.startsWith('/* custom-cohort-group-selection:transaction */')) return { rowCount: 1, rows: [{ transaction_id: '42' }] };
     if (sql.startsWith('/* custom-cohort-group-selection:target */')) return { rowCount: 1, rows: [context] };
     if (sql.startsWith('/* custom-cohort-group-selection:head */')) return head === null ? { rowCount: 0, rows: [] }
@@ -34,7 +35,8 @@ function database({ value = legacy(), revision = 2, status = 'draft', head = ref
     if (sql.startsWith('SELECT assignment_file.id, assignment_file.file_number')) return { rows: [{ id: '41', file_number: 'QA only' }] };
     if (sql.startsWith('INSERT INTO app.custom_appraisal_workfiles (')) return { rows: [] };
     if (sql.startsWith('SELECT status FROM app.custom_appraisal_workfiles')) return { rows: [{ status }] };
-    if (sql.startsWith("SELECT revision, section_value->>'workspace_version'")) return { rows: [{ revision, workspace_version: String(value.workspace_version) }] };
+    if (sql.startsWith("SELECT revision, section_value->>'workspace_version'")) return absent ? { rows: [] }
+      : { rows: [{ revision, workspace_version: String(value.workspace_version) }] };
     if (sql.startsWith('INSERT INTO app.custom_appraisal_workfile_sections (')) return { rows: [{
       section_key: params[1], section_value: JSON.parse(params[2]), revision: params[3], updated_by: params[4], updated_at: '2026-10-06T00:00:00Z',
     }] };
@@ -117,6 +119,24 @@ const completion = () => ({ ...transition(), contextRef: nextContext,
   expectedWorkspaceCheckpoint: { ...v7(), pending_capture: capture() } });
 const completeOwned = (db, input = completion(), settings = {}) => complete({ client: db.client, input, scopeJson: scope,
   observationPeriod: nextPeriod, discovery: null, privateSalesImport: null, checkBudget() {}, ...settings });
+
+test('only explicit empty V7 intent at revision zero can bootstrap an actually absent workspace', async () => {
+  const prior = { workspace_version: 7, active: null, pending_capture: null };
+  const input = { ...transition(), expectedWorkspaceRevision: 0, expectedWorkspaceCheckpoint: prior };
+  const db = database({ absent: true });
+  const result = await pending({ client: db.client, input, scopeJson: scope, pendingCapture: capture(), checkBudget() {} });
+  assert.equal(result.status, 'stored'); assert.equal(result.workspace.revision, 1);
+  assert.equal(result.workspace.value.active, null); assert.deepEqual(result.workspace.value.pending_capture, capture());
+  assert.equal(writes(db).length, 2); assert.ok(!db.calls.some(c => c.sql.includes('group-selection:')));
+  for (const other of [transition(), { ...input, expectedWorkspaceCheckpoint: v7() }]) {
+    const unavailable = database({ absent: true });
+    await assert.rejects(pending({ client: unavailable.client, input: other, scopeJson: scope,
+      pendingCapture: capture(), checkBudget() {} }), /unavailable/); assert.equal(writes(unavailable).length, 0);
+  }
+  const existing = database();
+  await assert.rejects(pending({ client: existing.client, input, scopeJson: scope,
+    pendingCapture: capture(), checkBudget() {} }), /revision_changed/); assert.equal(writes(existing).length, 0);
+});
 
 test('pending start/cancel retains the exact active identity; scoped metadata-only head fence and one history write', async () => {
   for (const [prior, target] of [[v7(), capture()], [{ ...v7(), pending_capture: capture() }, null]]) {

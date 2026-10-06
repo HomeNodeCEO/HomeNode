@@ -7,7 +7,7 @@ import { createCustomCohortGroupSelectionRepository } from './customCohortGroupS
 const same = (a, b) => json(a) === json(b);
 function fail(reason) { throw new TypeError(`custom_cohort_group_workspace_${reason}`); }
 
-async function readWorkspace(client, input, checkBudget) {
+async function readWorkspace(client, input, checkBudget, allowAbsent = false) {
   checkBudget();
   const rows = await client.query(`/* custom-cohort-group-workspace:read */
     SELECT revision, CASE WHEN octet_length(section_value::text) <= $3::integer
@@ -17,6 +17,10 @@ async function readWorkspace(client, input, checkBudget) {
   [input.assignmentFileId, CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION,
     CUSTOM_NEIGHBORHOOD_V6_WORKSPACE_CHECKPOINT_LIMITS.canonical_utf8_bytes * 2]);
   checkBudget();
+  if (allowAbsent && rows?.rowCount === 0 && rows.rows?.length === 0 && input.expectedWorkspaceRevision === 0
+    && input.expectedWorkspaceCheckpoint.workspace_version === 7
+    && input.expectedWorkspaceCheckpoint.active === null && input.expectedWorkspaceCheckpoint.pending_capture === null)
+    return Object.freeze({ section_revision: 0, checkpoint: input.expectedWorkspaceCheckpoint });
   if (rows?.rowCount !== 1 || rows.rows?.length !== 1) fail('unavailable');
   const restored = readCustomNeighborhoodWorkspaceCheckpoint(rows.rows[0]);
   if (restored.status !== 'restored') fail('unavailable');
@@ -51,7 +55,7 @@ async function checkPriorHead(client, scopeJson, checkpoint, checkBudget) {
  * Exact immediate-successor replay is read-only; a later edit cannot rewind.
  */
 export async function saveCustomCohortGroupPendingCapture({ client, input, scopeJson, pendingCapture, checkBudget }) {
-  const restored = await readWorkspace(client, input, checkBudget), prior = input.expectedWorkspaceCheckpoint;
+  const restored = await readWorkspace(client, input, checkBudget, pendingCapture !== null), prior = input.expectedWorkspaceCheckpoint;
   const value = prepareCustomNeighborhoodWorkspaceCheckpoint({ ...prior, pending_capture: pendingCapture });
   if (restored.section_revision === input.expectedWorkspaceRevision + 1 && same(restored.checkpoint, value)) {
     await checkPriorHead(client, scopeJson, prior, checkBudget);

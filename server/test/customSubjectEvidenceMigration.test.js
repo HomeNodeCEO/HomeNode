@@ -25,11 +25,16 @@ test('Subject receipt migration extends both exact key constraints without chang
   assert.doesNotMatch(migration, /DROP\s+(?:TABLE|SCHEMA|DATABASE)|DELETE\s+FROM|TRUNCATE|UPDATE\s+|INSERT\s+INTO/i);
 });
 
-test('follow-on receipt migration follows its prerequisite in the ordinary checksummed application registry', () => {
+test('follow-on receipt migration stays ordered in the ordinary checksummed application registry', () => {
   const list = registry.match(/const MIGRATIONS = Object\.freeze\(\[([^]*?)\]\);/)[1];
   const names = [...list.matchAll(/"([^\"]+)"/g)].map(match => match[1]);
-  assert.ok(names.indexOf('20261007_assignment_scoped_report_sections.sql') < names.indexOf('20261028_custom_subject_evidence.sql'));
   assert.equal(names.filter(name => name === '20261028_custom_subject_evidence.sql').length, 1);
+  assert.ok(names.indexOf('20261007_assignment_scoped_report_sections.sql')
+    < names.indexOf('20261028_custom_subject_evidence.sql'));
+  assert.ok(names.indexOf('20261028_custom_subject_evidence.sql')
+    < names.indexOf('20261029_custom_cohort_prepared_viewport_tiles.sql'));
+  assert.ok(names.indexOf('20261029_custom_cohort_prepared_viewport_tiles.sql')
+    < names.indexOf('20261030_custom_cohort_capture_jobs.sql'));
 });
 
 test('database permission to store receipts does not grant the manual API permission to forge them', () => {

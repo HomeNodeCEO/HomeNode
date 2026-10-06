@@ -14,6 +14,7 @@ import {
   type OfflineDatabaseSnapshot,
 } from "../src/offline/databaseEncryption";
 import { DatabaseActivityGate } from "../src/offline/databaseActivityGate";
+import { runKeyedTransaction } from "../src/offline/databaseTransactions";
 import { isUnreadableSqliteDatabaseError, offlineDatabasePolicy } from "../src/offline/databaseRecovery";
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -113,6 +114,84 @@ test("camera waits for the current database write and blocks later writes until 
   resume();
   await Promise.all([first, second]);
   assert.equal(secondRan, true);
+});
+
+test("encrypted store transactions use an independently keyed connection", () => {
+  const source = fs.readFileSync(path.resolve(testDirectory, "../src/offline/store.ts"), "utf8");
+  assert.match(source, /runKeyedTransaction\(\(\) => openKeyedDatabase\(databaseName\), task\)/);
+  assert.match(source, /await keyDatabase\(database, databaseName, existedBeforeOpen\);[\s\S]*SELECT count\(\*\) AS table_count FROM sqlite_master/);
+  assert.doesNotMatch(source, /withExclusiveTransactionAsync/);
+});
+
+test("photo transaction receives its own key before beginning and commits its writes", async () => {
+  const events: string[] = [];
+  const savedPhotos: string[] = [];
+  let pending: string[] = [];
+  let keyed = false;
+  let foreignKeys = false;
+  const connection = {
+    async execAsync(sql: string) {
+      assert.equal(keyed, true, "a primary connection's key does not unlock a second connection");
+      if (sql.includes("PRAGMA foreign_keys = ON")) foreignKeys = true;
+      if (sql === "BEGIN IMMEDIATE") assert.equal(foreignKeys, true);
+      if (sql === "COMMIT") { savedPhotos.push(...pending); pending = []; }
+      events.push(sql);
+    },
+    async savePhoto(id: string) { pending.push(id); events.push("photo write"); },
+    async closeAsync() { events.push("close"); },
+  };
+  await runKeyedTransaction(async () => {
+    events.push("open separate connection", "apply existing key");
+    keyed = true;
+    return connection;
+  }, async (transaction) => transaction.savePhoto("front"));
+  assert.deepEqual(savedPhotos, ["front"]);
+  assert.deepEqual(events, [
+    "open separate connection", "apply existing key",
+    "PRAGMA foreign_keys = ON; PRAGMA synchronous = NORMAL;",
+    "BEGIN IMMEDIATE", "photo write", "COMMIT", "close",
+  ]);
+});
+
+test("failed photo transactions roll back and close without replacing the original failure", async () => {
+  const failure = new Error("photo insert failed");
+  const events: string[] = [];
+  let pending = false;
+  await assert.rejects(runKeyedTransaction(async () => ({
+    async execAsync(sql: string) {
+      events.push(sql);
+      if (sql === "ROLLBACK") { pending = false; throw new Error("rollback failed"); }
+    },
+    async closeAsync() { events.push("close"); throw new Error("close failed"); },
+  }), async () => { pending = true; throw failure; }), (reason) => reason === failure);
+  assert.equal(pending, false);
+  assert.equal(events.includes("COMMIT"), false);
+  assert.deepEqual(events.slice(-2), ["ROLLBACK", "close"]);
+});
+
+test("an unavailable encryption key prevents the transaction and queued photo writes", async () => {
+  let writes = 0;
+  await assert.rejects(runKeyedTransaction(async () => {
+    throw new Error("mobile_offline_database_key_unavailable");
+  }, async () => { writes += 1; }), { message: "mobile_offline_database_key_unavailable" });
+  assert.equal(writes, 0);
+});
+
+test("separate evidence transactions each open and close their own keyed handle", async () => {
+  let opened = 0;
+  let closed = 0;
+  const used: number[] = [];
+  const open = async () => {
+    const id = ++opened;
+    return { id, async execAsync() {}, async closeAsync() { closed += 1; } };
+  };
+  await Promise.all([
+    runKeyedTransaction(open, async (transaction) => { used.push(transaction.id); }),
+    runKeyedTransaction(open, async (transaction) => { used.push(transaction.id); }),
+  ]);
+  assert.deepEqual(used.sort(), [1, 2]);
+  assert.equal(opened, 2);
+  assert.equal(closed, 2);
 });
 
 test("SQLCipher migration verifies schema, row counts, and user version before activation", () => {

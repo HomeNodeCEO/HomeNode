@@ -235,6 +235,16 @@ disjoint-group selection hash is unchanged. A synthetic 60,000-account test
 exercises many interleaved groups, and a 120,000-account fixture exceeds both
 legacy whole-blob byte/node ceilings; neither is live capacity or load acceptance.
 
+The original catalog identity is explicitly versioned. Retained v1 originals
+keep their exact full read-model byte digests and are never rewritten or given
+new semantics. New internal-owner selections use v2, which binds the sorted
+complete independent roster and every group ID/count/ordered membership digest;
+display labels, explanation text, presentation and JSON key/group/roster order
+are not population identity. Full catalog completeness, scope/context, coverage,
+partition and source-rights validation still apply before deriving either version.
+The v2 roster digest is incremental and budget-checked, including the 120k fixture.
+Reopening and exact current-head lost-ACK replay use the retained producer version.
+
 The read-model inputs preserve their exact compact JSON round trip under a
 separate four-megabyte ceiling. They are not forced through the legacy
 1.5-megabyte/100k-node source-blob canonicalizer. Raw source evidence retains
@@ -258,6 +268,11 @@ original source pages. Shared prepared reads do not transfer parcel geometry;
 private captures cannot silently use a shared-only cache. Complete membership,
 command original, paged union and head update share one bounded transaction.
 The workfile/assignment/batch lock order matches signing and private review.
+Read owners take the workfile `FOR UPDATE NOWAIT` at that first parent lock
+because their later subject-freshness fence requires the same mode. Read
+permission stays read: this does not authorize a write or mutate the report.
+Concurrent owner reads therefore refuse one competitor before source facts,
+instead of both acquiring SHARE and failing a later NOWAIT lock upgrade.
 
 Before commit/delivery the owner again checks current actor/assignment, subject
 and source rights and the exact private CSV review when present. Reopening

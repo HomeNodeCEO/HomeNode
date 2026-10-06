@@ -73,6 +73,42 @@ test('explicit empty selection keeps complete catalog lineage while producing no
   await assert.rejects(prepare({ ...empty.input, includedGroupIds: [U] }), /unknown_group/);
 });
 
+test('v2 complete membership identity ignores display and JSON order but binds every group, roster and context', async () => {
+  const f = fixture(), input = { ...f.input, catalogIdentityVersion: 2, includedGroupIds: [A] };
+  const first = await prepare(input), descriptor = JSON.parse(first.catalog_original_json);
+  assert.equal(descriptor.selection_catalog_version, 2);
+  assert.equal(descriptor.roster_account_ids_sha256, sha(JSON.stringify({ account_ids: f.accounts })));
+  assert.ok(!Object.hasOwn(descriptor, 'original_catalog_sha256'));
+  assert.ok(!Object.hasOwn(descriptor, 'original_roster_sha256'));
+  const display = structuredClone(f.catalog);
+  display.presentation.note = 'new rendering'; display.pockets[0].label = 'Renamed label';
+  display.pockets[0].reasons = ['New display explanation']; display.pockets.reverse();
+  const refreshed = await prepare({ ...input,
+    catalogJson: JSON.stringify(Object.fromEntries(Object.entries(display).reverse())),
+    rosterJson: JSON.stringify({ account_ids: [...f.accounts].reverse() }) });
+  assert.equal(refreshed.catalog_original_json, first.catalog_original_json);
+  assert.equal(refreshed.metadata_json, first.metadata_json);
+  assert.deepEqual(await rows(refreshed), await rows(first));
+  const membership = structuredClone(f.catalog);
+  membership.pockets[0].account_ids = [account(0), account(1)]; membership.pockets[1].account_ids = [account(2)];
+  assert.notEqual((await prepare({ ...input, catalogJson: JSON.stringify(membership) })).catalog_original_json,
+    first.catalog_original_json, 'a valid repartition is not merely presentation');
+  const renamed = structuredClone(f.catalog); renamed.pockets[1].id = `recorded-cad:${'d'.repeat(64)}`;
+  assert.notEqual((await prepare({ ...input, catalogJson: JSON.stringify(renamed) })).catalog_original_json,
+    first.catalog_original_json, 'an unselected group identity is still bound');
+  const newRoster = [...f.accounts.slice(0, -1), account(4)], stock = structuredClone(f.catalog);
+  stock.unassigned.account_ids = [account(4)];
+  assert.notEqual((await prepare({ ...input, catalogJson: JSON.stringify(stock),
+    rosterJson: JSON.stringify({ account_ids: newRoster }) })).catalog_original_json, first.catalog_original_json);
+  const nextContext = { ...context, context_sha256: 'd'.repeat(64) }, other = structuredClone(f.catalog);
+  other.binding.context_ref = nextContext;
+  assert.notEqual((await prepare({ ...input, catalogJson: JSON.stringify(other), contextJson: json(nextContext) }))
+    .catalog_original_json, first.catalog_original_json);
+  for (const catalogIdentityVersion of [0, 3, '2', null]) {
+    await assert.rejects(prepare({ ...input, catalogIdentityVersion }), /invalid_catalog_identity_version/);
+  }
+});
+
 test('server-owned reviewer intent is retained with catalog/group originals and changes cannot share a receipt', async () => {
   const f = fixture(), command = { command_version: 1, actor_user_id: scope.organization_id,
     operation_id: context.context_id, expected_selection_ref: null, included_recorded_group_ids: [A, B].sort(), selection_revision: 1 };
@@ -217,4 +253,11 @@ test('120,000-account read models above legacy blob byte/node limits still deriv
   const m = memoryStore(), r = await m.store.stage({ metadataJson: p.metadata_json, membershipPages: p.membershipPages() });
   assert.equal(r.account_count, count);
   assert.deepEqual(await m.store.verify({ metadataJson: p.metadata_json, manifestRef: r.manifest_ref }), r);
+  const v2 = await prepare({ ...f.input, includedGroupIds: [B, A], catalogIdentityVersion: 2 });
+  assert.equal(JSON.parse(v2.catalog_original_json).roster_account_ids_sha256,
+    sha(JSON.stringify({ account_ids: f.accounts })));
+  assert.ok(Buffer.byteLength(v2.catalog_original_json) < 2000);
+  const v2Staged = await m.store.stage({ metadataJson: v2.metadata_json, membershipPages: v2.membershipPages() });
+  assert.equal(v2Staged.selection_sha256, r.selection_sha256, 'producer version does not change chosen population identity');
+  assert.notDeepEqual(v2Staged.manifest_ref, r.manifest_ref, 'new evidence version has distinct retained lineage');
 });

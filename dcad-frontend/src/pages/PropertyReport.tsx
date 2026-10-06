@@ -43,8 +43,6 @@ import {
 import { useNeighborhoodProfile } from "@/hooks/useNeighborhoodProfile";
 import { useAssignmentConflictKeys } from "@/hooks/useAssignmentConflictKeys";
 import { useSellerCadOwnerSelection } from "@/hooks/useSellerCadOwnerSelection";
-import { usePropertyContext } from "@/hooks/usePropertyContext";
-import PropertyContextSection from "@/components/PropertyContextSection";
 import { useRelatedParcels } from "@/hooks/useRelatedParcels";
 import { useAssignmentScopedReportSections } from "@/hooks/useAssignmentScopedReportSections";
 import { useCustomAppraisalDownloads } from "@/hooks/useCustomAppraisalDownloads";
@@ -249,22 +247,6 @@ function AddressHero({
       return hydrated;
     });
   }, []);
-  const {
-    propertyContext,
-    propertyContextLoading,
-    propertyContextSaving,
-    propertyContextMessage,
-    propertyComplexityDraft,
-    setPropertyComplexityDraft,
-    propertyComplexityNotes,
-    setPropertyComplexityNotes,
-    loadAssessment: loadPropertyContextAssessment,
-    analyzeCurrentPropertyContext: runPropertyContextAnalysis,
-    saveCurrentPropertyComplexity: savePropertyComplexityReview,
-  } = usePropertyContext({
-    accountId,
-    initialAssessment: baseDetail?.property_context || null,
-  });
   const handleSelectedAssignmentFile = useCallback(async (
     selectedFile: AppraisalAssignmentFile,
     isCancelled: () => boolean,
@@ -324,8 +306,7 @@ function AddressHero({
         );
       }
     }
-    void loadPropertyContextAssessment(selectedFile.id, isCancelled);
-  }, [accountId, hydrateAssignmentDraft, loadPropertyContextAssessment, setAssignmentConflictKeys]);
+  }, [accountId, hydrateAssignmentDraft, setAssignmentConflictKeys]);
   const {
     assignmentFiles,
     setAssignmentFiles,
@@ -1309,16 +1290,6 @@ function AddressHero({
     }
   };
 
-  const analyzeCurrentPropertyContext = () => runPropertyContextAnalysis({
-    assignmentFileId: activeAssignmentFile?.id || null,
-    customGeometry: assignmentDraft.neighborhood_boundary_geometry ||
-      customMarketStudy?.market.custom_geometry || null,
-    geography: assignmentDraft.neighborhood_location_type || null,
-  });
-
-  const saveCurrentPropertyComplexity = () => savePropertyComplexityReview({
-    assignmentFileId: activeAssignmentFile?.id || null,
-  });
 
   const recordLenderRevisionRequest = async () => {
     const fileAtStart = activeAssignmentFileRef.current;
@@ -2803,18 +2774,6 @@ function AddressHero({
               </div>
             ) : null}
 
-            <PropertyContextSection
-              context={propertyContext}
-              loading={propertyContextLoading}
-              saving={propertyContextSaving}
-              message={propertyContextMessage}
-              complexity={propertyComplexityDraft}
-              notes={propertyComplexityNotes}
-              onAnalyze={() => void analyzeCurrentPropertyContext()}
-              onComplexityChange={setPropertyComplexityDraft}
-              onNotesChange={setPropertyComplexityNotes}
-              onSave={() => void saveCurrentPropertyComplexity()}
-            />
 
             <SubjectConditionConformitySection
               assignment={assignmentDraft}

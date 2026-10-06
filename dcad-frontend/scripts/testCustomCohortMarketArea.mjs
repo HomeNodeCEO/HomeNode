@@ -108,6 +108,7 @@ function marketComponent(overrides = {}) {
       runMarketConditionsAnalysis: () => { throw new Error('Exploration must not use the legacy market request.'); } };
     if (dependency === '@/lib/marketConditionsDraft') return { readMarketConditionsDraft: () => null, saveMarketConditionsDraft: () => assert.fail('Unexpected local save') };
     if (dependency === '@/features/neighborhood/customCohortMarketArea') return { ...helper, runMarketStudies: (...args) => { queries.push(args); return operation.promise; } };
+    if (dependency === './MarketStudyPropertyContext') return { default: 'MarketStudyPropertyContext' };
     assert.fail(`Unexpected component import: ${dependency}`);
   }).default;
   function render() { let passes = 0; do { dirty = false; cursor = 0; tree = Component(props); while (pending.length) pending.shift()();
@@ -131,6 +132,70 @@ test('actual market UI offers the exploration selection, not another drawing map
   assert.match(h.text, /Study complete/);
   h.update({ explorationArea: { ...group, binding: { ...group.binding, selectionRevision: 8 } } });
   assert.equal(h.published.at(-1), null); assert.match(h.text, /Study required/);
+});
+
+test('all four areas remain visible in conclusion weighting, including fourth-ranked exploration', async t => {
+  const value = completeResult(), keys = ['zip', 'radius_1', 'radius_2', 'exploration'];
+  value.analyses = keys.map(key => ({ ...value.analyses[0], market: { key, label: key === 'exploration' ? 'Exploration Map Area' : key } }));
+  value.recommendation.ranked_studies = value.analyses.map((a, index) => ({ key: a.market.key, label: a.market.label,
+    rank: index + 1, reliability_score: 80, sale_count: 50, reconciliation_weight_percent: 25 }));
+  const initialDraft = { ...draft(value), selectedAreaKeys: keys };
+  const h = marketComponent({ initialDraft }); t.after(h.dispose); await h.settle();
+  assert.doesNotMatch(h.text, /Study geography and related CAD parcels|Use as a study center|Exact CAD situs address|Reviewable market context override/);
+  const tree = h.render(), nodes = walk(tree);
+  const recommendation = nodes.find(n => typeof n.type === 'function' && n.type.name === 'RecommendedDetermination');
+  assert.ok(recommendation);
+  assert.match(text(recommendation.type(recommendation.props)), /#4 Exploration Map Area/);
+  assert.ok(nodes.find(n => n.type === 'MarketStudyPropertyContext'));
+  const weight = nodes.find(n => n.type === 'fieldset' && text(n).includes('Studies given greatest weight'));
+  assert.equal(walk(weight).filter(n => n.type === 'input' && n.props.type === 'checkbox').length, 4);
+  assert.match(text(weight), /Exploration Map Area/);
+});
+
+test('a database draft arriving after lazy mount restores results and the saved complexity review once', async t => {
+  const h = marketComponent({ explorationArea: null }); t.after(h.dispose); await h.settle();
+  assert.match(h.text, /Study required/);
+  const value = completeResult(), keys = ['zip', 'radius_1', 'radius_2', 'exploration'];
+  value.analyses = keys.map(key => ({ ...value.analyses[0], market: { key, label: key } }));
+  const signature = JSON.stringify({ areaKeys: [...keys].sort(), asOfDate: '2026-09-30', periodMonths: 12,
+    explorationIdentity: fixture().api.explorationAreaIdentity(group.binding), contextOverride: null });
+  const review = { version: 1, studySignature: signature, review: { notes: 'Saved review' } };
+  const restored = { ...draft(value), selectedAreaKeys: keys, asOfDate: '2026-09-30', periodMonths: 12,
+    propertyComplexity: review };
+  h.update({ initialDraft: restored }); await h.settle();
+  assert.match(h.text, /Study required/, 'Restored results still wait for the exact map selection');
+  assert.equal(h.published.filter(Boolean).length, 0);
+  const pendingContext = walk(h.render()).find(n => n.type === 'MarketStudyPropertyContext');
+  assert.equal(pendingContext.props.current, false);
+  assert.equal(pendingContext.props.studySignature, signature, 'The saved review keeps its completed-run identity while the map restores');
+  h.update({ explorationArea: group }); await h.settle();
+  assert.match(h.text, /Study complete/);
+  assert.deepEqual(h.published.at(-1).selectedAreaKeys, keys);
+  assert.equal(h.published.at(-1).asOfDate, '2026-09-30');
+  assert.equal(h.published.at(-1).periodMonths, 12);
+  assert.equal(h.published.at(-1).propertyComplexity, review);
+  assert.equal(walk(h.render()).find(n => n.type === 'MarketStudyPropertyContext').props.initialScreening, review);
+  assert.equal(h.queries.length, 0, 'Reopening reuses the completed market result');
+  h.button('Clear').props.onClick(); await h.settle();
+  h.update({ initialDraft: { ...restored, savedAt: '2026-10-06T01:00:00Z' } }); await h.settle();
+  assert.equal(h.button('Run  market studies').props.disabled, true, 'A later save cannot reset current edits');
+});
+
+test('late workfile hydration cannot overwrite edits or import another appraisal file', async t => {
+  const saved = draft(completeResult());
+  for (const foreign of [{ ...saved, accountId: 'OTHER' }, { ...saved, assignmentFileId: 16 }]) {
+    const h = marketComponent({ initialDraft: foreign }); t.after(h.dispose); await h.settle();
+    assert.match(h.text, /Study required/);
+    assert.equal(h.published.filter(Boolean).length, 0);
+    h.update({ initialDraft: saved }); await h.settle();
+    assert.match(h.text, /Study complete/, 'Only the current file draft is adopted');
+  }
+  const h = marketComponent(); t.after(h.dispose); await h.settle();
+  h.button('Clear').props.onClick(); await h.settle();
+  h.update({ initialDraft: saved }); await h.settle();
+  assert.match(h.text, /Study required/);
+  assert.equal(h.button('Run  market studies').props.disabled, true);
+  assert.equal(h.published.filter(Boolean).length, 0);
 });
 
 test('ZIP and radius studies bypass retained exploration when it is not selected', async () => {

@@ -30,7 +30,7 @@ export function buildSubjectNeighborhoodSummary(input: SubjectNeighborhoodSummar
   const homestead = location === 'rural' ? 'rural' : location.startsWith('[') ? '[urban-suburban/rural]' : 'urban-suburban';
   const municipal = input.insideMunicipalBoundaries === true ? 'within' : input.insideMunicipalBoundaries === false ? 'outside'
     : '[within/outside — verify]';
-  const school = clean(input.nearbySchool) || '[nearby school — verify]';
+  const school = reportTitleCase(clean(input.nearbySchool)) || '[nearby school — verify]';
   return `The subject immediate subdivision is known as ${subdivision}. The area consists of single family residential homes${input.includesTownhomes ? ' and townhomes' : ''} mostly built in the past ${age} on residential ${location} lots. `
     + 'The neighborhood has nearby parks, shopping, schools, and recreational amenities. '
     + `The home styles are predominantly two and single story traditional ${medianCount(input.medianBedrooms)} bedrooms and ${medianCount(input.medianBathrooms)} baths homes. `

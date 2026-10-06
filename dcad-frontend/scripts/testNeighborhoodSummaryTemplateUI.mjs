@@ -93,6 +93,7 @@ test('summary seeding never writes signed, archived, or unestablished workfile s
     if (key === 'react') return { useRef: () => ({ current: null }), useEffect: fn => fn() };
     if (key === '@/lib/subjectNeighborhoodSummary') return builder;
     if (key === '@/lib/neighborhoodSummaryTemplate') return helpers;
+    if (key === './useNearbySchool') return { useNearbySchool: () => null };
     throw new Error(`Unexpected import ${key}`);
   }).useSubjectSummary;
   for (const status of ['signed', 'archived', undefined, 'draft']) {

@@ -119,6 +119,17 @@ async function jsonRequest(options: Options, path: string, init: RequestInit, ma
   return readJson(response, maximum, signal);
 }
 
+/** Tiny optional summary lookup reuses the same authenticated/cancellable,
+ * byte-bounded transport; it cannot issue arbitrary URLs or affect map work. */
+export function createNeighborhoodSchoolTransport(options: Options) {
+  return (accountId: string, fileId: string, { signal }: { signal: AbortSignal }): Promise<unknown> => {
+    if (!accountId || accountId.length > 64 || /\p{Cc}/u.test(accountId)
+      || !/^[1-9]\d{0,18}$/.test(fileId)) throw new Error('Invalid neighborhood school request');
+    return jsonRequest(options, `/api/accounts/${encodeURIComponent(accountId)}/neighborhood-summary-school?assignment_file_id=${fileId}`,
+      { method: 'GET' }, 4096, signal);
+  };
+}
+
 /** One request, no retry or independent timer. Use with the preview controller's
  * bounded deadline (or another caller-owned finite AbortSignal). Semantic input
  * admission belongs to that controller and to the authorized server route. */

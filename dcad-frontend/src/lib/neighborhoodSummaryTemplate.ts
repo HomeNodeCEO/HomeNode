@@ -1,4 +1,5 @@
 import { buildSubjectNeighborhoodSummary } from './subjectNeighborhoodSummary.ts';
+import { reportTitleCase } from './propertyReportText.ts';
 import type { SubjectNeighborhoodSummaryInput } from './subjectNeighborhoodSummary';
 import type { CustomCohortPreviewGroup } from '../features/neighborhood/customCohortPreviewController';
 
@@ -40,6 +41,7 @@ export function refreshNeighborhoodSummaryTemplate(current: string, baseline: st
     const homestead = location === 'rural' ? 'rural' : location.startsWith('[') ? '[urban-suburban/rural]' : 'urban-suburban';
     next = current.replace(/on residential (?:urban|suburban|rural|\[urban\/suburban\/rural\]) lots\./, `on residential ${location} lots.`)
       .replace(/for an "(?:urban-suburban|rural|\[urban-suburban\/rural\])" homestead/, `for an "${homestead}" homestead`);
+    if (input.nearbySchool?.trim()) next = next.replace('[nearby school — verify]', reportTitleCase(input.nearbySchool.trim()));
   }
   return next === current ? null : next;
 }

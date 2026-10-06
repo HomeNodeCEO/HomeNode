@@ -244,6 +244,7 @@ export interface AssignmentDetailsPayload {
   subject_neighborhood_summary?: string;
   subject_neighborhood_summary_template?: string;
   subject_neighborhood_summary_review_items?: string[];
+  subject_neighborhood_summary_school?: import('./nearbySchoolContext').NearbySchoolContext;
   subject_condition_rating?: string;
   subject_condition_notes?: string;
   significant_physical_deficiencies?: boolean | null;
@@ -1957,7 +1958,7 @@ export async function getAccount(
   return fetchJSON<AccountDetail>(url);
 }
 
-/** Load the latest ordered MLS photo gallery available for an account. */
+/** Load ordered MLS photos. */
 export async function getAccountPhotos(accountId: string): Promise<AccountPhotosResponse> {
   const id = (accountId || '').trim();
   const url = makeUrl(`/api/accounts/${encodeURIComponent(id)}/photos`);
@@ -2978,7 +2979,7 @@ export async function savePropertyZoningVerification(
   });
 }
 
-/** Resolve one property's Census tract immediately, ahead of the background queue. */
+/** Resolve the subject Census tract. */
 export async function lookupAccountCensusGeography(
   accountId: string,
   editorKey: string,
@@ -3032,7 +3033,7 @@ export async function getCensusZipProfile(postalCode: string): Promise<CensusZip
   );
 }
 
-/** Load the official ACS 5-year unemployment estimate for a city/place. */
+/** Load city/place ACS unemployment. */
 export async function getCensusCityProfile(
   city: string,
   state = 'TX',

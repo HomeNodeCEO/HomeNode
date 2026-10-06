@@ -1,3 +1,5 @@
+import { isRetainedNearbySchoolContext } from '../services/nearbySchool.js';
+
 const HOA_FREQUENCIES = new Set([
   "",
   "per_year",
@@ -107,6 +109,9 @@ export function validateAssignmentDetails(value, { requireCompletion = true } = 
   }
   if (value.subject_neighborhood_summary_template !== undefined &&
     (typeof value.subject_neighborhood_summary_template !== "string" || value.subject_neighborhood_summary_template.length > 8000)) {
+    throw new Error("invalid_subject_neighborhood_summary");
+  }
+  if (value.subject_neighborhood_summary_school !== undefined && !isRetainedNearbySchoolContext(value.subject_neighborhood_summary_school)) {
     throw new Error("invalid_subject_neighborhood_summary");
   }
   if (value.subject_neighborhood_summary_review_items !== undefined &&

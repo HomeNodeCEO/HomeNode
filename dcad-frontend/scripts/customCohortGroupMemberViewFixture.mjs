@@ -11,8 +11,8 @@ import { canonicalAssessmentJson } from '../../server/src/services/neighborhoodA
 
 const load = (name, modules) => loadTrustedRepositoryCommonJs(new URL(`../src/features/neighborhood/${name}.ts`, import.meta.url),
   key => { assert.ok(Object.hasOwn(modules, key), `unexpected member view import ${key}`); return modules[key]; });
-const checkpoint = load('customWorkspaceCheckpoint', { './customCohortPocketCatalog': catalogHelpers, './customWorkspaceDiscovery.ts': discovery });
-const workspace = load('customCohortGroupWorkspaceTransport', { './customWorkspaceCheckpoint.ts': checkpoint,
+export const checkpoint = load('customWorkspaceCheckpoint', { './customCohortPocketCatalog': catalogHelpers, './customWorkspaceDiscovery.ts': discovery });
+export const workspace = load('customCohortGroupWorkspaceTransport', { './customWorkspaceCheckpoint.ts': checkpoint,
   './customCohortPreviewTransport.ts': transport, './customCohortRecordedGroupTransport.ts': selection });
 export const displayModule = load('customCohortGroupDisplay', { './customCohortGroupWorkspaceTransport.ts': workspace,
   './customCohortRecordedGroupTransport.ts': selection });
@@ -64,7 +64,7 @@ export async function groupMemberViewFixture(options = {}) {
     workspaceRevision: 5, checkpoint: { workspace_version: 7, active: { context_ref: f.request.context_ref, selection_ref: ref,
       observation_period: f.summary.observation_period }, pending_capture: null }, catalog, selected: saved };
   const display = await displayModule.createCustomCohortGroupDisplayReader(ports)(value, io());
-  return { ...f, value, display, calls, reader: memberView.createCustomCohortGroupMemberReader(ports),
+  return { ...f, value, display, rawCatalog, saved, numeric, opening, calls, reader: memberView.createCustomCohortGroupMemberReader(ports),
     readerFrom(request) { return memberView.createCustomCohortGroupMemberReader(selection.createCustomCohortRecordedGroupTransport({
       urlFor: path => `https://example.invalid${path}`, request })); } };
 }

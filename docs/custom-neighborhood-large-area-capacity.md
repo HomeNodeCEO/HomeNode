@@ -1090,6 +1090,56 @@ complete-population/period/unit/provenance validation and bounded run/merge
 preparation. Compact catalogs, partial source/spatial recovery, publication
 budgets, production activation and 5/10-mile/retrospective live acceptance remain.
 
+## Bounded retained Number runs (not a source/numerical owner switch)
+
+`exactPagedObservationRuns.js` bridges complete **unordered** finite-Number/null
+observation pages to the two-pass numerical kernel. It stages immutable
+1,000-cell sorted runs, merges at most eight bounded cursors at a time through
+additional retained pages, and reopens the final complete ordered stream. No
+full Number array, page median/mean averaging, SQL concurrency, third-party sort
+library, process cache or browser-provided population is introduced. Ties retain
+their original member ordinal, so signed zero and the legacy ascending reduction
+order survive. Number tokens are derived representations, not replacements for
+original source decimal text, IDs, units or conflicting/missing observations.
+
+Every source cell, including null, contributes to the complete count and ordered
+input witness before a manifest can be staged. Reopening validates canonical
+original UTF-8/hash/bytes, the exact opaque caller binding, root/metadata, all
+page lengths, ordered value/ordinal pairs, unique finite-member ordinals, full
+run exhaustion and the whole run witness. The root and metadata are freshly read
+at each pass beginning **and ending**. A foreign binding, missing/changed later
+page, duplicate ordinal, unexpected count/order/token, lost original, abort or
+deadline returns no completed distribution. Staging acknowledgments must match
+the exact bytes sent; provisional work never grants report/source authority.
+
+The supplying owner must independently establish the complete original member
+population and normalized cells, including canonical transaction deduplication,
+source identity/lineage, exact decimal conflicts, null reasons, period, unit,
+currency and historical support. This store treats its binding as opaque; a
+matching string or Number digest proves none of those semantics or current
+rights. That owner must bind/verify this supplementary graph against its original
+context/selection, account for **all** intermediate retention/cleanup roots and
+aggregate multi-metric work, roll back failed preparation, and fence the final
+registration/read/publication with fresh assignment/source rights and current
+head. No new report/source admission, durable capture checkpoint, registry table,
+graph/root budget, 50k capture limit, live calculator, host default or Apply
+behavior changes in this slice. The existing 250k per-measurement ceiling remains.
+
+Synthetic parity/admission tests include unordered/skewed/missing/extreme and
+signed-zero inputs, deterministic populations, lazy 60,001 cells and exact
+250,000 cells across multiple merge levels, one-over before I/O, closed data
+grammar, detached pages, missing/self-consistent malformed later directories,
+second-pass failure and actual I/O-settlement cancellation/ending deadlines.
+The existing guarded PostgreSQL suite adds a synthetic 11,001-cell fixture using
+the actual organization-scoped immutable blob repository, fresh-client reopen,
+foreign-organization/binding denial and caller rollback/cancellation. Its native
+assertions require the actual published head's CI, not a local recording fake.
+Neither kind of test is a >50k source capture, realistic geometry, measured live
+peak-memory/latency or full large-area publication/Apply acceptance. Original-bound
+complete-population numerical ownership, compact catalogs, stable partial
+source/spatial recovery, coherent publication budgets and real 5/10-mile,
+retrospective/production acceptance remain required before activation.
+
 The worker CLI validates its database URL before constructing the pool and
 requires certificate-verified TLS for every non-loopback host, including internal
 hosts. Only literal localhost/127.0.0.1/::1 development connections may be

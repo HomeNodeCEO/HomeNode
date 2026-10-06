@@ -10,6 +10,7 @@ overrides:
   compression: 1.8.2
   brace-expansion: 5.0.12
   image-size: 2.0.4
+  shell-quote: 1.11.0
   source-map-js: 1.2.2
 
 patchedDependencies:
@@ -48,8 +49,8 @@ importers:
         specifier: ~57.0.2
         version: 57.0.2(expo@57.0.15)
       expo-sqlite:
-        specifier: ~57.0.3
-        version: 57.0.3(expo@57.0.15)(react-native@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
+        specifier: ~57.0.4
+        version: 57.0.4(expo@57.0.15)(react-native@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
       expo-status-bar:
         specifier: ~57.0.1
         version: 57.0.1(expo@57.0.15)(react-native@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
@@ -1352,8 +1353,8 @@ packages:
     resolution: {integrity: sha512-aK+LdKzauHSGmsOStZtyxdzv0zWssCkxTw3m4QuOhfDSJsZaMRTd9O41d8ixU/QfELTbaJ0oRNcF7JFV/7O9YQ==}
     engines: {node: '>=20.16.0'}
 
-  expo-sqlite@57.0.3:
-    resolution: {integrity: sha512-gbu9Nwm76DNpSK+MEhCjjjF3/EMyFE96IEDSlfO9jPiF4q48a7bef5EXnWVrwW8rvqCZKYAfSGqSpYNhhhpgIg==}
+  expo-sqlite@57.0.4:
+    resolution: {integrity: sha512-3N/bnDx4+kWEC9GABxKPLe/6RHTZJR/7DNT5tz/cYi8f7emign3ooavXnJn0+JPBA0JhHmsdDPrmC+CtT86Jzg==}
     peerDependencies:
       expo: '*'
       react: '*'
@@ -2064,8 +2065,8 @@ packages:
     resolution: {integrity: sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A==}
     engines: {node: '>=8'}
 
-  shell-quote@1.10.0:
-    resolution: {integrity: sha512-w1aiOKwKuRgtwAReIIj89puqg+I7GvX4IbLrvmhXbzQsj1+Zwi4VO3+fa6ZF91TWSjIxoEkKnMeHcLEODK5ZXA==}
+  shell-quote@1.11.0:
+    resolution: {integrity: sha512-JdxDPD0DBTyu08pq0kPC0xSNet/qsU07qT6IsX1AS8oO2ICNRY4ldNa8OAI6PuwAH8tG3lxEhbqmyp4Dw4036g==}
     engines: {node: '>= 0.4'}
 
   signal-exit@3.0.7:
@@ -3905,7 +3906,7 @@ snapshots:
 
   expo-server@57.0.3: {}
 
-  expo-sqlite@57.0.3(expo@57.0.15)(react-native@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3):
+  expo-sqlite@57.0.4(expo@57.0.15)(react-native@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3):
     dependencies:
       await-lock: 2.2.2
       expo: 57.0.15(@babel/core@7.29.7(supports-color@8.1.1))(@expo/dom-webview@57.0.1)(react-native@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)(typescript@6.0.3)
@@ -4545,7 +4546,7 @@ snapshots:
 
   react-devtools-core@6.1.5:
     dependencies:
-      shell-quote: 1.10.0
+      shell-quote: 1.11.0
       ws: 7.5.13
     transitivePeerDependencies:
       - bufferutil
@@ -4692,7 +4693,7 @@ snapshots:
 
   shebang-regex@3.0.0: {}
 
-  shell-quote@1.10.0: {}
+  shell-quote@1.11.0: {}
 
   signal-exit@3.0.7: {}
 

@@ -24,7 +24,7 @@ map.counts.geojson_bytes = Buffer.byteLength(JSON.stringify(map.geojson));
 const expected = buildCustomCohortMapManifest(payload.catalog, map);
 async function storedRow(manifest = expected) {
   const encoded = await encodeCustomCohortPreparedMapOpening(manifest);
-  const row = { status: 'available', reason: null, payload_sha256: encoded.digest,
+  const row = { status: 'available', reason: null, source_catalog_format_version: 2, payload_sha256: encoded.digest,
     payload_utf8_bytes: encoded.bytes, compressed_payload: encoded.compressed };
   for (const kind of ['catalog', 'compressed_catalog', 'preview', 'compressed_preview', 'map', 'compressed_map'])
     row[`source_${kind}_sha256`] = row[`current_${kind}_sha256`] = kind === 'catalog' ? hash(JSON.stringify(payload)) : hash(kind);
@@ -44,10 +44,22 @@ test('compact prepared opening retains the exact original metadata and verifies 
   assert.deepEqual(calls[0].values, [scope.organization_id, context.context_id, context.context_sha256,
     scope.report_file_id, scope.assignment_file_id, scope.account_id]);
   assert.match(calls[0].sql, /o\.report_file_id=\$4::uuid AND o\.assignment_file_id=\$5::bigint AND o\.account_id=\$6/);
+  assert.match(calls[0].sql, /c\.format_version=m\.source_catalog_format_version/);
+  assert.match(calls[0].sql, /SELECT max\(latest\.format_version\)/);
+  assert.match(calls[0].sql, /latest\.format_version IN \(1,2\)/);
   for (const name of ['compressed_payload', 'compressed_preview', 'compressed_map'])
     assert.match(calls[0].sql, new RegExp(`sha256\\([cp]\\.${name}\\)`));
   assert.doesNotMatch(calls[0].sql, /SELECT[^]*?\bp\.compressed_map\s*(?:,|FROM)/);
   assert.equal(Object.hasOwn(expected, 'geojson'), false);
+});
+
+test('opening lineage admits either exact catalog format, independently of preview format one', async () => {
+  for (const version of [1, 2]) {
+    const row = await storedRow(); row.source_catalog_format_version = version;
+    assert.deepEqual(await reader(row).repo.read(payload), expected);
+  }
+  const row = await storedRow(); row.source_catalog_format_version = 3;
+  await assert.rejects(reader(row).repo.read(payload), /storage_conflict/);
 });
 
 test('missing or explicitly unsupported derivative preserves full-map fallback, not invented labels', async () => {
@@ -110,11 +122,12 @@ test('genuinely unavailable original geometry remains unavailable without a new 
 
 const encoded = value => { const text = Buffer.from(JSON.stringify(value));
   return { sha256: hash(text), utf8_bytes: text.length, compressed: gzipSync(text) }; };
-function jobSource(contextRef = context) {
+function jobSource(contextRef = context, catalogFormat = 2) {
   const preview = { preview_version: 2, context_ref: contextRef, target: { ...scope, snapshot_version: 1 }, all: { account_ids: ['OTHER', 'SUBJECT'] } };
   const catalogPayload = structuredClone(payload); catalogPayload.catalog.binding.context_ref = contextRef;
   const p = encoded(preview), m = encoded(map), c = encoded(catalogPayload);
   return { ...scope, context_id: contextRef.context_id, context_sha256: contextRef.context_sha256,
+    source_catalog_format_version: catalogFormat,
     preview_sha256: p.sha256, preview_utf8_bytes: p.utf8_bytes, compressed_preview: p.compressed,
     map_sha256: m.sha256, map_utf8_bytes: m.utf8_bytes, compressed_map: m.compressed,
     catalog_sha256: c.sha256, compressed_catalog_sha256: hash(c.compressed), catalog: c };
@@ -137,13 +150,28 @@ test('bounded offline pass derives one complete opening in a transaction with al
   const result = await runCustomCohortPreparedMapOpeningJob(fixture.pool, { maximumContexts: 1, logger: { info() { throw new Error('logging'); } } });
   assert.deepEqual(result, { status: 'complete', completed: 1, unavailable: 0 });
   const insert = fixture.calls.find(call => call.sql.includes('map-opening:insert'));
-  assert.deepEqual(insert.values.slice(0, 9), [scope.organization_id, context.context_id, context.context_sha256,
+  assert.deepEqual(insert.values.slice(0, 10), [scope.organization_id, context.context_id, context.context_sha256, 2,
     source.catalog_sha256, source.compressed_catalog_sha256, source.preview_sha256,
     hash(source.compressed_preview), source.map_sha256, hash(source.compressed_map)]);
-  assert.deepEqual(insert.values.slice(9, 11), ['available', null]);
+  assert.deepEqual(insert.values.slice(10, 12), ['available', null]);
   assert.equal(fixture.calls.filter(call => call.sql === 'COMMIT').length, 1);
   assert.ok(fixture.released());
   assert.ok(!fixture.calls.some(call => /UPDATE|DELETE|TRUNCATE|neighborhood-cache:/.test(call.sql)));
+});
+
+test('worker follows the current v1/v2 catalog rather than equating its format to the preview format', async () => {
+  for (const version of [1, 2]) {
+    const fixture = jobPool([jobSource(context, version)]);
+    assert.deepEqual(await runCustomCohortPreparedMapOpeningJob(fixture.pool, { maximumContexts: 1, logger: {} }),
+      { status: 'complete', completed: 1, unavailable: 0 });
+    const query = fixture.calls.find(call => call.sql.includes('map-opening:next')).sql;
+    assert.match(query, /JOIN LATERAL/);
+    assert.match(query, /candidate\.format_version IN \(1,2\)/);
+    assert.match(query, /ORDER BY candidate\.format_version DESC LIMIT 1/);
+    assert.match(query, /m\.source_catalog_format_version=c\.format_version/);
+    assert.doesNotMatch(query, /c\.format_version=p\.format_version/);
+    assert.equal(fixture.calls.find(call => call.sql.includes('map-opening:insert')).values[3], version);
+  }
 });
 
 test('invalid source records no partial display, continues later contexts and never repairs original facts', async () => {
@@ -153,7 +181,7 @@ test('invalid source records no partial display, continues later contexts and ne
   assert.deepEqual(await runCustomCohortPreparedMapOpeningJob(fixture.pool, { maximumContexts: 2, logger: {} }),
     { status: 'complete', completed: 1, unavailable: 1 });
   const inserts = fixture.calls.filter(call => call.sql.includes('map-opening:insert'));
-  assert.deepEqual(inserts[0].values.slice(9), ['unavailable', 'source_invalid', null, null, null]);
+  assert.deepEqual(inserts[0].values.slice(10), ['unavailable', 'source_invalid', null, null, null]);
   assert.equal(fixture.calls.filter(call => call.sql === 'COMMIT').length, 2);
 });
 
@@ -175,6 +203,19 @@ test('new immutable derivative migration is ordered after unchanged originals an
   assert.match(sql, /BEFORE UPDATE OR DELETE OR TRUNCATE/);
   assert.match(sql, /REFERENCES app\.neighborhood_custom_cohort_prepared_previews/);
   assert.match(sql, /REFERENCES app\.neighborhood_custom_cohort_prepared_catalogs/);
+  assert.match(sql, /source_catalog_format_version IN \(1,2\)/);
+  assert.match(sql, /PRIMARY KEY \(organization_id, context_id, format_version, source_catalog_format_version\)/);
+  assert.match(sql, /FOREIGN KEY \(organization_id, context_id, source_catalog_format_version, catalog_version\)/);
   assert.match(sql, /BETWEEN 1 AND 4000000/);
   assert.doesNotMatch(sql, /ALTER TABLE|DROP TABLE|DELETE FROM|TRUNCATE app|INSERT INTO|UPDATE app/);
+});
+
+test('map-opening CLI reuses verified remote TLS and never logs driver connection details', () => {
+  const script = fs.readFileSync(new URL('../scripts/runCustomCohortPreparedMapOpenings.js', import.meta.url), 'utf8');
+  assert.match(script, /\.\.\.customCohortCaptureJobPoolOptions\(process\.env\.DATABASE_URL\), max: 1/);
+  assert.match(script, /statement_timeout: 120_000/);
+  assert.match(script, /pool\.on\('error'/);
+  assert.match(script, /'database_connection_failed'/);
+  assert.match(script, /\? message : 'job_failed'/);
+  assert.doesNotMatch(script, /connectionString: process\.env|rejectUnauthorized: false|error\?\.code|error\?\.name/);
 });

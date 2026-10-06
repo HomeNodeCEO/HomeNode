@@ -20,7 +20,7 @@ test("UAD exposes a prominent manual save that flushes pending fields", () => {
 test("Custom Appraisal exposes a top-level save and waits for queued workfile changes", () => {
   const report = read("../../dcad-frontend/src/pages/PropertyReport.tsx");
   const saveStart = report.indexOf("const saveCustomAppraisalNow = async () =>");
-  const saveEnd = report.indexOf("const analyzeCurrentPropertyContext", saveStart);
+  const saveEnd = report.indexOf("const recordLenderRevisionRequest", saveStart);
   const savePath = report.slice(saveStart, saveEnd);
 
   assert.ok(saveStart >= 0 && saveEnd > saveStart, "the Custom Appraisal save path should be inspectable");

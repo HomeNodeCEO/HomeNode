@@ -6,6 +6,7 @@ import { ensureAssignmentDocumentsSchema } from '../src/services/assignmentDocum
 import { ensureCensusGeographySchema } from '../src/services/censusGeography.js';
 import { readCustomSubjectDocuments, projectCustomSubjectDocuments, mergeCustomSubjectApplication } from '../src/services/customSubjectApplication.js';
 import { readSfrepDocuments, previewSfrepDocuments } from '../src/services/sfrepDocumentTransfer.js';
+import { readSfrepPhotos, projectSfrepPhotos } from '../src/services/sfrepPhotoTransfer.js';
 
 test('actual PostgreSQL binds matched Census and reviewed HOA receipts into the same saved Subject export', {
   skip: !process.env.DATABASE_URL,
@@ -87,6 +88,92 @@ test('actual PostgreSQL binds matched Census and reviewed HOA receipts into the 
     const changed = previewSfrepDocuments(await readSfrepDocuments(client, input), input);
     assert.notEqual(changed.preview_digest, preview.preview_digest);
     assert.equal(changed.fields.some(field => field.fieldId === 'CensusTract'), false);
+  } finally {
+    if (client) {
+      try { await client.query('ROLLBACK'); } finally { client.release(); }
+    }
+    await pool.end();
+  }
+});
+
+test('actual PostgreSQL photo export binds the assignment and organization and selects only verified compatible copies', {
+  skip: !process.env.DATABASE_URL,
+}, async () => {
+  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 2 });
+  let client;
+  try {
+    const identity = await pool.query('SELECT current_database() AS name');
+    assert.match(identity.rows[0].name, /_test$/, 'synthetic integration requires a test database');
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const organizationId = randomUUID(), foreignOrganizationId = randomUUID(), userId = randomUUID();
+    for (const id of [organizationId, foreignOrganizationId]) {
+      await client.query("INSERT INTO app_auth.organizations (id, legal_name, display_name) VALUES ($1, 'Synthetic SFREP', 'Synthetic SFREP')", [id]);
+    }
+    await client.query("INSERT INTO app_auth.users (id, email, display_name) VALUES ($1, $2, 'Synthetic SFREP')", [userId, `${userId}@example.test`]);
+    const accountId = `SFP${randomUUID().slice(0, 18)}`;
+    await client.query("INSERT INTO core.accounts (account_id, address, city, postal_code) VALUES ($1, '100 Example Dr', 'Garland', '75041')", [accountId]);
+    const createFile = async () => {
+      const assignment = await client.query(`INSERT INTO app.assignment_files (account_id, organization_id, file_number)
+        VALUES ($1, $2, $3) RETURNING id`, [accountId, organizationId, `SFREP-SYNTH-${randomUUID()}`]);
+      const assignmentFileId = Number(assignment.rows[0].id), reportId = randomUUID(), sessionId = randomUUID();
+      await client.query(`INSERT INTO app.report_files (id, organization_id, account_id, workflow_type, file_number, custom_assignment_file_id)
+        VALUES ($1, $2, $3, 'custom_appraisal', $4, $5)`, [reportId, organizationId, accountId, `SFREP-SYNTH-${reportId}`, assignmentFileId]);
+      await client.query(`INSERT INTO app.inspection_sessions (id, report_file_id, organization_id, appraiser_user_id, base_report_revision)
+        VALUES ($1, $2, $3, $4, 1)`, [sessionId, reportId, organizationId, userId]);
+      return { assignmentFileId, reportId, sessionId };
+    };
+    const selected = await createFile(), previous = await createFile();
+    const createPhoto = async (file, position, status, organization = organizationId) => {
+      const id = randomUUID();
+      await client.query(`INSERT INTO app.inspection_photos
+        (id, inspection_session_id, report_file_id, organization_id, captured_by_user_id, client_photo_id,
+         request_sha256, workflow_type, category, category_source, caption, caption_source, source, position,
+         status, verified_at, retention_starts_at, retention_until)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'custom_appraisal', 'Front', 'manual', 'Front exterior — edited label', 'manual', 'camera', $8,
+         $9, CASE WHEN $9 IN ('verified', 'excluded') THEN now() END,
+         CASE WHEN $9 IN ('verified', 'excluded') THEN now() END,
+         CASE WHEN $9 IN ('verified', 'excluded') THEN now() + interval '5 years' END)`,
+      [id, file.sessionId, file.reportId, organization, userId, randomUUID(), 'a'.repeat(64), position, status]);
+      return id;
+    };
+    const includedId = await createPhoto(selected, 1, 'verified');
+    const pendingId = await createPhoto(selected, 2, 'pending_upload');
+    await createPhoto(selected, 3, 'excluded');
+    await createPhoto(selected, 4, 'verified', foreignOrganizationId);
+    await createPhoto(previous, 1, 'verified');
+    const createObject = async (photoId, variant, contentType, checksum = 'b'.repeat(64)) => {
+      const id = randomUUID();
+      await client.query(`INSERT INTO app.inspection_photo_objects
+        (id, photo_id, client_object_id, variant, storage_bucket, object_key, original_file_name, content_type,
+         expected_byte_size, byte_size, status, verified_at, checksum_sha256)
+        VALUES ($1, $2, $3, $4, 'synthetic-bucket', $5, 'synthetic.jpg', $6, 100, 100, 'verified', now(), $7)`,
+      [id, photoId, randomUUID(), variant, `synthetic/${id}`, contentType, checksum]);
+      return id;
+    };
+    await createObject(includedId, 'original', 'image/jpeg');
+    const displayId = await createObject(includedId, 'display', 'image/jpeg');
+    const input = { accountId, assignmentFileId: selected.assignmentFileId, includePhotos: true };
+    const rows = await readSfrepPhotos(client, input);
+    assert.deepEqual(rows.map(row => row.id), [includedId, pendingId]);
+    assert.equal(rows[0].object_id, displayId);
+    assert.equal(rows[1].object_id, null);
+    const projected = projectSfrepPhotos(rows, input);
+    assert.equal(projected.photos[0].label, 'Front exterior — edited label');
+    assert.equal(projected.imageAddenda.length, 1);
+    assert.equal(projected.photos[1].included, false);
+    assert.deepEqual(await readSfrepPhotos(client, { ...input, accountId: 'foreign-account' }), []);
+    assert.deepEqual(await readSfrepPhotos(client, { ...input, includePhotos: false }), []);
+    // Old verified records without a stored checksum cannot be mislabeled as
+    // export-ready. Prefer a valid original, then visibly exclude if neither copy qualifies.
+    await client.query('UPDATE app.inspection_photo_objects SET checksum_sha256 = NULL WHERE id = $1', [displayId]);
+    assert.equal((await readSfrepPhotos(client, input))[0].variant, 'original');
+    await client.query('UPDATE app.inspection_photo_objects SET checksum_sha256 = NULL WHERE photo_id = $1', [includedId]);
+    const unavailable = projectSfrepPhotos(await readSfrepPhotos(client, input), input);
+    assert.equal(unavailable.photos[0].included, false);
+    assert.equal(unavailable.imageAddenda.length, 0);
+    await client.query('UPDATE app.report_files SET organization_id = $1 WHERE id = $2', [foreignOrganizationId, selected.reportId]);
+    assert.deepEqual(await readSfrepPhotos(client, input), []);
   } finally {
     if (client) {
       try { await client.query('ROLLBACK'); } finally { client.release(); }

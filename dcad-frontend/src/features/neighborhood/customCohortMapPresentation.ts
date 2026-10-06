@@ -94,14 +94,16 @@ function scores(catalog: CheckedPocketCatalog, groups: ReadonlyMap<string, { cou
   // established recommendation, ranks and report population remain unchanged.
   if (catalog.prepared_secondary_map) for (const group of catalog.prepared_secondary_map.groups) {
     if (!group.supported_member_count || group.lower === null || group.upper === null) continue;
-    check(groups.get(group.id)?.count === group.member_count && byId.has(group.id));
+    check(groups.get(group.id)?.count === group.member_count
+      && (catalog.prepared_secondary_map.version === 2 || byId.has(group.id)));
     byId.set(group.id, { lower: group.lower, upper: group.upper,
       known_weight_percent: Math.max(0, Math.min(100, 100 - group.upper + group.lower)) });
   }
   for (const [id, group] of groups) {
     const values = byId.get(id) ?? { lower: null, upper: null, known_weight_percent: null };
-    const reason = id === CUSTOM_COHORT_UNASSIGNED_GROUP ? 'unassigned_recorded_group' : !recommendation ? 'recommendation_unavailable'
-      : field(recommendation, 'status') === 'insufficient_observations' ? 'recommendation_insufficient' : !group.count ? 'empty_group'
+    const displayScore = catalog.prepared_secondary_map?.version === 2 && byId.has(id);
+    const reason = id === CUSTOM_COHORT_UNASSIGNED_GROUP ? 'unassigned_recorded_group' : !recommendation && !displayScore ? 'recommendation_unavailable'
+      : recommendation && !displayScore && field(recommendation, 'status') === 'insufficient_observations' ? 'recommendation_insufficient' : !group.count ? 'empty_group'
         : values.known_weight_percent === 0 ? 'group_observations_unavailable' : null;
     Object.defineProperty(result, id, { enumerable: true, value: { status: reason === null ? 'available' : 'unknown', reason, ...values } });
   }

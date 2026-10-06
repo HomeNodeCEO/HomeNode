@@ -283,6 +283,8 @@ test('opt-in exact-reference map renders the saved display through its host port
     ['remove', f.saved.included_recorded_group_ids[0], 'subdivision']]);
   assert.equal(f.props.display.observations.summary.selected.account_count, 2);
   assert.equal(map.fits.length, 1); assert.match(h.html(), /Included · red outline/);
+  assert.equal(h.cityProps(), null, 'exact mode preserves the protected city-selector removal');
+  assert.doesNotMatch(h.html(), /City limits marker|Select a reference city/);
 });
 
 test('opt-in deliberate empty paints no red selected parcels and does not invent a default area', async t => {
@@ -336,16 +338,17 @@ test('renders exact retained Polygon holes and disconnected MultiPolygons, never
   assert.deepEqual(map.fits[0].bounds, [[-97, 32], [-96.78, 32.01]]);
   assert.match(h.html(), /Included · red outline/);
   assert.doesNotMatch(h.html(), /Color parcels by/);
-  assert.match(h.html(), /not legal subdivision or neighborhood boundaries/); assert.doesNotMatch(h.html(), /Loading parcel map/);
+  assert.doesNotMatch(h.html(), /Click a subdivision|Shapes follow cached parcels|Loading parcel map/);
 });
-test('range controls follow the similarity legend and live statistics follow the map before city limits', async () => {
+test('range controls follow the similarity legend and combined live statistics immediately follow the map', async () => {
   const props = { ...fixture(), scoreBandSelector: 'Score controls marker', belowMapStatistics: 'Live statistics marker' };
   const h = harness(); await h.ready(props);
   const markup = h.html();
-  assert.ok(markup.indexOf('Fill reflects recorded-group similarity') < markup.indexOf('Score controls marker'));
+  assert.ok(markup.indexOf('Pocket similarity and inclusion colors') < markup.indexOf('Score controls marker'));
+  assert.doesNotMatch(markup, /Fill reflects recorded-group similarity/);
   assert.ok(markup.indexOf('Score controls marker') < markup.indexOf('Interactive parcel map'));
   assert.ok(markup.indexOf('Interactive parcel map') < markup.indexOf('Live statistics marker'));
-  assert.ok(markup.indexOf('Live statistics marker') < markup.indexOf('City limits marker'));
+  assert.doesNotMatch(markup, /City limits marker|Select a reference city/);
 });
 test('opening loads exact green parcel fills and red inclusion outlines beneath the existing clickable dots at normal zoom', async () => {
   const { props, all, result } = deferredFixture();
@@ -744,7 +747,7 @@ test('a late runtime after unmount cannot create a map', async () => {
 });
 test('runtime failure and draw failure use an opaque fallback instead of partially painted old data', async () => {
   const h = harness({ rejectLoad: true }); h.render(fixture()); await h.drain();
-  assert.match(h.html(), /absolute inset-0[^\"]*bg-white/); assert.match(h.html(), /no substitute boundary/);
+  assert.match(h.html(), /absolute inset-0[^\"]*bg-white/); assert.match(h.html(), /saved selection is unchanged/);
   const p = harness({ throwPaint: true }), props = fixture(); await p.ready(props);
   p.render({ ...props, inspectedPocketId: 'recorded-cad:beta' }); assert.match(p.html(), /map could not be displayed/);
 });
@@ -795,7 +798,7 @@ test('single similarity view leaves unsupported scores unknown and keeps inclusi
     ['coalesce', ['feature-state', 'selected'], ['get', 'selected']],
     ['coalesce', ['feature-state', 'inspected'], ['get', 'inspected']]], 4]);
   assert.equal(h.node(n => n.type === 'select' && n.props['aria-label'] === 'Map color mode'), null);
-  assert.match(h.html(), /unknown/i); assert.match(h.html(), /group/i);
+  assert.match(h.html(), /unknown/i); assert.match(h.html(), /Pocket similarity and inclusion colors/);
   assert.equal(JSON.stringify(props), before); assert.equal(h.maps[0].fits.length, 1); assert.equal(h.loadCount, 1);
 });
 test('similarity uses exact fixed lower-bound bins, preserves selected flags and never scores unassigned parcels', async () => {
@@ -872,38 +875,28 @@ test('label clicks inspect only a currently admitted exact named group and never
   assert.equal(h.maps[0].fits.length, 1); assert.equal(h.maps[0].states.length, 0);
 });
 
-test('city control receives only the live loaded map and camera observation does not mutate any analysis input', async () => {
-  const props = fixture(), original = JSON.stringify(props), h = harness(); h.render(props);
-  assert.equal(h.cityProps()?.map ?? null, null); await h.drain();
-  assert.equal(h.cityProps()?.map ?? null, null, 'constructed runtime is not loaded yet');
-  h.emit('load'); h.emit('idle'); assert.equal(h.cityProps().map, h.maps[0]);
-  h.cityView(true); assert.equal(JSON.stringify(props), original); assert.equal(h.maps[0].states.length, 0);
-  h.cityView(false); assert.equal(h.maps[0].fits.length, 1);
+test('the loaded map has no city-reference selector or separate reference-camera ownership', async () => {
+  const props = fixture(), original = JSON.stringify(props), h = harness(); await h.ready(props);
+  assert.equal(h.cityProps(), null); assert.doesNotMatch(h.html(), /City limits marker|Select a reference city/);
+  assert.equal(JSON.stringify(props), original); assert.equal(h.maps[0].fits.length, 1);
 });
-test('geometry refresh while city view is active updates real parcel source without refitting the reference camera', async () => {
+test('geometry refresh still updates exact parcels and normal bounds after city-reference removal', async () => {
   const props = fixture(), h = harness(); await h.ready(props); const map = h.maps[0];
-  h.cityView(true); map.jumpTo({ center: [-96.5, 33], zoom: 9, bearing: 15, pitch: 10 });
-  const camera = structuredClone(map.camera); h.render(refreshedGeometry(props));
-  assert.equal(map.getSource('custom-cohort-parcels').replacements.length, 1);
-  assert.equal(map.fits.length, 1); assert.deepEqual(map.camera, camera); assert.equal(map.jumps.length, 1);
-  h.emit('idle'); h.showLabels(false); h.showLabels(true);
-  assert.equal(map.fits.length, 1); assert.deepEqual(map.camera, camera); assert.equal(h.maps.length, 1);
-  h.cityView(false); h.render(refreshedGeometry(props, 'd'));
-  assert.equal(map.fits.length, 2, 'normal geometry refresh can fit after city reference is released');
+  h.render(refreshedGeometry(props)); h.emit('idle');
+  assert.equal(map.getSource('custom-cohort-parcels').replacements.length, 1); assert.equal(map.fits.length, 2);
+  h.showLabels(false); h.showLabels(true); assert.equal(h.maps.length, 1); assert.equal(map.fits.length, 2);
 });
-test('new target disposes/clears the city map and late old city callbacks cannot hold the replacement camera', async () => {
-  const props = fixture(), h = harness(); await h.ready(props); const oldMap = h.maps[0], oldCity = h.cityProps();
-  h.cityView(true);
+test('new target still disposes the map and owns its replacement camera without city-reference state', async () => {
+  const props = fixture(), h = harness(); await h.ready(props); const oldMap = h.maps[0];
   const next = { ...props, group: { ...props.group, binding: { ...props.group.binding, assignmentFileId: '18' } } };
-  h.render(next); assert.equal(oldMap.removed, true); assert.equal(h.cityProps()?.map ?? null, null);
-  oldCity.onViewChange(true); await h.drain(); h.emit('load'); h.emit('idle'); const replacement = h.maps[1];
-  assert.equal(h.cityProps().map, replacement); assert.equal(replacement.fits.length, 1);
-  h.render(refreshedGeometry(next)); assert.equal(replacement.fits.length, 2, 'old callback does not retain city mode on new target');
+  h.render(next); assert.equal(oldMap.removed, true); await h.drain(); h.emit('load'); h.emit('idle');
+  const replacement = h.maps[1]; assert.equal(replacement.fits.length, 1); assert.equal(h.cityProps(), null);
+  h.render(refreshedGeometry(next)); assert.equal(replacement.fits.length, 2);
   h.unmount(); assert.equal(replacement.removed, true); assert.equal(h.timers.size, 0);
 });
 test('unavailable geometry clears city-map props and label callbacks cannot inspect disposed data', async () => {
   const calls = [], props = { ...fixture(), onInspectPocket: id => calls.push(id) }, h = harness(); await h.ready(props);
-  h.showLabels(true); h.cityView(true); const map = h.maps[0];
+  h.showLabels(true); const map = h.maps[0];
   h.render({ ...props, group: { ...props.group, parcel_map: { status: 'unavailable', reason: 'missing_parcel_geometry' } } });
   assert.equal(map.removed, true); assert.equal(h.cityProps()?.map ?? null, null);
   map.emit('click', { features: [{ properties: { pocket_id: 'recorded-cad:alpha' } }] }, 'custom-cohort-group-labels-text');
@@ -1056,7 +1049,7 @@ test('activation uses the complete subdivision at every finite live zoom', async
   const calls = [], legacy = [], props = { ...familyFixture(), onActivatePocket: (...args) => calls.push(args),
     onInspectPocket: id => legacy.push(id) }, h = harness(); await h.ready(props);
   const map = h.maps[0];
-  assert.match(h.html(), /Subdivision view: clicks include all captured related groups/);
+  assert.doesNotMatch(h.html(), /Subdivision view:|Related names are review groupings/);
   for (const zoom of [14.999, 15, 15.001, 12]) {
     // Deliberately do not emit zoom or rerender: the callback must not use the
     // last React display mode, even when the camera changed moments ago.
@@ -1100,8 +1093,7 @@ test('zoom never changes subdivision interaction, selection or either source', a
   assert.equal(source.replacements.length, 0); assert.equal(labels.replacements.length, 0);
   assert.equal(map.states.length, 0); assert.equal(map.fits.length, 1); assert.equal(h.presentationCount, 1);
   assert.equal(JSON.stringify(props), original); assert.equal(h.loadCount, 1);
-  assert.match(h.html(), /Zooming does not change your choices/);
-  assert.match(h.html(), /not verified legal phases or coverage outside this capture/);
+  assert.doesNotMatch(h.html(), /Zooming does not change your choices|not verified legal phases or coverage outside this capture/);
 });
 
 for (const largerSecondChild of [false, true]) test(`parent label keeps exact retained ${largerSecondChild ? 'largest child' : 'ID tie-break child'} anchor`, async () => {

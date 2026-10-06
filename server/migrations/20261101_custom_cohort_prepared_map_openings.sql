@@ -5,6 +5,7 @@ CREATE TABLE app.neighborhood_custom_cohort_prepared_map_openings (
   context_id uuid NOT NULL,
   format_version smallint NOT NULL CHECK (format_version = 1),
   catalog_version smallint NOT NULL CHECK (catalog_version = 3),
+  source_catalog_format_version smallint NOT NULL CHECK (source_catalog_format_version IN (1,2)),
   context_sha256 text NOT NULL CHECK (context_sha256 ~ '^[a-f0-9]{64}$'),
   source_catalog_sha256 text NOT NULL CHECK (source_catalog_sha256 ~ '^[a-f0-9]{64}$'),
   source_compressed_catalog_sha256 text NOT NULL CHECK (source_compressed_catalog_sha256 ~ '^[a-f0-9]{64}$'),
@@ -18,11 +19,11 @@ CREATE TABLE app.neighborhood_custom_cohort_prepared_map_openings (
   payload_utf8_bytes integer CHECK (payload_utf8_bytes BETWEEN 1 AND 4000000),
   compressed_payload bytea CHECK (octet_length(compressed_payload) BETWEEN 1 AND 4000000),
   prepared_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-  PRIMARY KEY (organization_id, context_id, format_version),
+  PRIMARY KEY (organization_id, context_id, format_version, source_catalog_format_version),
   FOREIGN KEY (organization_id, context_id, format_version)
     REFERENCES app.neighborhood_custom_cohort_prepared_previews
       (organization_id, context_id, format_version) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id, context_id, format_version, catalog_version)
+  FOREIGN KEY (organization_id, context_id, source_catalog_format_version, catalog_version)
     REFERENCES app.neighborhood_custom_cohort_prepared_catalogs
       (organization_id, context_id, format_version, catalog_version) ON DELETE RESTRICT,
   CHECK ((status='available' AND reason IS NULL AND payload_sha256 IS NOT NULL

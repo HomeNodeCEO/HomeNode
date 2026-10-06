@@ -4,15 +4,18 @@ import { createCustomNeighborhoodConfiguration, createCustomNeighborhoodCohortSe
   from '../src/application/customNeighborhoodComposition.js';
 import { runCustomCohortCaptureJobOnce }
   from '../src/services/neighborhoodAssessment/customCohortCaptureJobWorker.js';
+import { customCohortCaptureJobPoolOptions }
+  from '../src/services/neighborhoodAssessment/customCohortCaptureJobPool.js';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
 const configuration = createCustomNeighborhoodConfiguration();
 if (!configuration.enabled) throw new Error('custom_neighborhood_workspace_disabled');
-const usesRender = /\.render\.com(?:[/:]|$)/i.test(process.env.DATABASE_URL);
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL,
-  ssl: usesRender ? { rejectUnauthorized: false } : undefined,
-  max: 3, connectionTimeoutMillis: 5_000,
-  application_name: 'homenode-custom-cohort-capture-jobs' });
+const pool = new pg.Pool(customCohortCaptureJobPoolOptions(process.env.DATABASE_URL));
+pool.on('error', () => {
+  // Idle socket failures must not print driver messages or connection details.
+  process.exitCode = 1;
+  console.error('[neighborhood-capture-jobs] failed', 'database_connection_failed');
+});
 try {
   const cohortService = createCustomNeighborhoodCohortService({ pool, configuration });
   const result = await runCustomCohortCaptureJobOnce({ pool, cohortService });

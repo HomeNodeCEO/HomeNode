@@ -139,6 +139,17 @@ function transitioned(value: unknown, request: CustomCohortGroupWorkspaceCancel 
   return Object.freeze({ status: v.status as 'stored' | 'reused', authority: 'not_established' as const, workspace: saved });
 }
 
+// The lifecycle uses the same structural acknowledgment checks as finite I/O.
+// An injected adapter cannot turn a wrong revision/reference into saved state.
+export function checkCustomCohortGroupWorkspaceWriteReceipt(value: unknown,
+  request: CustomCohortGroupWorkspaceSave | CustomCohortGroupWorkspaceComplete, completing: boolean) {
+  return written(value, writingInput(request, completing), completing);
+}
+export function checkCustomCohortGroupWorkspaceTransitionReceipt(value: unknown,
+  request: CustomCohortGroupWorkspaceCancel | CustomCohortGroupWorkspaceStart, starting: boolean) {
+  return transitioned(value, transitionInput(request, starting), starting);
+}
+
 /** Finite authenticated I/O only. No timer, automatic retry, UUID allocation,
  * default selection, generic section write or report Apply. The consumer must
  * bind all projections to this exact receipt and enable V7 as one whole path. */

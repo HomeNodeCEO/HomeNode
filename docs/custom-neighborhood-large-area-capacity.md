@@ -620,3 +620,33 @@ this opt-in is enabled. No genuine saved file, accepted report, source/numeric
 capacity, background schedule, release policy or production SLA changes here.
 Partial source-page recovery and realistic complete >50k/5-/10-mile/retrospective
 acceptance remain unfinished.
+
+## Opt-in browser lifecycle for atomic V7 selections (not activation)
+
+`customCohortGroupWorkspaceLifecycle.ts` now owns the small V7 checkpoint and
+exact current server selection receipt independently of the legacy V1–6 host.
+It uses only the four atomic group-workspace commands for pending capture,
+completion, cancellation and group changes. It does not save flattened account
+arrays through the generic workfile writer. New-study completion retains the
+old completed area until the server acknowledges the coherent new checkpoint
+and selection head. Reopening verifies the current head against that exact
+checkpoint before making its group IDs available to a consumer.
+
+The owner requires an explicit initial-group policy; it does not silently
+select all groups or infer a recommendation. Empty selection remains empty.
+One file/session owns a finite, serial operation lane. A timed-out adapter that
+ignores cancellation remains quarantined until it actually settles. Unknown
+write acknowledgments require an authoritative current-file reload. If that
+read still shows the exact predecessor, only the original immutable command
+may be explicitly retried; a later checkpoint takes precedence and cannot be
+rewound by the old intent. An acknowledged command followed by a failed catalog
+read is reopened, not written again. Current roles, source rights, signed locks,
+CAS, immutable membership and final report authority remain server-owned.
+
+The existing production host, map/statistics/member/report consumers and legacy
+readers are unchanged. Catalog display still uses the bounded installed v3
+catalog, so this browser owner is not a paged greater-than-50k catalog or a live
+capacity increase. Production composition must connect all V7 consumers and
+the fresh section-read boundary as one coherent path before enabling the
+opt-in HTTP routes. No schedule, deployment, genuine appraisal choice or
+accepted report is changed by this slice.

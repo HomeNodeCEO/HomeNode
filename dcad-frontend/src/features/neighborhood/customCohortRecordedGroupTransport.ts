@@ -205,6 +205,9 @@ export function prepareCustomCohortRecordedGroupWrite(value: unknown): CustomCoh
 export function checkCustomCohortRecordedGroupWriteReceipt(value: unknown, request: CustomCohortRecordedGroupWrite) {
   return receipt(value, request, true) as Exclude<CustomCohortRecordedGroupReceipt, { readonly status: 'absent' }>;
 }
+export function checkCustomCohortRecordedGroupReadReceipt(value: unknown, request: CustomCohortRecordedGroupRead) {
+  return receipt(value, input(request, false), false);
+}
 
 /** One authenticated, bounded request. No independent timer, automatic retry,
  * implicit all-groups selection, source facts or reviewer identity in its body.

@@ -1,5 +1,36 @@
 # Complete larger-area Custom neighborhood studies
 
+## Opt-in prepared catalog browser client (not a UI/route switch)
+
+`customCohortPreparedCatalogClient.ts` composes the existing authenticated,
+cancellable byte-bounded transport with the actual whole-page display decoder.
+It sends only the current assignment/context and an optional page index through
+two fixed read actions. The server directory supplies the pinned root; the
+browser never sends roots, member arrays, source grants, roles or preparation.
+A first `not_prepared` response returns an explicit cache miss with no legacy
+exploration fallback. Every subsequent directory/page still invokes the current
+server owner; there is no locally cached first-header shortcut.
+
+Only all ordered pages with exact original hashes/UTF-8 lengths, whole counts,
+scope/context and a matching ending directory produce the actual issued
+immutable display type. Missing/changed pages, mid-flight cache miss or ending
+current-rights denial discard the pending result. Caller input is detached
+before authentication, and its same finite signal/deadline fences HTTP and
+hash settlement. The host must still fence its keyed current session/display
+before and after this operation. No new timer, retries, writes, selections,
+individual-member authority or legacy full-account catalog casts are added.
+
+Prepared requests alone use a 2,048-byte bound and 512,000-byte decompressed
+response bound in the shared transport; other limits stay unchanged. Synthetic
+HTTP tests use the actual registry/compiler/presenter retained originals, not
+fake compiler issuance, and cover all pages, empty/unresolved populations,
+explicit miss, late denial, mutation, abort/deadline and streamed UTF-8 bounds.
+These local SQL-protocol fixtures do not prove real database authorization;
+that remains the guarded native current-owner fixture and fresh full CI.
+The existing UI/routes/V7 defaults and installed 50k cap remain unchanged.
+Versioned map/member/opening consumers, complete >50k acquisition/publication,
+recurring worker canary and live large-area/retrospective acceptance remain.
+
 ## Current-authorized prepared catalog commands (default-unmounted transport)
 
 The Custom context owner now surrounds `customCohortPreparedCatalogOwner.js`

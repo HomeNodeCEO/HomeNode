@@ -162,11 +162,12 @@ export type CustomCohortMemberTransport = ReturnType<typeof createCustomCohortMe
 /** Shared bounded transport for the read-only views and idempotent context
  * capture. Operation names are closed; callers cannot supply arbitrary URLs. */
 export function createCustomCohortJsonTransport(options: Options) {
-  return async (accountId: string, operation: 'preview' | 'viewport' | 'catalog' | 'members' | 'capture' | 'reported-proposal' | 'reported-apply' | 'select-groups' | 'group-selection' | 'selection-preview' | 'selection-viewport' | 'selection-members' | 'selection-map-opening' | 'market-analysis' | 'selection-market-analysis' | 'land-use' | 'save-groups' | 'start-group-capture' | 'cancel-group-capture' | 'complete-group-capture',
+  return async (accountId: string, operation: 'preview' | 'viewport' | 'catalog' | 'members' | 'capture' | 'reported-proposal' | 'reported-apply' | 'select-groups' | 'group-selection' | 'selection-preview' | 'selection-viewport' | 'selection-members' | 'selection-map-opening' | 'market-analysis' | 'selection-market-analysis' | 'land-use' | 'save-groups' | 'start-group-capture' | 'cancel-group-capture' | 'complete-group-capture' | 'prepared-catalog' | 'prepared-catalog-page',
     payload: unknown, { signal }: { signal: AbortSignal }): Promise<unknown> => {
     checkSignal(signal);
     if (typeof accountId !== 'string' || !accountId || accountId.length > 64
-      || !['preview', 'viewport', 'catalog', 'members', 'capture', 'reported-proposal', 'reported-apply', 'select-groups', 'group-selection', 'selection-preview', 'selection-viewport', 'selection-members', 'selection-map-opening', 'market-analysis', 'selection-market-analysis', 'land-use', 'save-groups', 'start-group-capture', 'cancel-group-capture', 'complete-group-capture'].includes(operation)) throw new Error('Invalid neighborhood request');
+      || !['preview', 'viewport', 'catalog', 'members', 'capture', 'reported-proposal', 'reported-apply', 'select-groups', 'group-selection', 'selection-preview', 'selection-viewport', 'selection-members', 'selection-map-opening', 'market-analysis', 'selection-market-analysis', 'land-use', 'save-groups', 'start-group-capture', 'cancel-group-capture', 'complete-group-capture', 'prepared-catalog', 'prepared-catalog-page'].includes(operation)) throw new Error('Invalid neighborhood request');
+    const preparedCatalog = operation === 'prepared-catalog' || operation === 'prepared-catalog-page';
     const groupSelection = ['select-groups', 'group-selection', 'save-groups', 'start-group-capture', 'cancel-group-capture', 'complete-group-capture'].includes(operation);
     const selectionSummary = operation === 'selection-preview';
     const selectionViewport = operation === 'selection-viewport';
@@ -186,9 +187,9 @@ export function createCustomCohortJsonTransport(options: Options) {
     const path = `/api/accounts/${encodeURIComponent(accountId)}/neighborhood-cohort/${operation}`;
     const body = JSON.stringify(payload);
     if (typeof body !== 'string') throw new Error('Invalid neighborhood request body');
-    if (encoder.encode(body).length > (groupSelection || selectionSummary || selectionViewport || selectionMembers || selectionOpening || selectionMarket ? GROUP_SELECTION_BYTES : REQUEST_BYTES)) throw new Error('Neighborhood preview selection is too large');
+    if (encoder.encode(body).length > (preparedCatalog ? 2_048 : groupSelection || selectionSummary || selectionViewport || selectionMembers || selectionOpening || selectionMarket ? GROUP_SELECTION_BYTES : REQUEST_BYTES)) throw new Error('Neighborhood preview selection is too large');
     return jsonRequest(options, path, { method: 'POST', headers: { 'content-type': 'application/json' }, body },
-      groupSelection ? GROUP_SELECTION_BYTES : selectionMembers ? 2_360_000 : selectionOpening ? GROUP_MAP_OPENING_RESPONSE_BYTES : selectionSummary ? GROUP_SUMMARY_RESPONSE_BYTES : operation === 'preview' ? MAP_PREVIEW_RESPONSE_BYTES
+      preparedCatalog ? 512_000 : groupSelection ? GROUP_SELECTION_BYTES : selectionMembers ? 2_360_000 : selectionOpening ? GROUP_MAP_OPENING_RESPONSE_BYTES : selectionSummary ? GROUP_SUMMARY_RESPONSE_BYTES : operation === 'preview' ? MAP_PREVIEW_RESPONSE_BYTES
         : operation === 'viewport' || selectionViewport ? REQUEST_BYTES
         : operation === 'catalog' && payload !== null && typeof payload === 'object'
           && (openingMode || Object.hasOwn(payload, 'initial_preview_groups'))

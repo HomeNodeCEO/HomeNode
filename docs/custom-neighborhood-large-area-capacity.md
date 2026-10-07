@@ -12,6 +12,12 @@ relabel an older opening. Pages contain at most 100 groups, their counts and
 original membership digests, **not** account/member arrays. Empty and unresolved
 populations stay explicit. No phase inference, sample or median change is made.
 
+The actual-main integration check on October 7, 2026 (head `35eeac7f`,
+base `16870503`, runner merge `cda037c`) passed 414 native database tests,
+3,929 frontend tests and 10,188 server tests, with 55 expected native-only
+server skips. This proves that source/storage slice, not production activation
+or large-area live acceptance. Later commits require fresh protected checks.
+
 The transaction-bound immutable store names all of its original-digest,
 metadata, page and root retention references. Full reopen freshly checks every
 original page plus beginning/ending metadata/root/original fences. A single-page

@@ -1,5 +1,35 @@
 # Complete larger-area Custom neighborhood studies
 
+## Browser paged catalog admission (not a transport/host switch)
+
+`customCohortPagedCatalog.ts` reads the new retained display directory and every
+named page, verifies exact original SHA-256/UTF-8 lengths, target/context/root
+binding, full ordered group inventory and whole assigned/unresolved totals, and
+rechecks the exact header/current-owner port at the end. It emits no prefix or
+partial catalog. Explicit empty remains empty. The new immutable issued type
+has names, counts and server-retained partition digests, **not** account arrays;
+it cannot substitute for the legacy catalog's individual membership checks.
+Browser digests do not independently prove individual IDs, source rights,
+historical stock, statistics or Apply. Cancellation/deadline checks surround
+network and asynchronous hashing under the caller's one finite operation.
+
+The store's additive `open` read returns only an exact navigation directory,
+after fresh beginning/ending original/metadata/root reads; it does not claim to
+have read any display page. Decoder fixtures consume this ACTUAL server producer
+and store, including late original loss, ending refusal, altered page grammar,
+foreign bindings, explicit empty/60,001-member synthetic cases, getter/alias
+detachment and cancellation at hash settlement. Fresh full browser CI is still
+required; local focused tests do not establish host or current-role SQL proof.
+
+No HTTP route, authenticated transport, UI host, installed cap/flag, database
+schema, worker schedule, report or genuine file is switched. The next transport
+must be a closed, authenticated, no-store finite application route owned by the
+current assignment/source/retained-registry verifier, never a generic blob URL.
+The future host must fence its current session/display at admission/settlement;
+map/member/opening consumers need the corresponding versioned original proof,
+not a cast to a full-member catalog. Full prepared registry/owner wiring, partial
+source/spatial recovery, complete >50k publication and live acceptance remain.
+
 ## Original-bound paged display catalog (not a browser/catalog switch)
 
 `customCohortRecordedCatalogPages.js` compiles small subdivision display pages

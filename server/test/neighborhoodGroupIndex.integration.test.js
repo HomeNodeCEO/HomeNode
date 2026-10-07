@@ -11,6 +11,13 @@ import { withCustomCohortJobTransaction }
   from '../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
 import { createNeighborhoodFrozenSourcePages, NEIGHBORHOOD_FROZEN_PAGE_LIMITS }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourcePages.js';
+import { createNeighborhoodFrozenSpatialPages }
+  from '../src/services/neighborhoodAssessment/neighborhoodFrozenSpatialPages.js';
+
+const frozenSpatialOptions = options => ({...options,
+  geometryInput:{geometry_version:1,type:'Point',crs:'EPSG:4326',axis_order:'longitude_latitude',
+    coordinate_encoding:'decimal_string_v1',coordinates:['-96.7','32.9'],source_sha256:'a'.repeat(64)},
+  discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}});
 
 test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserves exact sale dates',{
   skip:!process.env.DATABASE_URL,timeout:360_000,
@@ -171,6 +178,12 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
       {...options,claim}).page({kind:'source_records',cursor:'',rowLimit:2}));
     assert.equal(JSON.parse(pricePage.rows[0].payload_text).current_price,'9007199254740993',
       'bounded source pages preserve exact original decimal text before Number interpretation');
+    const spatialPage=await withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSpatialPages(client,
+      frozenSpatialOptions({...options,claim})).page({kind:'parcels',cursor:'',rowLimit:2}));
+    assert.deepEqual(spatialPage.rows.map(row=>row.object_id),['1']);
+    assert.deepEqual(spatialPage.population,{parcel_count:'1',account_count:'1',unassociated_parcel_count:'0',
+      subject_included:true,unlocatable_global_parcels:'4',invalid_geometries:'0'});
+    assert.equal(spatialPage.authority,'not_established');assert.equal(spatialPage.coverage,'page_only');
     for(const sql of [
       'UPDATE app.neighborhood_group_generations SET parcel_count=0 WHERE generation_id=$1',
       'UPDATE app.neighborhood_group_parcel_facts SET living_area_sqft=1 WHERE generation_id=$1',
@@ -212,6 +225,11 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
       {...options,claim}).page({kind:'parcels',cursor:originalPage.next_cursor,rowLimit:2}));
     assert.deepEqual(resumed.rows.map(row=>row.row_key),['3','4']);
     assert.equal(resumed.original.generation_id,first.generationId,'fresh page client never follows a later sweep');
+    const spatialResumed=await withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSpatialPages(client,
+      frozenSpatialOptions({...options,claim})).page({kind:'accounts',cursor:'',rowLimit:2}));
+    assert.deepEqual(spatialResumed.rows,[{account_id:'INDEX-A',parcel_count:'1'}]);
+    assert.equal(spatialResumed.definition_sha256,spatialPage.definition_sha256,
+      'fixed point/radius/operation and original sweep give one stable resumable spatial definition');
     await pool.query(`UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second'
       WHERE operation_id=$1`,[operation]);
     const nextClaim=await withCustomCohortJobTransaction(pool,async client=>{
@@ -290,6 +308,46 @@ test('isolated PostgreSQL: freezes a complete 60001-account original source popu
     assert.equal(source.current_price,'9007199254740993');
     assert.equal(source.source_raw_witness.fields.ClosePrice.value_text,'9007199254740993');
     assert.equal(JSON.stringify(source).includes('PrivateFixtureKey'),false);
+    const organization=randomUUID(),actor=randomUUID(),report=randomUUID(),operation=randomUUID();
+    await pool.query("INSERT INTO app_auth.organizations(id,legal_name,display_name) VALUES($1,'Spatial synthetic','Spatial synthetic')",[organization]);
+    await pool.query("INSERT INTO app_auth.users(id,email,display_name) VALUES($1,$2,'Spatial actor')",[actor,`${actor}@example.test`]);
+    const assignment=(await pool.query(`INSERT INTO app.assignment_files(organization_id,account_id,file_number,created_by_user_id,assigned_appraiser_user_id)
+      VALUES($1,'FROZEN-00001',$2,$3,$3) RETURNING id::text`,[organization,`SPATIAL-${randomUUID()}`,actor])).rows[0].id;
+    await pool.query(`INSERT INTO app.report_files(id,organization_id,account_id,workflow_type,file_number,custom_assignment_file_id)
+      VALUES($1,$2,'FROZEN-00001','custom_appraisal',$3,$4)`,[report,organization,`SPATIAL-${randomUUID()}`,assignment]);
+    const scope={organization_id:organization,report_file_id:report,assignment_file_id:assignment,account_id:'FROZEN-00001'};
+    const options={scope,actorUserId:actor};
+    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).enqueue({scope,actorUserId:actor,
+      request:{operation_id:operation,observation_period:{start_date:'2025-01-01',end_date:'2026-10-07'}}}));
+    const claim=await withCustomCohortJobTransaction(pool,async client=>{
+      const [job]=await createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900});
+      return {operation_id:operation,claim_token:job.claim_token,attempts:job.attempts};
+    });
+    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).pinPreparedGeneration(claim,options));
+    // Traverse all 60,001 unique identities using fixed-width pages and a
+    // running count/cursor only. No array of the population is held by Node.
+    let after='',seen=0,done=false,maximumPageRows=0;
+    for(let batch=0;!done&&batch<5;batch++)await withCustomCohortJobTransaction(pool,async client=>{
+      const reader=createNeighborhoodFrozenSpatialPages(client,frozenSpatialOptions({...options,claim}));
+      for(let i=0;i<64&&!done;i++) {
+        const page=await reader.page({kind:'accounts',cursor:after,rowLimit:250});
+        assert.equal(page.original.generation_id,frozen.generationId);assert.equal(page.population.account_count,'60001');
+        assert.equal(page.population.unlocatable_global_parcels,'1');assert.equal(page.population.subject_included,true);
+        assert.ok(page.rows.every(row=>row.parcel_count==='1'));
+        maximumPageRows=Math.max(maximumPageRows,page.rows.length);seen+=page.rows.length;after=page.next_cursor;done=page.end_of_roster;
+      }
+    });
+    assert.equal(done,true);assert.equal(seen,60001);assert.equal(after,'FROZEN-60001');assert.equal(maximumPageRows,250);
+    const tenMile=await withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSpatialPages(client,
+      {...frozenSpatialOptions({...options,claim}),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'16093.44'}})
+      .page({kind:'parcels',cursor:'60000',rowLimit:250}));
+    assert.equal(tenMile.population.parcel_count,'60001');assert.equal(tenMile.end_of_roster,true);
+    assert.deepEqual(tenMile.rows.map(row=>row.object_id),['60001']);
+    await assert.rejects(withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSpatialPages(client,
+      frozenSpatialOptions({...options,claim,scope:{...scope,report_file_id:randomUUID()}})).page({kind:'accounts',cursor:''})),/claim_lost/);
+    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,operation));
+    await assert.rejects(withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSpatialPages(client,
+      frozenSpatialOptions({...options,claim})).page({kind:'accounts',cursor:''})),/claim_lost/);
     assert.equal(source.close_date,'2010-01-01','old sales are preserved as observations, not represented as retrospective stock');
     assert.equal((await pool.query("SELECT payload->>'is_resolved' AS resolved FROM app.neighborhood_frozen_source_rows WHERE generation_id=$1 AND kind='sale_links' AND row_key='3'",[frozen.generationId])).rows[0].resolved,'false');
     await pool.query("UPDATE gis.dcad_parcels SET residential_area_sqft=9999 WHERE object_id=1");

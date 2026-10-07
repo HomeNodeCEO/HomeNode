@@ -6,6 +6,8 @@ import * as catalog from '../src/features/neighborhood/customCohortPocketCatalog
 import * as selection from '../src/features/neighborhood/customCohortRecordedGroupTransport.ts';
 import * as transport from '../src/features/neighborhood/customCohortPreviewTransport.ts';
 import * as lane from '../src/features/neighborhood/customWorkspaceRequestLane.ts';
+import * as marketTransport from '../src/features/neighborhood/customCohortGroupMarketTransport.ts';
+import { completeCalendarMonthWindow } from '../../server/src/services/marketConditions.js';
 import { checkpoint, workspace, displayModule, mapView, memberView, groupMemberViewFixture, json, io } from './customCohortGroupMemberViewFixture.mjs';
 import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 import { prepareCustomCohortGroupWorkspaceTransportRequest as serverRequest,
@@ -21,9 +23,11 @@ const lifecycle = load('customCohortGroupWorkspaceLifecycle.ts', { './customCoho
   './customCohortRecordedGroupTransport.ts': selection, './customWorkspaceCheckpoint.ts': checkpoint,
   './customCohortPocketCatalog.ts': catalog, './customCohortGroupDisplay.ts': displayModule });
 const legacy = load('customWorkspaceApi.ts', { './customWorkspaceCheckpoint': checkpoint, './customCohortPreviewTransport': transport });
+const marketView = load('customCohortGroupMarketView.ts', { './customCohortGroupDisplay.ts': displayModule, './customCohortGroupMarketTransport.ts': marketTransport });
 const { createCustomCohortGroupWorkspaceApi: createApi } = load('customCohortGroupWorkspaceApi.ts', {
   './customWorkspaceApi.ts': legacy, './customCohortPreviewTransport.ts': transport, './customCohortGroupWorkspaceTransport.ts': workspace,
-  './customCohortRecordedGroupTransport.ts': selection, './customCohortGroupDisplay.ts': displayModule, './customCohortGroupMapView.ts': mapView });
+  './customCohortRecordedGroupTransport.ts': selection, './customCohortGroupDisplay.ts': displayModule, './customCohortGroupMapView.ts': mapView,
+  './customCohortGroupMarketView.ts': marketView, './customCohortGroupMarketTransport.ts': marketTransport });
 const clone = value => structuredClone(value);
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 const same = (a, b) => a && b && a.length === b.length && a.every((value, i) => Object.is(value, b[i]));
@@ -54,6 +58,7 @@ async function server({ absent = false, pending = false, privateSales = false } 
       if (action === 'selection-preview') return json(fixture.numeric);
       if (action === 'selection-map-opening') return json(fixture.opening);
       if (action === 'selection-members') return json(fixture.resultFor(body.population, body.page));
+      if (action === 'selection-market-analysis') return json(marketResponse(target, body));
       if (action === 'preview' || action === 'members') return json({ subset_inspection_only: true });
       if (action === 'capture') {
         fixture = await groupMemberViewFixture({ contextRef: { ...fixture.request.context_ref, context_id: body.operation_id }, empty: true });
@@ -109,6 +114,7 @@ function harness(t, db, overrides = {}, laneModule = lane) {
   const Host = load('components/CustomCohortGroupWorkspaceHost.tsx', { react, 'react/jsx-runtime': jsx,
     '../customCohortGroupWorkspaceLifecycle': lifecycle, '../customWorkspaceCheckpoint': checkpoint,
     '../customWorkspaceRequestLane': laneModule, '../customCohortGroupMemberView': memberView,
+    '../customCohortGroupMarketTransport': marketTransport,
     './CustomCohortWorkspace': { default: WorkspaceStub, __esModule: true }, './CustomReportedObservationAdoption': { default: AdoptionStub, __esModule: true },
     '../../../data/neighborhoodCityBoundaries.json': { default: cities, __esModule: true } }).default;
   const cleanup = () => { if (fiber) { fiber.cells.forEach(c => c?.cleanup?.()); fiber.live = false; fiber = null; } };
@@ -134,6 +140,75 @@ function harness(t, db, overrides = {}, laneModule = lane) {
 const actions = db => db.calls.map(c => c.action);
 const WINDOW = { west: '-97', south: '32', east: '-96', north: '33' };
 const PAGE = { limit: 1, after_member_id: null };
+const STUDY = { asOf: '2026-10-31', periodMonths: 12, contextOverride: null };
+function marketResponse(target, body) {
+  const p = completeCalendarMonthWindow(body.as_of, body.period_months);
+  return { subject: { account_id: target.accountId }, analyses: [{ market: { key: 'exploration', scope: 'exploration' },
+    period: { start: p.start, end: p.end }, population: { eligible_sale_count: 0, mapped_sale_count: 0 },
+    filters: { record_type: 'closed_sale', period_months: p.periodMonths, analysis_as_of: p.analysisAsOf,
+      complete_calendar_months: true, partial_as_of_month_excluded: p.partialMonthExcluded } }],
+    recommendation: { conclusion: 'insufficient' }, unavailable_areas: [], independence_notice: 'Independent market study.',
+    exploration_binding: { context_ref: body.context_ref, selection_revision: body.selection_ref.selection_revision,
+      selection_sha256: body.selection_ref.selection_sha256 }, exploration_selection_ref: body.selection_ref };
+}
+
+test('current host publishes only an exact market area with a read-only keyed lane, not a fake legacy selection or report writer', async t => {
+  const db = await server(), published = [], before = clone(db.section), accepted = clone(db.accepted);
+  const h = harness(t, db, { onMarketAreaChange: value => published.push(value) }); await h.settle();
+  const area = published.at(-1); assert.ok(area && Object.isFrozen(area));
+  assert.equal(area.display, h.workspace().exact.display); displayModule.requireCustomCohortGroupDisplay(area.display);
+  const result = await area.read(STUDY, io()); await h.settle();
+  assert.deepEqual(result.exploration_selection_ref, area.display.active.selection_ref);
+  assert.deepEqual(actions(db).slice(-1), ['selection-market-analysis']);
+  const sent = db.calls.at(-1).body;
+  assert.equal(sent.as_of, '2026-10-31'); assert.deepEqual(sent.area_keys, ['exploration']);
+  assert.doesNotMatch(JSON.stringify(sent), /account_ids|pockets|viewport|geometry|sessionKey/);
+  assert.equal(db.maxOpen, 1); assert.equal(db.keys, 0); assert.deepEqual(db.section, before); assert.deepEqual(db.accepted, accepted);
+  assert.equal(await h.controls.flush(), true);
+  h.unmount(); assert.equal(published.at(-1), null);
+  const count = db.calls.length; await assert.rejects(area.read(STUDY, io())); assert.equal(db.calls.length, count);
+});
+
+test('a map click invalidates a settling market study before a queued selection save, and old callbacks never query the newer display', async t => {
+  const db = await server(), hold = deferred(), published = [];
+  db.overrides.set('selection-market-analysis', async () => hold.promise);
+  const h = harness(t, db, { onMarketAreaChange: area => published.push(area) }); await h.settle();
+  const old = published.at(-1), waiting = old.read(STUDY, io()), refused = assert.rejects(waiting);
+  await h.settle(); const body = db.calls.find(c => c.action === 'selection-market-analysis').body;
+  h.select([]); await h.settle(); assert.equal(published.at(-1), null); assert.equal(actions(db).includes('save-groups'), false);
+  hold.resolve(json(marketResponse(db.target, body))); await refused; await h.settle();
+  const next = published.at(-1); assert.ok(next && next !== old);
+  assert.equal(next.display.active.selection_ref.selection_revision, old.display.active.selection_ref.selection_revision + 1);
+  assert.equal(next.display.observations.summary.selected.account_count, 0);
+  const count = db.calls.length; await assert.rejects(old.read(STUDY, io())); assert.equal(db.calls.length, count);
+  assert.equal(db.maxOpen, 1); assert.equal(db.keys, 0);
+});
+
+test('read-only finalization and unmount revoke even a retained exact market area without a report write', async t => {
+  const db = await server(), published = [], hold = deferred();
+  const h = harness(t, db, { onMarketAreaChange: area => published.push(area) }); await h.settle();
+  const area = published.at(-1), count = db.calls.length;
+  h.controls.setReadOnly(true); await h.settle(); assert.equal(published.at(-1), null);
+  await assert.rejects(area.read(STUDY, io())); assert.equal(db.calls.length, count);
+  h.controls.setReadOnly(false); await h.settle();
+  db.overrides.set('selection-market-analysis', () => hold.promise);
+  const waiting = published.at(-1).read(STUDY, io()), refused = assert.rejects(waiting); await h.settle();
+  const body = db.calls.at(-1).body; h.unmount(); assert.equal(published.at(-1), null); await refused;
+  hold.resolve(json(marketResponse(db.target, body))); assert.equal(db.keys, 0);
+});
+
+test('a queued market window is detached before lane admission and never runs concurrently with another consumer', async t => {
+  const db = await server(), published = [], hold = deferred(); let requests = 0;
+  db.overrides.set('selection-market-analysis', async (_call, respond) => { if (++requests === 1) await hold.promise; return respond(); });
+  const h = harness(t, db, { onMarketAreaChange: area => published.push(area) }); await h.settle();
+  const area = published.at(-1), first = area.read(STUDY, io()); await h.settle();
+  const study = { ...STUDY, asOf: '2026-09-30', contextOverride: { source: 'manual', city: 'Garland' } };
+  const second = area.read(study, io()); study.asOf = '2020-01-01'; study.contextOverride.city = 'Changed';
+  await h.settle(); assert.equal(requests, 1); hold.resolve(); await first; const result = await second; await h.settle();
+  const calls = db.calls.filter(c => c.action === 'selection-market-analysis'); assert.equal(calls.length, 2);
+  assert.equal(calls[1].body.as_of, '2026-09-30'); assert.equal(calls[1].body.context_override.city, 'Garland');
+  assert.equal(result.analyses[0].filters.analysis_as_of, '2026-09-30'); assert.equal(db.maxOpen, 1);
+});
 
 test('fresh draft read precedes one coherent exact opening without a generic writer or report mutation', async t => {
   const db = await server(), accepted = clone(db.accepted), initial = clone(db.section), h = harness(t, db); await h.settle();

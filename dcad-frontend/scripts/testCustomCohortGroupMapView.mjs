@@ -5,6 +5,7 @@ import * as discovery from '../src/features/neighborhood/customWorkspaceDiscover
 import * as transport from '../src/features/neighborhood/customCohortPreviewTransport.ts';
 import * as selection from '../src/features/neighborhood/customCohortRecordedGroupTransport.ts';
 import * as loader from '../src/features/neighborhood/customCohortViewportLoader.ts';
+import * as marketTransport from '../src/features/neighborhood/customCohortGroupMarketTransport.ts';
 import { createCustomWorkspaceRequestLane } from '../src/features/neighborhood/customWorkspaceRequestLane.ts';
 import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 import { selectionMapOpeningFixture } from '../../server/test/fixtures/customCohortSelectionMapOpeningFixture.js';
@@ -21,12 +22,14 @@ const workspace = load('customCohortGroupWorkspaceTransport', { './customWorkspa
 const displayModule = load('customCohortGroupDisplay', { './customCohortGroupWorkspaceTransport.ts': workspace,
   './customCohortRecordedGroupTransport.ts': selection });
 const mapView = load('customCohortGroupMapView', { './customCohortGroupDisplay.ts': displayModule, './customCohortViewportLoader.ts': loader });
+const marketView = load('customCohortGroupMarketView', { './customCohortGroupDisplay.ts': displayModule, './customCohortGroupMarketTransport.ts': marketTransport });
 const presentation = load('customCohortMapPresentation', { './customCohortPocketCatalog.ts': catalogHelpers });
 const legacy = load('customWorkspaceApi', { './customWorkspaceCheckpoint': checkpoint, './customCohortPreviewTransport': transport });
 const { createCustomCohortGroupWorkspaceApi: createApi } = load('customCohortGroupWorkspaceApi', {
   './customWorkspaceApi.ts': legacy, './customCohortPreviewTransport.ts': transport,
   './customCohortGroupWorkspaceTransport.ts': workspace, './customCohortRecordedGroupTransport.ts': selection,
   './customCohortGroupDisplay.ts': displayModule, './customCohortGroupMapView.ts': mapView,
+  './customCohortGroupMarketView.ts': marketView, './customCohortGroupMarketTransport.ts': marketTransport,
 });
 const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };

@@ -10,6 +10,7 @@ import { saveCustomAppraisalWorkfileSectionInTransaction } from '../../src/servi
 import { runCustomCohortGroupWorkspaceHttpDatabaseChecks } from './customCohortGroupWorkspaceHttpDatabaseChecks.js';
 import { runCustomCohortPreparedCatalogOwnerDatabaseChecks } from './customCohortPreparedCatalogOwnerDatabaseChecks.js';
 import { runCustomCohortPreparedMembershipOwnerDatabaseChecks } from './customCohortPreparedMembershipOwnerDatabaseChecks.js';
+import { runCustomCohortPreparedSelectionOwnerDatabaseChecks } from './customCohortPreparedSelectionOwnerDatabaseChecks.js';
 
 /** Invoked only by the verified disposable PostgreSQL fixture. No live accounts,
  * source provider, user report choices, accepted sections or shared database.
@@ -705,5 +706,13 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, sc
     current: later, originalGroupIds: newIds, calls, workspaceState, protectedOther, coordinatorWorkspace,
     coordinatorBefore, suspend, loseNextCommit: () => { loseCommitAck = true; },
     denySource: value => { denyPolicy = value; } })).checks);
+  checks.push(...(await runCustomCohortPreparedSelectionOwnerDatabaseChecks({ pool, owner, identity, read, scope,
+    calls, observationPeriod, protectedOther, suspend,
+    denyMembers: (value, final = false) => { denyMembers = value && !final; denyFinalMembers = value && final; memberPolicyCalls = 0; },
+    denySource: (value, final = false) => { denyPolicy = value && !final; denyFinalPolicy = value && final; policyCalls = 0; },
+    revokeNextRead: () => { revokeAtCatalogRead = true; }, cancelNextHead: controller => { cancelAtHead = controller; },
+    revokeNextHead: () => { revokeAtHead = true; }, loseNextCommit: () => { loseCommitAck = true; },
+    failNextHistory: () => { failWorkspaceHistory = true; },
+  })).checks);
   return { checks };
 }

@@ -10,6 +10,7 @@ import { createCustomCohortRetainedCatalogReader } from './customCohortRetainedC
 import { prepareCustomCohortCatalogMembershipWitness, createCustomCohortCatalogMembershipWitnessStore }
   from './customCohortCatalogMembershipWitness.js';
 import { createCustomCohortRetainedMembershipReader } from './customCohortRetainedMembershipReader.js';
+import { createCustomCohortRetainedGroupSelectionStage } from './customCohortRetainedGroupSelectionStage.js';
 
 const unpack = promisify(gunzip), hash = value => createHash('sha256').update(value).digest('hex');
 const SHA = /^[a-f0-9]{64}$/;
@@ -64,7 +65,7 @@ const sourceColumns = `c.format_version AS source_catalog_format_version, c.payl
  * they never decode a source catalog/preview or reconstruct member arrays.
  * No pool, BEGIN/COMMIT, retry, cache, cron, feature flag or live route is owned.
  */
-export function createCustomCohortPreparedCatalogRegistry(client, scopeJson, contextJson, operationOptions = {}) {
+function createRegistry(client, scopeJson, contextJson, operationOptions, selectionOnly) {
   check(client && !types.isProxy(client) && typeof client.query === 'function' && typeof client.release === 'function', 'caller_client_required');
   const scope = prepareCustomCohortContextScope(scopeJson), context = prepareCustomCohortContextReference(contextJson);
   const key = [scope.organization_id, context.context_id, context.context_sha256,
@@ -74,7 +75,8 @@ export function createCustomCohortPreparedCatalogRegistry(client, scopeJson, con
   const live = () => { check(!signal?.aborted, 'cancelled'); checkBudget(); check(!signal?.aborted, 'cancelled'); };
   let busy = false, operations = 0, bytes = 0;
   const charge = (size = 0) => {
-    live(); check(++operations <= 512, 'operations_limit'); bytes += size; check(bytes <= 128_000_000, 'io_bytes_limit');
+    live(); check(++operations <= (selectionOnly ? 1024 : 512), 'operations_limit'); bytes += size;
+    check(bytes <= (selectionOnly ? 256_000_000 : 128_000_000), 'io_bytes_limit');
   };
   const sql = async (text, values = key) => { charge(); const result = await query(text, values); live(); return result; };
   const transaction = async () => {
@@ -163,6 +165,17 @@ export function createCustomCohortPreparedCatalogRegistry(client, scopeJson, con
     check(same(await registration(), root) && same(await memberRoot(root), reference), 'ending_source');
     check(await transaction() === started, 'caller_transaction_required'); live(); return result;
   }
+  async function selection(method, commandJson) {
+    const started = await transaction(), root = await registration();
+    const reference = root ? await memberRoot(root) : null;
+    if (!reference) { check(await transaction() === started, 'caller_transaction_required'); return null; }
+    // Both roots are chosen by exact current SQL lineage, never supplied by the
+    // command. No dense source replay or automatic preparation on a miss.
+    const result = await createCustomCohortRetainedGroupSelectionStage(boundedBlobs,
+      { ...binding(root), witnessRef: reference }, op)[method](commandJson);
+    check(same(await registration(), root) && same(await memberRoot(root), reference), 'ending_source');
+    check(await transaction() === started, 'caller_transaction_required'); live(); return result;
+  }
   async function prepare(withMembership = false) {
     const started = await transaction(), originalPins = await sourcePins();
     if (!originalPins) { check(await transaction() === started, 'caller_transaction_required'); return null; }
@@ -242,10 +255,25 @@ export function createCustomCohortPreparedCatalogRegistry(client, scopeJson, con
     live(); check(!busy, 'operation_in_progress'); busy = true;
     try { return await work(); } finally { busy = false; }
   }
+  if (selectionOnly) return Object.freeze({
+    describe: commandJson => run(() => selection('describe', commandJson)),
+    stage: commandJson => run(() => selection('stage', commandJson)),
+  });
   return Object.freeze({ prepare: () => run(prepare), open: () => run(() => read('open')),
     // Internal preparation/read only. Current-owner rights remain mandatory;
     // these whole-catalog artifacts are never the appraiser's selected head.
     prepareMembership: () => run(() => prepare(true)), reopenMembership: () => run(membership),
     async page(index) { check(Number.isSafeInteger(index) && index >= 0 && index < 21, 'page_index'); return run(() => read('page', index)); },
     reopen: () => run(() => read('reopen')) });
+}
+
+export function createCustomCohortPreparedCatalogRegistry(client, scopeJson, contextJson, operationOptions = {}) {
+  return createRegistry(client, scopeJson, contextJson, operationOptions, false);
+}
+
+/** Trusted internal selection profile only. It shares one finite lifetime
+ * budget across SQL pins and original-page I/O; no public limit option, roots,
+ * preparation method, source grant, selected head or transaction is exposed. */
+export function createCustomCohortPreparedSelectionRegistry(client, scopeJson, contextJson, operationOptions = {}) {
+  return createRegistry(client, scopeJson, contextJson, operationOptions, true);
 }

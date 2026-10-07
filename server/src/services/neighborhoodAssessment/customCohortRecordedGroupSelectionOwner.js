@@ -54,6 +54,15 @@ async function headOriginal(owned, selectionRef) {
 }
 
 async function derive(owned, input, commandJson, catalogIdentityVersion) {
+  if (owned.retainedSelection) {
+    // The current transaction owner, not inputOf()/a browser, supplies this
+    // SQL-rooted capability. Old v1 producer bytes retain their dense verifier;
+    // this explicit new path refuses rather than silently reinterpreting them.
+    if (catalogIdentityVersion !== 2) fail('prepared_identity_version_unsupported');
+    const result = await owned.retainedSelection.describe(commandJson);
+    if (result === null) fail('membership_not_prepared');
+    return result;
+  }
   const command = prepareCustomCohortGroupSelectionCommandOriginal(commandJson);
   return prepareCustomCohortRecordedGroupSelection({ scopeJson: owned.scopeJson,
     contextJson: json(input.contextRef), catalogJson: owned.catalogJson, rosterJson: owned.rosterJson,
@@ -181,12 +190,20 @@ export function createCustomCohortRecordedGroupSelectionOwner({ identityOf, exec
           // The repository still verifies the full request and current head.
           if (original.receipt.operation_id === input.operationId) identityVersion = original.identityVersion;
         }
-        const derived = await derive(owned, input, commandJson, identityVersion);
-        const stored = await owned.blobs.put(derived.catalog_original_json);
-        if (json(stored) !== json(derived.catalog_ref)) fail('storage_conflict');
-        const staged = await createCohortPagedGroupSelectionV1Store(owned.blobs).stage({
-          metadataJson: derived.metadata_json, membershipPages: derived.membershipPages(),
-          signal: owned.budget.signal, checkBudget: owned.budget.check });
+        let derived, staged;
+        if (owned.retainedSelection) {
+          if (identityVersion !== 2) fail('prepared_identity_version_unsupported');
+          derived = await owned.retainedSelection.stage(commandJson);
+          if (derived === null) fail('membership_not_prepared');
+          staged = derived;
+        } else {
+          derived = await derive(owned, input, commandJson, identityVersion);
+          const stored = await owned.blobs.put(derived.catalog_original_json);
+          if (json(stored) !== json(derived.catalog_ref)) fail('storage_conflict');
+          staged = await createCohortPagedGroupSelectionV1Store(owned.blobs).stage({
+            metadataJson: derived.metadata_json, membershipPages: derived.membershipPages(),
+            signal: owned.budget.signal, checkBudget: owned.budget.check });
+        }
         const result = await repository.put({
           operationId: input.operationId, expectedSelectionRef: input.expectedSelectionRef,
           metadataJson: derived.metadata_json, manifestRef: staged.manifest_ref });

@@ -270,3 +270,98 @@ test('checkpoint access refuses stale claims, corrupt readback and unadmitted op
     { phase: 'subject', evidence_refs: [{ content_sha256: 'bad', canonical_utf8_bytes: '1' }] }), /invalid_checkpoint/);
   assert.equal(calls, before, 'unadmitted checkpoint input never reaches SQL');
 });
+
+function generationFixture({ autocommit=false, endingLost=false, corrupt=false, active=true }={}) {
+  const generation='66666666-6666-4666-8666-666666666666',calls=[];
+  let pinned=null,transactions=0,fences=0;
+  const repository=createCustomCohortCaptureJobRepository({async query(sql,values) {
+    calls.push({sql,values});
+    if(sql.includes('generation-transaction')) return {rowCount:1,rows:[{transaction_id:autocommit?String(++transactions):'12'}]};
+    if(sql.includes('generation-fence')) return ++fences===2 && endingLost
+      ? {rowCount:0,rows:[]} : {rowCount:1,rows:[{operation_id:operation}]};
+    if(sql.includes('generation-read')) return pinned ? {rowCount:1,rows:[{generation_id:pinned,
+      status:'complete',retirement_started_at:corrupt?'2026-01-01':null,
+      source_observed_at:'2026-01-01T00:00:00.000000Z',completed_at:'2026-01-01T00:01:00.000000Z',
+      parcel_count:'60001',sale_count:'82',group_count:'2'}]} : {rowCount:0,rows:[]};
+    if(sql.includes('generation-active')) return active ? {rowCount:1,rows:[{generation_id:generation}]} : {rowCount:0,rows:[]};
+    if(sql.includes('generation-pin')) {pinned=values.at(-1);return {rowCount:1,rows:[]};}
+    throw new Error('unexpected_generation_query');
+  }});
+  return {repository,calls,generation,set pinned(value){pinned=value;}};
+}
+const generationClaim={operation_id:operation,claim_token:token,attempts:1};
+const generationOptions={scope,actorUserId:actor};
+
+test('prepared generation read miss performs no preparation or source-table read',async()=>{
+  const f=generationFixture();
+  assert.equal(await f.repository.readPreparedGeneration(generationClaim,generationOptions),null);
+  assert.equal(f.calls.some(({sql})=>sql.includes('generation-active') || sql.includes('generation-pin')),false);
+  assert.equal(f.calls.some(({sql})=>sql.includes('core.') || sql.includes('gis.')),false);
+});
+
+test('prepared generation is server-picked once and never follows a newer active pointer on replay',async()=>{
+  const f=generationFixture();
+  const original=await f.repository.pinPreparedGeneration(generationClaim,generationOptions);
+  assert.equal(original.generation_id,f.generation);
+  assert.equal(original.parcel_count,'60001');
+  assert.equal(Object.isFrozen(original),true);
+  const before=f.calls.length;
+  assert.deepEqual(await f.repository.pinPreparedGeneration(generationClaim,generationOptions),original);
+  assert.deepEqual(await f.repository.readPreparedGeneration({...generationClaim,attempts:2},generationOptions),original);
+  assert.equal(f.calls.slice(before).some(({sql})=>sql.includes('generation-active') || sql.includes('generation-pin')),false);
+  const active=f.calls.find(({sql})=>sql.includes('generation-active')).sql;
+  assert.match(active,/retirement_started_at IS NULL/);
+  assert.match(active,/FOR KEY SHARE OF generation NOWAIT/);
+});
+
+test('generation pin checks the exact live job scope and actor at both ends without renewing its lease',async()=>{
+  const f=generationFixture();
+  await f.repository.pinPreparedGeneration(generationClaim,generationOptions);
+  const fences=f.calls.filter(({sql})=>sql.includes('generation-fence'));
+  assert.equal(fences.length,2);
+  for(const {sql,values} of fences){
+    assert.deepEqual(values,[operation,token,1,organization,report,'17','SYNTHETIC-ACCOUNT',actor]);
+    assert.match(sql,/FOR SHARE NOWAIT/);
+    assert.match(sql,/cancellation_requested_at IS NULL/);
+    assert.match(sql,/lease_expires_at>clock_timestamp\(\)/);
+    assert.doesNotMatch(sql,/SET lease_expires_at/);
+  }
+});
+
+test('generation pin rejects autocommit before any job or prepared source is read or written',async()=>{
+  for(const method of ['pinPreparedGeneration','readPreparedGeneration']) {
+    const f=generationFixture({autocommit:true});
+    await assert.rejects(f.repository[method](generationClaim,generationOptions),/caller_transaction_required/);
+    assert.equal(f.calls.length,2);
+    assert.ok(f.calls.every(({sql})=>sql.includes('generation-transaction')));
+  }
+});
+
+test('missing complete active generation does not mint a pin or fall back to mutable data',async()=>{
+  const f=generationFixture({active:false});
+  await assert.rejects(f.repository.pinPreparedGeneration(generationClaim,generationOptions),/prepared_generation_unavailable/);
+  assert.equal(f.calls.some(({sql})=>sql.includes('generation-pin')),false);
+});
+
+test('corrupt or retired prepared generation is refused instead of silently replaced',async()=>{
+  const f=generationFixture({corrupt:true});f.pinned=f.generation;
+  await assert.rejects(f.repository.readPreparedGeneration(generationClaim,generationOptions),/prepared_generation_corrupt/);
+  await assert.rejects(f.repository.pinPreparedGeneration(generationClaim,generationOptions),/prepared_generation_corrupt/);
+  assert.equal(f.calls.some(({sql})=>sql.includes('generation-active') || sql.includes('generation-pin')),false);
+});
+
+test('ending cancellation or claim loss refuses a staged generation result for caller rollback',async()=>{
+  const f=generationFixture({endingLost:true});
+  await assert.rejects(f.repository.pinPreparedGeneration(generationClaim,generationOptions),/claim_lost/);
+  assert.ok(f.calls.some(({sql})=>sql.includes('generation-pin')),'the owner must roll back this attempted pin');
+});
+
+test('a browser generation, missing actor or malformed claim is rejected before SQL',async()=>{
+  const f=generationFixture();
+  for(const options of [{...generationOptions,generation_id:f.generation},{scope},{...generationOptions,actorUserId:'invalid'}]) {
+    await assert.rejects(f.repository.pinPreparedGeneration(generationClaim,options),/invalid_/);
+    await assert.rejects(f.repository.readPreparedGeneration(generationClaim,options),/invalid_/);
+  }
+  await assert.rejects(f.repository.pinPreparedGeneration({...generationClaim,attempts:0},generationOptions),/invalid_claim/);
+  assert.equal(f.calls.length,0);
+});

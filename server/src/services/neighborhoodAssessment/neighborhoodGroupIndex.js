@@ -182,10 +182,12 @@ JOIN app.neighborhood_group_summary summary ON summary.generation_id=active.gene
 WHERE active.id=true AND summary.county_key=$1 AND summary.city_key=$2
   AND summary.subdivision_key=$3`;
 
-const OLD_GENERATION = `SELECT generation_id FROM app.neighborhood_group_generations
-  WHERE generation_id<>(SELECT generation_id FROM app.neighborhood_group_active WHERE id=true)
-    AND status='complete'
-  ORDER BY completed_at DESC OFFSET 1 LIMIT 1`;
+const OLD_GENERATION = `SELECT generation.generation_id FROM app.neighborhood_group_generations generation
+  WHERE generation.generation_id<>(SELECT generation_id FROM app.neighborhood_group_active WHERE id=true)
+    AND generation.status='complete'
+    AND NOT EXISTS (SELECT 1 FROM app.neighborhood_custom_cohort_prepared_generation_pins pin
+      WHERE pin.generation_id=generation.generation_id)
+  ORDER BY generation.completed_at DESC OFFSET 1 LIMIT 1 FOR UPDATE OF generation SKIP LOCKED`;
 const PRUNE_FACTS = table => `WITH old AS (
   SELECT ctid FROM app.${table} WHERE generation_id=$1::uuid LIMIT $2::integer
 ), removed AS (
@@ -195,7 +197,21 @@ const PRUNE_PARCELS=PRUNE_FACTS('neighborhood_group_parcel_facts');
 const PRUNE_SALES=PRUNE_FACTS('neighborhood_group_sale_facts');
 
 async function pruneObsoleteGeneration(client,batchSize,deadline) {
-  const old=(await client.query(OLD_GENERATION)).rows?.[0]?.generation_id;
+  // Claim retirement atomically before deleting even the first fact batch.
+  // The generation row lock conflicts with a new pin's KEY SHARE lock. Once
+  // retired, it cannot be pinned after cleanup pauses or the worker crashes.
+  let old;
+  await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
+  try {
+    old=(await client.query(OLD_GENERATION)).rows?.[0]?.generation_id;
+    if (old) {
+      const result=await client.query(`UPDATE app.neighborhood_group_generations
+        SET retirement_started_at=coalesce(retirement_started_at,clock_timestamp())
+        WHERE generation_id=$1::uuid AND status='complete'`,[old]);
+      if (result.rowCount!==1) throw new Error('neighborhood_group_index_retirement_invalid');
+    }
+    await client.query('COMMIT');
+  } catch(error) { await client.query('ROLLBACK').catch(()=>{}); throw error; }
   if (!old) return {status:'none'};
   for (const sql of [PRUNE_PARCELS,PRUNE_SALES]) for (;;) {
     if (Date.now()>deadline) return {status:'deferred',generationId:old};

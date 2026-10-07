@@ -107,7 +107,72 @@ const SCOPED_CHECKPOINT_FENCE = `${FENCE} AND organization_id=$4::uuid
  */
 export function createCustomCohortCaptureJobRepository(client) {
   if (typeof client?.query !== 'function') fail('client_required');
+  const transactionId = async () => {
+    const row = one(await client.query('/* custom-cohort-job:generation-transaction */ SELECT txid_current()::text AS transaction_id'), 'caller_transaction_required');
+    if (typeof row.transaction_id !== 'string' || !/^[1-9][0-9]{0,19}$/.test(row.transaction_id)) fail('caller_transaction_required');
+    return row.transaction_id;
+  };
+  const preparedGeneration = async (claim, options, preparing) => {
+    const values = scopedClaimOf(claim, options);
+    const started = await transactionId();
+    // Reject autocommit before the first pin write, not after leaving an orphan.
+    if (await transactionId() !== started) fail('caller_transaction_required');
+    const fence = async () => one(await client.query(`/* custom-cohort-job:generation-fence */
+      SELECT operation_id::text FROM app.neighborhood_custom_cohort_capture_jobs
+      WHERE ${SCOPED_CHECKPOINT_FENCE} FOR SHARE NOWAIT`, values), 'claim_lost');
+    await fence();
+    const read = async () => {
+      const result = await client.query(`/* custom-cohort-job:generation-read */
+        SELECT generation.generation_id::text,generation.status,generation.retirement_started_at,
+          to_char(generation.source_observed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS source_observed_at,
+          to_char(generation.completed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS completed_at,
+          generation.parcel_count::text,generation.sale_count::text,generation.group_count::text
+        FROM app.neighborhood_custom_cohort_prepared_generation_pins pin
+        JOIN app.neighborhood_group_generations generation USING(generation_id)
+        WHERE pin.operation_id=$1::uuid AND pin.organization_id=$2::uuid AND pin.report_file_id=$3::uuid
+          AND pin.assignment_file_id=$4::bigint AND pin.account_id=$5 AND pin.actor_user_id=$6::uuid`,
+      [values[0],...values.slice(3)]);
+      if (result?.rowCount === 0 && Array.isArray(result.rows) && result.rows.length === 0) return null;
+      const row = one(result, 'prepared_generation_corrupt');
+      if (!UUID.test(row.generation_id ?? '') || row.status !== 'complete' || row.retirement_started_at !== null
+        || ![row.source_observed_at,row.completed_at].every(value => typeof value === 'string'
+          && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(value))
+        || row.completed_at < row.source_observed_at
+        || !['parcel_count','sale_count','group_count'].every(key => typeof row[key] === 'string'
+          && /^(?:0|[1-9][0-9]{0,18})$/.test(row[key]) && BigInt(row[key]) <= 9223372036854775807n)) fail('prepared_generation_corrupt');
+      return Object.freeze({ generation_id: row.generation_id,source_observed_at: row.source_observed_at,
+        completed_at: row.completed_at,parcel_count: row.parcel_count,sale_count: row.sale_count,group_count: row.group_count });
+    };
+    let pinned = await read();
+    if (preparing && pinned === null) {
+      // The server picks the completed active generation. A browser, checkpoint
+      // or replacement worker cannot choose a different generation for this job.
+      const candidate = one(await client.query(`/* custom-cohort-job:generation-active */
+        SELECT generation.generation_id::text FROM app.neighborhood_group_active active
+        JOIN app.neighborhood_group_generations generation USING(generation_id)
+        WHERE active.id=true AND generation.status='complete' AND generation.retirement_started_at IS NULL
+        FOR KEY SHARE OF generation NOWAIT`), 'prepared_generation_unavailable');
+      if (!UUID.test(candidate.generation_id ?? '')) fail('prepared_generation_corrupt');
+      await client.query(`/* custom-cohort-job:generation-pin */
+        INSERT INTO app.neighborhood_custom_cohort_prepared_generation_pins
+          (operation_id,organization_id,report_file_id,assignment_file_id,account_id,actor_user_id,generation_id)
+        VALUES($1::uuid,$2::uuid,$3::uuid,$4::bigint,$5,$6::uuid,$7::uuid)
+        ON CONFLICT(operation_id) DO NOTHING`, [values[0],...values.slice(3),candidate.generation_id]);
+      pinned = await read();
+      if (!pinned || pinned.generation_id !== candidate.generation_id) fail('prepared_generation_conflict');
+    }
+    await fence();
+    if (await transactionId() !== started) fail('caller_transaction_required');
+    return pinned;
+  };
   return Object.freeze({
+    /** Internal preparation primitive only. Caller supplies a live current-
+     * authorized job transaction and rolls back on every failure. Pinning a
+     * descriptive index is neither full source acquisition nor source rights. */
+    pinPreparedGeneration: (claim, options) => preparedGeneration(claim, options, true),
+    /** Reopen the exact pinned generation under the replacement live claim;
+     * never consult today's active pointer or silently replace a missing pin. */
+    readPreparedGeneration: (claim, options) => preparedGeneration(claim, options, false),
     async status(scope, operationId) {
       scope = scopeOf(scope); operationId = uuid(operationId);
       const row = one(await client.query(`/* custom-cohort-job:status */

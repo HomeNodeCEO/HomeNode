@@ -70,7 +70,7 @@ export async function checkCustomCohortPreparedCatalogRegistryDatabase(pool, ide
     for (const sql of [
       'UPDATE app.neighborhood_custom_cohort_prepared_catalog_roots SET manifest_sha256=manifest_sha256 WHERE organization_id=$1 AND context_id=$2',
       'DELETE FROM app.neighborhood_custom_cohort_prepared_catalog_roots WHERE organization_id=$1 AND context_id=$2',
-      'TRUNCATE app.neighborhood_custom_cohort_prepared_catalog_roots',
+      'TRUNCATE app.neighborhood_custom_cohort_prepared_catalog_roots, app.neighborhood_custom_cohort_catalog_membership_roots',
       'UPDATE app.neighborhood_custom_cohort_catalog_membership_roots SET witness_sha256=witness_sha256 WHERE organization_id=$1 AND context_id=$2',
       'DELETE FROM app.neighborhood_custom_cohort_catalog_membership_roots WHERE organization_id=$1 AND context_id=$2',
       'TRUNCATE app.neighborhood_custom_cohort_catalog_membership_roots',

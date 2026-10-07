@@ -41,6 +41,12 @@ export async function checkCustomCohortRetainedGroupSelectionStageDatabase(pool)
       rosterAccountIdsSha256:w.roster_account_ids_sha256,witnessRef:whole.witness_ref };
     const ids = [f.catalog.pockets[1].id,f.catalog.pockets[4].id,'discovery:unassigned'],commandJson = command(ids);
     expected = await derive({ ...f.input,includedGroupIds:ids,revision:1,commandJson,catalogIdentityVersion:2 });
+    const readOnly = { get:blobs.get,put() { assert.fail('description may not write selected originals'); } };
+    const described = await stage(readOnly,binding).describe(commandJson);
+    assert.equal(described.status,'described_group_selection');
+    assert.equal(described.metadata_json,expected.metadata_json);
+    assert.equal(described.catalog_original_json,expected.catalog_original_json);
+    assert.equal(Object.hasOwn(described,'manifest_ref'),false);
     selected = await stage(blobs,binding).stage(commandJson);
     assert.equal(selected.catalog_original_json,expected.catalog_original_json);
     assert.equal(selected.metadata_json,expected.metadata_json);

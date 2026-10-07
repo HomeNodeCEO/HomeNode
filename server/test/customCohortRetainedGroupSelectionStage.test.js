@@ -46,6 +46,37 @@ test('stored original pages stage the exact unchanged v2 command/metadata/page i
   assert.equal(Object.hasOwn(actual,'selection_ref'),false); assert.equal(Object.hasOwn(actual,'summary'),false);
 });
 
+test('read-only description matches the old command originals but never claims or writes a selected manifest', async () => {
+  const h = await harness(),ids = [h.f.catalog.pockets[1].id,'discovery:unassigned'],commandJson = h.command(ids);
+  const expected = await derive({ ...h.f.input,includedGroupIds:ids,revision:1,commandJson,catalogIdentityVersion:2 });
+  const owned = stage(h.repository,h.binding),out = await owned.describe(commandJson);
+  assert.equal(out.status,'described_group_selection'); assert.equal(out.catalog_original_json,expected.catalog_original_json);
+  assert.equal(out.metadata_json,expected.metadata_json); assert.deepEqual(out.catalog_ref,expected.catalog_ref);
+  assert.deepEqual(out.included_recorded_group_ids,expected.included_recorded_group_ids);
+  assert.equal(out.account_count,h.f.catalog.pockets[1].member_count+h.f.catalog.unassigned.member_count);
+  assert.equal(h.writes.length,0);
+  for (const key of ['selection_ref','manifest_ref','manifest_json','selection_sha256','summary']) assert.equal(Object.hasOwn(out,key),false);
+  const selected = await owned.stage(commandJson);
+  assert.equal(selected.metadata_json,out.metadata_json); assert.equal(selected.catalog_original_json,out.catalog_original_json);
+});
+
+test('read-only description refuses ending original loss and shares the stage settlement lane', async () => {
+  let active = false,visits = 0,entered,release,hold = false;
+  const gate = new Promise(r => { entered = r; }),settled = new Promise(r => { release = r; });
+  const h = await harness(undefined,async ({ kind,hash }) => {
+    if (active && kind === 'get' && hash === h.whole.witness_ref.content_sha256) {
+      if (hold) { entered(); await settled; }
+      else if (++visits === 2) return null;
+    }
+  });
+  active = true; await assert.rejects(stage(h.repository,h.binding).describe(h.command([])),/missing_original/);
+  assert.equal(h.writes.length,0);
+  active = true; hold = true; const owned = stage(h.repository,h.binding),pending = owned.describe(h.command([])); await gate;
+  await assert.rejects(owned.stage(h.command([])),/operation_in_progress/);
+  await assert.rejects(owned.describe(h.command([])),/operation_in_progress/);
+  hold = false; visits = 0; active = false; release(); await pending; assert.equal(h.writes.length,0);
+});
+
 test('complete 60001, empty selections and unresolved-only originals remain exact without a live capacity switch', async () => {
   for (const options of [{ count:60001,groupCount:7 },{ count:0,groupCount:0 },{ count:37,groupCount:0 }]) {
     const h = await harness(options),ids = h.f.catalog.pockets.map(g => g.id);

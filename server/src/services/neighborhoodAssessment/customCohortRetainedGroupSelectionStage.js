@@ -56,23 +56,53 @@ export function createCustomCohortRetainedGroupSelectionStage(repository,binding
     const text = await bounded.get(ref.content_sha256,ref.canonical_utf8_bytes);
     check(typeof text === 'string' && same(blob(text),ref),'missing_or_changed_original'); return text;
   }
-  return Object.freeze({ async stage(commandJson) {
-    live(); check(!busy,'operation_in_progress');
+  function commandOf(commandJson) {
     const command = prepareCustomCohortGroupSelectionCommandOriginal(commandJson);
     const context = JSON.parse(captured.contextJson);
     if (command.command_version === 3) check(command.expected_workspace_checkpoint.pending_capture.operation_id === context.context_id,'command_mismatch');
+    return command;
+  }
+  async function describeOriginal(command) {
+    const original = await createCustomCohortRetainedMembershipReader(bounded,captured,op).reopen();
+    const baseText = await load(captured.originalCatalogRef),base = JSON.parse(baseText);
+    const whole = JSON.parse(original.metadata_json);
+    check(same(base.groups,whole.groups) && same(base.scope,whole.scope)
+      && same(base.context_ref,whole.context_ref) && base.roster_account_ids_sha256 === captured.rosterAccountIdsSha256,'binding');
+    const included = new Set(command.included_recorded_group_ids);
+    check(command.included_recorded_group_ids.every(id => base.groups.some(g => g.id === id)),'unknown_group');
+    const groups = base.groups.filter(g => included.has(g.id));
+    const catalog_original_json = json({ ...base,selection_command:command }),catalog_ref = blob(catalog_original_json);
+    const metadata_json = json({ ...whole,catalog_ref,revision:command.selection_revision,groups });
+    return { original,baseText,included,catalog_original_json,catalog_ref,metadata_json,
+      account_count:groups.reduce((n,g) => n + g.member_count,0) };
+  }
+  async function endingOriginal(d,withSelectedOriginal) {
+    const ending = await createCustomCohortRetainedMembershipReader(bounded,captured,op).reopen();
+    check(same(ending,d.original) && await load(captured.originalCatalogRef) === d.baseText,'ending_original');
+    if (withSelectedOriginal) check(await load(d.catalog_ref) === d.catalog_original_json,'ending_original'); live();
+  }
+  return Object.freeze({
+    /** Read-only command/catalog description for the existing head verifier.
+     * It verifies the whole SOURCE partition twice, not a selected manifest.
+     * Caller must still verify every selected page and current head separately.
+     * No selected bytes, root, head or report are written by this method. */
+    async describe(commandJson) {
+      live(); check(!busy,'operation_in_progress'); const command = commandOf(commandJson); busy = true;
+      try {
+        const d = await describeOriginal(command); await endingOriginal(d,false);
+        return Object.freeze({ authority:'not_established',status:'described_group_selection',
+          source_witness_ref:d.original.witness_ref,catalog_original_json:d.catalog_original_json,
+          catalog_ref:d.catalog_ref,metadata_json:d.metadata_json,account_count:d.account_count,
+          included_recorded_group_ids:Object.freeze([...command.included_recorded_group_ids]) });
+      } finally { busy = false; }
+    },
+    async stage(commandJson) {
+    live(); check(!busy,'operation_in_progress'); const command = commandOf(commandJson);
     busy = true;
     try {
-      const original = await createCustomCohortRetainedMembershipReader(bounded,captured,op).reopen();
-      const baseText = await load(captured.originalCatalogRef),base = JSON.parse(baseText);
-      const whole = JSON.parse(original.metadata_json),manifest = JSON.parse(original.manifest_json);
-      check(same(base.groups,whole.groups) && same(base.scope,whole.scope)
-        && same(base.context_ref,whole.context_ref) && base.roster_account_ids_sha256 === captured.rosterAccountIdsSha256,'binding');
-      const included = new Set(command.included_recorded_group_ids);
-      check(command.included_recorded_group_ids.every(id => base.groups.some(g => g.id === id)),'unknown_group');
-      const catalog_original_json = json({ ...base,selection_command:command }),catalog_ref = blob(catalog_original_json);
-      const metadata_json = json({ ...whole,catalog_ref,revision:command.selection_revision,
-        groups:base.groups.filter(g => included.has(g.id)) });
+      const d = await describeOriginal(command);
+      const { original,included,catalog_original_json,catalog_ref,metadata_json } = d;
+      const manifest = JSON.parse(original.manifest_json);
       async function* pages() {
         // Consume only one original page and one output buffer at a time.
         // Rechunk AFTER filtering, preserving the unchanged producer's exact
@@ -96,12 +126,10 @@ export function createCustomCohortRetainedGroupSelectionStage(repository,binding
       const selected = await store.stage({ ...args,membershipPages:pages() });
       const verified = await store.verify({ ...args,manifestRef:selected.manifest_ref });
       check(verified.manifest_json === selected.manifest_json
-        && selected.account_count === base.groups.filter(g => included.has(g.id)).reduce((n,g) => n + g.member_count,0),'selection');
+        && selected.account_count === d.account_count,'selection');
       // No provisional pages/counts are delivered until a FRESH whole-original
       // verification and the derived command original both still agree.
-      const ending = await createCustomCohortRetainedMembershipReader(bounded,captured,op).reopen();
-      check(same(ending,original) && await load(captured.originalCatalogRef) === baseText
-        && await load(catalog_ref) === catalog_original_json,'ending_original'); live();
+      await endingOriginal(d,true);
       const selectedManifest = JSON.parse(selected.manifest_json);
       const refs = [...original.retention_refs,catalog_ref,blob(metadata_json),selected.manifest_ref,
         ...selectedManifest.membership_pages.map(p => p.page),...selectedManifest.account_pages.map(p => p.page)];

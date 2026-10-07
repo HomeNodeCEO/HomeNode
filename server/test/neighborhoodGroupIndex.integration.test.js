@@ -93,7 +93,11 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     assert.equal(original.stored_geometry_ewkb,originalGeometry,'nightly materialization preserves exact original EWKB');
     assert.equal(original.residential_area_sqft,'1000');
     await assert.rejects(pool.query("UPDATE app.neighborhood_frozen_source_rows SET payload='{}' WHERE generation_id=$1",[first.generationId]),error=>error.code==='55000');
-    await assert.rejects(pool.query('TRUNCATE app.neighborhood_frozen_source_rows'),error=>error.code==='55000');
+    // The stock's new original-row FK refuses plain TRUNCATE before PostgreSQL
+    // even runs our immutable trigger. CASCADE must still hit that guard.
+    await assert.rejects(pool.query('TRUNCATE app.neighborhood_frozen_source_rows'),
+      error=>error.code==='0A000' && /foreign key constraint/.test(error.message));
+    await assert.rejects(pool.query('TRUNCATE app.neighborhood_frozen_source_rows CASCADE'),error=>error.code==='55000');
     const summary=await getPreparedNeighborhoodGroupSummary(pool,{county:'Dallas',city:'Garland',subdivision:'Monica Park 4'});
     assert.ok(summary.completed_at > summary.source_observed_at,
       'completion must record the end of the long source transaction');

@@ -45,10 +45,22 @@ export async function runCustomCohortPreparedSelectionOwnerDatabaseChecks({ pool
   const captured = await owner.capture({ ...identity, operationId: pending.operation_id, observationPeriod });
   const nextRead = { ...identity, contextRef: captured.context_ref };
   // Capture registration alone does not publish the subdivision catalog.
-  // Explicitly exercise its actual owner preparation before the supplemental
-  // membership preparation; never let a selection command fill this cache miss.
-  const catalog = await owner.catalog({ ...nextRead, selection: { revision: 1, pockets: [] }, catalogVersion: 3 });
+  // The installed owner writes the neutral catalog only for a recommended
+  // catalog request, and writes the neutral indexed preview from an opening.
+  // A catalog-only presentation intentionally publishes neither derivative.
+  // Exercise that actual opening before supplemental membership preparation;
+  // never let a selection command fill this cache miss.
+  const catalog = await owner.catalog({ ...nextRead, selection: { revision: 1, pockets: [] }, catalogVersion: 3,
+    includeRecommendation: true, initialPreviewMode: 'all_catalog_groups' });
   assert.equal(catalog.catalog.catalog_complete, true);
+  const originals = (await pool.query(`SELECT
+    (SELECT count(*)::int FROM app.neighborhood_custom_cohort_prepared_catalogs
+      WHERE organization_id=$1 AND context_id=$2 AND context_sha256=$3 AND catalog_version=3 AND format_version IN (1,2)) AS catalogs,
+    (SELECT count(*)::int FROM app.neighborhood_custom_cohort_prepared_previews
+      WHERE organization_id=$1 AND context_id=$2 AND context_sha256=$3 AND format_version=1) AS previews`,
+  [scope.organization_id, nextRead.contextRef.context_id, nextRead.contextRef.context_sha256])).rows[0];
+  assert.ok(originals.catalogs > 0 && originals.previews === 1,
+    'actual opening must retain both original neutral catalog and indexed preview before supplemental preparation');
   const finish = { ...nextRead, operationId: randomUUID(), expectedSelectionRef: null,
     expectedWorkspaceRevision: started.workspace.revision, expectedWorkspaceCheckpoint: started.workspace.value,
     includedRecordedGroupIds: [] };

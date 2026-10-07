@@ -62,6 +62,13 @@ marker alone never proves a complete acquisition. Headers and exact pinned
 version are checked again before delivery; finite lifetime page/query/byte/time
 budgets, cancellation and a serial settlement lane cover every read.
 
+The encoded source-page envelope is not the installed legacy evidence-blob
+envelope (1.5 MB). A future acquisition owner must retain independently bounded
+original chunks plus their complete ordered manifest, or use a separately
+versioned storage profile; it cannot pass a 2.1-MB transport page into the legacy
+blob repository or silently relax its reference/scanner limits. Current routes
+do not connect these internal readers to that repository.
+
 Tests exercise corrupted originals/metadata, autocommit, ending claim loss,
 closed inputs/getters, native numeric order, cancellation, pending I/O and
 aggregate budgets. The actual native index fixture also reads pages on fresh

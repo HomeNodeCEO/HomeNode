@@ -13,6 +13,8 @@ import { createNeighborhoodFrozenSourcePages, NEIGHBORHOOD_FROZEN_PAGE_LIMITS }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourcePages.js';
 import { createNeighborhoodFrozenSpatialPages }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenSpatialPages.js';
+import { createNeighborhoodFrozenSourceClosurePages }
+  from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourceClosurePages.js';
 
 const frozenSpatialOptions = options => ({...options,
   geometryInput:{geometry_version:1,type:'Point',crs:'EPSG:4326',axis_order:'longitude_latitude',
@@ -352,4 +354,82 @@ test('isolated PostgreSQL: freezes a complete 60001-account original source popu
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM app.neighborhood_group_generations')).rows[0].count,1,
       'failed source snapshot and generation header roll back together');
   } finally {await pool.end();}
+});
+
+test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion',{
+  skip:!process.env.DATABASE_URL,timeout:180_000,
+},async()=>{
+  const target=await prepareNeighborhoodCiDatabase();const {default:pg}=await import('pg');
+  const pool=new pg.Pool({connectionString:target.connectionString,max:2,statement_timeout:120_000});
+  try {
+    await pool.query(NEIGHBORHOOD_CACHED_SOURCE_SCHEMA);
+    await pool.query('ALTER TABLE core.primary_improvements ADD COLUMN IF NOT EXISTS pool boolean');
+    await pool.query(`INSERT INTO core.accounts(account_id,county,city,subdivision) VALUES
+      ('CLOSURE-A','Dallas','Garland','Original Stock'),('CLOSURE-B','Dallas','Garland','Original Stock'),
+      ('CLOSURE-OUTSIDE','Dallas','Garland','Outside Stock')`);
+    await pool.query(`INSERT INTO gis.dcad_parcels(object_id,account_id,subdivision_name,source_record_hash,geom) VALUES
+      (1,'CLOSURE-A','Original Stock','a',ST_Multi(ST_MakeEnvelope(-96.7,32.9,-96.699,32.901,4326))),
+      (2,'CLOSURE-B','Original Stock','b',ST_Multi(ST_MakeEnvelope(-96.699,32.9,-96.698,32.901,4326))),
+      (3,'CLOSURE-OUTSIDE','Outside Stock','c',ST_Multi(ST_MakeEnvelope(-97.7,32.9,-97.699,32.901,4326))),
+      (4,'CLOSURE-A','Original Stock','d',ST_Multi(ST_MakeEnvelope(-97.71,32.9,-97.709,32.901,4326))),
+      (5,NULL,NULL,'e',ST_Multi(ST_MakeEnvelope(-96.7,32.901,-96.699,32.902,4326)))`);
+    await pool.query(`INSERT INTO core.sales_source_records(id,primary_account_id,current_price,close_date,raw_payload) VALUES
+      (501,'CLOSURE-A',9007199254740993,'2010-01-01','{"ClosePrice":9007199254740993}'::jsonb),
+      (502,'CLOSURE-OUTSIDE',777777,'2026-01-01',NULL),
+      (503,NULL,NULL,NULL,NULL),(504,'CLOSURE-OUTSIDE',500000,'2025-01-01',NULL)`);
+    await pool.query(`INSERT INTO core.sales(id,source_record_id,account_id,closing_date,sale_price) VALUES
+      (1,501,'CLOSURE-OUTSIDE','2010-01-01',9007199254740993),
+      (2,502,'CLOSURE-OUTSIDE','2026-01-01',777777),
+      (3,NULL,'CLOSURE-B','2012-01-01',200000),(4,504,'CLOSURE-B','2025-01-01',500000)`);
+    await pool.query(`INSERT INTO core.sale_parcels(id,source_record_id,source_position,parcel_sequence,account_id,is_resolved) VALUES
+      (1,501,1,1,'CLOSURE-A',true),(2,501,1,2,'CLOSURE-OUTSIDE',true),
+      (3,503,1,1,'CLOSURE-B',true),(4,503,1,2,NULL,false),(5,502,1,1,'CLOSURE-OUTSIDE',true)`);
+    const run=randomUUID(),otherRun=randomUUID();
+    await pool.query(`INSERT INTO gis.source_sync_runs(id,source_key,status,records_seen) VALUES
+      ($1,'dcad_parcels','complete',5),($2,'other_source','complete',99)`,[run,otherRun]);
+    await pool.query(`INSERT INTO gis.source_sync_state(source_key,status,last_run_id) VALUES
+      ('dcad_parcels','complete',$1),('other_source','complete',$2)`,[run,otherRun]);
+    const frozen=await runNeighborhoodGroupIndex(pool,{batchSize:2,logger:{info(){}},retainOriginalSources:true});
+    const organization=randomUUID(),actor=randomUUID(),report=randomUUID(),operation=randomUUID();
+    await pool.query("INSERT INTO app_auth.organizations(id,legal_name,display_name) VALUES($1,'Closure synthetic','Closure synthetic')",[organization]);
+    await pool.query("INSERT INTO app_auth.users(id,email,display_name) VALUES($1,$2,'Closure actor')",[actor,`${actor}@example.test`]);
+    const assignment=(await pool.query(`INSERT INTO app.assignment_files(organization_id,account_id,file_number,created_by_user_id,assigned_appraiser_user_id)
+      VALUES($1,'CLOSURE-A',$2,$3,$3) RETURNING id::text`,[organization,`CLOSURE-${randomUUID()}`,actor])).rows[0].id;
+    await pool.query(`INSERT INTO app.report_files(id,organization_id,account_id,workflow_type,file_number,custom_assignment_file_id)
+      VALUES($1,$2,'CLOSURE-A','custom_appraisal',$3,$4)`,[report,organization,`CLOSURE-${randomUUID()}`,assignment]);
+    const scope={organization_id:organization,report_file_id:report,assignment_file_id:assignment,account_id:'CLOSURE-A'},options={scope,actorUserId:actor};
+    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).enqueue({scope,actorUserId:actor,
+      request:{operation_id:operation,observation_period:{start_date:'2025-01-01',end_date:'2026-10-07'}}}));
+    const claim=await withCustomCohortJobTransaction(pool,async client=>{
+      const [job]=await createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900});
+      return {operation_id:operation,claim_token:job.claim_token,attempts:job.attempts};
+    });
+    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).pinPreparedGeneration(claim,options));
+    const expected={parcels:['1','2','4'],accounts:['CLOSURE-A','CLOSURE-B'],source_records:['501','503','504'],
+      sales:['1','3','4'],sale_links:['1','2','3','4'],sync_state:['dcad_parcels'],sync_runs:[run]};
+    for(const [kind,keys] of Object.entries(expected))await withCustomCohortJobTransaction(pool,async client=>{
+      const reader=createNeighborhoodFrozenSourceClosurePages(client,frozenSpatialOptions({...options,claim}));
+      let after='',done=false;const rows=[];
+      for(let i=0;i<12&&!done;i++){
+        const page=await reader.page({kind,cursor:after,rowLimit:1});
+        assert.equal(page.original.generation_id,frozen.generationId);assert.equal(page.stock_population.account_count,'2');
+        assert.equal(page.stock_population.parcel_count,'3');assert.equal(page.stock_population.unassociated_parcel_count,'1');
+        assert.equal(page.additional_cadastral_accounts,false);assert.equal(page.authority,'not_established');
+        rows.push(...page.rows);after=page.next_cursor;done=page.end_of_layer;
+      }
+      assert.equal(done,true);assert.deepEqual(rows.map(row=>row.row_key),keys,`${kind} is exact original-stock-seeded one-hop scope`);
+      if(kind==='source_records'){
+        const payload=JSON.parse(rows[0].payload_text);assert.equal(payload.current_price,'9007199254740993');
+        assert.equal(payload.close_date,'2010-01-01');assert.equal(payload.source_raw_witness.fields.ClosePrice.value_text,'9007199254740993');
+      }
+      if(kind==='sales')assert.equal(JSON.parse(rows[1].payload_text).closing_date,'2012-01-01','legacy observations outside analytic period remain original');
+      if(kind==='sale_links'){
+        assert.equal(JSON.parse(rows[1].payload_text).account_id,'CLOSURE-OUTSIDE','package association is retained, not stock membership');
+        assert.equal(JSON.parse(rows[3].payload_text).is_resolved,false,'unresolved seeded associations are never filtered away');
+      }
+    });
+    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,operation));
+    await assert.rejects(withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSourceClosurePages(client,
+      frozenSpatialOptions({...options,claim})).page({kind:'source_records',cursor:''})),/claim_lost/);
+  }finally{await pool.end();}
 });

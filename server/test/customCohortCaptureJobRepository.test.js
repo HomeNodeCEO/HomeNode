@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { CAPTURE_JOB_LEASE_SECONDS, createCustomCohortCaptureJobRepository }
   from '../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
 import { assessmentEvidenceDigest } from '../src/services/neighborhoodAssessment/contract.js';
@@ -13,6 +14,24 @@ const scope = { organization_id: organization, report_file_id: report,
   assignment_file_id: '17', account_id: 'SYNTHETIC-ACCOUNT' };
 const request = { operation_id: operation, observation_period: {
   start_date: '2024-01-01', end_date: '2024-12-31' } };
+
+test('prepared-generation pin migration is registered after its job and index prerequisites', () => {
+  const name = '20261104_custom_cohort_prepared_generation_pins.sql';
+  const registry = readFileSync(new URL('../src/database/mobileMigrations.js', import.meta.url), 'utf8');
+  for (const prerequisite of ['20261024_neighborhood_group_index.sql',
+    '20261030_custom_cohort_capture_jobs.sql', '20261103_custom_cohort_catalog_membership_roots.sql']) {
+    assert.ok(registry.includes(prerequisite));
+    assert.ok(registry.indexOf(name) > registry.indexOf(prerequisite));
+  }
+  const sql = readFileSync(new URL(`../migrations/${name}`, import.meta.url), 'utf8');
+  assert.match(sql, /FOREIGN KEY\(operation_id,organization_id,report_file_id,assignment_file_id,account_id,actor_user_id\)/);
+  assert.match(sql, /ON DELETE RESTRICT ON UPDATE RESTRICT/);
+  assert.match(sql, /BEFORE UPDATE OR DELETE OR TRUNCATE/);
+  assert.match(sql, /REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT/);
+  assert.doesNotMatch(sql, /FOR EACH ROW|DISABLE TRIGGER|DROP TABLE|UPDATE app\.|DELETE FROM app\./);
+  for (const relation of ['neighborhood_group_generations', 'neighborhood_group_parcel_facts',
+    'neighborhood_group_sale_facts', 'neighborhood_group_summary']) assert.ok(sql.includes(`'${relation}'`));
+});
 
 test('shared lease bounds remain inclusive and invalid values never reach PostgreSQL', async () => {
   assert.deepEqual(CAPTURE_JOB_LEASE_SECONDS, { min: 15, max: 900 });

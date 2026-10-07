@@ -4,6 +4,7 @@ import { createNeighborhoodCohortBlobRepository } from '../../src/services/neigh
 import { prepareCustomCohortRecordedCatalogSource as prepare, createCustomCohortRecordedCatalogPageStore as store }
   from '../../src/services/neighborhoodAssessment/customCohortRecordedCatalogPages.js';
 import { customCohortCatalogPageFixture as fixture } from '../fixtures/customCohortCatalogPageFixture.js';
+import { createCustomCohortRetainedCatalogReader } from '../../src/services/neighborhoodAssessment/customCohortRetainedCatalogReader.js';
 
 /** Only the existing guarded migrated disposable PostgreSQL owner invokes
  * this synthetic fixture. Actual organization scoping, exact original bytes,
@@ -63,11 +64,23 @@ export async function checkCustomCohortRecordedCatalogPageDatabase(pool) {
     assert.equal(manifest.group_count, '238'); assert.ok(!Object.hasOwn(directory, 'groups'));
     await assert.rejects(store(createNeighborhoodCohortBlobRepository(observer, other)).open(fresh, staged.manifest_ref),
       /missing_or_changed_original/);
+    const binding = { scopeJson: make('').input.scopeJson, contextJson: make('').input.contextJson,
+      manifestRef: staged.manifest_ref, originalCatalogRef: complete.metadata.original_catalog_ref,
+      sourceReadModelSha256: complete.metadata.original_read_model_sha256,
+      rosterAccountIdsSha256: complete.metadata.roster_account_ids_sha256 };
+    const retained = createCustomCohortRetainedCatalogReader(blobs, binding);
+    assert.deepEqual(await retained.open(), directory);
+    assert.deepEqual(await retained.reopen(), complete);
+    await assert.rejects(createCustomCohortRetainedCatalogReader(createNeighborhoodCohortBlobRepository(observer, other), binding).open(),
+      /missing_or_changed_original/);
     assert.deepEqual(await store(blobs).reopen(fresh, staged.manifest_ref), complete);
     for (let i = 0; i < fresh.page_count; i++) {
       const page = await store(blobs).readPage(await prepare(make('').input), staged.manifest_ref, i);
       assert.deepEqual(page.page.groups, complete.groups.slice(i * 100, (i + 1) * 100));
       assert.equal(page.status, 'display_page'); assert.ok(!Object.hasOwn(page, 'catalog_complete'));
+      const retainedPage = await retained.page(i);
+      assert.deepEqual(retainedPage.page_ref, page.page_ref);
+      assert.deepEqual(JSON.parse(retainedPage.page_json), page.page);
     }
     await observer.query('COMMIT');
   } catch (error) { await observer.query('ROLLBACK'); throw error; }

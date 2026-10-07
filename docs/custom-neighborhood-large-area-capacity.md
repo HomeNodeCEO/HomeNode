@@ -1,5 +1,42 @@
 # Complete larger-area Custom neighborhood studies
 
+## Reopening stored catalog pages without dense compiler replay
+
+`customCohortRetainedCatalogReader.js` reads the actual retained directory,
+metadata, complete ordered membership-digest original and requested display
+pages without an in-memory compiler receipt or full catalog/roster account
+arrays. It verifies original canonical bytes/hash/length, exact scope/context,
+the caller's pinned original/read-model/roster bindings, whole inventory and
+assigned/unresolved totals, subject status, page-to-original descriptor equality,
+and fresh ending original/root/metadata reads. Directory and single-page results
+do not claim other pages were read; full reopen returns only after every named
+page and ending fence. One serial finite storage budget spans calls, including
+actual pending-I/O settlement after cancellation. No median or membership is
+inferred from display counts.
+
+The binding is INTERNAL: its root and source pins must come from a freshly
+authorized prepared registry which registered an actual complete compiler
+receipt and rechecks actual immutable source hashes. This reader does not create
+that registry or grant authority to arbitrary matching JSON/digests. A browser
+must never submit its scope, source pins or roster. Current assignment/role/source
+and subject checks are still the surrounding owner's responsibility before and
+after reading. Full individual membership/selection/Apply proof remains separate.
+
+Fixtures compile and store the actual graph, remove the dense source inputs,
+then compare fresh-reader output byte-for-byte to the original complete display.
+The browser consumes that actual persisted path, including a synthetic 60,001
+population; exact 2,049-group and empty/unresolved cases, foreign/source bindings,
+self-consistent corrupted storage, missing late originals, finite aggregate
+budgets and held-I/O cancellation are exercised. Fresh-client/foreign-organization
+SQL assertions are added to the existing guarded native fixture. Only fresh
+current-head native CI proves those SQL assertions; synthetic/local tests are
+not source rights, complete >50k acquisition/publication or live performance.
+
+No existing owner/registry/HTTP/host/worker is switched by this slice. The next
+step is exact prepared-registry registration and current-owner closed transport,
+then corresponding versioned map/opening/member/display consumers. Installed
+50k limits, V7 OFF, accepted reports, cron and production choices are unchanged.
+
 ## Browser paged catalog admission (not a transport/host switch)
 
 `customCohortPagedCatalog.ts` reads the new retained display directory and every

@@ -75,6 +75,9 @@ export async function runCustomCohortPreparedCatalogOwnerDatabaseChecks({ pool, 
     assert.equal((await post('prepare-recorded-catalog', body)).status, 404);
     assert.equal((await post('prepare-recorded-catalog-membership', body)).status, 404);
     assert.equal((await post('prepared-catalog-membership', body)).status, 404);
+    for (const path of ['select-prepared-recorded-groups', 'select-and-save-prepared-recorded-groups',
+      'complete-prepared-recorded-group-capture', 'prepared-recorded-group-selection'])
+      assert.equal((await post(path, body)).status, 404, 'new trusted prepared selection methods are not browser commands');
   } finally { await new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }); }
   assert.deepEqual(await retained(), saved); assert.deepEqual(await protectedState(), before);
   checks.push('native optional HTTP directory/page commands use actual current authenticated owner, no-store/closed envelopes, and reject source denial and member injection; preparation remains unmounted');

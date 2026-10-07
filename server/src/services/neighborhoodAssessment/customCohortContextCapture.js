@@ -24,6 +24,7 @@ import { loadCurrentCustomCohortJobActor } from './customCohortJobActor.js';
 import { createCustomCohortRecordedGroupSelectionOwner,
   reopenCustomCohortRecordedGroupSelectionOriginal } from './customCohortRecordedGroupSelectionOwner.js';
 import { createCustomCohortPreparedCatalogOwner } from './customCohortPreparedCatalogOwner.js';
+import { createCustomCohortPreparedSelectionRegistry } from './customCohortPreparedCatalogRegistry.js';
 import { createCustomCohortGroupSelectionRepository } from './customCohortGroupSelectionRepository.js';
 import { prepareCustomCohortGroupWorkspaceSave,
   prepareCustomCohortGroupCaptureCompletion } from './customCohortGroupWorkspaceSave.js';
@@ -693,12 +694,13 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if (!same(decision, loaded.privateAuthorization.decision)) fail('market_policy_changed');
     }
   }
-  const preparedCatalog = createCustomCohortPreparedCatalogOwner({ identityOf,
-    execute: async (originalInput, options, writing, work, projection) => {
+  async function executePreparedOriginal(originalInput, options, writing, work, projection = 'intent') {
       // Closed owner methods alone choose this projection. Catalog display
       // permission is never an implicit grant for individual membership.
-      if (!['catalog', 'membership'].includes(projection)) fail('invalid_input');
-      const additionalExposures = projection === 'membership' ? ['report_observation_members'] : [];
+      const selecting = ['intent', 'workspace', 'complete'].includes(projection);
+      if ((!['catalog', 'membership'].includes(projection) && !selecting)
+        || (!writing && ['workspace', 'complete'].includes(projection))) fail('invalid_input');
+      const additionalExposures = projection === 'membership' || selecting ? ['report_observation_members'] : [];
       const budget = operationBudget(options), permission = writing ? 'write' : 'read';
       return transaction(pool, 'READ COMMITTED', budget, async client => {
         const initial = await resolveTarget(client, originalInput, false, permission);
@@ -720,7 +722,26 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         if (licensed.privateAuthorization) fail('prepared_catalog_private_source_unsupported');
         if ((await createCustomCohortSubjectRepository(client, scopeJson)
           .compareCurrent(licensed.subjectReference)).status !== 'matched') fail('subject_changed');
-        const result = await work({ client, scopeJson, budget });
+        if (selecting && writing && projection === 'intent') {
+          const versions = await client.query(`/* custom-cohort-group-workspace:legacy-guard */
+            SELECT section_value->>'workspace_version' AS workspace_version
+            FROM app.custom_appraisal_workfile_sections
+            WHERE assignment_file_id=$1::bigint AND section_key=$2 FOR SHARE NOWAIT`,
+          [input.assignmentFileId, CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION]);
+          if (versions?.rows?.some(row => row.workspace_version === '7')) fail('selection_workspace_workflow_required');
+        }
+        const selectionWorkspace = projection === 'workspace' ? await prepareCustomCohortGroupWorkspaceSave({
+          client, input, observationPeriod: licensed.observationPeriod, discovery: licensed.discovery,
+          checkBudget: budget.check,
+        }) : projection === 'complete' ? await prepareCustomCohortGroupCaptureCompletion({
+          client, input, scopeJson, observationPeriod: licensed.observationPeriod, discovery: licensed.discovery,
+          privateSalesImport: null, checkBudget: budget.check,
+        }) : null;
+        const result = await work({ client, auth, scopeJson, budget, ...(selecting ? {
+          blobs: createNeighborhoodCohortBlobRepository(client, target.organization_id), selectionWorkspace,
+          retainedSelection: createCustomCohortPreparedSelectionRegistry(client, scopeJson,
+            canonicalAssessmentJson(input.contextRef), { signal: budget.signal, checkBudget: budget.check }),
+        } : {}) });
         // Reopen the SAME original context/dependencies and policy using fresh
         // database roles before delivery/COMMIT, including an ordinary cache miss.
         const finalAuth = await loadCurrentCustomCohortJobActor(client, input.auth.userId, target.organization_id);
@@ -737,7 +758,13 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           .compareCurrent(ending.subjectReference)).status !== 'matched') fail('subject_changed');
         budget.check(); return freeze(result);
       });
-    } });
+  }
+  const preparedCatalog = createCustomCohortPreparedCatalogOwner({ identityOf, execute: executePreparedOriginal });
+  // Explicit internal companions, not replacements for the installed routes or
+  // legacy/private-source workflows. Neither display nor member counts are
+  // cast into a map/statistical result; selected originals/head are still fully
+  // verified by the unchanged selection repository in this same transaction.
+  const retainedGroupSelection = createCustomCohortRecordedGroupSelectionOwner({ identityOf, execute: executePreparedOriginal });
   const recordedGroupSelection = createCustomCohortRecordedGroupSelectionOwner({ identityOf,
     executeWorkspaceTransition: async (originalInput, options, work) => {
       const budget = operationBudget(options);
@@ -1496,6 +1523,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
   return Object.freeze({
     ...recordedGroupSelection,
     ...preparedCatalog,
+    selectPreparedRecordedGroups: retainedGroupSelection.selectRecordedGroups,
+    selectAndSavePreparedRecordedGroups: retainedGroupSelection.selectAndSaveRecordedGroups,
+    completePreparedRecordedGroupCapture: retainedGroupSelection.completeRecordedGroupCapture,
+    readPreparedRecordedGroupSelection: retainedGroupSelection.readRecordedGroupSelection,
     // These are intentionally not exposed by the HTTP router until a worker
     // can process queued jobs. Queue admission is not a source grant; every
     // operation rechecks current assignment access and the worker must recheck

@@ -1720,3 +1720,42 @@ choice, accepted report, source right, flag, cap, deployment or cron schedule is
 changed by this slice. Complete >50k numerical/publication ownership, compact
 catalog, partial source/spatial recovery and real large-area/live QA acceptance
 remain outstanding.
+
+### Internal prepared selection owner bridge (2026-10-07)
+
+The current context owner now has explicit internal companions for selecting,
+saving, completing V7 capture choices and reopening a selection from the stored
+whole-catalog membership graph. These do not replace or mount the installed
+browser workflow. The shared original-context executor reloads the current DB
+actor, exact assignment and retained subject, and independently authorizes both
+catalog and individual-membership purposes before work and before delivery or
+COMMIT. Private-source contexts refuse this shared-only path; signed workfiles
+refuse writes. Public commands cannot supply a root, member roster, catalog,
+actor stamp or new resource limit.
+
+The selection registry chooses its display and member roots from exact current
+SQL source lineage in the caller's same transaction. Its distinct internal
+profile shares a finite 1,024-operation/256MB lifetime budget across SQL and
+original-page I/O; the old catalog profile remains 512 operations/128MB. A miss
+does not prepare data or replay a dense source catalog/preview. Original source
+pages and selected pages still undergo their existing whole verifiers. Exact
+v2 command/catalog/page identity is preserved, including command versions 1,
+2 and 3. The explicit prepared path refuses old v1 producer identity rather
+than reinterpret it; the installed legacy verifier still handles that identity.
+
+The unchanged repository and workspace writer own current-head CAS, immutable
+operation replay, explicit empty selection, V7 completion/save and one coherent
+head/workspace/history transaction. Stale operations cannot rewind a newer head.
+The source graph is not a statistical result, map or accepted-report grant.
+Synthetic tests use the actual compiler/registry/stager/repository with a
+12,001-observation source fixture and deliberately unavailable dense originals.
+Guarded actual PostgreSQL tests exercise fresh current roles and source purposes,
+head cancellation, history failure, signed refusal, lost COMMIT acknowledgment,
+fresh-client reopening and old/new verifier agreement. Full native CI is required;
+local syntax and source-budget checks are not a substitute for it.
+
+No live route/default/feature flag, acquisition cap, report, source license,
+deployment, worker or schedule is activated here. Partial large-area source
+acquisition, bounded exact numerical/geometry consumers, coherent report
+publication and real >50k/5-mile/10-mile/retrospective/live QA acceptance remain
+outstanding. No genuine appraisal choices or accepted reports are changed.

@@ -1,5 +1,41 @@
 # Complete larger-area Custom neighborhood studies
 
+## Pinned original-stock one-hop source pages (2026-10-07, internal only)
+
+`neighborhoodFrozenSourceClosurePages` restricts originals to the exact frozen
+spatial stock, entirely inside Postgres. Transaction seeds come only from that
+stock's primary MLS identities, normalized sales and parcel associations. Every
+sale and link for those seeds is retained across **all available dates**, including
+outside-package accounts and unresolved associations. Linked outside accounts
+never seed another transaction hop or become extra stock. Legacy sales are read
+only for the original stock. Cadastral originals cover selected stock accounts
+only, including their other parcel parts; outside linked CAD accounts are not
+added. DCAD sync state and the stock/state-referenced sync runs remain scoped.
+
+Only fixed seven-kind original projections run. Original JSON text preserves
+decimal/date/geometry literals, with SQL-side encoded-byte admission, stable native
+keysets and finite shared page/byte/time bounds. The 2.1-MB encoded page envelope
+is shared with the original-source reader, so every valid retained 1-MB row fits
+alone even with worst-case second JSON escaping; the operation cap stays 32 MB.
+Each source page is surrounded
+by the actual pinned spatial reader's live scope/claim/header checks. No whole
+city account list crosses to Node, no dates/resolution flags remove source rows,
+and no arbitrary raw payload, provider query or browser source plan is admitted.
+
+Local protocol tests cover source scoping, autocommit, initial/ending pin/header
+loss, outside subject, corrupt/oversized originals, cancellation and pending I/O.
+A new isolated native fixture independently checks all seven scopes, exact large
+decimal/old legacy values, a heavily escaped original above 1.5 MB followed by
+another stock account, outside package links, unresolved links, no second-hop
+sales or linked CAD expansion, and cancellation. Native proof is pending until CI.
+
+This remains storage **data**, not a current source grant, whole-closure acquisition
+receipt or historical coverage claim. The future owner must authorize a NEW exact
+pinned-spatial-roster purpose and full original projection at both ends, verify
+every complete layer/identity, retain original lineage and coherently publish.
+The legacy array-bound capability/purpose is not reused or broadened. No routes,
+owners, schedules, V7 defaults, installed caps or genuine reports change.
+
 ## Pinned exact-radius spatial pages (2026-10-07, internal only)
 
 `neighborhoodFrozenSpatialPages` queries the immutable original parcel geometry

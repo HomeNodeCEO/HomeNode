@@ -73,7 +73,11 @@ export async function checkCustomCohortRetainedGroupSelectionStageDatabase(pool)
     assert.equal((await selectionStore(blobs).verify({ metadataJson:selected.metadata_json,manifestRef:selected.manifest_ref })).account_count,
       selected.account_count);
     assert.equal(await foreign.get(selected.catalog_ref.content_sha256,selected.catalog_ref.canonical_utf8_bytes),null);
-    await assert.rejects(stage(foreign,binding).stage(command([])),/missing_or_changed_original/);
+    // Whole-original admission refuses the missing tenant witness before the
+    // selected-stage reader can reach its own derived-original check.
+    await assert.rejects(stage(foreign,binding).stage(command([])),{
+      name:'TypeError',message:'custom_cohort_retained_membership_missing_original',
+    });
     await observer.query('ROLLBACK');
   } catch (error) { await observer.query('ROLLBACK'); throw error; }
   finally { observer.release(); }

@@ -1,5 +1,43 @@
 # Complete larger-area Custom neighborhood studies
 
+## Bounded pinned original-source pages (2026-10-07, storage only)
+
+`neighborhoodFrozenSourcePages` reads fixed original mirror layers from an
+**already pinned** exact unfinished job. Every page rechecks the live
+scope/original actor/claim/cancellation/lease at both ends in the caller-owned
+transaction. It never pins on a miss or consults the mutable active generation.
+Native numeric, UUID and C-collated text indices provide stable page ordering;
+only module-owned queries run, with no browser-chosen table or source projection.
+
+Postgres limits both row count and **actual encoded transport bytes before
+returning payloads**. The 2.1-MB page ceiling covers the worst-case second JSON
+encoding of every valid retained 1-MB original, its bounded key and framing;
+the 32-MB whole-operation ceiling is unchanged. A large original is carried into
+the next page, not skipped or truncated. Original JSON text retains decimal literals and
+exact original EWKB, without interpreting them as rounded JS numbers or group
+medians. Each result is one bounded original page, explicitly not whole-study
+coverage, selected membership, statistics, or current authorization. A layer-end
+marker alone never proves a complete acquisition. Headers and exact pinned
+version are checked again before delivery; finite lifetime page/query/byte/time
+budgets, cancellation and a serial settlement lane cover every read.
+
+Tests exercise corrupted originals/metadata, autocommit, ending claim loss,
+closed inputs/getters, native numeric order, cancellation, pending I/O and
+aggregate budgets. The actual native index fixture also reads pages on fresh
+transactions, exercises a 900k-byte CAD original and a heavily escaped original
+whose encoded transport exceeds 1.5 MB; both must split by bytes without hiding
+subsequent keys. It
+checks exact decimal/geometry preservation, resumes after four nightly sweeps
+and a replacement claim, and refuses stale/cancelled claims. Native CI must
+execute these assertions before merge.
+
+This is an internal **storage primitive**, not the current-authorized acquisition
+owner or a live route switch. Its owner still must independently reload current
+assignment/actor/subject and source-purpose rights at both ends, bind a new
+versioned roster/one-hop source-closure acquisition, and retain original lineage
+through terminal-job pin transfer/release. None of the legacy weak receipt,
+installed 50k ceiling, schedules, V7 defaults, reports or genuine choices change.
+
 ## Opt-in frozen original-source sweep (2026-10-07, not activated)
 
 The nightly group-index writer has an explicit internal

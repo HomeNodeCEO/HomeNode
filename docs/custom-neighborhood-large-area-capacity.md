@@ -1,5 +1,41 @@
 # Complete larger-area Custom neighborhood studies
 
+## Resumable seven-layer original chain (2026-10-07, representation only)
+
+`cohortOriginalSourceChainV1` stores the seven fixed scoped source layers as
+immutable page nodes and exact original-text chunks. Each new prefix has one
+small root reference with seven layer heads, ordered cursors and running counts;
+the existing 64-reference job checkpoint limit is unchanged. Layer counts,
+boundaries and supplied-original bytes are checked before writes. A lost final
+acknowledgment can replay the same prior root/page without inventing a new
+source version. Reopening reads one bounded original node at a time on a new
+client/transaction, following the exact reverse chain rather than allocating
+every city account, page reference or source document in memory.
+
+The fixed representation bounds are 200,000 nodes, 2 million rows per layer,
+14 million rows and 8 GB of original text across the graph. Each root/node has
+its own small metadata ceiling; finite query/I/O/time limits, cancellation and
+serial settlement apply across calls. All legacy blob/scanner limits remain
+unchanged. A supplied continuation position is **data, not root reachability
+or authority**. The owner must start at each actual root head, follow every
+returned edge without skipping any, and independently reconcile all counts,
+identities, ordered layers and current source/report rights before publication.
+An end marker or a retained graph does not establish provider completeness,
+complete source identity closure, historical coverage or permission to release
+the job's original-generation pin. The new authorized capture owner and its
+full closure/numeric/publication integration remain incomplete and unmounted.
+
+Unit tests traverse 60,001 synthetic stock rows over 241 pages behind one small
+checkpoint reference, all seven layers, heavily escaped >1.5-MB exact originals,
+acknowledgment replay, malformed order/binding, missing late nodes/chunks,
+forgery, cancellation, pending settlement and input mutation. The actual native
+source fixture stages every real one-hop source page and the existing fenced
+source checkpoint in the same caller transaction, then independently reopens
+each layer on fresh SQL clients with actual live pin/checkpoint checks outside
+the representation codec and different-organization refusal. That native test
+must actually execute before release; neither test is whole authorized >50k
+report acquisition or a production map-latency claim.
+
 ## Bounded exact-original text retention (2026-10-07, internal codec only)
 
 `cohortOriginalTextChunksV1` retains one bounded source-page text as an ordered

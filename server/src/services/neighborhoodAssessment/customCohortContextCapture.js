@@ -21,6 +21,7 @@ import { createCustomCohortSubjectRepository } from './customCohortSubjectReposi
 import { createCustomCohortContextRepository } from './customCohortContextRepository.js';
 import { createCustomCohortCaptureJobRepository, prepareCustomCohortCaptureJobClaim } from './customCohortCaptureJobRepository.js';
 import { loadCurrentCustomCohortJobActor } from './customCohortJobActor.js';
+import { createNeighborhoodFrozenJobStock } from './neighborhoodFrozenJobStock.js';
 import { createCustomCohortRecordedGroupSelectionOwner,
   reopenCustomCohortRecordedGroupSelectionOriginal } from './customCohortRecordedGroupSelectionOwner.js';
 import { createCustomCohortPreparedCatalogOwner } from './customCohortPreparedCatalogOwner.js';
@@ -1558,6 +1559,86 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const target = await resolveTarget(client, input, true, 'write');
         return createCustomCohortCaptureJobRepository(client).cancel(
           Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])), input.operationId);
+      });
+    },
+    /** New internal worker stage, not an HTTP/default acquisition path. Retain
+     * the original subject and exact SQL stock once; NEVER read licensed sales
+     * here or publish a partial context/report. Source acquisition has its own
+     * subsequent current-purpose checks and explicit versioned owner. */
+    async prepareFrozenCaptureJobStock(value, options = {}) {
+      if (!options || Object.getPrototypeOf(options)!==Object.prototype) fail('invalid_options');
+      const {captureJobClaim:providedClaim,...budgetOptions}=options;
+      const originalInput=inputOf(value);
+      const claim=prepareCustomCohortCaptureJobClaim(providedClaim);
+      if (claim.operation_id!==originalInput.operationId.toLowerCase()) fail('operation_conflict');
+      if (originalInput.privateSalesImport || originalInput.discovery?.profile_id!=='custom-suburban-radius-v2') fail('frozen_discovery_unsupported');
+      const budget=operationBudget(budgetOptions,LIMITS.capture_duration_ms);
+      return transaction(pool,'READ COMMITTED',budget,async client=>{
+        // Resolve only the organization locator before fresh DB identity. Old
+        // browser/worker role claims are not used for even initial admission.
+        const locator=one(await client.query(`/* custom-cohort-capture:job-organization */
+          SELECT organization_id FROM app.assignment_files WHERE id=$1::bigint AND account_id=$2`,
+        [originalInput.assignmentFileId,originalInput.accountId]));
+        let input=freeze({...originalInput,operationId:claim.operation_id,
+          auth:await loadCurrentCustomCohortJobActor(client,originalInput.auth.userId,locator.organization_id)});
+        privateDraft(await privateCaptureWorkfile(client,input));
+        const target=await resolveTarget(client,input,true);
+        const scope=Object.fromEntries(TARGET_FIELDS.map(key=>[key,target[key]]));
+        const jobOptions={scope,actorUserId:input.auth.userId},jobs=createCustomCohortCaptureJobRepository(client);
+        const requested={operation_id:input.operationId,observation_period:input.observationPeriod,discovery:input.discovery};
+        if(!same(await jobs.readRequest(claim,jobOptions),requested)) fail('operation_conflict');
+        const checkpoint=await jobs.readCheckpoint(claim,jobOptions);
+        if(checkpoint && !['subject','frozen_stock_v1'].includes(checkpoint.phase)) fail('checkpoint_conflict');
+        if(checkpoint?.phase==='frozen_stock_v1' && checkpoint.evidence_refs.length!==2) fail('checkpoint_conflict');
+        const subjects=createCustomCohortSubjectRepository(client,canonicalAssessmentJson(scope));
+        const blobs=createNeighborhoodCohortBlobRepository(client,scope.organization_id);
+        const study=freeze({profile_id:input.discovery.profile_id,discovery:input.discovery,
+          observation_period:input.observationPeriod,knowledge_cutoff:null});
+        let retained;
+        if(checkpoint) {
+          retained=await resumeCustomCohortSubjectCheckpoint({checkpoint:{phase:'subject',evidence_refs:[checkpoint.evidence_refs[0]]},
+            blobs,subjects,input,study,reportedProfile,housingProfile});
+        } else {
+          const subjectReference=await subjects.capture(),subject=await subjects.load(subjectReference);
+          if(study.observation_period.end_date>subject.effective_date) fail('period_after_effective_date');
+          const point=await subjects.loadRecordedPoint(subjectReference);
+          if(point.status!=='represented') fail('recorded_point_required');
+          const body=freeze({intent_version:1+(reportedProfile?2:0)+4,operation_id:input.operationId,
+            actor_user_id:input.auth.userId,subject_inputs:subjectReference,target:subject.target,
+            effective_date:subject.effective_date,study,created_at:await databaseTime(client),
+            ...(reportedProfile?{reported_sale_interpretation:reportedProfile}:{}),recorded_housing_interpretation:housingProfile});
+          retained={subjectReference,subject,point,intent:{body,reference:await blobs.put(canonicalAssessmentJson(body))}};
+        }
+        authorizePublicCadastralCatalogRead(input.auth,input.accountId,{workflows:['custom_appraisal'],
+          permissionChecker:(auth,workflow,permission)=>hasApplicationPermission(auth,workflow,permission,scope.organization_id)});
+        const pin=checkpoint?.phase==='frozen_stock_v1' ? await jobs.readPreparedGeneration(claim,jobOptions)
+          : await jobs.pinPreparedGeneration(claim,jobOptions);
+        if(!pin) fail('prepared_generation_unavailable');
+        const stockStore=createNeighborhoodFrozenJobStock(client,{claim,scope,actorUserId:input.auth.userId,
+          geometryInput:retained.point.geometry_input,discovery:input.discovery,subjectIntent:retained.intent.reference,checkBudget:budget.check});
+        const stock=checkpoint?.phase==='frozen_stock_v1' ? await stockStore.read() : await stockStore.prepare();
+        const body={stock_stage_version:1,usage:'frozen_job_stock_only',subject_intent:retained.intent.reference,stock};
+        let reference;
+        if(checkpoint?.phase==='frozen_stock_v1') {
+          reference=checkpoint.evidence_refs[1];
+          if(await blobs.get(reference.content_sha256,reference.canonical_utf8_bytes)!==canonicalAssessmentJson(body)) fail('checkpoint_conflict');
+        }else{
+          reference=await blobs.put(canonicalAssessmentJson(body));
+          await jobs.saveCheckpoint(claim,jobOptions,{phase:'frozen_stock_v1',evidence_refs:[retained.intent.reference,reference]});
+        }
+        // Recheck current roles, exact assignment and original subject under
+        // READ COMMITTED before commit. Pin/data/checkpoint alone grant none.
+        input=freeze({...input,auth:await loadCurrentCustomCohortJobActor(client,input.auth.userId,scope.organization_id)});
+        assertTarget(await resolveTarget(client,input,true),target);
+        privateDraft(await privateCaptureWorkfile(client,input));
+        if((await subjects.compareCurrent(retained.subjectReference)).status!=='matched') fail('subject_changed');
+        authorizePublicCadastralCatalogRead(input.auth,input.accountId,{workflows:['custom_appraisal'],
+          permissionChecker:(auth,workflow,permission)=>hasApplicationPermission(auth,workflow,permission,scope.organization_id)});
+        if(!same(await jobs.readRequest(claim,jobOptions),requested) || !same(await stockStore.read(),stock)) fail('checkpoint_conflict');
+        budget.check();
+        return freeze({status:'stock_prepared',operation_id:input.operationId,reused:checkpoint?.phase==='frozen_stock_v1',
+          stock_reference:reference,generation_id:stock.generation_id,population:stock.population,
+          source_acquisition:'not_established',report_update:'none'});
       });
     },
     async capture(value, options = {}) {

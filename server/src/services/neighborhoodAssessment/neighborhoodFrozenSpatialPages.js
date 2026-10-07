@@ -67,6 +67,18 @@ function metadata(result, generationId) {
     source_transaction_started_at:row.started_at,completed_at:row.completed_at,
     row_count:row.row_count,payload_utf8_bytes:row.payload_utf8_bytes,layer_counts:Object.freeze(counts) });
 }
+// Shared immutable-header validation for the actual stock owner. This is DATA,
+// not an actor/source grant; callers retain the scoped live pin at both ends.
+export async function readNeighborhoodFrozenSourceHeader(client, generationId) {
+  return metadata(await client.query(HEADER,[generationId]),generationId);
+}
+export function neighborhoodFrozenSpatialDefinition(claim, generationId, geometryInput, rawDiscovery) {
+  const geometry = prepareNeighborhoodDiscoveryGeometryV1(geometryInput);
+  const discovery = prepareNeighborhoodDiscoveryChoice(rawDiscovery);
+  if (geometry.status !== 'prepared' || discovery.profile_id !== NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V2) fail('invalid_discovery');
+  return Object.freeze({spatial_format_version:1,operation_id:claim.operation_id,generation_id:generationId,
+    geometry_input:geometry.geometry_input,discovery,distance_semantics:'postgis_geography_spheroid_v1',parcel_predicate:'all_intersecting_parcels'});
+}
 const WHERE = `generation_id=$1::uuid AND kind='parcels' AND geom IS NOT NULL
   AND ST_DWithin(geom::geography,ST_SetSRID(ST_MakePoint($2::double precision,$3::double precision),4326)::geography,
     $4::double precision,true)`;
@@ -183,8 +195,7 @@ export function createNeighborhoodFrozenSpatialPages(client, rawOptions) {
         || JSON.stringify(await jobs.readPreparedGeneration(claim,jobOptions))!==JSON.stringify(pin)) fail('source_changed');
       check();
       cachedPopulation = Object.freeze({original,validity:Object.freeze(validity),population:Object.freeze(population)});
-      const definition = Object.freeze({spatial_format_version:1,operation_id:claim.operation_id,generation_id:pin.generation_id,
-        geometry_input:geometry.geometry_input,discovery,distance_semantics:'postgis_geography_spheroid_v1',parcel_predicate:'all_intersecting_parcels'});
+      const definition = neighborhoodFrozenSpatialDefinition(claim,pin.generation_id,geometry.geometry_input,discovery);
       return Object.freeze({status:'spatial_page',authority:'not_established',coverage:'page_only',original,definition,
         definition_sha256:assessmentEvidenceDigest(definition),population:Object.freeze({...population,...validity}),
         kind:input.kind,after:previous,next_cursor:last,rows:Object.freeze(rows),

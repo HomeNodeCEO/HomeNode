@@ -5,7 +5,7 @@ import { customNeighborhoodPrivateSalesPurpose } from '../../security/customNeig
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA = /^[a-f0-9]{64}$/;
 const ACCOUNT_CONTROL = /[\u0000-\u001f\u007f]/;
-const PHASES = new Set(['subject', 'spatial', 'source', 'preparation', 'registration']);
+const PHASES = new Set(['subject', 'spatial', 'source', 'preparation', 'registration', 'frozen_stock_v1']);
 const STATUSES = new Set(['queued', 'running', 'retry', 'succeeded', 'failed', 'cancelled']);
 export const CAPTURE_JOB_LEASE_SECONDS = Object.freeze({ min: 15, max: 900 });
 function fail(reason) { throw new TypeError(`custom_cohort_capture_job_${reason}`); }
@@ -175,6 +175,15 @@ export function createCustomCohortCaptureJobRepository(client) {
     /** Reopen the exact pinned generation under the replacement live claim;
      * never consult today's active pointer or silently replace a missing pin. */
     readPreparedGeneration: (claim, options) => preparedGeneration(claim, options, false),
+    async readRequest(claim, options) {
+      const values = scopedClaimOf(claim, options);
+      const row = one(await client.query(`/* custom-cohort-job:request-read */
+        SELECT request_payload,request_sha256 FROM app.neighborhood_custom_cohort_capture_jobs
+        WHERE ${SCOPED_CHECKPOINT_FENCE}`,values),'claim_lost');
+      const request = requestOf(row.request_payload);
+      if (request.operation_id !== values[0] || assessmentEvidenceDigest(request) !== row.request_sha256) fail('job_corrupt');
+      return request;
+    },
     async status(scope, operationId) {
       scope = scopeOf(scope); operationId = uuid(operationId);
       const row = one(await client.query(`/* custom-cohort-job:status */

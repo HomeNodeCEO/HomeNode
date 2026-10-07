@@ -15,6 +15,18 @@ const scope = { organization_id: organization, report_file_id: report,
 const request = { operation_id: operation, observation_period: {
   start_date: '2024-01-01', end_date: '2024-12-31' } };
 
+test('original job request is reopened under exact live scope/actor/claim, never taken from a replacement worker',async()=>{
+  const claim={operation_id:operation,claim_token:token,attempts:1};
+  const calls=[];
+  const repository=createCustomCohortCaptureJobRepository({async query(sql,values){calls.push({sql,values});
+    return {rowCount:1,rows:[{request_payload:request,request_sha256:assessmentEvidenceDigest(request)}]};}});
+  assert.deepEqual(await repository.readRequest(claim,{scope,actorUserId:actor}),request);
+  assert.deepEqual(calls[0].values,[operation,token,1,organization,report,'17','SYNTHETIC-ACCOUNT',actor]);
+  assert.match(calls[0].sql,/cancellation_requested_at IS NULL/);assert.match(calls[0].sql,/lease_expires_at>clock_timestamp\(\)/);
+  const corrupt=createCustomCohortCaptureJobRepository({async query(){return {rowCount:1,rows:[{request_payload:request,request_sha256:'a'.repeat(64)}]};}});
+  await assert.rejects(corrupt.readRequest(claim,{scope,actorUserId:actor}),/job_corrupt/);
+});
+
 test('prepared-generation pin migration is registered after its job and index prerequisites', () => {
   const name = '20261104_custom_cohort_prepared_generation_pins.sql';
   const registry = readFileSync(new URL('../src/database/mobileMigrations.js', import.meta.url), 'utf8');

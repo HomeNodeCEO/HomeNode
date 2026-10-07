@@ -15,6 +15,10 @@ import { createNeighborhoodFrozenSpatialPages }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenSpatialPages.js';
 import { createNeighborhoodFrozenSourceClosurePages }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourceClosurePages.js';
+import { createCohortOriginalTextChunksV1Store }
+  from '../src/services/neighborhoodAssessment/cohortOriginalTextChunksV1.js';
+import { createNeighborhoodCohortBlobRepository }
+  from '../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
 
 const frozenSpatialOptions = options => ({...options,
   geometryInput:{geometry_version:1,type:'Point',crs:'EPSG:4326',axis_order:'longitude_latitude',
@@ -416,6 +420,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).pinPreparedGeneration(claim,options));
     const expected={parcels:['1','2','4'],accounts:['CLOSURE-A','CLOSURE-B'],source_records:['501','503','504'],
       sales:['1','3','4'],sale_links:['1','2','3','4'],sync_state:['dcad_parcels'],sync_runs:[run]};
+    let retainedPageManifest,retainedPageText;
     for(const [kind,keys] of Object.entries(expected))await withCustomCohortJobTransaction(pool,async client=>{
       const reader=createNeighborhoodFrozenSourceClosurePages(client,frozenSpatialOptions({...options,claim}));
       let after='',done=false;const rows=[];
@@ -426,6 +431,18 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         assert.equal(page.additional_cadastral_accounts,false);assert.equal(page.authority,'not_established');
         if(kind==='accounts'&&after==='')assert.ok(page.page_utf8_bytes>1_500_000,
           'scoped closure admits the heavily escaped original before continuing to the next stock account');
+        if(kind==='accounts'&&after===''){
+          // The opaque page exceeds the legacy whole-JSON envelope. Only its
+          // individually bounded chunk wrappers enter that unchanged profile.
+          retainedPageText=JSON.stringify({scope,operation_id:operation,page});
+          assert.ok(Buffer.byteLength(retainedPageText)>1_500_000);
+          const stored=await createCohortOriginalTextChunksV1Store(createNeighborhoodCohortBlobRepository(client,organization))
+            .put(retainedPageText);
+          assert.equal(stored.authority,'not_established');assert.ok(stored.chunk_count>1);
+          retainedPageManifest=stored.manifest;
+          assert.equal((await createCustomCohortCaptureJobRepository(client).readPreparedGeneration(claim,options))
+            .generation_id,frozen.generationId,'storage does not substitute for the ending live pin fence');
+        }
         rows.push(...page.rows);after=page.next_cursor;done=page.end_of_layer;
       }
       assert.equal(done,true);assert.deepEqual(rows.map(row=>row.row_key),keys,`${kind} is exact original-stock-seeded one-hop scope`);
@@ -440,6 +457,22 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         assert.equal(JSON.parse(rows[3].payload_text).is_resolved,false,'unresolved seeded associations are never filtered away');
       }
     });
+    await withCustomCohortJobTransaction(pool,async client=>{
+      assert.equal((await createCustomCohortCaptureJobRepository(client).readPreparedGeneration(claim,options))
+        .generation_id,frozen.generationId);
+      const reopened=await createCohortOriginalTextChunksV1Store(createNeighborhoodCohortBlobRepository(client,organization))
+        .get(retainedPageManifest);
+      assert.equal(reopened.text,retainedPageText,'a fresh SQL client reopens every original chunk, byte for byte');
+      assert.equal(reopened.coverage,'one_original_text');assert.equal(reopened.authority,'not_established');
+      assert.equal((await client.query(`SELECT max(canonical_utf8_bytes)::integer AS maximum
+        FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1`,[organization])).rows[0].maximum<1_500_000,true,
+        'no legacy blob limit is increased for the >1.5-MB original page');
+      assert.equal((await createCustomCohortCaptureJobRepository(client).readPreparedGeneration(claim,options))
+        .generation_id,frozen.generationId);
+    });
+    await assert.rejects(withCustomCohortJobTransaction(pool,client=>createCohortOriginalTextChunksV1Store(
+      createNeighborhoodCohortBlobRepository(client,randomUUID())).get(retainedPageManifest)),/missing_original/,
+    'content addressing never makes retained originals cross organization boundaries');
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,operation));
     await assert.rejects(withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSourceClosurePages(client,
       frozenSpatialOptions({...options,claim})).page({kind:'source_records',cursor:''})),/claim_lost/);

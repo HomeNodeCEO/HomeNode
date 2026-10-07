@@ -1,5 +1,35 @@
 # Complete larger-area Custom neighborhood studies
 
+## Bounded exact-original text retention (2026-10-07, internal codec only)
+
+`cohortOriginalTextChunksV1` retains one bounded source-page text as an ordered
+content-addressed manifest and UTF-8-safe original chunks through the existing
+organization-scoped blob repository. No raw original text is parsed, rounded or
+rewritten. Every chunk wrapper stays below the **unchanged 1.5-MB legacy blob,
+canonical-JSON and scanner limits**, including worst-case six-byte JSON escaping.
+The raw text ceiling is 4 MB, chunks are at most 240 kB, and a manifest has at most
+17 children. Reads independently reopen and verify every child, its index, exact
+byte count, complete ordered length and original-text digest before delivery.
+Missing or changed late children cannot return a partial original. Finite shared
+query/encoded-I/O/time bounds, cancellation and a settlement lane apply.
+
+This is a representation codec, **not source, report-scope or acquisition
+authority**. A current-authorized owner must bind the exact report/assignment,
+job, generation and study definition into the original being retained and
+recheck its live claim and source rights at both ends. One retained/reopened
+page does not establish complete layers, source identity closure, retained whole
+capture, statistical membership or permission to transfer/release a pin. The
+complete ordered acquisition graph and its owner remain unfinished; this does
+not raise installed limits, enable V7, mount a route or alter reports.
+
+Local tests cover heavy escapes/exact large decimal literals, Unicode split
+boundaries, worst-case controls, the full 4-MB ceiling, malformed inputs,
+missing/altered late originals, forged manifest order/count/hash, acknowledgment
+loss, cancellation, pending I/O and aggregate bounds. The isolated native source
+fixture additionally stages a >1.5-MB exact scoped page, reopens it through a
+fresh SQL client, verifies every stored blob stays below the old cap and refuses
+a different organization. Native CI must actually execute this before release.
+
 ## Pinned original-stock one-hop source pages (2026-10-07, internal only)
 
 `neighborhoodFrozenSourceClosurePages` restricts originals to the exact frozen

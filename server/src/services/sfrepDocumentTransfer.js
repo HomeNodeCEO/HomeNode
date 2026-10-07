@@ -58,9 +58,11 @@ export async function readSfrepDocuments(pool, { accountId, assignmentFileId, do
         ON saved_subject.assignment_file_id = assignment.id AND saved_subject.section_key = 'report.subject_identification'
       LEFT JOIN app.custom_appraisal_sections saved_evidence
         ON saved_evidence.assignment_file_id = assignment.id AND saved_evidence.section_key = 'report.subject_evidence'
-      LEFT JOIN app.custom_appraisal_sections saved_market
+      -- Market studies and the retained map checkpoint belong to the workfile
+      -- section store, not the document-applied report section store above.
+      LEFT JOIN app.custom_appraisal_workfile_sections saved_market
         ON saved_market.assignment_file_id = assignment.id AND saved_market.section_key = 'market_conditions'
-      LEFT JOIN app.custom_appraisal_sections saved_workspace
+      LEFT JOIN app.custom_appraisal_workfile_sections saved_workspace
         ON saved_workspace.assignment_file_id = assignment.id AND saved_workspace.section_key = 'neighborhood_workspace'
       LEFT JOIN app.report_files report_file
         ON report_file.custom_assignment_file_id = assignment.id

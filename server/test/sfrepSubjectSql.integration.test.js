@@ -7,6 +7,8 @@ import { ensureCensusGeographySchema } from '../src/services/censusGeography.js'
 import { readCustomSubjectDocuments, projectCustomSubjectDocuments, mergeCustomSubjectApplication } from '../src/services/customSubjectApplication.js';
 import { readSfrepDocuments, previewSfrepDocuments } from '../src/services/sfrepDocumentTransfer.js';
 import { readSfrepPhotos, projectSfrepPhotos } from '../src/services/sfrepPhotoTransfer.js';
+import { ensureCustomAppraisalWorkfileSchema } from '../src/services/customAppraisalWorkfiles.js';
+import { sfrepNeighborhoodFixture } from './fixtures/sfrepNeighborhoodFixture.js';
 
 test('actual PostgreSQL binds matched Census and reviewed HOA receipts into the same saved Subject export', {
   skip: !process.env.DATABASE_URL,
@@ -18,6 +20,7 @@ test('actual PostgreSQL binds matched Census and reviewed HOA receipts into the 
     assert.match(identity.rows[0].name, /_test$/, 'synthetic integration requires a test database');
     await ensureAssignmentDocumentsSchema(pool);
     await ensureCensusGeographySchema(pool);
+    await ensureCustomAppraisalWorkfileSchema(pool);
     client = await pool.connect();
     await client.query('BEGIN');
     const accountId = `QAS${Date.now()}`;
@@ -76,6 +79,16 @@ test('actual PostgreSQL binds matched Census and reviewed HOA receipts into the 
         'application/pdf', $3, $4, $5, 'reviewed')`,
     [accountId, assignmentFileId, addendumBytes, createHash('sha256').update(addendumBytes).digest('hex'), addendumBytes.length]);
     const fieldsOnly = { ...input, documentIds: [], includeDocuments: false };
+    // Use the real editor's section store. A pure projection fixture cannot
+    // catch a production snapshot joined to the wrong, similarly named table.
+    const neighborhood = sfrepNeighborhoodFixture();
+    await client.query(`INSERT INTO app.custom_appraisal_workfiles (assignment_file_id, canonical_file_name)
+      VALUES ($1, $2)`, [assignmentFileId, `SFREP-WORKFILE-${randomUUID()}`]);
+    for (const [key, section] of [['market_conditions', neighborhood.market], ['neighborhood_workspace', neighborhood.workspace]]) {
+      await client.query(`INSERT INTO app.custom_appraisal_workfile_sections
+        (assignment_file_id, section_key, section_value, revision) VALUES ($1, $2, $3::jsonb, $4)`,
+      [assignmentFileId, key, JSON.stringify(section.value), section.revision]);
+    }
     for (const formId of ['FNMA-1004-0911', 'FNMA-2055-0911']) {
       const mapped = previewSfrepDocuments(await readSfrepDocuments(client, fieldsOnly), { ...fieldsOnly, formId });
       assert.equal(mapped.fields.find(field => field.fieldId === 'StreetAddress')?.value, '100 Example Dr');
@@ -83,6 +96,15 @@ test('actual PostgreSQL binds matched Census and reviewed HOA receipts into the 
       assert.equal(mapped.fields.find(field => field.fieldId === 'SalePriceAmount')?.value, '282500.00');
       assert.match(mapped.fields.find(field => field.fieldId === 'AnalyzedContractDescription')?.value || '', /purchase price of \$282,500/);
       assert.equal(mapped.pdfAddenda.length, 0);
+      assert.equal(mapped.savedReport.marketRevision, 3);
+      assert.equal(mapped.fields.find(field => field.fieldId === 'PropertyValuesStableCheckBox')?.value, 'true');
+      assert.equal(mapped.fields.find(field => field.fieldId === 'MarketingTimeUnder3MonthsCheckBox')?.value, 'true');
+      assert.equal(mapped.fields.find(field => field.fieldId === 'SingleFamilyHousingPricePredominantAmount')?.value, '300');
+      assert.equal(mapped.fields.find(field => field.fieldId === 'SingleFamilyHousingAgePredominant')?.value, '60');
+      assert.equal(mapped.fields.find(field => field.fieldId === 'LandUseOneUnitPercentage')?.value, '60');
+      assert.equal(mapped.fields.find(field => field.fieldId === 'LandUse24UnitPercentage')?.value, '0');
+      assert.match(mapped.fields.find(field => field.fieldId === 'MarketConditions')?.value || '', /ZIP & Exploration/);
+      assert.match(mapped.fields.find(field => field.fieldId === 'NeighborhoodBoundaries')?.value || '', /edge-sharing neighbors/);
     }
     await client.query("UPDATE core.account_census_geographies SET status = 'review_required' WHERE account_id = $1", [accountId]);
     const changed = previewSfrepDocuments(await readSfrepDocuments(client, input), input);

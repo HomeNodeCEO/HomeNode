@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { randomUUID } from 'node:crypto';
+import { randomUUID,createHash } from 'node:crypto';
 import { prepareNeighborhoodCiDatabase } from './helpers/neighborhoodCiDatabase.js';
 import { NEIGHBORHOOD_CACHED_SOURCE_SCHEMA } from './fixtures/neighborhoodCachedSourceSchemaFixture.js';
 import { runNeighborhoodGroupIndex,getPreparedNeighborhoodGroupSummary }
@@ -19,6 +19,9 @@ import { createCohortOriginalTextChunksV1Store }
   from '../src/services/neighborhoodAssessment/cohortOriginalTextChunksV1.js';
 import { createNeighborhoodCohortBlobRepository }
   from '../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
+import { canonicalAssessmentJson } from '../src/services/neighborhoodAssessment/contract.js';
+import { createCohortOriginalSourceChainV1Store }
+  from '../src/services/neighborhoodAssessment/cohortOriginalSourceChainV1.js';
 
 const frozenSpatialOptions = options => ({...options,
   geometryInput:{geometry_version:1,type:'Point',crs:'EPSG:4326',axis_order:'longitude_latitude',
@@ -420,7 +423,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).pinPreparedGeneration(claim,options));
     const expected={parcels:['1','2','4'],accounts:['CLOSURE-A','CLOSURE-B'],source_records:['501','503','504'],
       sales:['1','3','4'],sale_links:['1','2','3','4'],sync_state:['dcad_parcels'],sync_runs:[run]};
-    let retainedPageManifest,retainedPageText;
+    let retainedPageManifest,retainedPageText,chainBinding,chainRoot;
     for(const [kind,keys] of Object.entries(expected))await withCustomCohortJobTransaction(pool,async client=>{
       const reader=createNeighborhoodFrozenSourceClosurePages(client,frozenSpatialOptions({...options,claim}));
       let after='',done=false;const rows=[];
@@ -429,6 +432,22 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         assert.equal(page.original.generation_id,frozen.generationId);assert.equal(page.stock_population.account_count,'2');
         assert.equal(page.stock_population.parcel_count,'3');assert.equal(page.stock_population.unassociated_parcel_count,'1');
         assert.equal(page.additional_cadastral_accounts,false);assert.equal(page.authority,'not_established');
+        if(!chainBinding){
+          chainBinding={...scope,operation_id:operation,generation_id:frozen.generationId,
+            spatial_definition_sha256:page.spatial_definition_sha256,
+            source_original_sha256:createHash('sha256').update(canonicalAssessmentJson(page.original)).digest('hex')};
+          chainRoot=(await createCohortOriginalSourceChainV1Store(
+            createNeighborhoodCohortBlobRepository(client,organization),chainBinding).create()).root;
+        }
+        const originalText=JSON.stringify({binding:chainBinding,page});
+        const appended=await createCohortOriginalSourceChainV1Store(
+          createNeighborhoodCohortBlobRepository(client,organization),chainBinding).append({root:chainRoot,original_text:originalText});
+        assert.equal(appended.authority,'not_established');assert.equal(appended.coverage,'stored_pages_only');
+        chainRoot=appended.root;
+        assert.ok(Number(chainRoot.canonical_utf8_bytes)<16_000,'all source pages need only one small root checkpoint reference');
+        await createCustomCohortCaptureJobRepository(client).saveCheckpoint(claim,options,{phase:'source',evidence_refs:[chainRoot]});
+        assert.equal((await createCustomCohortCaptureJobRepository(client).readPreparedGeneration(claim,options))
+          .generation_id,frozen.generationId,'the actual live claim/pin remains an independent owner fence');
         if(kind==='accounts'&&after==='')assert.ok(page.page_utf8_bytes>1_500_000,
           'scoped closure admits the heavily escaped original before continuing to the next stock account');
         if(kind==='accounts'&&after===''){
@@ -457,6 +476,33 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         assert.equal(JSON.parse(rows[3].payload_text).is_resolved,false,'unresolved seeded associations are never filtered away');
       }
     });
+    for(const [kind,keys] of Object.entries(expected)){
+      let position=null;const reopenedKeys=[];let pageCount=0,rawBytes=0;
+      do{
+        const step=await withCustomCohortJobTransaction(pool,async client=>{
+          const jobs=createCustomCohortCaptureJobRepository(client);
+          assert.deepEqual((await jobs.readCheckpoint(claim,options)).evidence_refs,[chainRoot]);
+          assert.equal((await jobs.readPreparedGeneration(claim,options)).generation_id,frozen.generationId);
+          const stored=await createCohortOriginalSourceChainV1Store(
+            createNeighborhoodCohortBlobRepository(client,organization),chainBinding).read({root:chainRoot,kind,position});
+          assert.equal((await jobs.readPreparedGeneration(claim,options)).generation_id,frozen.generationId);
+          return stored;
+        });
+        const body=JSON.parse(step.original_text);
+        assert.deepEqual(body.binding,chainBinding);assert.equal(body.page.kind,kind);
+        assert.equal(step.authority,'not_established');assert.equal(step.coverage,'stored_pages_only');
+        reopenedKeys.unshift(...body.page.rows.map(row=>row.row_key));pageCount++;rawBytes+=Buffer.byteLength(step.original_text);
+        if(kind==='accounts'&&body.page.after==='')assert.ok(Buffer.byteLength(step.original_text)>1_500_000);
+        if(kind==='source_records'&&body.page.after==='')assert.match(body.page.rows[0].payload_text,/9007199254740993/);
+        position=step.next_position;
+        if(position===null){assert.equal(step.layer.row_count,keys.length);assert.equal(step.layer.page_count,pageCount);
+          assert.equal(step.layer.original_utf8_bytes,rawBytes);assert.equal(step.layer.ended,true);}
+      }while(position!==null);
+      assert.deepEqual(reopenedKeys,keys,`${kind} independently reopens every ordered original through fresh SQL clients`);
+    }
+    await assert.rejects(withCustomCohortJobTransaction(pool,client=>createCohortOriginalSourceChainV1Store(
+      createNeighborhoodCohortBlobRepository(client,randomUUID()),chainBinding).read({root:chainRoot,kind:'parcels',position:null})),/missing_original/,
+    'the graph cannot expose retained source pages to another organization');
     await withCustomCohortJobTransaction(pool,async client=>{
       assert.equal((await createCustomCohortCaptureJobRepository(client).readPreparedGeneration(claim,options))
         .generation_id,frozen.generationId);

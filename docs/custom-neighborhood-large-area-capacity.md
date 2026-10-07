@@ -2046,6 +2046,59 @@ acquisition, bounded exact numerical/geometry consumers, coherent report
 publication and real >50k/5-mile/10-mile/retrospective/live QA acceptance remain
 outstanding. No genuine appraisal choices or accepted reports are changed.
 
+### Independent geographic-original verification stage (2026-10-07)
+
+The internal `verifyFrozenCaptureJobStockOriginals` method continues the actual
+current-authorized capture owner after all seven source-graph layers have been
+independently verified. Its five-reference `frozen_geo_verify_v1` checkpoint
+adds small geographic-original progress to the unchanged subject, stock,
+source and graph-verification references. Caller continuations, geometry
+rosters, recorded grants and acquisition receipts are not accepted. An
+unfinished graph cannot advance this stage or be rewritten by it.
+
+Each step reads the exact retained stock PK and original FK, not the broader
+selected-account source graph. NULL-account geographic parcels are included;
+outside parts belonging to selected accounts are not promoted into the stock.
+Native key zero is retained and bigint identities stay text. Fixed SQL checks
+each original native key, account metadata and payload identity, and exact
+stored geometry representation. Original Polygon EWKB is normalized to
+MultiPolygon before comparison with the frozen spatial column; legitimate
+normalization is not a discrepancy. Missing, different or malformed originals
+refuse the transaction. No spatial search or mutable CAD/MLS fallback runs.
+
+SQL admits at most 250 candidates per step, with an eight-MB payload/geometry
+validation prefix and a five-second query bound. A byte-limited prefix does not
+claim end. Only a single constant-size aggregate crosses into Node, not parcel
+geometry or original payload arrays. At the actual end, independently traversed
+parcel/NULL-account counts and each stock account's own parcel count must match
+the retained stock descriptor. A full 250-row page needs its separate terminal
+query. The saved continuation is under 400 bytes in the synthetic >50k test.
+
+The same actual initial/ending current DB actor, assignment, draft, original
+subject, source purpose, job request/lease, pin and stock checks surround each
+step and checkpoint commit. The saved original decision is not a current
+permission grant. Ending denial rolls back proof; uncertain successful COMMIT
+reopens the committed continuation without duplicating an already completed
+page. The legacy worker does not dispatch this checkpoint.
+
+Native CI must verify all 60,001 geographic originals through 241 fresh SQL
+steps, transferring only one aggregate per query and performing no new spatial
+search. This is the guarded geographic DATA lane, not complete >50k typed
+acquisition or live timing. The separate small actual-owner fixture must prove
+current rights at both ends, role/subject changes, lost actual COMMIT
+acknowledgment, completed replay, cancellation, NULL-account stock versus
+outside source parts, and legitimate Polygon/MultiPolygon normalization. A
+disposable building-generation corruption fixture must reject original key,
+account and EWKB discrepancies without disabling guards or changing published
+rows. Local/mock tests do not replace that native execution.
+
+`originals_verified` establishes geographic-original representation only.
+Source identity/association closure, typed numerical interpretation and exact
+complete-population statistics remain separate work, along with the worker,
+coherent publication, terminal original transfer/pin retirement and live
+acceptance. No acquisition/source cap, source right, scanner/blob profile,
+route/default, cron, deployment, genuine choice or accepted report is changed.
+
 ### Independent original graph verification stage (2026-10-07)
 
 The internal `verifyFrozenCaptureJobSourcePage` method independently reopens the

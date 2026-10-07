@@ -3,6 +3,8 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { assessmentEvidenceDigest } from '../src/services/neighborhoodAssessment/contract.js';
 import { createNeighborhoodFrozenJobStock } from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStock.js';
+import { createNeighborhoodFrozenJobStockOriginals, NEIGHBORHOOD_FROZEN_STOCK_ORIGINAL_PAGE_SQL,
+  NEIGHBORHOOD_FROZEN_STOCK_ORIGINAL_TOTALS_SQL } from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStockOriginals.js';
 import { neighborhoodFrozenSpatialDefinition } from '../src/services/neighborhoodAssessment/neighborhoodFrozenSpatialPages.js';
 
 const id='70000000-0000-4000-8000-000000000001',date='2026-10-07T00:00:00.000000Z';
@@ -107,4 +109,105 @@ test('additive stock migration has exact indexes, original FKs and immutable pub
   for(const relation of ['neighborhood_custom_cohort_stock_parcels','neighborhood_custom_cohort_stock_accounts'])
     for(const suffix of ['_insert_guard','_immutable'])assert.ok(Buffer.byteLength(relation+suffix)<=63);
   assert.doesNotMatch(sql,/DISABLE TRIGGER|DROP TABLE|DELETE FROM|UPDATE core\.|UPDATE gis\./);
+});
+
+function originalsFixture(hook=()=>{},population={parcel_count:'60001',account_count:'60000',unassociated_parcel_count:'1'}) {
+  const f=fixture(async call=>{
+    Object.assign(call.stock,population);
+    const supplied=await hook(call);if(supplied)return supplied;
+    if(call.text.includes('stock-originals:page')) {
+      const after=call.values[2]===''?-1:Number(call.values[2]),size=Number(population.parcel_count);
+      const count=Math.min(250,size-after-1),last=count===0?null:String(after+count);
+      return result({page_count:count,candidate_count:count,unassociated_count:count&&after+count===size-1?Number(population.unassociated_parcel_count):0,
+        invalid_count:0,last_object_id:last});
+    }
+    if(call.text.includes('stock-originals:totals'))return result({...population,invalid_accounts:'0'});
+    return null;
+  },true);
+  return {...f,originals:()=>createNeighborhoodFrozenJobStockOriginals(f.client,options)};
+}
+
+test('all 60001 geographic originals use fresh bounded steps, include key zero and reconcile exact end counts',async()=>{
+  const f=originalsFixture();let progress=null,done=false,steps=0;
+  while(!done){const step=await f.originals().step(progress);progress=step.progress;done=step.all_parcels_verified;
+    assert.equal(step.authority,'not_established');assert.equal(step.coverage,'geographic_originals_only');
+    assert.ok(Buffer.byteLength(JSON.stringify(progress))<400);assert.equal(step.advanced,true);assert.ok(++steps<=242);}
+  assert.equal(steps,241);assert.equal(progress.after_object_id,'60000');assert.equal(progress.verified_parcels,60001);
+  assert.equal(progress.verified_unassociated,1);
+  const pages=f.calls.filter(call=>call.text.includes('stock-originals:page'));
+  assert.equal(pages[0].values[2],'','no synthetic cursor zero silently loses legitimate object_id zero');
+  assert.equal(f.calls.filter(call=>call.text.includes('stock-originals:totals')).length,1);
+  assert.ok(!f.calls.some(call=>/ST_DWithin|job-stock:begin|job-stock:parcels/.test(call.text)));
+  const from=f.calls.length;assert.equal((await f.originals().step(progress)).advanced,false);
+  assert.ok(!f.calls.slice(from).some(call=>call.text.includes('stock-originals:')));
+});
+
+test('a full 250-row original page requires the separate exact terminal query',async()=>{
+  const f=originalsFixture(()=>{},{parcel_count:'250',account_count:'249',unassociated_parcel_count:'1'});
+  const first=await f.originals().step(null);assert.equal(first.all_parcels_verified,false);
+  const end=await f.originals().step(first.progress);assert.equal(end.all_parcels_verified,true);
+  assert.equal(end.progress.verified_parcels,250);assert.equal(end.progress.after_object_id,'249');
+});
+
+test('a byte-limited geographic prefix cannot claim end just because it has fewer than 250 rows',async()=>{
+  const f=originalsFixture(({text,values})=>text.includes('stock-originals:page')&&values[2]===''?
+    result({page_count:125,candidate_count:250,unassociated_count:0,invalid_count:0,last_object_id:'124'}):null,
+    {parcel_count:'250',account_count:'249',unassociated_parcel_count:'1'});
+  const first=await f.originals().step(null);assert.equal(first.all_parcels_verified,false);
+  const next=await f.originals().step(first.progress);assert.equal(next.all_parcels_verified,true);
+  assert.equal(next.progress.verified_parcels,250);
+});
+
+test('missing/changed original representation and counts refuse rather than publish partial geographic proof',async()=>{
+  const fields=[row=>row.invalid_count=1,row=>row.page_count=251,row=>row.last_object_id='-1',
+    row=>row.last_object_id=null,row=>row.unassociated_count=251];
+  for(const change of fields){const f=originalsFixture(({text})=>{
+    if(text.includes('stock-originals:page')){const row={page_count:250,candidate_count:250,unassociated_count:0,invalid_count:0,last_object_id:'249'};change(row);return result(row);}});
+    await assert.rejects(f.originals().step(null),/original_mismatch|invalid_progress/);}
+  for(const change of [row=>row.parcel_count='4',row=>row.account_count='1',row=>row.unassociated_parcel_count='0',row=>row.invalid_accounts='1']){
+    const f=originalsFixture(({text})=>{if(text.includes('stock-originals:totals')){
+      const row={parcel_count:'3',account_count:'2',unassociated_parcel_count:'1',invalid_accounts:'0'};change(row);return result(row);}},
+    {parcel_count:'3',account_count:'2',unassociated_parcel_count:'1'});
+    await assert.rejects(f.originals().step(null),/stock_count_mismatch/);
+  }
+  const omitted=originalsFixture(({text})=>text.includes('stock-originals:page')?
+    result({page_count:0,candidate_count:0,unassociated_count:0,invalid_count:0,last_object_id:null}):null);
+  await assert.rejects(omitted.originals().step(null),/stock_count_mismatch/);
+});
+
+test('geographic checkpoint cannot change stock, counts, continuation or scalar identity',async()=>{
+  const f=originalsFixture(),first=await f.originals().step(null),saved=first.progress;
+  for(const change of [p=>p.stock_sha256='e'.repeat(64),p=>p.verified_parcels=60002,
+    p=>p.verified_unassociated=2,p=>p.done=true]){
+    const p={...saved};change(p);await assert.rejects(f.originals().step(p),/stock_changed/);
+  }
+  for(const bad of [new Proxy(saved,{}),{...saved,grant:true},{...saved,after_object_id:9223372036854775807},
+    {...saved,get verified_parcels(){throw Error('getter');}}, {...saved,after_object_id:'9223372036854775808'}])
+    await assert.rejects(f.originals().step(bad),/invalid_input|invalid_progress/);
+  const repeated=originalsFixture(({text})=>text.includes('stock-originals:page')?
+    result({page_count:1,candidate_count:1,unassociated_count:0,invalid_count:0,last_object_id:'249'}):null);
+  await assert.rejects(repeated.originals().step(saved),/invalid_progress/);
+});
+
+test('geographic verification detaches continuation and refuses overlap, lost claim or cancelled budget',async()=>{
+  let release;const pending=new Promise(resolve=>{release=resolve;});let waiting=false;
+  const f=originalsFixture(async({text})=>{if(waiting&&text.includes('job-stock:read'))await pending;});
+  const first=await f.originals().step(null),mutable={...first.progress};waiting=true;
+  const reader=f.originals(),running=reader.step(mutable);mutable.after_object_id='900';mutable.verified_parcels=1;
+  await new Promise(resolve=>setImmediate(resolve));await assert.rejects(reader.step(null),/concurrent_operation/);
+  release();const second=await running;assert.equal(second.progress.after_object_id,'499');assert.equal(second.progress.verified_parcels,500);
+  const lost=originalsFixture(({text})=>text.includes('generation-fence')?{rowCount:0,rows:[]}:null);
+  await assert.rejects(lost.originals().step(null),/claim_lost/);
+  const cancelled=createNeighborhoodFrozenJobStockOriginals(f.client,{...options,checkBudget(){throw Error('cancelled');}});
+  const from=f.calls.length;await assert.rejects(cancelled.step(null),/cancelled/);assert.equal(f.calls.length,from);
+});
+
+test('fixed geographic verification plans preserve NULL originals and normalize Polygon EWKB without spatial recomputation',()=>{
+  assert.match(NEIGHBORHOOD_FROZEN_STOCK_ORIGINAL_PAGE_SQL,/LEFT JOIN app\.neighborhood_frozen_source_rows/);
+  assert.match(NEIGHBORHOOD_FROZEN_STOCK_ORIGINAL_PAGE_SQL,/ORDER BY stock\.object_id LIMIT 250/);
+  assert.match(NEIGHBORHOOD_FROZEN_STOCK_ORIGINAL_PAGE_SQL,/ST_AsEWKB\(ST_Multi\(ST_GeomFromEWKB/);
+  assert.match(NEIGHBORHOOD_FROZEN_STOCK_ORIGINAL_PAGE_SQL,/payload \? 'account_id'/);
+  assert.match(NEIGHBORHOOD_FROZEN_STOCK_ORIGINAL_TOTALS_SQL,/FULL JOIN recorded USING\(account_id\)/);
+  assert.doesNotMatch(NEIGHBORHOOD_FROZEN_STOCK_ORIGINAL_PAGE_SQL+NEIGHBORHOOD_FROZEN_STOCK_ORIGINAL_TOTALS_SQL,
+    /ST_DWithin|FROM gis\.|FROM core\.|jsonb_agg|INSERT|UPDATE|DELETE/);
 });

@@ -105,8 +105,14 @@ export function createCustomCohortPreparedStatisticsReader(ports: Ports) {
       && b.selectionFingerprint === pinned.request.selectionRef.selection_sha256
       && same(observations.selection_ref, pinned.request.selectionRef)
       && same(closed(summary.observation_period, ['start_date', 'end_date']), pinned.observationPeriod));
-    check(closed(summary.all, Object.keys(summary.all as object)).account_count === catalog.account_count
-      && closed(summary.selected, Object.keys(summary.selected as object)).account_count === count);
+    // Numeric envelopes allow arbitrary JSON. Check object shape before asking
+    // for keys so a missing/null population follows our deliberate refusal path.
+    const all = summary.all, selectedPopulation = summary.selected;
+    check(all && typeof all === 'object' && Object.getPrototypeOf(all) === Object.prototype
+      && selectedPopulation && typeof selectedPopulation === 'object'
+      && Object.getPrototypeOf(selectedPopulation) === Object.prototype);
+    check(closed(all, Object.keys(all)).account_count === catalog.account_count
+      && closed(selectedPopulation, Object.keys(selectedPopulation)).account_count === count);
     // One bounded directory read, not another whole catalog/page transfer.
     check(await currentCatalog(catalog, boundedIo)); live();
     const ending = selection(await read(pinned.read, boundedIo)); live();

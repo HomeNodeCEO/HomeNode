@@ -147,6 +147,24 @@ test('closed caller intent, dates, accessors and cloned catalog receipts refuse 
   assert.equal(h.calls.length, before);
 });
 
+test('missing, null, array and scalar numeric populations refuse with the intentional statistics error', async () => {
+  for (const population of ['all', 'selected']) {
+    for (const invalid of [undefined, null, [], 0, false, 'population']) {
+      const h = await harness({ hook: ({ out, call }) => {
+        if (call.action === 'selection-preview') {
+          if (invalid === undefined) delete out.summary[population];
+          else out.summary[population] = invalid;
+        }
+        return json(out);
+      } });
+      await assert.rejects(h.run(h.value, io()), {
+        name: 'TypeError', message: 'invalid_custom_cohort_prepared_statistics_display',
+      });
+      assert.equal(h.calls.at(-1).action, 'selection-preview');
+    }
+  }
+});
+
 test('target/ref/period/deadline aliases are pinned before authentication while host/session authority remains external', async () => {
   let entered, release;
   const ready = new Promise(r => { entered = r; }), held = new Promise(r => { release = r; });

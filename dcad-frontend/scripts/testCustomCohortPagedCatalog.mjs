@@ -7,19 +7,29 @@ import { prepareCustomCohortRecordedCatalogSource as prepare, createCustomCohort
 import { prepareNeighborhoodCohortBlob as blob } from '../../server/src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
 import { canonicalAssessmentJson as json } from '../../server/src/services/neighborhoodAssessment/contract.js';
 import { customCohortCatalogPageFixture as fixture } from '../../server/test/fixtures/customCohortCatalogPageFixture.js';
+import { createCustomCohortRetainedCatalogReader } from '../../server/src/services/neighborhoodAssessment/customCohortRetainedCatalogReader.js';
 
 const io = () => ({ signal: new AbortController().signal, deadline: performance.now() + 30_000 });
-async function harness(options) {
+async function harness(options, retained = false) {
   const f = fixture(options), source = await prepare(f.input), originals = new Map(), calls = [];
   const repository = { async put(text) { const r = blob(text); originals.set(r.content_sha256, text); return r; },
     async get(hash) { return originals.get(hash) ?? null; } };
   const staged = await store(repository).stage(source);
   const request = { accountId: f.scope.account_id, assignmentFileId: f.scope.assignment_file_id,
     contextRef: f.context, catalogRef: staged.manifest_ref };
+  const directory = await store(repository).open(source, staged.manifest_ref), metadata = JSON.parse(directory.metadata_json);
+  const binding = { scopeJson: f.input.scopeJson, contextJson: f.input.contextJson, manifestRef: staged.manifest_ref,
+    originalCatalogRef: metadata.original_catalog_ref, sourceReadModelSha256: metadata.original_read_model_sha256,
+    rosterAccountIdsSha256: metadata.roster_account_ids_sha256 };
+  const reopened = options => createCustomCohortRetainedCatalogReader(repository, binding, { signal: options.signal,
+    checkBudget() { if (performance.now() >= options.deadline) throw new Error('owner_deadline'); } });
   const ports = { async open(r, options) {
-    calls.push({ kind: 'open', r, options }); return store(repository).open(await prepare(f.input), r.catalogRef);
+    calls.push({ kind: 'open', r, options });
+    if (retained) return reopened(options).open();
+    return store(repository).open(await prepare(f.input), r.catalogRef);
   }, async page(r, index, options) {
     calls.push({ kind: 'page', r, index, options });
+    if (retained) return reopened(options).page(index);
     const p = await store(repository).readPage(await prepare(f.input), r.catalogRef, index);
     return { page_ref: p.page_ref, page_json: json(p.page) };
   } };
@@ -38,6 +48,16 @@ test('actual retained server originals produce one immutable complete browser ca
   assert.equal(requireCatalog(result), result); assert.throws(() => requireCatalog({ ...result }), /invalid_custom_cohort_paged_catalog/);
   assert.ok(!Object.hasOwn(result, 'pockets')); assert.ok(!JSON.stringify(result).includes('"account_ids":'));
   assert.ok(!Object.hasOwn(result, 'selected')); assert.ok(!Object.hasOwn(result, 'apply'));
+});
+
+test('browser reads actual persisted server graph without replaying dense source catalog or roster', async () => {
+  const h = await harness({ count: 60001, groupCount: 7 }, true);
+  h.f.input.catalogJson = null; h.f.input.rosterJson = null; h.f.catalog.pockets = null; h.f.accounts = null;
+  const result = await reader(h.ports)(h.request, io());
+  assert.equal(result.account_count, 60001);
+  assert.equal(result.groups.reduce((sum, g) => sum + g.member_count, 0), 60001);
+  assert.equal(result.authority, 'not_established'); assert.ok(!JSON.stringify(result).includes('"account_ids":'));
+  assert.deepEqual(h.calls.map(c => c.kind), ['open', 'page', 'open']);
 });
 
 test('60,001-member, explicit empty and wholly unresolved originals retain exact whole counts with no radius/default selection', async () => {

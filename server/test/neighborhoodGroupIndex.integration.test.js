@@ -9,6 +9,8 @@ import { createCustomCohortCaptureJobRepository }
   from '../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
 import { withCustomCohortJobTransaction }
   from '../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
+import { createNeighborhoodFrozenSourcePages, NEIGHBORHOOD_FROZEN_PAGE_LIMITS }
+  from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourcePages.js';
 
 test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserves exact sale dates',{
   skip:!process.env.DATABASE_URL,timeout:360_000,
@@ -30,6 +32,12 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
       ('INDEX-B','Dallas','Garland',' MONICA  PARK 4 '),
       ('INDEX-C','Dallas','Garland','Another Park'),
       ('INDEX-D','Dallas','Garland',NULL)`);
+    // Two individually valid near-row-limit originals must split by transport
+    // bytes, not be truncated, skipped, or returned as one oversized page.
+    await pool.query(`UPDATE core.accounts SET legal_description=repeat('A',900000)
+      WHERE account_id IN ('INDEX-A','INDEX-B')`);
+    await pool.query(`INSERT INTO core.sales_source_records(id,primary_account_id,current_price,close_date,raw_payload)
+      VALUES(501,'INDEX-A',9007199254740993,'2010-01-01','{"ClosePrice":9007199254740993}'::jsonb)`);
     await pool.query(`INSERT INTO gis.dcad_parcels
       (object_id,account_id,subdivision_name,residential_area_sqft,residential_year_built,
        parcel_area_sqft,current_market_value,source_record_hash,source_updated_at)
@@ -138,6 +146,24 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
       .readPreparedGeneration(claim,options));
     assert.equal(pinned.generation_id,first.generationId,'fresh connection recovers the actual committed pin');
     assert.equal(pinned.parcel_count,'5');
+    const originalPage=await withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSourcePages(client,
+      {...options,claim}).page({kind:'parcels',cursor:'',rowLimit:2}));
+    assert.deepEqual(originalPage.rows.map(row=>row.row_key),['1','2']);assert.equal(originalPage.end_of_layer,false);
+    assert.equal(JSON.parse(originalPage.rows[0].payload_text).stored_geometry_ewkb,originalGeometry);
+    assert.equal(originalPage.authority,'not_established');assert.equal(originalPage.coverage,'page_only');
+    const accountPage=await withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSourcePages(client,
+      {...options,claim}).page({kind:'accounts',cursor:'',rowLimit:4}));
+    assert.deepEqual(accountPage.rows.map(row=>row.row_key),['INDEX-A']);assert.equal(accountPage.end_of_layer,false);
+    assert.ok(accountPage.page_utf8_bytes<=NEIGHBORHOOD_FROZEN_PAGE_LIMITS.page_utf8_bytes);
+    const accountEnd=await withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSourcePages(client,
+      {...options,claim}).page({kind:'accounts',cursor:accountPage.next_cursor,rowLimit:4}));
+    assert.deepEqual(accountEnd.rows.map(row=>row.row_key),['INDEX-B','INDEX-C','INDEX-D']);
+    assert.equal(accountEnd.end_of_layer,true);
+    assert.equal(JSON.parse(accountEnd.rows[0].payload_text).legal_description.length,900000);
+    const pricePage=await withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSourcePages(client,
+      {...options,claim}).page({kind:'source_records',cursor:'',rowLimit:2}));
+    assert.equal(JSON.parse(pricePage.rows[0].payload_text).current_price,'9007199254740993',
+      'bounded source pages preserve exact original decimal text before Number interpretation');
     for(const sql of [
       'UPDATE app.neighborhood_group_generations SET parcel_count=0 WHERE generation_id=$1',
       'UPDATE app.neighborhood_group_parcel_facts SET living_area_sqft=1 WHERE generation_id=$1',
@@ -175,6 +201,10 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     assert.equal((await pool.query('SELECT living_area_sqft::text AS area FROM app.neighborhood_group_parcel_facts WHERE generation_id=$1 AND object_id=2',[first.generationId])).rows[0].area,'2000');
     assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client)
       .pinPreparedGeneration(claim,options)),pinned,'replay does not switch to the latest sweep');
+    const resumed=await withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSourcePages(client,
+      {...options,claim}).page({kind:'parcels',cursor:originalPage.next_cursor,rowLimit:2}));
+    assert.deepEqual(resumed.rows.map(row=>row.row_key),['3','4']);
+    assert.equal(resumed.original.generation_id,first.generationId,'fresh page client never follows a later sweep');
     await pool.query(`UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second'
       WHERE operation_id=$1`,[operation]);
     const nextClaim=await withCustomCohortJobTransaction(pool,async client=>{
@@ -186,9 +216,17 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
       .readPreparedGeneration(claim,options)),/claim_lost/);
     assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client)
       .readPreparedGeneration(nextClaim,options)),pinned,'a replacement worker resumes the same retained generation');
+    await assert.rejects(withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSourcePages(client,
+      {...options,claim}).page({kind:'parcels',cursor:resumed.next_cursor,rowLimit:2})),/claim_lost/);
+    const finalPage=await withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSourcePages(client,
+      {...options,claim:nextClaim}).page({kind:'parcels',cursor:resumed.next_cursor,rowLimit:2}));
+    assert.deepEqual(finalPage.rows.map(row=>row.row_key),['5']);assert.equal(finalPage.end_of_layer,true);
+    assert.equal(finalPage.original.generation_id,first.generationId);
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,operation));
     await assert.rejects(withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client)
       .readPreparedGeneration(nextClaim,options)),/claim_lost/);
+    await assert.rejects(withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSourcePages(client,
+      {...options,claim:nextClaim}).page({kind:'parcels',cursor:'',rowLimit:2})),/claim_lost/);
   } finally { await pool.end(); }
 });
 

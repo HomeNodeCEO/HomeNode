@@ -56,6 +56,15 @@ test('publishes only after parcel, sale and summary preparation in one snapshot'
   assert.equal(sql.includes('ROLLBACK'),false);
   assert.equal(f.released,true);
   assert.equal(f.releaseError,undefined);
+  assert.equal(sql.some(value=>value.includes('neighborhood-frozen-source:')),false,
+    'installed nightly CLI keeps the full original sweep disabled');
+});
+
+test('invalid frozen-source opt-in is rejected before connecting a worker',async()=>{
+  for(const retainOriginalSources of ['true',1,null,{}]) {
+    const f=fixture();await assert.rejects(runNeighborhoodGroupIndex(f.pool,{retainOriginalSources}),/retain_original_sources/);
+    assert.deepEqual(f.calls,[]);
+  }
 });
 
 test('failed generation rolls back and never replaces the active pointer',async()=>{

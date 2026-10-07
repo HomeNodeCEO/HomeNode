@@ -41,6 +41,10 @@ CREATE TABLE app.neighborhood_custom_cohort_stock_parcels (
 );
 CREATE INDEX neighborhood_cohort_stock_parcels_account_idx
   ON app.neighborhood_custom_cohort_stock_parcels(operation_id,account_id,object_id) WHERE account_id IS NOT NULL;
+-- Old unpinned original generations retire in row batches. RESTRICT checks
+-- must use this generation-leading index, not scan every retained job's stock.
+CREATE INDEX neighborhood_cohort_stock_parcels_original_idx
+  ON app.neighborhood_custom_cohort_stock_parcels(generation_id,kind,row_key);
 CREATE TABLE app.neighborhood_custom_cohort_stock_accounts (
   operation_id uuid NOT NULL REFERENCES app.neighborhood_custom_cohort_job_stocks(operation_id) ON DELETE RESTRICT ON UPDATE RESTRICT,
   account_id text COLLATE "C" NOT NULL,

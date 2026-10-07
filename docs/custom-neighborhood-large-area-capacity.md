@@ -2065,7 +2065,8 @@ its immutable original parcel in the pinned sweep, including unassociated
 parcels. Other parcel parts belonging to a selected account but outside the
 circle remain source evidence only, not spatial members. Fixed operation/object
 and operation/account indexes support subsequent page reads without repeated
-distance scans or dense account arrays in Node.
+distance scans or dense account arrays in Node. A generation/kind/key index
+also keeps original-row FK checks bounded during obsolete-sweep retirement.
 
 The versioned `frozen_stock_v1` checkpoint retains the subject intent and stock
 descriptor in the same transaction as membership publication. A fresh client

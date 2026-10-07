@@ -101,6 +101,7 @@ test('additive stock migration has exact indexes, original FKs and immutable pub
   const sql=readFileSync(new URL(`../migrations/${name}`,import.meta.url),'utf8');
   assert.match(sql,/REFERENCES app.neighborhood_frozen_source_rows\(generation_id,kind,row_key\)/);
   assert.match(sql,/PRIMARY KEY\(operation_id,object_id\)/);assert.match(sql,/PRIMARY KEY\(operation_id,account_id\)/);
+  assert.match(sql,/CREATE INDEX neighborhood_cohort_stock_parcels_original_idx\s+ON app.neighborhood_custom_cohort_stock_parcels\(generation_id,kind,row_key\)/);
   assert.match(sql,/REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT/);
   for(const match of sql.matchAll(/CREATE (?:INDEX|TRIGGER|FUNCTION) ([a-z_.]+)/g))assert.ok(Buffer.byteLength(match[1].replace(/^app\./,''))<=63);
   for(const relation of ['neighborhood_custom_cohort_stock_parcels','neighborhood_custom_cohort_stock_accounts'])

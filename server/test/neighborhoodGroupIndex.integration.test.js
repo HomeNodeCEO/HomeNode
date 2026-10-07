@@ -47,6 +47,10 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
       WHERE schemaname='app' AND tablename='neighborhood_custom_cohort_prepared_generation_pins'
         AND indexname='neighborhood_cohort_prepared_pins_generation_idx'`)).rows[0].count,1,
       'the declared generation pin index exists with its exact non-truncated name');
+    assert.equal((await pool.query(`SELECT indexdef FROM pg_indexes WHERE schemaname='app'
+      AND tablename='neighborhood_custom_cohort_stock_parcels' AND indexname='neighborhood_cohort_stock_parcels_original_idx'`))
+      .rows[0].indexdef,'CREATE INDEX neighborhood_cohort_stock_parcels_original_idx ON app.neighborhood_custom_cohort_stock_parcels USING btree (generation_id, kind, row_key)',
+      'original-row FK checks have an exact generation-leading index for bounded obsolete-generation retirement');
     await pool.query(`INSERT INTO core.accounts(account_id,county,city,subdivision) VALUES
       ('INDEX-A','Dallas','Garland','Monica Park 4'),
       ('INDEX-B','Dallas','Garland',' MONICA  PARK 4 '),

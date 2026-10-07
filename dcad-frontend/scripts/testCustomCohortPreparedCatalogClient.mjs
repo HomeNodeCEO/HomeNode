@@ -36,7 +36,7 @@ test('fixed authenticated HTTP client loads all ACTUAL registered originals and 
   const original = await h.h.make().reopen();
   assert.equal(result.status, 'available'); assert.equal(requireCatalog(result.catalog), result.catalog);
   assert.deepEqual(result.catalog.groups, original.groups); assert.equal(result.catalog.account_count, 501);
-  assert.deepEqual(h.calls.map(c => c.action), ['prepared-catalog', 'prepared-catalog',
+  assert.deepEqual(h.calls.map(c => c.action), ['prepared-catalog',
     'prepared-catalog-page', 'prepared-catalog-page', 'prepared-catalog-page', 'prepared-catalog']);
   assert.deepEqual(h.calls.filter(c => c.action.endsWith('-page')).map(c => c.body.page_index), [0, 1, 2]);
   for (const c of h.calls) {
@@ -59,7 +59,7 @@ test('actual empty and wholly unresolved catalogs remain exact without radius, r
     assert.equal(result.status, 'available'); assert.equal(result.catalog.account_count, count);
     assert.equal(result.catalog.unassigned_account_count, count);
     assert.equal(result.catalog.groups.reduce((n, g) => n + g.member_count, 0), count);
-    assert.equal(h.calls.filter(c => c.action === 'prepared-catalog').length, 3);
+    assert.equal(h.calls.filter(c => c.action === 'prepared-catalog').length, 2);
     assert.equal(h.calls.filter(c => c.action.endsWith('-page')).length, count ? 1 : 0);
   }
 });
@@ -69,12 +69,30 @@ test('cache miss makes one authorized read and never performs a synchronous fall
   assert.deepEqual(await h.run(h.request, io()), { status: 'not_prepared' }); assert.equal(h.calls.length, 1);
 });
 
+test('the one-shot beginning directory is verified before pages and is never reused by a later operation', async () => {
+  const broken = await harness(undefined, async ({ response, call }) => {
+    const value = await response(call.body);
+    if (call.action === 'prepared-catalog') value.catalog.manifest_json += ' ';
+    return json(value);
+  });
+  await assert.rejects(broken.run(broken.request, io()), /invalid_custom_cohort_paged_catalog/);
+  assert.equal(broken.calls.length, 1);
+  let denied = false;
+  const h = await harness(undefined, async ({ response, call }) => denied
+    ? json({ error: 'neighborhood_access_denied' }, 403) : json(await response(call.body)));
+  assert.equal((await h.run(h.request, io())).status, 'available');
+  const before = h.calls.length; denied = true;
+  await assert.rejects(h.run(h.request, io()), { status: 403, errorCode: 'neighborhood_access_denied' });
+  assert.equal(h.calls.length, before + 1);
+  assert.equal(h.calls.at(-1).action, 'prepared-catalog');
+});
+
 test('current-owner refusal or lost preparation at the ending check discards every pending page', async () => {
   for (const late of ['denied', 'missing', 'changed']) {
     let opens = 0;
     const h = await harness(undefined, async ({ response, call }) => {
       const value = await response(call.body);
-      if (call.action === 'prepared-catalog' && ++opens === 3) {
+      if (call.action === 'prepared-catalog' && ++opens === 2) {
         if (late === 'denied') return json({ error: 'neighborhood_access_denied' }, 403);
         if (late === 'missing') return json({ ...value, status: 'not_prepared', catalog: null });
         return json({ ...value, catalog: { ...value.catalog, metadata_json: value.catalog.metadata_json + ' ' } });
@@ -82,7 +100,7 @@ test('current-owner refusal or lost preparation at the ending check discards eve
       return json(value);
     });
     await assert.rejects(h.run(h.request, io()), late === 'denied' ? { status: 403, errorCode: 'neighborhood_access_denied' } : undefined);
-    assert.equal(opens, 3); assert.equal(h.calls.filter(c => c.action.endsWith('-page')).length, 3);
+    assert.equal(opens, 2); assert.equal(h.calls.filter(c => c.action.endsWith('-page')).length, 3);
   }
 });
 
@@ -115,13 +133,13 @@ test('caller aliases and accessors cannot redirect an authentication-suspended o
   const value = structuredClone(h.request), options = io(), pending = h.run(value, options);
   await ready; value.accountId = 'foreign'; value.assignmentFileId = '99'; value.contextRef.context_sha256 = 'f'.repeat(64);
   options.deadline = 0; release(); const result = await pending;
-  assert.equal(result.catalog.request.accountId, h.request.accountId); assert.equal(h.calls.length, 6);
+  assert.equal(result.catalog.request.accountId, h.request.accountId); assert.equal(h.calls.length, 5);
   let getters = 0; const bad = Object.defineProperty({ ...h.request }, 'contextRef', {
     enumerable: true, get() { getters++; return h.request.contextRef; } });
   await assert.rejects(h.run(bad, io())); assert.equal(getters, 0);
   for (const extra of [{ catalogRef: {} }, { account_ids: [] }, { role: 'owner' }, { prepare: true }])
     await assert.rejects(h.run({ ...h.request, ...extra }, io()));
-  assert.equal(h.calls.length, 6);
+  assert.equal(h.calls.length, 5);
 });
 
 test('finite caller deadline and cancellation fence slow authentication, late HTTP bodies and late hash settlement', async () => {

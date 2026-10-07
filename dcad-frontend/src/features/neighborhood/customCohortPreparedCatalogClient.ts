@@ -88,10 +88,17 @@ export function createCustomCohortPreparedCatalogClient(options: Parameters<type
     const first = await read(); if (first === null) return Object.freeze({ status: 'not_prepared' });
     if (!('manifest_ref' in first)) fail();
     // Pin the root from the current authorized directory, never a browser root.
-    // Subsequent opens/pages still hit the current owner; no local lookup cache.
+    // That same detached directory is the decoder's beginning original. Consume
+    // it once rather than repeat the identical read; pages and the ending open
+    // still hit the current owner. This is not a cross-operation lookup cache.
     const bound = Object.freeze({ ...request, catalogRef: first.manifest_ref });
+    let beginning: Directory | null = first;
     const reader = createCustomCohortPagedCatalogReader({
-      async open() { const result = await read(); if (result === null || !('manifest_ref' in result)) fail(); return result; },
+      async open() {
+        live();
+        if (beginning !== null) { const result = beginning; beginning = null; return result; }
+        const result = await read(); if (result === null || !('manifest_ref' in result)) fail(); return result;
+      },
       async page(_r, index) { const result = await read(index); if (result === null || !('page_ref' in result)) fail(); return result; },
     });
     const catalog = await reader(bound, boundedIo); live(); return Object.freeze({ status: 'available', catalog });

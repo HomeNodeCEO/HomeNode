@@ -77,7 +77,10 @@ async function app(t, { enabled = true, authenticated = true, parsed = false, fa
 test('optional routes use only middleware identity and a finite gate; no-store bounded bytes ignore app indentation', async t => {
   const f = await app(t), before = performance.now(), response = await f.post('prepared-catalog');
   assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
-  assert.equal(await response.text(), JSON.stringify(f.directory));
+  // The presenter owns the closed wire field order. Compare its actual compact
+  // encoding, not the fixture's incidental insertion order; indentation still
+  // must not inflate or alter the bounded wire response.
+  assert.equal(await response.text(), JSON.stringify(present(f.directory, prepare(f.body), f.h.f.scope.account_id)));
   assert.deepEqual(f.calls[0][0], { auth: f.auth, accountId: f.h.f.scope.account_id,
     assignmentFileId: f.body.assignment_file_id, contextRef: f.body.context_ref });
   assert.ok(f.calls[0][1].signal instanceof AbortSignal); assert.ok(f.calls[0][1].deadline >= before + 60_000);

@@ -116,7 +116,7 @@ export default function ReportTypeChooser({ subject, onClose }: Props) {
             ...(option.workflow === "custom_appraisal" ? { effective_date: effectiveDate } : {}),
           });
       window.location.assign(reportDestination(option.type, {
-        accountId: result.report_file.account_id,
+        accountId: result.report_file.account_id || subject.accountId || "",
         ownerName: subject.ownerName,
       }, result.report_file.target_id));
     } catch (reason) {

@@ -72,8 +72,8 @@ test('cache miss makes one authorized read and never performs a synchronous fall
 test('the one-shot beginning directory is verified before pages and is never reused by a later operation', async () => {
   const broken = await harness(undefined, async ({ response, call }) => {
     const value = await response(call.body);
-    if (call.action === 'prepared-catalog') value.catalog.manifest_json += ' ';
-    return json(value);
+    return json(call.action === 'prepared-catalog'
+      ? { ...value, catalog: { ...value.catalog, manifest_json: value.catalog.manifest_json + ' ' } } : value);
   });
   await assert.rejects(broken.run(broken.request, io()), /invalid_custom_cohort_paged_catalog/);
   assert.equal(broken.calls.length, 1);

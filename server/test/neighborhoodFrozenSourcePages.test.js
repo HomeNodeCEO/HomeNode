@@ -63,7 +63,7 @@ test('header drift, missing pages, byte overflow and nonmonotone originals never
     ({text,page})=>text.includes('frozen-pages:parcels')?result({...page([]),candidate_count:1}):null,
     ({text,page})=>text.includes('frozen-pages:parcels')?result(page(['2','1'])):null,
     ({text,page})=>text.includes('frozen-pages:parcels')?result({...page(['1']),next_cursor:'9'}):null,
-    ({text,page})=>text.includes('frozen-pages:parcels')?result({...page(['1']),page_utf8_bytes:1_500_001}):null,
+    ({text,page})=>text.includes('frozen-pages:parcels')?result({...page(['1']),page_utf8_bytes:NEIGHBORHOOD_FROZEN_PAGE_LIMITS.page_utf8_bytes+1}):null,
     ({text,header})=>text.includes('frozen-pages:header')?result({...header,row_count:'4'}):null,
   ]) await assert.rejects(fixture({hook}).pages.page({kind:'parcels',cursor:''}),/neighborhood_frozen_pages_/);
 });
@@ -72,6 +72,19 @@ test('native numeric order is not text order and a page is not complete-study co
   const f=fixture({hook:({text,page})=>text.includes('frozen-pages:parcels')?result(page(['2','10'])):null});
   const p=await f.pages.page({kind:'parcels',cursor:'1',rowLimit:3});
   assert.equal(p.next_cursor,'10');assert.equal(p.end_of_layer,true);assert.equal(p.coverage,'page_only');
+});
+
+test('a valid near-limit heavily escaped original fits alone without blocking the next key',async()=>{
+  const payload=JSON.stringify({legal_description:'\\'.repeat(480_000)});
+  assert.ok(Buffer.byteLength(payload)<1_000_000);
+  const page_json=JSON.stringify([{row_key:'1',payload_text:payload}]);
+  assert.ok(Buffer.byteLength(page_json)>1_500_000);
+  assert.ok(Buffer.byteLength(page_json)<NEIGHBORHOOD_FROZEN_PAGE_LIMITS.page_utf8_bytes);
+  const f=fixture({hook:({text})=>text.includes('frozen-pages:parcels')?result({page_json,
+    page_count:1,candidate_count:2,next_cursor:'1',page_utf8_bytes:Buffer.byteLength(page_json)}):null});
+  const page=await f.pages.page({kind:'parcels',cursor:'',rowLimit:2});
+  assert.equal(page.next_cursor,'1');assert.equal(page.end_of_layer,false);
+  assert.equal(page.rows[0].payload_text,payload);
 });
 
 test('closed inputs reject source/generation injection, unknown kinds and getters before SQL',async()=>{

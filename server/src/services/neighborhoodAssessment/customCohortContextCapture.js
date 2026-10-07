@@ -25,6 +25,7 @@ import { createNeighborhoodFrozenJobStock } from './neighborhoodFrozenJobStock.j
 import { createNeighborhoodFrozenJobSourcePages } from './neighborhoodFrozenSourceClosurePages.js';
 import { createCohortOriginalSourceChainV1Store, COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS }
   from './cohortOriginalSourceChainV1.js';
+import { verifyCohortOriginalSourceGraphStep } from './cohortOriginalSourceGraphV1.js';
 import { createCustomCohortRecordedGroupSelectionOwner,
   reopenCustomCohortRecordedGroupSelectionOriginal } from './customCohortRecordedGroupSelectionOwner.js';
 import { createCustomCohortPreparedCatalogOwner } from './customCohortPreparedCatalogOwner.js';
@@ -1524,6 +1525,129 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     }
     return response;
   }
+  async function frozenCaptureJobSourceStage(value, options = {}, verifying = false) {
+    if (!options || Object.getPrototypeOf(options)!==Object.prototype) fail('invalid_options');
+    const {captureJobClaim:providedClaim,...budgetOptions}=options;
+    const originalInput=inputOf(value),claim=prepareCustomCohortCaptureJobClaim(providedClaim);
+    if(claim.operation_id!==originalInput.operationId.toLowerCase()) fail('operation_conflict');
+    if(!reportedProfile) fail('frozen_source_profile_unsupported');
+    if(originalInput.privateSalesImport || originalInput.discovery?.profile_id!=='custom-suburban-radius-v2') fail('frozen_discovery_unsupported');
+    const budget=operationBudget(budgetOptions,LIMITS.capture_duration_ms);
+    return transaction(pool,'READ COMMITTED',budget,async client=>{
+      const locator=one(await client.query(`/* custom-cohort-capture:job-organization */
+        SELECT organization_id FROM app.assignment_files WHERE id=$1::bigint AND account_id=$2`,
+      [originalInput.assignmentFileId,originalInput.accountId]));
+      let input=freeze({...originalInput,operationId:claim.operation_id,
+        auth:await loadCurrentCustomCohortJobActor(client,originalInput.auth.userId,locator.organization_id)});
+      privateDraft(await privateCaptureWorkfile(client,input));
+      const target=await resolveTarget(client,input,true),scope=Object.fromEntries(TARGET_FIELDS.map(key=>[key,target[key]]));
+      const jobs=createCustomCohortCaptureJobRepository(client),jobOptions={scope,actorUserId:input.auth.userId};
+      const requested={operation_id:input.operationId,observation_period:input.observationPeriod,discovery:input.discovery};
+      if(!same(await jobs.readRequest(claim,jobOptions),requested)) fail('operation_conflict');
+      const checkpoint=await jobs.readCheckpoint(claim,jobOptions);
+      const allowedPhases=verifying?['frozen_source_v1','frozen_verify_v1']:['frozen_stock_v1','frozen_source_v1'];
+      if(!checkpoint || !allowedPhases.includes(checkpoint.phase)
+        ||checkpoint.evidence_refs.length!==(checkpoint.phase==='frozen_stock_v1'?2:checkpoint.phase==='frozen_verify_v1'?4:3))
+        fail('checkpoint_conflict');
+      const subjects=createCustomCohortSubjectRepository(client,canonicalAssessmentJson(scope));
+      const blobs=createNeighborhoodCohortBlobRepository(client,scope.organization_id);
+      const study=freeze({profile_id:input.discovery.profile_id,discovery:input.discovery,
+        observation_period:input.observationPeriod,knowledge_cutoff:null});
+      const retained=await resumeCustomCohortSubjectCheckpoint({checkpoint:{phase:'subject',evidence_refs:[checkpoint.evidence_refs[0]]},
+        blobs,subjects,input,study,reportedProfile,housingProfile});
+      authorizePublicCadastralCatalogRead(input.auth,input.accountId,{workflows:['custom_appraisal'],
+        permissionChecker:(auth,workflow,permission)=>hasApplicationPermission(auth,workflow,permission,scope.organization_id)});
+      const stockOptions={claim,scope,actorUserId:input.auth.userId,geometryInput:retained.point.geometry_input,
+        discovery:input.discovery,subjectIntent:retained.intent.reference,checkBudget:budget.check};
+      const stockStore=createNeighborhoodFrozenJobStock(client,stockOptions),stock=await stockStore.read();
+      const stockReference=checkpoint.evidence_refs[1];
+      const stockBody={stock_stage_version:1,usage:'frozen_job_stock_only',subject_intent:retained.intent.reference,stock};
+      if(await blobs.get(stockReference.content_sha256,stockReference.canonical_utf8_bytes)!==canonicalAssessmentJson(stockBody)) fail('checkpoint_conflict');
+      // Explicit versioned selection preimage: actual owner-selected SQL
+      // stock, scope, generation, original header/point definition and subject.
+      // The old <=50k array/capability is never minted, spoofed or widened.
+      const selection=freeze({selection_version:'frozen_job_stock_source_v1',scope,operation_id:input.operationId,
+        subject_intent:retained.intent.reference,stock_reference:stockReference,generation_id:stock.generation_id,
+        spatial_definition_sha256:stock.definition_sha256,source_original_sha256:stock.source_original_sha256,
+        stock_population:stock.population});
+      const context=contextOf(retained.subject),purpose=describeNeighborhoodCombinedEvidenceMarketDataPurpose({
+        selection_sha256:assessmentEvidenceDigest(selection),effective_date:context.effective_date,
+        observation_period:input.observationPeriod,knowledge_cutoff:null});
+      // Same independently approved fixed mapping5/witness2, immutable
+      // retention and all-date one-hop fields. Retained grant metadata is not
+      // authority: current policy must allow before any licensed original.
+      const decision=await boundedPolicy(authorizeMarketData,client,input.auth,context,purpose,budget);
+      const binding={...scope,operation_id:input.operationId,generation_id:stock.generation_id,
+        spatial_definition_sha256:stock.definition_sha256,source_original_sha256:stock.source_original_sha256};
+      const chain=createCohortOriginalSourceChainV1Store(blobs,binding,{signal:budget.signal,checkBudget:budget.check});
+      let root,reference=checkpoint.evidence_refs[2]??null;
+      if(reference) {
+        const text=await blobs.get(reference.content_sha256,reference.canonical_utf8_bytes);
+        if(text===null||Buffer.byteLength(text)>16_000) fail('checkpoint_conflict');
+        let previous;try{previous=JSON.parse(text);}catch{fail('checkpoint_conflict');}
+        exactKeys(previous,['source_stage_version','usage','selection','purpose','market_decision','root']);
+        if(previous.source_stage_version!==1||previous.usage!=='frozen_source_prefix_only'
+          ||!same(previous.selection,selection)||!same(previous.purpose,purpose)||!same(previous.market_decision,decision)) fail('market_policy_changed');
+        root=previous.root;
+      }else root=(await chain.create()).root;
+      let prefix=await chain.describe(root);
+      const kind=COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.find(key=>!prefix.layers[key].ended);
+      let verification=null,verificationReference=checkpoint.evidence_refs[3]??null;
+      if(!verifying&&kind) {
+        const page=await createNeighborhoodFrozenJobSourcePages(client,{...stockOptions,signal:budget.signal})
+          .page({kind,cursor:prefix.layers[kind].cursor,rowLimit:250});
+        root=(await chain.append({root,original_text:JSON.stringify({binding,page})})).root;
+        prefix=await chain.describe(root);
+        const body={source_stage_version:1,usage:'frozen_source_prefix_only',selection,purpose,market_decision:decision,root};
+        reference=await blobs.put(canonicalAssessmentJson(body));
+        await jobs.saveCheckpoint(claim,jobOptions,{phase:'frozen_source_v1',evidence_refs:[retained.intent.reference,stockReference,reference]});
+      }
+      if(verifying) {
+        let progress=null;
+        if(verificationReference) {
+          const text=await blobs.get(verificationReference.content_sha256,verificationReference.canonical_utf8_bytes);
+          if(text===null||Buffer.byteLength(text)>16_000) fail('checkpoint_conflict');
+          let previous;try{previous=JSON.parse(text);}catch{fail('checkpoint_conflict');}
+          exactKeys(previous,['verification_stage_version','usage','source_reference','selection','purpose','market_decision','progress']);
+          if(previous.verification_stage_version!==1||previous.usage!=='frozen_original_graph_progress_only'
+            ||!same(previous.source_reference,reference)||!same(previous.selection,selection)
+            ||!same(previous.purpose,purpose)||!same(previous.market_decision,decision)) fail('market_policy_changed');
+          progress=previous.progress;
+        }
+        const pages=createNeighborhoodFrozenJobSourcePages(client,{...stockOptions,signal:budget.signal});
+        verification=await verifyCohortOriginalSourceGraphStep({chain,readSourcePage:page=>pages.page(page),
+          root,progress,checkBudget:budget.check});
+        if(verification.advanced) {
+          const body={verification_stage_version:1,usage:'frozen_original_graph_progress_only',
+            source_reference:reference,selection,purpose,market_decision:decision,progress:verification.progress};
+          verificationReference=await blobs.put(canonicalAssessmentJson(body));
+          await jobs.saveCheckpoint(claim,jobOptions,{phase:'frozen_verify_v1',
+            evidence_refs:[retained.intent.reference,stockReference,reference,verificationReference]});
+        }
+      }
+      input=freeze({...input,auth:await loadCurrentCustomCohortJobActor(client,input.auth.userId,scope.organization_id)});
+      assertTarget(await resolveTarget(client,input,true),target);
+      privateDraft(await privateCaptureWorkfile(client,input));
+      if((await subjects.compareCurrent(retained.subjectReference)).status!=='matched') fail('subject_changed');
+      authorizePublicCadastralCatalogRead(input.auth,input.accountId,{workflows:['custom_appraisal'],
+        permissionChecker:(auth,workflow,permission)=>hasApplicationPermission(auth,workflow,permission,scope.organization_id)});
+      if(!same(await boundedPolicy(authorizeMarketData,client,input.auth,context,purpose,budget),decision)) fail('market_policy_changed');
+      if(!same(await jobs.readRequest(claim,jobOptions),requested)||!same(await stockStore.read(),stock)) fail('checkpoint_conflict');
+      if(!same((await chain.describe(root)).layers,prefix.layers)) fail('checkpoint_conflict');
+      budget.check();
+      if(verifying) return freeze({status:'original_graph_progress_retained',operation_id:input.operationId,
+        source_reference:reference,verification_reference:verificationReference,generation_id:stock.generation_id,
+        advanced:verification.advanced,verified_layer_count:verification.verified_layer_count,
+        all_layers_verified:verification.all_layers_verified,
+        original_graph_verification:verification.all_layers_verified?'representation_verified':'in_progress',
+        geographic_stock_verification:'not_established',typed_identity_closure:'not_established',
+        source_acquisition:'not_established',report_update:'none'});
+      return freeze({status:'source_prefix_retained',operation_id:input.operationId,source_reference:reference,
+        generation_id:stock.generation_id,advanced:kind!==undefined,layers:prefix.layers,
+        all_layers_ended:COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.every(key=>prefix.layers[key].ended),
+        original_graph_verification:'not_established',source_acquisition:'not_established',report_update:'none'});
+    });
+  }
   return Object.freeze({
     ...recordedGroupSelection,
     ...preparedCatalog,
@@ -1644,100 +1768,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           source_acquisition:'not_established',report_update:'none'});
       });
     },
-    /** Internal durable one-page source stage. A prefix/checkpoint is DATA,
-     * never a complete acquisition or a report grant. The legacy worker cannot
-     * consume this checkpoint; keep it unmounted until its whole-graph owner
-     * and dispatcher are ready. No spatial predicate/dense roster is repeated. */
-    async prepareFrozenCaptureJobSourcePage(value, options = {}) {
-      if (!options || Object.getPrototypeOf(options)!==Object.prototype) fail('invalid_options');
-      const {captureJobClaim:providedClaim,...budgetOptions}=options;
-      const originalInput=inputOf(value),claim=prepareCustomCohortCaptureJobClaim(providedClaim);
-      if(claim.operation_id!==originalInput.operationId.toLowerCase()) fail('operation_conflict');
-      if(!reportedProfile) fail('frozen_source_profile_unsupported');
-      if(originalInput.privateSalesImport || originalInput.discovery?.profile_id!=='custom-suburban-radius-v2') fail('frozen_discovery_unsupported');
-      const budget=operationBudget(budgetOptions,LIMITS.capture_duration_ms);
-      return transaction(pool,'READ COMMITTED',budget,async client=>{
-        const locator=one(await client.query(`/* custom-cohort-capture:job-organization */
-          SELECT organization_id FROM app.assignment_files WHERE id=$1::bigint AND account_id=$2`,
-        [originalInput.assignmentFileId,originalInput.accountId]));
-        let input=freeze({...originalInput,operationId:claim.operation_id,
-          auth:await loadCurrentCustomCohortJobActor(client,originalInput.auth.userId,locator.organization_id)});
-        privateDraft(await privateCaptureWorkfile(client,input));
-        const target=await resolveTarget(client,input,true),scope=Object.fromEntries(TARGET_FIELDS.map(key=>[key,target[key]]));
-        const jobs=createCustomCohortCaptureJobRepository(client),jobOptions={scope,actorUserId:input.auth.userId};
-        const requested={operation_id:input.operationId,observation_period:input.observationPeriod,discovery:input.discovery};
-        if(!same(await jobs.readRequest(claim,jobOptions),requested)) fail('operation_conflict');
-        const checkpoint=await jobs.readCheckpoint(claim,jobOptions);
-        if(!checkpoint || !['frozen_stock_v1','frozen_source_v1'].includes(checkpoint.phase)
-          ||checkpoint.evidence_refs.length!==(checkpoint.phase==='frozen_stock_v1'?2:3)) fail('checkpoint_conflict');
-        const subjects=createCustomCohortSubjectRepository(client,canonicalAssessmentJson(scope));
-        const blobs=createNeighborhoodCohortBlobRepository(client,scope.organization_id);
-        const study=freeze({profile_id:input.discovery.profile_id,discovery:input.discovery,
-          observation_period:input.observationPeriod,knowledge_cutoff:null});
-        const retained=await resumeCustomCohortSubjectCheckpoint({checkpoint:{phase:'subject',evidence_refs:[checkpoint.evidence_refs[0]]},
-          blobs,subjects,input,study,reportedProfile,housingProfile});
-        authorizePublicCadastralCatalogRead(input.auth,input.accountId,{workflows:['custom_appraisal'],
-          permissionChecker:(auth,workflow,permission)=>hasApplicationPermission(auth,workflow,permission,scope.organization_id)});
-        const stockOptions={claim,scope,actorUserId:input.auth.userId,geometryInput:retained.point.geometry_input,
-          discovery:input.discovery,subjectIntent:retained.intent.reference,checkBudget:budget.check};
-        const stockStore=createNeighborhoodFrozenJobStock(client,stockOptions),stock=await stockStore.read();
-        const stockReference=checkpoint.evidence_refs[1];
-        const stockBody={stock_stage_version:1,usage:'frozen_job_stock_only',subject_intent:retained.intent.reference,stock};
-        if(await blobs.get(stockReference.content_sha256,stockReference.canonical_utf8_bytes)!==canonicalAssessmentJson(stockBody)) fail('checkpoint_conflict');
-        // Explicit versioned selection preimage: actual owner-selected SQL
-        // stock, scope, generation, original header/point definition and subject.
-        // The old <=50k array/capability is never minted, spoofed or widened.
-        const selection=freeze({selection_version:'frozen_job_stock_source_v1',scope,operation_id:input.operationId,
-          subject_intent:retained.intent.reference,stock_reference:stockReference,generation_id:stock.generation_id,
-          spatial_definition_sha256:stock.definition_sha256,source_original_sha256:stock.source_original_sha256,
-          stock_population:stock.population});
-        const context=contextOf(retained.subject),purpose=describeNeighborhoodCombinedEvidenceMarketDataPurpose({
-          selection_sha256:assessmentEvidenceDigest(selection),effective_date:context.effective_date,
-          observation_period:input.observationPeriod,knowledge_cutoff:null});
-        // Same independently approved fixed mapping5/witness2, immutable
-        // retention and all-date one-hop fields. Retained grant metadata is not
-        // authority: current policy must allow before any licensed original.
-        const decision=await boundedPolicy(authorizeMarketData,client,input.auth,context,purpose,budget);
-        const binding={...scope,operation_id:input.operationId,generation_id:stock.generation_id,
-          spatial_definition_sha256:stock.definition_sha256,source_original_sha256:stock.source_original_sha256};
-        const chain=createCohortOriginalSourceChainV1Store(blobs,binding,{signal:budget.signal,checkBudget:budget.check});
-        let root,reference=checkpoint.evidence_refs[2]??null;
-        if(reference) {
-          const text=await blobs.get(reference.content_sha256,reference.canonical_utf8_bytes);
-          if(text===null||Buffer.byteLength(text)>16_000) fail('checkpoint_conflict');
-          let previous;try{previous=JSON.parse(text);}catch{fail('checkpoint_conflict');}
-          exactKeys(previous,['source_stage_version','usage','selection','purpose','market_decision','root']);
-          if(previous.source_stage_version!==1||previous.usage!=='frozen_source_prefix_only'
-            ||!same(previous.selection,selection)||!same(previous.purpose,purpose)||!same(previous.market_decision,decision)) fail('market_policy_changed');
-          root=previous.root;
-        }else root=(await chain.create()).root;
-        let prefix=await chain.describe(root);
-        const kind=COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.find(key=>!prefix.layers[key].ended);
-        if(kind) {
-          const page=await createNeighborhoodFrozenJobSourcePages(client,{...stockOptions,signal:budget.signal})
-            .page({kind,cursor:prefix.layers[kind].cursor,rowLimit:250});
-          root=(await chain.append({root,original_text:JSON.stringify({binding,page})})).root;
-          prefix=await chain.describe(root);
-          const body={source_stage_version:1,usage:'frozen_source_prefix_only',selection,purpose,market_decision:decision,root};
-          reference=await blobs.put(canonicalAssessmentJson(body));
-          await jobs.saveCheckpoint(claim,jobOptions,{phase:'frozen_source_v1',evidence_refs:[retained.intent.reference,stockReference,reference]});
-        }
-        input=freeze({...input,auth:await loadCurrentCustomCohortJobActor(client,input.auth.userId,scope.organization_id)});
-        assertTarget(await resolveTarget(client,input,true),target);
-        privateDraft(await privateCaptureWorkfile(client,input));
-        if((await subjects.compareCurrent(retained.subjectReference)).status!=='matched') fail('subject_changed');
-        authorizePublicCadastralCatalogRead(input.auth,input.accountId,{workflows:['custom_appraisal'],
-          permissionChecker:(auth,workflow,permission)=>hasApplicationPermission(auth,workflow,permission,scope.organization_id)});
-        if(!same(await boundedPolicy(authorizeMarketData,client,input.auth,context,purpose,budget),decision)) fail('market_policy_changed');
-        if(!same(await jobs.readRequest(claim,jobOptions),requested)||!same(await stockStore.read(),stock)) fail('checkpoint_conflict');
-        if(!same((await chain.describe(root)).layers,prefix.layers)) fail('checkpoint_conflict');
-        budget.check();
-        return freeze({status:'source_prefix_retained',operation_id:input.operationId,source_reference:reference,
-          generation_id:stock.generation_id,advanced:kind!==undefined,layers:prefix.layers,
-          all_layers_ended:COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.every(key=>prefix.layers[key].ended),
-          original_graph_verification:'not_established',source_acquisition:'not_established',report_update:'none'});
-      });
-    },
+    /** Internal source-prefix DATA stage; never dispatched by the legacy worker. */
+    prepareFrozenCaptureJobSourcePage: (value, options = {}) => frozenCaptureJobSourceStage(value, options),
+    /** Independent current-authorized root-edge/original-representation validation.
+     * Not typed identity closure, complete geographic stock, source acquisition,
+     * report publication or Apply. Progress is loaded only from this job's fence. */
+    verifyFrozenCaptureJobSourcePage: (value, options = {}) => frozenCaptureJobSourceStage(value, options, true),
     async capture(value, options = {}) {
     if (!options || Object.getPrototypeOf(options) !== Object.prototype)
       fail('invalid_options');

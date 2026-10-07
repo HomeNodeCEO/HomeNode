@@ -2046,6 +2046,52 @@ acquisition, bounded exact numerical/geometry consumers, coherent report
 publication and real >50k/5-mile/10-mile/retrospective/live QA acceptance remain
 outstanding. No genuine appraisal choices or accepted reports are changed.
 
+### Independent original graph verification stage (2026-10-07)
+
+The internal `verifyFrozenCaptureJobSourcePage` method independently reopens the
+completed original source root and follows one actual root-linked edge per
+transaction. Its bounded four-reference `frozen_verify_v1` checkpoint retains
+the unchanged subject, stock and source references plus small verification
+progress. Progress comes only from the exact live scoped job, never a browser
+cursor or claimed completeness. Each of the seven layers starts at its actual
+head, follows every previous edge and must match declared page, row and byte
+counts at its tail. An unfinished acquisition cannot start verification.
+
+Each original page is also reproduced independently from the fixed indexed SQL
+closure against the same pinned immutable generation. Every native row key and
+`payload_text` must match exactly; only bounded metadata is canonicalized.
+Unsafe decimal literals and large escaped strings are neither parsed into
+numbers nor sent through an enlarged legacy whole-JSON envelope. This verifies
+representation and the original fixed page query, not merely content hashes or
+end markers. No second spatial discovery, mutable CAD/MLS fallback, extra
+linked-account discovery or dense population is introduced.
+
+The actual owner uses the same initial/ending current DB actor, assignment,
+draft, subject, source-purpose, job-request/lease and exact generation/stock
+checks as original acquisition. Progress and the fenced checkpoint commit
+together; ending refusal rolls them back and a lost COMMIT acknowledgment can
+reopen the next saved edge. Completed progress still requires current rights.
+Neither this method nor the new checkpoint is dispatched by the legacy worker.
+
+Required native evidence covers the full seven-layer adversarial fixture,
+initial/ending source denial, ending role/subject changes, exact escaped/unsafe
+originals, lost actual COMMIT acknowledgment and fresh-client continuation with
+no spatial query. The 60,001-property native fixture must also reject a 500-row
+unfinished prefix before any verification source query. A separate synthetic
+60,001-original graph exercises all 241 page edges and constant-size progress;
+that does **not** substitute for native full large-area acquisition or live
+timing.
+
+`representation_verified` deliberately establishes no typed identity closure,
+complete geographic-stock verification or source-acquisition/report grant.
+Geographic stock still contains null-account geometry that the selected-account
+source graph does not, and source closure includes outside parts that are not
+geographic stock. Those original checks, typed source interpretation, exact
+complete-population numerics, worker integration, coherent publication,
+terminal original transfer/pin retirement and live acceptance remain pending.
+No production route/default, source cap/right, cron, deployment, genuine report
+choice or accepted report is changed by this dormant stage.
+
 ### Current-authorized indexed source prefix stage (2026-10-07)
 
 The internal `prepareFrozenCaptureJobSourcePage` method now connects the actual

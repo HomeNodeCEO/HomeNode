@@ -483,6 +483,11 @@ test('isolated PostgreSQL: freezes a complete 60001-account original source popu
       'fresh actual source transactions use retained indexed membership without another spatial sweep');
     const sourceCheckpoint=(await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[sourceOperation])).rows[0].checkpoint;
     assert.equal(sourceCheckpoint.phase,'frozen_source_v1');assert.equal(sourceCheckpoint.evidence_refs.length,3);
+    const unfinishedFrom=sourceCalls.length;
+    await assert.rejects(sourceOwner.verifyFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),/unfinished_original_graph/);
+    assert.ok(!sourceCalls.slice(unfinishedFrom).some(sql=>sql.includes('neighborhood-frozen-job-closure:')),
+      'the 500-row prefix is never accepted as a complete 60,001-property original graph');
+    assert.deepEqual((await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[sourceOperation])).rows[0].checkpoint,sourceCheckpoint);
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1',[assignment])).rows[0].n,0);
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,sourceOperation));
     await assert.rejects(sourceOwner.prepareFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),/claim_lost/);
@@ -738,8 +743,64 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       assert.deepEqual(seen,keys,`${kind} actual authorized indexed prefix retains exact all-date one-hop originals`);
     }
     assert.equal(ownedHeader.selection.stock_population.unassociated_parcel_count,'1');
+    // Independent actual-owner verification uses a new transaction/client for
+    // each root edge, with current DB actor/source purpose at both ends. It is
+    // representation verification only, never a typed acquisition/Apply receipt.
+    const verificationCalls=[];let revokeVerification=false,revokeVerificationRole=false,
+      changeVerificationSubject=false,loseVerificationCommit=false;
+    const verificationPool={async connect(){const client=await pool.connect();return {release:client.release.bind(client),async query(config){
+      verificationCalls.push(config.text);const result=await client.query(config);
+      if(config.text.includes('neighborhood-frozen-job-closure:')&&revokeVerification){revokeVerification=false;
+        await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});}
+      if(config.text.includes('neighborhood-frozen-job-closure:')&&revokeVerificationRole){revokeVerificationRole=false;
+        await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);}
+      if(config.text.includes('neighborhood-frozen-job-closure:')&&changeVerificationSubject){changeVerificationSubject=false;
+        await client.query("UPDATE app.appraisal_subject_snapshots SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2000') WHERE id=$1",[sourceSnapshot]);}
+      if(config.text==='COMMIT'&&loseVerificationCommit){loseVerificationCommit=false;throw Error('synthetic verification COMMIT acknowledgement lost');}
+      return result;}};}};
+    const verificationOwner=createCustomCohortContextCapture({pool:verificationPool,sourceMode:'combined-witness2-v1',authorizeMarketData:fixturePolicy()});
+    const readCheckpoint=async()=>(await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[sourceOperation])).rows[0].checkpoint;
+    await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+    await assert.rejects(verificationOwner.verifyFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),/market_data_access_denied/);
+    assert.ok(!verificationCalls.some(sql=>sql.includes('neighborhood-frozen-job-closure:')),'current denied license reads no graph originals');
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));revokeVerification=true;
+    await assert.rejects(verificationOwner.verifyFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),/market_data_access_denied/);
+    assert.deepEqual(await readCheckpoint(),ownedCheckpoint,'ending license revocation rolls back graph progress');
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));revokeVerificationRole=true;
+    await assert.rejects(verificationOwner.verifyFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),/job_actor_access_revoked/);
+    assert.deepEqual(await readCheckpoint(),ownedCheckpoint,'ending current role revocation rolls back graph progress');
+    await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    changeVerificationSubject=true;
+    await assert.rejects(verificationOwner.verifyFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),/subject_changed/);
+    assert.deepEqual(await readCheckpoint(),ownedCheckpoint,'ending original subject comparison rolls back graph progress');
+    loseVerificationCommit=true;
+    await assert.rejects(verificationOwner.verifyFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),error=>error.outcome_unknown===true);
+    const committedCheckpoint=await readCheckpoint();assert.equal(committedCheckpoint.phase,'frozen_verify_v1');
+    assert.equal(committedCheckpoint.evidence_refs.length,4);
+    const progressFrom=verificationCalls.length;
+    let verified=await verificationOwner.verifyFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim});
+    assert.equal(verified.verified_layer_count,2,'fresh-client lost-ACK recovery resumes at the next actual root head');
+    assert.ok(verificationCalls.slice(progressFrom).some(sql=>sql.includes('neighborhood-frozen-job-closure:accounts')));
+    assert.ok(!verificationCalls.slice(progressFrom).some(sql=>sql.includes('neighborhood-frozen-job-closure:parcels')),
+      'the already committed first graph edge is not silently duplicated');
+    for(let i=0;i<10&&!verified.all_layers_verified;i++)verified=await verificationOwner.verifyFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim});
+    assert.equal(verified.all_layers_verified,true);assert.equal(verified.original_graph_verification,'representation_verified');
+    assert.equal(verified.geographic_stock_verification,'not_established');assert.equal(verified.typed_identity_closure,'not_established');
+    assert.equal(verified.source_acquisition,'not_established');assert.equal(verified.report_update,'none');
+    const replayFrom=verificationCalls.length;
+    assert.equal((await verificationOwner.verifyFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim})).advanced,false);
+    assert.ok(!verificationCalls.slice(replayFrom).some(sql=>sql.includes('neighborhood-frozen-job-closure:')));
+    assert.ok(!verificationCalls.some(sql=>/ST_DWithin|frozen-spatial:counts|job-stock:begin/.test(sql)),
+      'verification does not repeat spatial discovery or replace the indexed stock');
+    await assert.rejects(sourceOwner.prepareFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),/checkpoint_conflict/,
+      'an immutable graph verification cannot be resumed as a mutable source prefix');
+    await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+    await assert.rejects(verificationOwner.verifyFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),/market_data_access_denied/,
+      'a completed representation checkpoint is never a retained permission grant');
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1',[assignment])).rows[0].n,0);
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,sourceOperation));
+    await assert.rejects(verificationOwner.verifyFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),/claim_lost/);
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,operation));
     await assert.rejects(withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSourceClosurePages(client,
       frozenSpatialOptions({...options,claim})).page({kind:'source_records',cursor:''})),/claim_lost/);

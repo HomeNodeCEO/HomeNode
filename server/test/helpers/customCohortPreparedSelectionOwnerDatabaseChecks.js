@@ -44,6 +44,11 @@ export async function runCustomCohortPreparedSelectionOwnerDatabaseChecks({ pool
     expectedWorkspaceCheckpoint: prior.section_value, pendingCapture: pending });
   const captured = await owner.capture({ ...identity, operationId: pending.operation_id, observationPeriod });
   const nextRead = { ...identity, contextRef: captured.context_ref };
+  // Capture registration alone does not publish the subdivision catalog.
+  // Explicitly exercise its actual owner preparation before the supplemental
+  // membership preparation; never let a selection command fill this cache miss.
+  const catalog = await owner.catalog({ ...nextRead, selection: { revision: 1, pockets: [] }, catalogVersion: 3 });
+  assert.equal(catalog.catalog.catalog_complete, true);
   const finish = { ...nextRead, operationId: randomUUID(), expectedSelectionRef: null,
     expectedWorkspaceRevision: started.workspace.revision, expectedWorkspaceCheckpoint: started.workspace.value,
     includedRecordedGroupIds: [] };

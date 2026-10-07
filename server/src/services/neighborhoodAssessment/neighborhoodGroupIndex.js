@@ -198,6 +198,9 @@ const PRUNE_PARCELS=PRUNE_FACTS('neighborhood_group_parcel_facts');
 const PRUNE_SALES=PRUNE_FACTS('neighborhood_group_sale_facts');
 const PRUNE_ORIGINALS=PRUNE_FACTS('neighborhood_frozen_source_rows');
 
+/** Retire an unpinned prior generation after publication. A short exclusive
+ * retirement claim prevents new pins before bounded, restartable deletions;
+ * failure defers cleanup without rolling back the newly published index. */
 async function pruneObsoleteGeneration(client,batchSize,deadline) {
   // Claim retirement atomically before deleting even the first fact batch.
   // The generation row lock conflicts with a new pin's KEY SHARE lock. Once

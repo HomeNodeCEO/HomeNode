@@ -20,7 +20,7 @@ CREATE TABLE app.neighborhood_custom_cohort_prepared_generation_pins (
       (operation_id,organization_id,report_file_id,assignment_file_id,account_id,actor_user_id)
     ON DELETE RESTRICT ON UPDATE RESTRICT
 );
-CREATE INDEX neighborhood_custom_cohort_prepared_generation_pins_generation_idx
+CREATE INDEX neighborhood_cohort_prepared_pins_generation_idx
   ON app.neighborhood_custom_cohort_prepared_generation_pins(generation_id);
 CREATE TRIGGER neighborhood_custom_cohort_prepared_generation_pins_immutable
   BEFORE UPDATE OR DELETE OR TRUNCATE ON app.neighborhood_custom_cohort_prepared_generation_pins

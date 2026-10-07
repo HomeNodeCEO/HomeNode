@@ -1,5 +1,38 @@
 # Complete larger-area Custom neighborhood studies
 
+## Whole catalog parcel-membership preparation (not a live read switch)
+
+`customCohortCatalogMembershipWitness.js` supplements the compact display graph
+with actual bounded original `(account, group)` and independent roster pages.
+The existing complete-partition compiler verifies every assigned/unassigned
+group, count and ordered digest against the original roster. The display and
+membership graphs must share the same original catalog identity. This is a
+whole-population artifact, not the appraiser's selected area or saved head.
+
+Preparation stages and fully verifies both graphs in the caller transaction,
+reopens ending display originals and membership metadata/root, then retains a
+small supplementary root binding source read-model bytes, complete roster,
+scope/context and both graph manifests. Every cleanup reference is returned.
+Shared finite I/O accounting and a serial lane span all calls, including actual
+settlement; aliases, missing later originals, lost acknowledgments, cancellation
+and deadline/budget failures do not produce a completed registration receipt.
+The caller must roll back every failed operation and fence current assignment,
+source and subject rights before and after coherent registration.
+
+Synthetic tests cover exact 60,001-member/empty/unresolved partitions, damaged
+unselected memberships, whole original retention, ending losses and finite
+settlement fences. A new guarded disposable PostgreSQL fixture covers real
+tenant-private bytes, fresh-client full membership verification, rollback and
+unchanged report/acceptance/section/selection-head state. Its execution still
+requires fresh native CI; the memory repository tests are not that evidence.
+
+No browser transport/decoder, SQL registry, generic blob API, map/member cast,
+current authorization, worker schedule, cap, V7 default, host or Apply behavior
+changes here. Versioned individual-membership consumers and coherent current
+registry integration are required next. Durable partial acquisition/spatial
+recovery, complete fifteen-metric >50k publication, recurring worker and real
+5/10-mile/city/retrospective/live acceptance remain incomplete.
+
 ## Prepared statistics-only coherent display (not map/member/host activation)
 
 `customCohortPreparedStatisticsDisplay.ts` composes the actual issued complete

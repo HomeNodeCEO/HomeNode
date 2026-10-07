@@ -1,5 +1,46 @@
 # Complete larger-area Custom neighborhood studies
 
+## Pinned exact-radius spatial pages (2026-10-07, internal only)
+
+`neighborhoodFrozenSpatialPages` queries the immutable original parcel geometry
+in the job's already-retained overnight version. An exact geography-expression
+GiST index supports the unchanged whole-parcel, spheroid `ST_DWithin` predicate
+for the existing 1-/2-/3-/5-/10-mile choices. Parcel centers, subdivision dots,
+approximate degree envelopes and simplified geometry never define membership.
+Unique account identities are independently grouped in C-collated order; parcel
+pages retain individual IDs, exact original geometry hashes and source hashes.
+No full city account array or original geometry payload is transferred to Node.
+
+Every page reopens the live scoped claim and original metadata at both ends.
+Fixed population counts may be reused only within that same finite reader's
+definition/version, never current actor/source rights. Postgres admits bounded
+encoded bytes before delivery. Fixed row/query/page/byte/runtime limits and a
+serial settlement lane span all calls. Page ends, exact counts and the definition
+digest are data only: the future acquisition owner must verify complete ordered
+pages, bind cursor/version/subject, and independently enforce current rights.
+
+Unlocated null/empty geometries are reported as **global unknown-location
+parcels**, not silently classified as outside the study. Invalid nonempty
+geometry refuses the read before distance predicates. Null-account parcels stay
+in parcel counts; they are not manufactured into account identities. A subject
+outside the known spatial membership is reported, never silently inserted.
+Neither historical stock nor provider completeness is inferred from this mirror.
+
+Local tests cover native key ordering, >50k counts, claim/header loss even with
+cached counts, unknown geometry, corruption, cancellation, I/O settlement,
+closed inputs and indexed fixed SQL. Native CI extends the actual pinned sweep
+fixture and traverses all **60,001 account identities** with 250-row pages and
+running count/cursor only, plus 5-/10-mile queries and scope/cancel refusals.
+Native proof is pending until those real database assertions execute.
+
+This module is not mounted or activated. It adds no new source grant and cannot
+be cast into the old 50k array-bound acquisition receipt. A current-authorized
+durable acquisition owner, seeded all-date one-hop source closure, terminal
+retention transfer, complete-population statistics and coherent report/Apply
+consumers remain before activation. City polygons need their separate installed
+identity/predicate path; this reader explicitly accepts radius definitions only.
+Existing schedules, V7 defaults, genuine choices and accepted reports stay put.
+
 ## Bounded pinned original-source pages (2026-10-07, storage only)
 
 `neighborhoodFrozenSourcePages` reads fixed original mirror layers from an

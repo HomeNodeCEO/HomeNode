@@ -1,5 +1,46 @@
 # Complete larger-area Custom neighborhood studies
 
+## Stable prepared-generation retention (2026-10-07, internal only)
+
+The job ledger now has explicit `pinPreparedGeneration` and
+`readPreparedGeneration` storage operations. Preparation chooses the completed
+active overnight city/subdivision generation itself; no browser generation ID
+is accepted. Reopening or replaying uses that same retained generation, even
+after a newer sweep publishes or a replacement worker claims the operation.
+Every operation checks the exact organization/report/assignment/account,
+original actor, live claim token/attempt, cancellation and lease at both ends.
+Two caller-transaction probes refuse autocommit before any pin write. The pin
+shares the caller's rollback/commit and never renews a lease or starts a capture.
+
+The additive migration binds each immutable pin to the exact job identity and
+generation with restrictive foreign keys. Statement-level transition-table
+guards prevent modification or removal of pinned generation metadata and all
+three fact collections without adding one lookup per fact row. Generation row
+locks coordinate a first pin with mutations and cleanup. The updated scheduled
+index writer excludes every pinned version and commits a retirement marker
+before deleting any old fact batch; a version whose cleanup has begun cannot be
+pinned after a worker crash. Unpinned old versions still retire in bounded
+batches. Older worker builds that do not know about pins cannot delete pinned
+facts: the database guard refuses that entire statement and cleanup is deferred.
+
+Local tests cover scope/claim fences, read misses, closed inputs, autocommit,
+exact replay, corruption and ending claim loss. The native index fixture uses
+the actual nightly writer and migrated database for rollback, lost COMMIT ACK
+with fresh reopen, pin immutability, four consecutive sweeps, unpinned cleanup,
+replacement claims and cancellation. Native CI proof is required before merge.
+
+This is a retention prerequisite, **not** full original-source acquisition:
+the existing group index is descriptive and lacks the complete original parcel
+geometry, MLS witness/association graph and historical source coverage required
+by a report. A pin cannot be cast into the legacy acquisition receipt, current
+source authorization, selected membership, statistical result or Apply proof.
+No owner/HTTP/worker call creates pins automatically, and no feature/default,
+installed cap, production schedule or genuine appraisal choice changes here.
+Bounded original-source materialization and current-authorized consumer wiring
+remain required. A reviewed terminal-job retention/release policy is also
+required before activating pins, so completed/cancelled jobs do not retain
+nightly versions indefinitely. Whole-roadmap/live acceptance remains incomplete.
+
 ## Retained original group-selection staging (not a selected-head switch)
 
 The internal `customCohortRetainedGroupSelectionStage` consumes actual stored

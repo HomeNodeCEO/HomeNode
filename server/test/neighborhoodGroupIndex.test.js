@@ -147,3 +147,16 @@ test('nightly facts keep missing amenities unknown and aggregate only recorded a
   assert.match(summary,/percentile_cont\(0\.5\).*garage_area_sqft/);
   assert.match(summary,/percentile_cont\(0\.5\).*outbuilding_area_sqft/);
 });
+
+test('cleanup claims retirement in a separate transaction before deleting facts and excludes every pin',async()=>{
+  const f=fixture();
+  await runNeighborhoodGroupIndex(f.pool,{logger:{info(){}}});
+  const sql=f.calls.map(call=>call.sql);
+  const begin=sql.indexOf('BEGIN ISOLATION LEVEL READ COMMITTED');
+  assert.ok(begin>sql.indexOf('COMMIT'),'publication is already committed');
+  const claim=sql[begin+1];
+  assert.match(claim,/NOT EXISTS \(SELECT 1 FROM app\.neighborhood_custom_cohort_prepared_generation_pins/);
+  assert.match(claim,/FOR UPDATE OF generation SKIP LOCKED/);
+  assert.equal(sql[begin+2],'COMMIT');
+  assert.equal(sql.slice(begin).some(value=>value.includes('DELETE FROM')),false,'empty retirement does not delete any facts');
+});

@@ -1,5 +1,39 @@
 # Complete larger-area Custom neighborhood studies
 
+## Transactional whole-catalog membership registry (not live activation)
+
+The prepared-catalog registry can explicitly compile and retain both display
+and actual whole-catalog membership graphs from its checked compressed catalog
+and independent indexed preview originals. The additive membership-root table
+links the exact existing display/source format to the supplemental root in the
+same caller transaction. Existing display-only prepare/read behavior is unchanged.
+Source/transaction checks precede the first write and fence registration again;
+lost acknowledgments, cancellation or any late failure require full rollback.
+
+`reopenMembership` transfers no dense source catalog/preview. It reads current
+SQL source/display/member pins and every retained original membership and union
+page, checks exact full partition descriptors against the independent display
+original, then rereads ending original roots/metadata and current registration.
+It returns an explicitly whole-catalog receipt, NOT an appraiser-selected head,
+map projection, statistics, access grant or Apply evidence. Current actor,
+assignment, source and subject authorization stays with the surrounding owner
+on both ends. No new current-owner command, browser route, worker or flag mounts
+these methods yet. All cleanup roots and aggregate finite settlement budgets
+remain explicit; a read does not compile a cache miss.
+
+Local fixtures exercise 12,001 ACTUAL source-mapped observations, empty and
+unresolved populations, stale formats/pins, substituted roots/metadata, missing
+later pages, ending loss and held-I/O cancellation. The actual old source
+acquisition refuses the attempted 60,001-record fixture at its input-byte
+ceiling; this is retained as an assertion, not bypassed or represented by a
+smaller fake population. The separate isolated 60,001-member representation
+test is not complete large-area source acquisition. Guarded native SQL assertions
+extend real commit/fresh-client/foreign-scope/immutability and lost-member-ACK/
+cancellation rollback with unchanged reports/choices. Fresh CI must execute
+them before they count as database proof. Durable partial source/spatial
+acquisition, versioned map/member/owner consumers, fifteen-metric >50k coherent
+publication and real large-area/retrospective/live acceptance remain required.
+
 ## Whole catalog parcel-membership preparation (not a live read switch)
 
 `customCohortCatalogMembershipWitness.js` supplements the compact display graph

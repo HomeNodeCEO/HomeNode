@@ -42,7 +42,7 @@ export async function checkCustomCohortPreparedCatalogRegistryDatabase(pool, ide
       { status: 'unavailable', reason: 'synthetic_geometry_not_supplied', geojson: null });
     return prepared.context_ref;
   }
-  let context, complete, staged;
+  let context, complete, staged, completeMembership, stagedMembership;
   try {
     await client.query('BEGIN'); await client.query("SET LOCAL statement_timeout='8s'");
     context = await source(randomUUID());
@@ -50,13 +50,30 @@ export async function checkCustomCohortPreparedCatalogRegistryDatabase(pool, ide
     assert.equal(await owner.open(), null); staged = await owner.prepare(); complete = await owner.reopen();
     assert.equal(staged.status, 'prepared'); assert.equal(complete.metadata.account_count, 31);
     assert.equal((await registry(observing, scopeJson, json(context)).prepare()).status, 'reused');
+    assert.equal(await owner.reopenMembership(),null);
+    stagedMembership = await owner.prepareMembership(); completeMembership = await owner.reopenMembership();
+    assert.equal(stagedMembership.status,'prepared'); assert.equal(completeMembership.account_count,31);
+    assert.equal(JSON.parse(completeMembership.manifest_json).membership_count,'31');
+    assert.deepEqual(completeMembership.witness_ref,stagedMembership.witness_ref);
+    assert.equal((await registry(observing,scopeJson,json(context)).prepareMembership()).status,'reused');
+    const savedMembers = await client.query(`SELECT witness_sha256,display_manifest_sha256
+      FROM app.neighborhood_custom_cohort_catalog_membership_roots WHERE organization_id=$1 AND context_id=$2`,
+    [scope.organization_id,context.context_id]);
+    assert.equal(savedMembers.rowCount,1); assert.equal(savedMembers.rows[0].witness_sha256,stagedMembership.witness_ref.content_sha256);
+    assert.equal(savedMembers.rows[0].display_manifest_sha256,staged.manifest_ref.content_sha256);
+    const originalBlobs = createNeighborhoodCohortBlobRepository(client,scope.organization_id);
+    for (const ref of stagedMembership.retention_refs)
+      assert.equal(typeof await originalBlobs.get(ref.content_sha256,ref.canonical_utf8_bytes),'string');
     assert.equal((await client.query(`SELECT count(*)::int AS n FROM app.neighborhood_custom_cohort_prepared_catalog_roots
       WHERE organization_id=$1 AND context_id=$2`, [scope.organization_id, context.context_id])).rows[0].n, 1);
     await client.query('COMMIT');
     for (const sql of [
       'UPDATE app.neighborhood_custom_cohort_prepared_catalog_roots SET manifest_sha256=manifest_sha256 WHERE organization_id=$1 AND context_id=$2',
       'DELETE FROM app.neighborhood_custom_cohort_prepared_catalog_roots WHERE organization_id=$1 AND context_id=$2',
-      'TRUNCATE app.neighborhood_custom_cohort_prepared_catalog_roots',
+      'TRUNCATE app.neighborhood_custom_cohort_prepared_catalog_roots, app.neighborhood_custom_cohort_catalog_membership_roots',
+      'UPDATE app.neighborhood_custom_cohort_catalog_membership_roots SET witness_sha256=witness_sha256 WHERE organization_id=$1 AND context_id=$2',
+      'DELETE FROM app.neighborhood_custom_cohort_catalog_membership_roots WHERE organization_id=$1 AND context_id=$2',
+      'TRUNCATE app.neighborhood_custom_cohort_catalog_membership_roots',
     ]) {
       await client.query('BEGIN'); await client.query('SAVEPOINT registry_rejection');
       await assert.rejects(client.query(sql, sql.startsWith('TRUNCATE') ? [] : [scope.organization_id, context.context_id]),
@@ -65,6 +82,7 @@ export async function checkCustomCohortPreparedCatalogRegistryDatabase(pool, ide
     }
     const counts = async () => (await pool.query(`SELECT
       (SELECT count(*)::int FROM app.neighborhood_custom_cohort_prepared_catalog_roots) AS roots,
+      (SELECT count(*)::int FROM app.neighborhood_custom_cohort_catalog_membership_roots) AS member_roots,
       (SELECT count(*)::int FROM app.neighborhood_cohort_evidence_blobs) AS blobs`)).rows[0];
     const retained = await counts(); await client.query('BEGIN');
     const alternate = await source(randomUUID());
@@ -76,6 +94,21 @@ export async function checkCustomCohortPreparedCatalogRegistryDatabase(pool, ide
     } };
     await assert.rejects(registry(lostAck, scopeJson, json(alternate)).prepare(), /synthetic_registry_lost_ack/);
     assert.equal(failed, true); await client.query('ROLLBACK'); assert.deepEqual(await counts(), retained);
+    for (const failure of ['ack','cancel']) {
+      await client.query('BEGIN'); const additional = await source(randomUUID()), cancellation = new AbortController(); let observed = false;
+      const failing = { release() {},async query(sql,values) {
+        const result = await client.query(sql,values);
+        if (sql.includes('prepared-catalog-membership:insert')) {
+          observed = true;
+          if (failure === 'ack') throw new Error('synthetic_membership_lost_ack');
+          cancellation.abort();
+        }
+        return result;
+      } };
+      await assert.rejects(registry(failing,scopeJson,json(additional),{ signal:cancellation.signal }).prepareMembership(),
+        failure === 'ack' ? /synthetic_membership_lost_ack/ : /cancelled/);
+      assert.equal(observed,true); await client.query('ROLLBACK'); assert.deepEqual(await counts(),retained);
+    }
     await client.query('BEGIN'); await assert.rejects(registry(client, scopeJson, json(context)).page(20), /page_index/);
     await client.query('ROLLBACK');
   } catch (error) { await client.query('ROLLBACK'); throw error; }
@@ -86,12 +119,15 @@ export async function checkCustomCohortPreparedCatalogRegistryDatabase(pool, ide
     const observed = { release() {}, async query(sql, values) { calls.push(sql); return observer.query(sql, values); } };
     const first = calls.length, owner = registry(observed, scopeJson, json(context));
     assert.deepEqual(await owner.reopen(), complete);
+    assert.deepEqual(await owner.reopenMembership(),completeMembership);
     const directory = await owner.open(); assert.deepEqual(directory.manifest_ref, staged.manifest_ref);
     assert.deepEqual(JSON.parse((await owner.page(0)).page_json).groups, complete.groups);
     assert.ok(!calls.slice(first).some(sql => /registry:(originals|pins|insert)|prepared-(catalog|preview):read/.test(sql)));
     for (const changed of [{ ...scope, report_file_id: randomUUID() }, { ...scope, account_id: 'FOREIGN' },
-      { ...scope, organization_id: randomUUID() }, { ...scope, assignment_file_id: '9223372036854775807' }])
+      { ...scope, organization_id: randomUUID() }, { ...scope, assignment_file_id: '9223372036854775807' }]) {
       assert.equal(await registry(observed, json(changed), json(context)).open(), null);
+      assert.equal(await registry(observed,json(changed),json(context)).reopenMembership(),null);
+    }
     await observer.query('COMMIT');
     await assert.rejects(registry(observed, scopeJson, json(context)).open(), /caller_transaction_required/);
   } catch (error) { await observer.query('ROLLBACK'); throw error; }

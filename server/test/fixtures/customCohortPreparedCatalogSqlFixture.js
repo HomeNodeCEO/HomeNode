@@ -15,12 +15,20 @@ export function customCohortPreparedCatalogSqlFixture(f = fixture(), hooks = {})
   const source = { source_catalog_format_version: 2, catalog_sha256: c.digest, catalog_utf8_bytes: c.bytes,
     compressed_catalog_sha256: hash(c.packed), compressed_catalog: c.packed,
     preview_sha256: p.digest, preview_utf8_bytes: p.bytes, compressed_preview_sha256: hash(p.packed), compressed_preview: p.packed };
-  let root = null;
+  let root = null, memberRoot = null;
   const client = { release() {}, async query(sql, values) {
     calls.push({ sql, values }); await hooks.before?.(sql, values, source);
     let result;
     if (sql.includes('registry:transaction')) result = { rowCount: 1, rows: [{ transaction_id: hooks.transaction?.() ?? '77' }] };
     else if (/registry:(pins|originals)/.test(sql)) result = hooks.missingSource ? { rowCount: 0, rows: [] } : { rowCount: 1, rows: [{ ...source }] };
+    else if (sql.includes('prepared-catalog-membership:read')) result = memberRoot ? { rowCount:1,rows:[{ ...memberRoot }] } : { rowCount:0,rows:[] };
+    else if (sql.includes('prepared-catalog-membership:insert')) {
+      if (!memberRoot) {
+        memberRoot = { display_manifest_sha256:values[4],display_manifest_utf8_bytes:values[5],
+          witness_sha256:values[6],witness_utf8_bytes:values[7] };
+        result = { rowCount:1,rows:[{ witness_sha256:memberRoot.witness_sha256 }] };
+      } else result = { rowCount:0,rows:[] };
+    }
     else if (sql.includes('registry:read')) result = root ? { rowCount: 1, rows: [{ ...root,
       current_catalog_format_version: source.source_catalog_format_version,
       ...Object.fromEntries(['catalog_sha256', 'catalog_utf8_bytes', 'compressed_catalog_sha256', 'preview_sha256',
@@ -45,5 +53,6 @@ export function customCohortPreparedCatalogSqlFixture(f = fixture(), hooks = {})
     await hooks.after?.(sql, result, source); return result;
   } };
   const make = (options = {}, scope = f.scope) => registry(client, json(scope), json(f.context), options);
-  return { f, client, calls, source, originals, make, root: () => root, dropRoot: () => { root = null; } };
+  return { f, client, calls, source, originals, make, root: () => root, memberRoot: () => memberRoot,
+    dropRoot: () => { root = null; },dropMemberRoot: () => { memberRoot = null; } };
 }

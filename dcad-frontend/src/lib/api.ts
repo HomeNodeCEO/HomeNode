@@ -3035,6 +3035,20 @@ export async function createCanonicalReportFile(
   });
 }
 
+/** Create a Custom Appraisal for an entered address with no CAD account match. */
+export async function createAddressReportFile(input: {
+  organization_id: string;
+  client_request_id: string;
+  effective_date: string;
+  subject: { address: string; city?: string | null };
+}): Promise<{ report_file: CanonicalReportFile; created: boolean }> {
+  return fetchJSON(makeUrl('/api/address-subjects/report-files'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ...input, workflow_type: 'custom_appraisal' }),
+  });
+}
+
 /** Create a distinct appraisal file. Earlier file snapshots are never overwritten. */
 export async function createAssignmentFile(
   accountId: string,

@@ -26,6 +26,29 @@ export function normalizeAccountId(value) {
   return accountId;
 }
 
+function normalizeManualSubject(input) {
+  const address = String(input?.address || "").trim().replace(/\s+/g, " ");
+  const city = String(input?.city || "").trim().replace(/\s+/g, " ");
+  if (!/^\d+[A-Za-z]?(?:[-/]\d+)?\s+\S/.test(address)
+    || address.length > 200 || /[\u0000-\u001f\u007f]/.test(address)
+    || city.length > 100 || /[\u0000-\u001f\u007f]/.test(city)) {
+    throw new Error("invalid_subject_address");
+  }
+  return { address, city: city || null };
+}
+
+/** The request UUID gives an address-only file a stable, non-CAD account key on retries. */
+export function manualSubjectAccountId(clientRequestId) {
+  return `HNMANUAL_${normalizeUuid(clientRequestId, "invalid_client_request_id").replaceAll("-", "").toUpperCase()}`;
+}
+
+export async function createAddressReportFile(pool, auth, input = {}) {
+  if (input.workflow_type !== "custom_appraisal") throw new Error("invalid_workflow_type");
+  const subject = normalizeManualSubject(input.subject);
+  const accountId = manualSubjectAccountId(input.client_request_id);
+  return createReportFile(pool, auth, { ...input, account_id: accountId }, { manualSubject: subject });
+}
+
 function organizationAccess(auth, organizationId) {
   return auth.organizations.find((item) => item.organizationId === organizationId) || null;
 }
@@ -254,7 +277,7 @@ async function insertCanonicalTarget(client, {
   return { taxProtestFileId: id };
 }
 
-export async function createReportFile(pool, auth, input = {}) {
+export async function createReportFile(pool, auth, input = {}, { manualSubject = null } = {}) {
   const organizationId = normalizeOrganization(auth, input.organization_id, { write: true });
   const accountId = normalizeAccountId(input.account_id);
   const workflowType = normalizeWorkflowType(input.workflow_type);
@@ -289,6 +312,10 @@ export async function createReportFile(pool, auth, input = {}) {
       ) {
         throw new Error("creation_request_conflict");
       }
+      if (manualSubject && (
+        retried.rows[0].address !== manualSubject.address
+        || (retried.rows[0].city || null) !== manualSubject.city
+      )) throw new Error("creation_request_conflict");
       if (workflowType === "custom_appraisal") {
         const original = await client.query(
           `SELECT metadata->>'effective_date' AS effective_date FROM app.report_file_events
@@ -302,6 +329,13 @@ export async function createReportFile(pool, auth, input = {}) {
       }
       await client.query("COMMIT");
       return { reportFile: reportFileResponse(retried.rows[0]), created: false };
+    }
+    if (manualSubject) {
+      await client.query(
+        `INSERT INTO core.accounts (account_id, address, city, data_quality_status)
+         VALUES ($1, $2, $3, 'manual_subject')`,
+        [accountId, manualSubject.address, manualSubject.city],
+      );
     }
     const account = await client.query("SELECT account_id FROM core.accounts WHERE account_id = $1", [accountId]);
     if (!account.rows.length) throw new Error("account_not_found");

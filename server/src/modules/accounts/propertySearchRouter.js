@@ -2,6 +2,7 @@ import express from "express";
 
 import { resolveCanonicalAccountId } from "../../services/accountQuality.js";
 import { findAccountByCountyIdentifier } from "../../services/salesReconciliation.js";
+import { hasApplicationPermission } from "../../security/applicationAccess.js";
 import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import { PaginationError, parsePagination } from "../../util/pagination.js";
 import { normalizePropertyCity, parsePropertySearch } from "../../util/propertySearch.js";
@@ -11,6 +12,7 @@ export function createPropertySearchRouter({
   accountQualityReady,
   salesReconciliationReady,
   requireApplicationReader,
+  hasPermission = hasApplicationPermission,
   normalizeCity = normalizePropertyCity,
   parseSearch = parsePropertySearch,
   findCountyAccount = findAccountByCountyIdentifier,
@@ -33,6 +35,7 @@ export function createPropertySearchRouter({
     typeof normalizeCity !== "function"
     || typeof parseSearch !== "function"
     || typeof findCountyAccount !== "function"
+    || typeof hasPermission !== "function"
     || typeof resolveAccountId !== "function"
   ) {
     throw new TypeError("property_search_dependency_required");
@@ -56,6 +59,11 @@ export function createPropertySearchRouter({
 
       const params = [];
       const bind = (value) => `$${params.push(value)}`;
+      const manualOrganizationIds = (req.mobileAuth?.organizations || [])
+        .filter((organization) => hasPermission(
+          req.mobileAuth, "custom_appraisal", "read", organization.organizationId,
+        ))
+        .map((organization) => organization.organizationId);
       let where;
       let matchSql;
       let orderSql;
@@ -135,6 +143,12 @@ export function createPropertySearchRouter({
         `;
       }
 
+      const manualVisibilitySql = manualOrganizationIds.length ? `EXISTS (
+              SELECT 1 FROM app.report_files manual_file
+              WHERE manual_file.account_id = a.account_id
+                AND manual_file.workflow_type = 'custom_appraisal'
+                AND manual_file.organization_id = ANY(${bind(manualOrganizationIds)}::uuid[])
+            )` : "FALSE";
       const sql = `
         SELECT
           a.account_id,
@@ -174,6 +188,8 @@ export function createPropertySearchRouter({
           LIMIT 1
         ) mv ON TRUE
         WHERE ${where}
+          AND (a.data_quality_status IS DISTINCT FROM 'manual_subject'
+            OR ${manualVisibilitySql})
         ORDER BY ${orderSql}
         LIMIT ${bind(limit)} OFFSET ${bind(offset)}
       `;

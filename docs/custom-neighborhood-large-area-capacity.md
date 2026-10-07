@@ -8,8 +8,9 @@ It sends only the current assignment/context and an optional page index through
 two fixed read actions. The server directory supplies the pinned root; the
 browser never sends roots, member arrays, source grants, roles or preparation.
 A first `not_prepared` response returns an explicit cache miss with no legacy
-exploration fallback. Every subsequent directory/page still invokes the current
-server owner; there is no locally cached first-header shortcut.
+exploration fallback. The first authorized directory is consumed once as the
+decoder's opening original; every page and the ending directory still invoke
+the current server owner. There is no cross-operation cache.
 
 Only all ordered pages with exact original hashes/UTF-8 lengths, whole counts,
 scope/context and a matching ending directory produce the actual issued

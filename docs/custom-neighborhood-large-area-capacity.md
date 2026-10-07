@@ -1,5 +1,34 @@
 # Complete larger-area Custom neighborhood studies
 
+## Internal current-authorized whole membership commands (not map activation)
+
+`prepareRecordedCatalogMembership` and `reopenPreparedRecordedCatalogMembership`
+now wrap the actual whole-original registry in the current context owner's
+transaction. Both commands reload the current database actor and exact assignment,
+reopen the original context dependencies and subject, and independently require
+both catalog and individual-members source purposes before any derivative and
+again before delivery/commit. Display permission never implies a members grant.
+Private-source captures remain explicitly unsupported by this shared derivative.
+Preparation requires a draft; its public-shaped receipt returns status only,
+without roots. Read returns an internal whole-catalog receipt, not a selected
+head, map result, numeric summary or source grant. Missing roots never compile.
+
+No HTTP route, public presenter, browser/UI/default, cap, worker schedule or
+Apply path mounts these membership commands. Existing display commands retain
+their narrower source purpose and behavior. Closed inputs cannot inject roots,
+member arrays, projections or stale grants. Synthetic fixtures use the actual
+source mapper/index/compiler/registry; guarded native assertions exercise initial
+and ending independent-purpose denial, actual child-insert lost ACK/cancellation,
+fresh ending DB role loss and rollback, signed-file preparation refusal, reusable
+commit and fresh-client complete-page reads without dense source replay. Report,
+accepted section and selected-head state remain unchanged. Full current-head
+native CI is required for those database assertions to count as execution proof.
+
+Versioned map/member/opening consumers, resumable paged source/spatial acquisition,
+complete fifteen-metric >50k publication and real 5/10-mile/city/retrospective/live
+acceptance remain incomplete. This slice neither raises the existing acquisition
+byte ceiling nor claims the isolated 60,001-member representation is a live study.
+
 ## Transactional whole-catalog membership registry (not live activation)
 
 The prepared-catalog registry can explicitly compile and retain both display
@@ -17,8 +46,8 @@ original, then rereads ending original roots/metadata and current registration.
 It returns an explicitly whole-catalog receipt, NOT an appraiser-selected head,
 map projection, statistics, access grant or Apply evidence. Current actor,
 assignment, source and subject authorization stays with the surrounding owner
-on both ends. No new current-owner command, browser route, worker or flag mounts
-these methods yet. All cleanup roots and aggregate finite settlement budgets
+on both ends. The internal current-owner commands above now provide those fences;
+no browser route, worker or flag mounts them. All cleanup roots and finite budgets
 remain explicit; a read does not compile a cache miss.
 
 Local fixtures exercise 12,001 ACTUAL source-mapped observations, empty and

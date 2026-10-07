@@ -1,5 +1,47 @@
 # Complete larger-area Custom neighborhood studies
 
+## Retained original group-selection staging (not a selected-head switch)
+
+The internal `customCohortRetainedGroupSelectionStage` consumes actual stored
+whole-catalog membership/independent roster pages under a freshly source-checked
+registry binding, rather than replaying dense catalog/roster source arrays.
+It verifies every original partition page, filters the appraiser's exact recorded
+group IDs in original account order, and rechunks into the unchanged selected
+page width. Complete v2 command/catalog identity, metadata, page bytes and union
+digests match the existing source compiler exactly. Empty and unresolved choices
+remain explicit. Neither counts nor map viewport predicates replace members.
+
+The separate read-only `describe` method supplies exact existing command/catalog
+and metadata identity to a future selected-head verifier, without staged writes
+or a selected-manifest claim. It verifies the whole source graph at both ends;
+the consumer still must verify the actual selected manifest/pages and current
+head independently. Both methods share one finite budget and settlement lane.
+
+Every selected page passes the existing complete verifier before a fresh ending
+whole-original verification. Catalog command originals and all source/selected
+cleanup references are retained in the caller's transaction; lost acknowledgments,
+later missing originals, cancellation and budget expiry require full rollback.
+Finite aggregate I/O accounting spans all calls and the same serial lane remains
+occupied through actual settlement. Only one source page and one selected output
+buffer are held while filtering; no city-wide flattened member array is built.
+
+Synthetic tests compare byte-for-byte with the unchanged actual compiler/store,
+including isolated 60,001-member whole/empty selections, unresolved-only data,
+unselected-page loss, foreign bindings, nested getters, pending I/O and lifetime
+budgets. Guarded disposable PostgreSQL assertions cover actual staged original
+bytes, fresh-client complete verification, foreign-tenant denial and full rollback
+after lost write acknowledgment/cancellation with unchanged report/acceptance/head
+state. Native execution requires fresh full CI, not a memory repository claim.
+
+This primitive does not authorize sources, register a mutable selected head,
+commit, mount a browser/HTTP/map/numeric/Apply path or raise an installed cap.
+Current actor/assignment/subject/source fences remain the executable owner's
+responsibility on both ends; stored actor stamps describe intent only. Integrating
+this preparation with that owner, versioned map/member/opening consumers, durable
+paged source/spatial recovery, complete >50k publication and live acceptance are
+still required. The isolated representation is not large-area acquisition or an
+instant live timing result; existing source-byte refusal stays unchanged.
+
 ## Internal current-authorized whole membership commands (not map activation)
 
 `prepareRecordedCatalogMembership` and `reopenPreparedRecordedCatalogMembership`

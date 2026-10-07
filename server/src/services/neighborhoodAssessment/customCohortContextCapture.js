@@ -694,7 +694,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     }
   }
   const preparedCatalog = createCustomCohortPreparedCatalogOwner({ identityOf,
-    execute: async (originalInput, options, writing, work) => {
+    execute: async (originalInput, options, writing, work, projection) => {
+      // Closed owner methods alone choose this projection. Catalog display
+      // permission is never an implicit grant for individual membership.
+      if (!['catalog', 'membership'].includes(projection)) fail('invalid_input');
+      const additionalExposures = projection === 'membership' ? ['report_observation_members'] : [];
       const budget = operationBudget(options), permission = writing ? 'write' : 'read';
       return transaction(pool, 'READ COMMITTED', budget, async client => {
         const initial = await resolveTarget(client, originalInput, false, permission);
@@ -709,7 +713,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         assertTarget(target, initial);
         const scopeJson = canonicalAssessmentJson(Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])));
         const licensed = await authorizedRetainedInputs(client, { scopeJson, reference: input.contextRef, input,
-          authorizeMarketData, authorizePrivateSales, budget, exposure: 'report_observation_catalog', loadInputs: false });
+          authorizeMarketData, authorizePrivateSales, budget, exposure: 'report_observation_catalog',
+          additionalExposures, loadInputs: false });
         // Original metadata establishes whether this was a private-source study.
         // Never inspect a shared derivative or compile a fallback for that case.
         if (licensed.privateAuthorization) fail('prepared_catalog_private_source_unsupported');
@@ -723,7 +728,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         assertTarget(await resolveTarget(client, finalInput, true, permission), target);
         if (writing) privateDraft(await privateCaptureWorkfile(client, finalInput));
         const ending = await authorizedRetainedInputs(client, { scopeJson, reference: input.contextRef, input: finalInput,
-          authorizeMarketData, authorizePrivateSales, budget, exposure: 'report_observation_catalog', loadInputs: false });
+          authorizeMarketData, authorizePrivateSales, budget, exposure: 'report_observation_catalog',
+          additionalExposures, loadInputs: false });
         if (ending.privateAuthorization || !same(ending.header, licensed.header)
           || !same(ending.purpose, licensed.purpose) || !same(ending.decision, licensed.decision)
           || !same(ending.subjectReference, licensed.subjectReference)) fail('operation_conflict');

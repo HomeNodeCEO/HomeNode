@@ -26,24 +26,28 @@ function inputOf(value, identityOf, paged) {
  * a shared-only derivative must never silently replace their original study.
  * Only explicit internal preparation decodes originals; directory/page reads
  * return a cache miss without compiling, reconstructing members or writing.
- * No selection, numeric summary, map membership, Apply or legacy catalog cast.
+ * Whole membership is an internal original-data receipt, not a selected head
+ * or map result. Its executor must independently authorize the members purpose.
+ * No selection, numeric summary, map projection, Apply or legacy catalog cast.
  */
 export function createCustomCohortPreparedCatalogOwner({ identityOf, execute } = {}) {
   if (typeof identityOf !== 'function' || typeof execute !== 'function')
     throw new TypeError('custom_cohort_prepared_catalog_owner_dependencies');
   async function run(value, options, method) {
     const paged = method === 'page', input = inputOf(value, identityOf, paged);
-    return execute(input, options, method === 'prepare', async ({ client, scopeJson, budget }) => {
+    const membership = method === 'prepareMembership' || method === 'reopenMembership';
+    const writing = method === 'prepare' || method === 'prepareMembership';
+    return execute(input, options, writing, async ({ client, scopeJson, budget }) => {
       budget.check();
       const registry = createCustomCohortPreparedCatalogRegistry(client, scopeJson, json(input.contextRef),
         { signal: budget.signal, checkBudget: budget.check });
       const result = await registry[method](input.pageIndex); budget.check();
       const envelope = { authority: 'not_established', target: Object.freeze({ account_id: input.accountId,
         assignment_file_id: input.assignmentFileId }), context_ref: input.contextRef };
-      if (method === 'prepare') return Object.freeze({ ...envelope, status: result?.status ?? 'not_prepared' });
+      if (writing) return Object.freeze({ ...envelope, status: result?.status ?? 'not_prepared' });
       return Object.freeze({ ...envelope, status: result ? 'available' : 'not_prepared',
-        ...(paged ? { page_index: input.pageIndex } : {}), catalog: result });
-    });
+        ...(paged ? { page_index: input.pageIndex } : {}), [membership ? 'membership' : 'catalog']: result });
+    }, membership ? 'membership' : 'catalog');
   }
   return Object.freeze({
     /** Worker/internal-only preparation; not mounted as a browser command. */
@@ -52,5 +56,9 @@ export function createCustomCohortPreparedCatalogOwner({ identityOf, execute } =
     openPreparedRecordedCatalog: (value, options = {}) => run(value, options, 'open'),
     /** One exact original page, never an analytical membership page. */
     pagePreparedRecordedCatalog: (value, options = {}) => run(value, options, 'page'),
+    /** Internal whole-catalog preparation, not the appraiser's selected set. */
+    prepareRecordedCatalogMembership: (value, options = {}) => run(value, options, 'prepareMembership'),
+    /** Freshly verified original graph; no HTTP/public presenter or map cast. */
+    reopenPreparedRecordedCatalogMembership: (value, options = {}) => run(value, options, 'reopenMembership'),
   });
 }

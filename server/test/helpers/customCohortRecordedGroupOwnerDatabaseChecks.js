@@ -9,6 +9,7 @@ import { customCohortOpeningSelection } from '../../src/services/neighborhoodAss
 import { saveCustomAppraisalWorkfileSectionInTransaction } from '../../src/services/customAppraisalWorkfiles.js';
 import { runCustomCohortGroupWorkspaceHttpDatabaseChecks } from './customCohortGroupWorkspaceHttpDatabaseChecks.js';
 import { runCustomCohortPreparedCatalogOwnerDatabaseChecks } from './customCohortPreparedCatalogOwnerDatabaseChecks.js';
+import { runCustomCohortPreparedMembershipOwnerDatabaseChecks } from './customCohortPreparedMembershipOwnerDatabaseChecks.js';
 
 /** Invoked only by the verified disposable PostgreSQL fixture. No live accounts,
  * source provider, user report choices, accepted sections or shared database.
@@ -47,6 +48,7 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, sc
   const calls = [], checks = [];
   let loseCommitAck = false, cancelAtHead = null, revokeAtHead = false, revokeAtRead = false;
   let revokeAtCatalogRead = false, cancelAtCatalogRead = null, loseRegistryAck = false;
+  let loseMembershipAck = false, cancelAtMembershipInsert = null, revokeAtMembershipInsert = false;
   let cancelAtWorkspace = null, revokeAtWorkspace = false, failWorkspaceHistory = false;
   let denyPolicy = false, denyFinalPolicy = false, denySummary = false, denyFinalSummary = false;
   let denyMembers = false, denyFinalMembers = false;
@@ -65,6 +67,11 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, sc
       }
       if (loseRegistryAck && config.text.includes('prepared-catalog-registry:insert')) {
         loseRegistryAck = false; throw new Error('synthetic_registry_ack_failure');
+      }
+      if (config.text.includes('prepared-catalog-membership:insert')) {
+        cancelAtMembershipInsert?.abort(); cancelAtMembershipInsert = null;
+        if (revokeAtMembershipInsert) { revokeAtMembershipInsert = false; await suspend('suspended'); }
+        if (loseMembershipAck) { loseMembershipAck = false; throw new Error('synthetic_membership_ack_failure'); }
       }
       if (config.values?.[1] === 'neighborhood_workspace') {
         if (config.text.includes('INSERT INTO app.custom_appraisal_workfile_sections (')) {
@@ -132,6 +139,14 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, sc
       denyPolicy = value && !final; denyFinalPolicy = value && final; policyCalls = 0;
     }, revokeNextRead: () => { revokeAtCatalogRead = true; },
     cancelNextRead: controller => { cancelAtCatalogRead = controller; }, loseNextRegistryAck: () => { loseRegistryAck = true; },
+  })).checks);
+  checks.push(...(await runCustomCohortPreparedMembershipOwnerDatabaseChecks({ pool, owner, read, scope, calls,
+    protectedState, suspend, expectedAccounts: catalog.catalog.pockets.reduce((n,p) => n + p.member_count, catalog.catalog.unassigned.member_count),
+    denyMembers: (value, final = false) => { denyMembers = value && !final; denyFinalMembers = value && final; memberPolicyCalls = 0; },
+    loseNextMembershipAck: () => { loseMembershipAck = true; },
+    cancelNextMembershipInsert: controller => { cancelAtMembershipInsert = controller; },
+    revokeNextMembershipInsert: () => { revokeAtMembershipInsert = true; },
+    revokeNextRead: () => { revokeAtCatalogRead = true; },
   })).checks);
   assert.equal((await owner.readRecordedGroupSelection(read)).status, 'absent');
   let entered, release;

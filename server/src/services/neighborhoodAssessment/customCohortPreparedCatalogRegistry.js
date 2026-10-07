@@ -7,6 +7,9 @@ import { createNeighborhoodCohortBlobRepository } from './cohortEvidenceBlobRepo
 import { prepareCustomCohortRecordedCatalogSource, createCustomCohortRecordedCatalogPageStore } from './customCohortRecordedCatalogPages.js';
 import { restoreCustomCohortIndexedObservationPreview } from './customCohortObservationPreview.js';
 import { createCustomCohortRetainedCatalogReader } from './customCohortRetainedCatalogReader.js';
+import { prepareCustomCohortCatalogMembershipWitness, createCustomCohortCatalogMembershipWitnessStore }
+  from './customCohortCatalogMembershipWitness.js';
+import { createCustomCohortRetainedMembershipReader } from './customCohortRetainedMembershipReader.js';
 
 const unpack = promisify(gunzip), hash = value => createHash('sha256').update(value).digest('hex');
 const SHA = /^[a-f0-9]{64}$/;
@@ -140,7 +143,27 @@ export function createCustomCohortPreparedCatalogRegistry(client, scopeJson, con
     const text = data.toString('utf8'); check(Buffer.from(text).equals(data));
     let value; try { value = JSON.parse(text); } catch { fail('storage_conflict'); } live(); return value;
   }
-  async function prepare() {
+  const memberRoot = async root => {
+    const row = one(await sql(`/* prepared-catalog-membership:read */ SELECT witness_sha256,witness_utf8_bytes,
+      display_manifest_sha256,display_manifest_utf8_bytes FROM app.neighborhood_custom_cohort_catalog_membership_roots
+      WHERE organization_id=$1::uuid AND context_id=$2::uuid AND context_sha256=$3 AND format_version=1
+        AND source_catalog_format_version=$4`, [key[0],key[1],key[2],root.source_catalog_format_version]), true);
+    if (!row) return null;
+    check(row.display_manifest_sha256 === root.manifest_sha256 && row.display_manifest_utf8_bytes === root.manifest_utf8_bytes);
+    check(typeof row.witness_sha256 === 'string' && SHA.test(row.witness_sha256)
+      && Number.isSafeInteger(row.witness_utf8_bytes) && row.witness_utf8_bytes > 0 && row.witness_utf8_bytes <= 4_000);
+    return Object.freeze({ content_sha256: row.witness_sha256, canonical_utf8_bytes: String(row.witness_utf8_bytes) });
+  };
+  async function membership() {
+    const started = await transaction(), root = await registration();
+    const reference = root ? await memberRoot(root) : null;
+    if (!reference) { check(await transaction() === started, 'caller_transaction_required'); return null; }
+    const result = await createCustomCohortRetainedMembershipReader(boundedBlobs,
+      { ...binding(root), witnessRef: reference }, op).reopen();
+    check(same(await registration(), root) && same(await memberRoot(root), reference), 'ending_source');
+    check(await transaction() === started, 'caller_transaction_required'); live(); return result;
+  }
+  async function prepare(withMembership = false) {
     const started = await transaction(), originalPins = await sourcePins();
     if (!originalPins) { check(await transaction() === started, 'caller_transaction_required'); return null; }
     const source = one(await sql(`/* prepared-catalog-registry:originals */ SELECT ${sourceColumns},
@@ -156,13 +179,27 @@ export function createCustomCohortPreparedCatalogRegistry(client, scopeJson, con
       && rawPreview.selected?.account_ids?.length === 0 && rawPreview.pockets?.length === 0);
     const preview = restoreCustomCohortIndexedObservationPreview(rawPreview);
     check(preview.all.account_ids.length === preview.member_tables.stock.length);
-    const receipt = await prepareCustomCohortRecordedCatalogSource({ scopeJson: json(scope), contextJson: json(context),
-      catalogJson: JSON.stringify(payload.catalog), rosterJson: JSON.stringify({ account_ids: preview.all.account_ids }) }, op);
+    const input = { scopeJson: json(scope), contextJson: json(context), catalogJson: JSON.stringify(payload.catalog),
+      rosterJson: JSON.stringify({ account_ids: preview.all.account_ids }) };
+    const receipt = withMembership ? await prepareCustomCohortCatalogMembershipWitness(input, op)
+      : await prepareCustomCohortRecordedCatalogSource(input, op);
     // Refuse autocommit/moved client ownership before the FIRST blob write,
     // not only before root publication. Caller owns rollback after any error.
     check(await transaction() === started, 'caller_transaction_required');
-    const store = createCustomCohortRecordedCatalogPageStore(boundedBlobs, op), staged = await store.stage(receipt);
-    const complete = await store.reopen(receipt, staged.manifest_ref), m = complete.metadata;
+    let staged, complete, retained;
+    if (withMembership) {
+      retained = await createCustomCohortCatalogMembershipWitnessStore(boundedBlobs, op).stage(receipt);
+      const witness = JSON.parse(retained.witness_json);
+      staged = { manifest_ref: witness.display_manifest_ref };
+      complete = await createCustomCohortRetainedCatalogReader(boundedBlobs, {
+        scopeJson: json(scope), contextJson: json(context), manifestRef: witness.display_manifest_ref,
+        originalCatalogRef: witness.original_catalog_ref, sourceReadModelSha256: witness.source_read_model_sha256,
+        rosterAccountIdsSha256: witness.roster_account_ids_sha256 }, op).reopen();
+    } else {
+      const store = createCustomCohortRecordedCatalogPageStore(boundedBlobs, op); staged = await store.stage(receipt);
+      complete = await store.reopen(receipt, staged.manifest_ref);
+    }
+    const m = complete.metadata;
     const root = registered({ ...originalPins, manifest_sha256: staged.manifest_ref.content_sha256,
       manifest_utf8_bytes: Number(staged.manifest_ref.canonical_utf8_bytes), original_catalog_sha256: m.original_catalog_ref.content_sha256,
       original_catalog_utf8_bytes: Number(m.original_catalog_ref.canonical_utf8_bytes),
@@ -178,6 +215,26 @@ export function createCustomCohortPreparedCatalogRegistry(client, scopeJson, con
       RETURNING manifest_sha256`, [key[0], key[1], key[2], ...PINS.map(k => root[k]), ...ROOT.map(k => root[k])]), true);
     if (inserted) check(inserted.manifest_sha256 === root.manifest_sha256);
     check(same(await registration(), root), 'publication_conflict');
+    if (withMembership) {
+      const ref = retained.witness_ref;
+      const added = one(await sql(`/* prepared-catalog-membership:insert */ INSERT INTO app.neighborhood_custom_cohort_catalog_membership_roots
+        (organization_id,context_id,context_sha256,format_version,display_format_version,source_catalog_format_version,
+          display_manifest_sha256,display_manifest_utf8_bytes,witness_sha256,witness_utf8_bytes)
+        VALUES ($1::uuid,$2::uuid,$3,1,1,$4,$5,$6,$7,$8)
+        ON CONFLICT (organization_id,context_id,format_version,source_catalog_format_version) DO NOTHING RETURNING witness_sha256`,
+      [key[0],key[1],key[2],root.source_catalog_format_version,root.manifest_sha256,root.manifest_utf8_bytes,
+        ref.content_sha256,Number(ref.canonical_utf8_bytes)]), true);
+      if (added) check(added.witness_sha256 === ref.content_sha256);
+      check(same(await memberRoot(root), ref), 'publication_conflict');
+      // stage() already verified every original member and union page. Do not
+      // repeat that whole work at publication; freshly recheck its exact root
+      // and registered source/display pins. A later read verifies the full graph.
+      check(await boundedBlobs.get(ref.content_sha256, ref.canonical_utf8_bytes) === retained.witness_json, 'ending_source');
+      check(same(await registration(), root) && same(await memberRoot(root), ref), 'ending_source');
+      check(await transaction() === started, 'caller_transaction_required'); live();
+      return Object.freeze({ authority: 'not_established', status: added ? 'prepared' : 'reused',
+        witness_ref: ref, retention_refs: retained.retention_refs });
+    }
     check(await transaction() === started, 'caller_transaction_required'); live();
     return Object.freeze({ authority: 'not_established', status: inserted ? 'prepared' : 'reused', manifest_ref: staged.manifest_ref });
   }
@@ -186,6 +243,9 @@ export function createCustomCohortPreparedCatalogRegistry(client, scopeJson, con
     try { return await work(); } finally { busy = false; }
   }
   return Object.freeze({ prepare: () => run(prepare), open: () => run(() => read('open')),
+    // Internal preparation/read only. Current-owner rights remain mandatory;
+    // these whole-catalog artifacts are never the appraiser's selected head.
+    prepareMembership: () => run(() => prepare(true)), reopenMembership: () => run(membership),
     async page(index) { check(Number.isSafeInteger(index) && index >= 0 && index < 21, 'page_index'); return run(() => read('page', index)); },
     reopen: () => run(() => read('reopen')) });
 }

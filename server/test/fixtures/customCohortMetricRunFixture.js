@@ -9,11 +9,12 @@ import { contextFixture } from './customCohortContextFixture.js';
 /** Synthetic mapping-v2/source-chunker fixture only. No original SQL source,
  * licensed grant, historical stock, current assignment rights or live facts. */
 export function customCohortMetricRunFixture({ count = 3, selectionRevision = 2, empty = false,
-  price = '330000.125', periodEnd = '2024-06-30', organization, accountPrefix = 'MR-' } = {}) {
+  price = '330000.125', periodEnd = '2024-06-30', organization, accountPrefix = 'MR-', targetOverride = {}, contextRef } = {}) {
   const accounts = Array.from({ length: count }, (_, i) => `${accountPrefix}${String(i).padStart(6, '0')}`);
+  if (count && targetOverride.account_id) accounts[0] = targetOverride.account_id;
   const target = { ...contextFixture().target, account_id: accounts[0] ?? `${accountPrefix}EMPTY`, assignment_file_id: '17',
-    ...(organization ? { organization_id: organization } : {}) };
-  const context_ref = { context_id: contextFixture().context_id, context_revision: '1', context_sha256: 'e'.repeat(64) };
+    ...(organization ? { organization_id: organization } : {}), ...targetOverride };
+  const context_ref = contextRef ?? { context_id: contextFixture().context_id, context_revision: '1', context_sha256: 'e'.repeat(64) };
   const scope = Object.fromEntries(['organization_id', 'appraisal_case_id', 'subject_snapshot_id', 'account_id'].map(key => [key, target[key]]));
   const parcels = accounts.map((account_id, i) => ({ object_id: String(i + 1), account_id,
     residential_year_built: 1950 + i % 70, residential_area_sqft: String(1500 + i * .125),

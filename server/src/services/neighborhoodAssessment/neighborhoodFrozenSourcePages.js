@@ -4,7 +4,11 @@ import { createCustomCohortCaptureJobRepository, prepareCustomCohortCaptureJobCl
   from './customCohortCaptureJobRepository.js';
 
 export const NEIGHBORHOOD_FROZEN_PAGE_LIMITS = Object.freeze({
-  rows: 250, page_utf8_bytes: 1_500_000, operation_utf8_bytes: 32_000_000,
+  // Retention permits 1 MB of PostgreSQL JSON text. Encoding that text again
+  // can double its quotes/backslashes. 2.1 MB also covers a 256-byte row key
+  // (even with six-byte control escapes), fixed field names and array framing.
+  // Thus every valid retained row fits alone; aggregate admission stays in SQL.
+  rows: 250, page_utf8_bytes: 2_100_000, operation_utf8_bytes: 32_000_000,
   pages: 64, queries: 2048, operation_ms: 60_000,
 });
 const KINDS = Object.freeze({ parcels: 'bigint', accounts: 'text', source_records: 'bigint',
@@ -12,7 +16,9 @@ const KINDS = Object.freeze({ parcels: 'bigint', accounts: 'text', source_record
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
 const SNAPSHOT = /^[0-9]+:[0-9]+:(?:[0-9]+(?:,[0-9]+)*)?$/;
+/** Refuse the page without granting partial-result or acquisition authority. */
 function fail(reason) { throw new TypeError(`neighborhood_frozen_pages_${reason}`); }
+/** Copy only plain enumerable own data fields, without invoking caller code. */
 function data(value, required, optional = []) {
   if (!value || types.isProxy(value) || Object.getPrototypeOf(value) !== Object.prototype) fail('invalid_input');
   const descriptors = Object.getOwnPropertyDescriptors(value), names = Reflect.ownKeys(descriptors);
@@ -21,10 +27,12 @@ function data(value, required, optional = []) {
     || !descriptors[key].enumerable)) fail('invalid_input');
   return Object.fromEntries(names.map(key => [key, descriptors[key].value]));
 }
+/** Validate exact decimal count text without first rounding it through Number. */
 function boundedInteger(value, maximum) {
   return typeof value === 'string' && /^(?:0|[1-9][0-9]{0,18})$/.test(value)
     && BigInt(value) <= BigInt(maximum);
 }
+/** Validate the native keyset cursor for one fixed original-source layer. */
 function cursor(value, type) {
   if (typeof value !== 'string' || Buffer.byteLength(value) > 256 || value.includes('\0')) fail('invalid_cursor');
   if (!value) return value;
@@ -33,15 +41,18 @@ function cursor(value, type) {
   if (type === 'uuid' && !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(value)) fail('invalid_cursor');
   return value;
 }
+/** Compare keys using the same numeric or byte order as the SQL page plan. */
 function advancing(next, previous, type) {
   if (!next) return false;
   return previous === '' || (type === 'bigint' ? BigInt(next) > BigInt(previous)
     : Buffer.compare(Buffer.from(next), Buffer.from(previous)) > 0);
 }
+/** Require the single aggregate/header row promised by a fixed SQL plan. */
 function one(result) {
   if (result?.rowCount !== 1 || !Array.isArray(result.rows) || result.rows.length !== 1) fail('invalid_result');
   return result.rows[0];
 }
+/** Build ordering only from this module's closed kind-to-native-type mapping. */
 const order = type => type === 'text' ? 'row_key COLLATE "C"' : `row_key::${type}`;
 // Closed fixed plans, not a request-chosen relation, predicate or projection.
 // PostgreSQL admits encoded rows by their *actual transport* bytes before any
@@ -70,6 +81,7 @@ const HEADER = `/* neighborhood-frozen-pages:header */ SELECT generation_id::tex
   to_char(completed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS completed_at,
   layer_counts,row_count::text,payload_utf8_bytes::text FROM app.neighborhood_frozen_source_generations
   WHERE generation_id=$1::uuid`;
+/** Validate all seven layer totals and the exact pinned snapshot identity. */
 function metadata(result, generationId) {
   const row = one(result);
   if (row.generation_id !== generationId || row.format_version !== 1 || row.status !== 'complete'

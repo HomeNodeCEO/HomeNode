@@ -36,6 +36,10 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     // bytes, not be truncated, skipped, or returned as one oversized page.
     await pool.query(`UPDATE core.accounts SET legal_description=repeat('A',900000)
       WHERE account_id IN ('INDEX-A','INDEX-B')`);
+    // This valid sub-1-MB JSON original grows beyond the former 1.5-MB limit
+    // when payload::text is embedded as a string in the encoded transport row.
+    await pool.query(`UPDATE core.accounts SET legal_description=repeat(chr(92),480000)
+      WHERE account_id='INDEX-B'`);
     await pool.query(`INSERT INTO core.sales_source_records(id,primary_account_id,current_price,close_date,raw_payload)
       VALUES(501,'INDEX-A',9007199254740993,'2010-01-01','{"ClosePrice":9007199254740993}'::jsonb)`);
     await pool.query(`INSERT INTO gis.dcad_parcels
@@ -159,7 +163,10 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
       {...options,claim}).page({kind:'accounts',cursor:accountPage.next_cursor,rowLimit:4}));
     assert.deepEqual(accountEnd.rows.map(row=>row.row_key),['INDEX-B','INDEX-C','INDEX-D']);
     assert.equal(accountEnd.end_of_layer,true);
-    assert.equal(JSON.parse(accountEnd.rows[0].payload_text).legal_description.length,900000);
+    assert.equal(JSON.parse(accountEnd.rows[0].payload_text).legal_description,'\\'.repeat(480000));
+    assert.ok(accountEnd.page_utf8_bytes>1_500_000,
+      'a valid heavily escaped original is admitted, and later keys remain reachable');
+    assert.ok(accountEnd.page_utf8_bytes<=NEIGHBORHOOD_FROZEN_PAGE_LIMITS.page_utf8_bytes);
     const pricePage=await withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSourcePages(client,
       {...options,claim}).page({kind:'source_records',cursor:'',rowLimit:2}));
     assert.equal(JSON.parse(pricePage.rows[0].payload_text).current_price,'9007199254740993',

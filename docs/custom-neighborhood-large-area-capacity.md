@@ -10,8 +10,10 @@ Native numeric, UUID and C-collated text indices provide stable page ordering;
 only module-owned queries run, with no browser-chosen table or source projection.
 
 Postgres limits both row count and **actual encoded transport bytes before
-returning payloads**. A large original that fits alone is carried into the next
-page, not skipped or truncated. Original JSON text retains decimal literals and
+returning payloads**. The 2.1-MB page ceiling covers the worst-case second JSON
+encoding of every valid retained 1-MB original, its bounded key and framing;
+the 32-MB whole-operation ceiling is unchanged. A large original is carried into
+the next page, not skipped or truncated. Original JSON text retains decimal literals and
 exact original EWKB, without interpreting them as rounded JS numbers or group
 medians. Each result is one bounded original page, explicitly not whole-study
 coverage, selected membership, statistics, or current authorization. A layer-end
@@ -22,7 +24,9 @@ budgets, cancellation and a serial settlement lane cover every read.
 Tests exercise corrupted originals/metadata, autocommit, ending claim loss,
 closed inputs/getters, native numeric order, cancellation, pending I/O and
 aggregate budgets. The actual native index fixture also reads pages on fresh
-transactions, exercises two 900k-byte CAD originals that must split by bytes,
+transactions, exercises a 900k-byte CAD original and a heavily escaped original
+whose encoded transport exceeds 1.5 MB; both must split by bytes without hiding
+subsequent keys. It
 checks exact decimal/geometry preservation, resumes after four nightly sweeps
 and a replacement claim, and refuses stale/cancelled claims. Native CI must
 execute these assertions before merge.

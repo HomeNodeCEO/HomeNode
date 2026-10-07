@@ -526,6 +526,13 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
   // old captures are never relabeled by changed review heads.
   const groupContext = await owner.capture(captureInput());
   const groupRead = { auth, accountId: account, assignmentFileId: assignment, contextRef: groupContext.context_ref };
+  const preparedRefusalFrom = calls.length;
+  for (const [method, input] of [['openPreparedRecordedCatalog', groupRead],
+    ['pagePreparedRecordedCatalog', { ...groupRead, pageIndex: 0 }], ['prepareRecordedCatalog', groupRead]])
+    await assert.rejects(owner[method](input), reason('prepared_catalog_private_source_unsupported'));
+  assert.ok(!calls.slice(preparedRefusalFrom).some(sql => sql.includes('prepared-catalog-registry:')),
+    'a CURRENT-authorized private context cannot open or prepare a shared-only derivative');
+  checks.push('native prepared catalog commands refuse private-source contexts after original private-policy checks, before any shared derivative/fallback or mutation');
   const groupCatalog = await owner.catalog({ ...groupRead, selection: { revision: 1, pockets: [] }, catalogVersion: 3 });
   const groupIds = groupCatalog.catalog.pockets.map(p => p.id);
   if (groupCatalog.catalog.unassigned.member_count) groupIds.push('discovery:unassigned');

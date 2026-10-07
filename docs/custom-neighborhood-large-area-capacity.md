@@ -1,5 +1,50 @@
 # Complete larger-area Custom neighborhood studies
 
+## Current-authorized prepared catalog commands (default-unmounted transport)
+
+The Custom context owner now surrounds `customCohortPreparedCatalogOwner.js`
+with the actual caller transaction and fresh database actor/assignment checks.
+It reopens the immutable original context and dependency metadata, verifies
+the original source purpose/current catalog exposure and current subject,
+then reads the registered directory or one page. Before delivery/commit it
+reloads database roles, checks the exact assignment/target again, reopens those
+same original context/dependencies and source policy, and compares the subject
+again. Read permission is not widened by the existing ordered NOWAIT parent
+lock. A shared-only derivative cannot replace a private-source study: after
+its distinct original private-policy check that context is explicitly refused
+before any derivative read, preparation or dense fallback.
+
+An absent derivative returns `not_prepared` with `catalog: null`; a read does
+not compile, reconstruct member arrays or write anything. Explicit internal
+`prepareRecordedCatalog` retains the actual source-compiler/registry path and
+requires current write permission and a private draft on both ends. It is NOT
+a browser command and is not yet scheduled or wired into a worker. This slice
+does not promise that every existing context already has a registered catalog.
+
+`preparedRecordedCatalogReads` is an explicit default-false router composition
+option. Only when a coherent versioned consumer is shipped may it mount the
+closed `prepared-catalog` and `prepared-catalog-page` POST reads. Middleware
+identity, existing finite execution gate/deadline/cancellation, no-store, a
+2,048-byte original request ceiling and 512,000-byte checked response envelope
+are retained. Requests contain only assignment/context and an optional numeric
+page index; browser roots, members, roles, selection or prepare claims refuse.
+Responses bind exact target/context and admit only hash/length-checked closed
+directory metadata or one display page. Neither establishes individual
+membership, analytical completeness, statistics, source rights or Apply.
+
+Actual compiler fixtures exercise empty/unresolved/full display originals and
+closed command/presentation syntax. The guarded disposable native fixture
+additionally uses the REAL current owner after a REAL source capture/catalog:
+coherent prepare/reuse, rollback after lost insert ACK/cancellation/ending role
+revocation, no dense-source transfer on directory/all-page reads, stale-request
+role denial, initial/ending source denial, foreign targets and actual optional
+HTTP envelopes. The private-source native fixture refuses before shared reads.
+Report/acceptance/workspace/selection state remains unchanged. Actual fresh CI,
+not local protocol mocks, establishes native results. This is not live rollout,
+a complete >50k capture, recurring worker proof or production SLA acceptance.
+Matching versioned map/member/opening consumers remain next; no legacy full-
+account catalog cast, V7 activation or installed 50k cap change occurs here.
+
 ## Prepared display-catalog registry (not a live-owner/HTTP switch)
 
 `customCohortPreparedCatalogRegistry.js` derives and registers display originals
@@ -29,10 +74,10 @@ limits are not changed by that representation budget.
 
 Current actor/assignment/source/subject authorization and original-context
 dependency checks remain the surrounding owner's responsibility at BOTH ends;
-this repository does not grant those rights. No route, worker, cron, UI host,
+this repository does not grant those rights. No live route, worker, cron, UI host,
 legacy full-member catalog consumer, V7 flag, 50k cap, report or live file is
 switched. Full individual membership and Apply proof stay separate. Next is
-the closed current-owner authenticated transport, then corresponding versioned
+the current-owner default-unmounted transport above, then corresponding versioned
 map/opening/member/display consumers. Partial source/spatial recovery, coherent
 whole >50k publication and live 5/10-mile/retrospective acceptance remain.
 

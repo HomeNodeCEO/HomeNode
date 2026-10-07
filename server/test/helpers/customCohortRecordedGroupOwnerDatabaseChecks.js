@@ -8,6 +8,7 @@ import { runCustomCohortPreparedMapOpeningJob } from '../../src/services/neighbo
 import { customCohortOpeningSelection } from '../../src/services/neighborhoodAssessment/customCohortOpeningPreview.js';
 import { saveCustomAppraisalWorkfileSectionInTransaction } from '../../src/services/customAppraisalWorkfiles.js';
 import { runCustomCohortGroupWorkspaceHttpDatabaseChecks } from './customCohortGroupWorkspaceHttpDatabaseChecks.js';
+import { runCustomCohortPreparedCatalogOwnerDatabaseChecks } from './customCohortPreparedCatalogOwnerDatabaseChecks.js';
 
 /** Invoked only by the verified disposable PostgreSQL fixture. No live accounts,
  * source provider, user report choices, accepted sections or shared database.
@@ -45,6 +46,7 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, sc
   const coordinatorBefore = (await coordinatorWorkspace()).rows;
   const calls = [], checks = [];
   let loseCommitAck = false, cancelAtHead = null, revokeAtHead = false, revokeAtRead = false;
+  let revokeAtCatalogRead = false, cancelAtCatalogRead = null, loseRegistryAck = false;
   let cancelAtWorkspace = null, revokeAtWorkspace = false, failWorkspaceHistory = false;
   let denyPolicy = false, denyFinalPolicy = false, denySummary = false, denyFinalSummary = false;
   let denyMembers = false, denyFinalMembers = false;
@@ -57,6 +59,13 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, sc
     return { release: error => client.release(error), async query(config) {
       calls.push(config.text);
       const result = await client.query(config);
+      if (config.text.includes('prepared-catalog-registry:read')) {
+        cancelAtCatalogRead?.abort(); cancelAtCatalogRead = null;
+        if (revokeAtCatalogRead) { revokeAtCatalogRead = false; await suspend('suspended'); }
+      }
+      if (loseRegistryAck && config.text.includes('prepared-catalog-registry:insert')) {
+        loseRegistryAck = false; throw new Error('synthetic_registry_ack_failure');
+      }
       if (config.values?.[1] === 'neighborhood_workspace') {
         if (config.text.includes('INSERT INTO app.custom_appraisal_workfile_sections (')) {
           cancelAtWorkspace?.abort(); cancelAtWorkspace = null;
@@ -118,6 +127,12 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, sc
     report: (await pool.query(`SELECT to_jsonb(r) AS value FROM app.report_files r WHERE id=$1`, [scope.report_file_id])).rows,
   });
   const before = await protectedState();
+  checks.push(...(await runCustomCohortPreparedCatalogOwnerDatabaseChecks({ pool, owner, read, scope, calls,
+    protectedState, suspend, denySource: (value, final = false) => {
+      denyPolicy = value && !final; denyFinalPolicy = value && final; policyCalls = 0;
+    }, revokeNextRead: () => { revokeAtCatalogRead = true; },
+    cancelNextRead: controller => { cancelAtCatalogRead = controller; }, loseNextRegistryAck: () => { loseRegistryAck = true; },
+  })).checks);
   assert.equal((await owner.readRecordedGroupSelection(read)).status, 'absent');
   let entered, release;
   const holding = new Promise(resolve => { entered = resolve; });

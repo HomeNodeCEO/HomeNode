@@ -21,6 +21,9 @@ import { CUSTOM_COHORT_GROUP_MAP_OPENING_RESPONSE_BYTES, prepareCustomCohortGrou
   presentCustomCohortGroupMapOpeningTransportResponse } from '../../services/neighborhoodAssessment/customCohortGroupMapOpening.js';
 import { prepareCustomCohortRecordedGroupMarketRequest }
   from '../../services/neighborhoodAssessment/customCohortRecordedGroupMarketAnalysis.js';
+import { CUSTOM_COHORT_PREPARED_CATALOG_REQUEST_BYTES, CUSTOM_COHORT_PREPARED_CATALOG_RESPONSE_BYTES,
+  prepareCustomCohortPreparedCatalogRequest, presentCustomCohortPreparedCatalogResponse }
+  from '../../services/neighborhoodAssessment/customCohortPreparedCatalogTransport.js';
 
 const BASE = '/api/accounts/:id/neighborhood-cohort';
 const BODY_BYTES = 4_000_000;
@@ -35,7 +38,8 @@ const CONFLICT_ERRORS = new Set(['operation_conflict', 'subject_changed', 'targe
   'workspace_changed', 'workspace_capture_pending', 'report_editor_changed', 'report_geography_changed',
   'report_policy_changed', 'report_proposal_changed', 'report_group_conflict', 'report_replacement_conflict']);
 const UNAVAILABLE_ERRORS = new Set(['recorded_point_required', 'spatial_incomplete',
-  'selector_incomplete', 'transaction_identity_incomplete', 'source_incomplete', 'retained_inputs_unavailable']);
+  'selector_incomplete', 'transaction_identity_incomplete', 'source_incomplete', 'retained_inputs_unavailable',
+  'prepared_catalog_private_source_unsupported']);
 const PREVIEW_CAPACITY_ERRORS = new Set([
   'custom_cohort_recorded_group_owner_summary_account_limit',
   'custom_cohort_observation_preview_output_bytes_limit',
@@ -130,7 +134,7 @@ function publicFailure(error) {
  * Never supply its internal raw `.preview` method as `.present` here.
  */
 export function createCustomNeighborhoodCohortRouter({ cohortService, marketAnalysis, landUseAnalysis, recordedGroupMarketAnalysis, logger = console,
-  recordedGroupWorkspaceTransitions = false } = {}) {
+  recordedGroupWorkspaceTransitions = false, preparedRecordedCatalogReads = false } = {}) {
   if (['capture', 'present', 'inspect', 'catalog'].some(key => typeof cohortService?.[key] !== 'function')) {
     throw new TypeError('custom_neighborhood_cohort_router_dependencies_required');
   }
@@ -138,6 +142,9 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, marketAnal
     && ['selectAndSaveRecordedGroups', 'startRecordedGroupCapture', 'cancelRecordedGroupCapture', 'completeRecordedGroupCapture']
       .some(key => typeof cohortService?.[key] !== 'function')))
     throw new TypeError('custom_neighborhood_group_workspace_router_dependencies_required');
+  if (typeof preparedRecordedCatalogReads !== 'boolean' || (preparedRecordedCatalogReads
+    && ['openPreparedRecordedCatalog', 'pagePreparedRecordedCatalog'].some(key => typeof cohortService?.[key] !== 'function')))
+    throw new TypeError('custom_neighborhood_prepared_catalog_router_dependencies_required');
   const router = express.Router();
   function route(action, fields, execute, optional = [], { bodyBytes = BODY_BYTES,
     prepareBody = value => value, presentResult = value => value, responseBytes = null } = {}) {
@@ -235,6 +242,17 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, marketAnal
         req.removeListener('aborted', abort); res.removeListener('close', closed);
       }
     });
+  }
+  // Explicitly unmounted by default until the versioned consumer ships as a
+  // coherent host. Preparation remains INTERNAL; no browser-triggered compile.
+  if (preparedRecordedCatalogReads) for (const paged of [false, true]) {
+    route(paged ? 'prepared-catalog-page' : 'prepared-catalog', ['assignment_file_id', 'context_ref', ...(paged ? ['page_index'] : [])],
+      (identity, body, options) => cohortService[paged ? 'pagePreparedRecordedCatalog' : 'openPreparedRecordedCatalog']({
+        ...identity, contextRef: body.context_ref, ...(paged ? { pageIndex: body.page_index } : {}) }, options), [], {
+        bodyBytes: CUSTOM_COHORT_PREPARED_CATALOG_REQUEST_BYTES, responseBytes: CUSTOM_COHORT_PREPARED_CATALOG_RESPONSE_BYTES,
+        prepareBody: body => prepareCustomCohortPreparedCatalogRequest(body, paged),
+        presentResult: (result, body, accountId) => presentCustomCohortPreparedCatalogResponse(result, body, accountId, paged),
+      });
   }
   route('capture', ['assignment_file_id', 'operation_id', 'observation_period'], (identity, body, options) =>
     cohortService.capture({ ...identity, operationId: body.operation_id, observationPeriod: body.observation_period,

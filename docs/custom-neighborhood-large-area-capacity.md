@@ -1,5 +1,52 @@
 # Complete larger-area Custom neighborhood studies
 
+## Prepared display-catalog registry (not a live-owner/HTTP switch)
+
+`customCohortPreparedCatalogRegistry.js` derives and registers display originals
+once from the actual immutable complete v3 catalog and the independent indexed
+preview's full roster. It verifies exact compressed/original hashes and lengths,
+scope/context and neutral selection, invokes the actual complete partition
+compiler, stages every original/page/root, reopens the complete staged graph,
+and publishes an immutable registry row in the caller's SAME transaction.
+Autocommit/moved transaction ownership is refused before the first blob write;
+any later failure requires the owner to roll back. No arbitrary supplied JSON,
+root reference or fake compiler receipt can register a result through this API.
+
+The additive `20261102_custom_cohort_prepared_catalog_roots.sql` migration links
+each directory to its exact catalog/preview format and organization-private
+original/root blobs. `open`, `page` and `reopen` read only small current SQL
+source pins and bounded retained originals. They do not transfer, decompress or
+rebuild the dense source catalog/preview on a hit. PostgreSQL still hashes the
+actual compressed source bytes; this saves network/Node allocation, not all
+database work. Fresh beginning/ending registered pins and same-transaction
+checks remain mandatory. A new source format without its corresponding root is
+a cache miss; disappearance/corruption of registered sources refuses, rather
+than returning stale output. Directory/page results never claim other pages
+were read; complete reopen reads every page. One serial 512-operation/128MB
+aggregate budget includes source preparation and graph I/O, with caller deadline
+and cancellation checks around actual settlement. Installed capture/analytical
+limits are not changed by that representation budget.
+
+Current actor/assignment/source/subject authorization and original-context
+dependency checks remain the surrounding owner's responsibility at BOTH ends;
+this repository does not grant those rights. No route, worker, cron, UI host,
+legacy full-member catalog consumer, V7 flag, 50k cap, report or live file is
+switched. Full individual membership and Apply proof stay separate. Next is
+the closed current-owner authenticated transport, then corresponding versioned
+map/opening/member/display consumers. Partial source/spatial recovery, coherent
+whole >50k publication and live 5/10-mile/retrospective acceptance remain.
+
+Fixtures use actual source mapping/index/partition compiler and stored originals
+(including a 12,001-account dense index and explicit empty/unresolved cases),
+not mocked receipt issuance. Local tests cover source/format/raw-byte corruption,
+late original loss, source mutation during staging, complete page reopening,
+transaction movement before writes, and held-I/O budget/cancellation. The native
+guarded migrated PostgreSQL fixture additionally tests real scope queries,
+fresh-client reads, immutability, coherent commit, lost-ACK rollback and unchanged
+report/acceptance/selection-head hashes. Only fresh CI can establish its actual
+SQL result; neither synthetic count nor local tests prove source rights,
+authenticated transport, complete >50k acquisition or production latency.
+
 ## Reopening stored catalog pages without dense compiler replay
 
 `customCohortRetainedCatalogReader.js` reads the actual retained directory,

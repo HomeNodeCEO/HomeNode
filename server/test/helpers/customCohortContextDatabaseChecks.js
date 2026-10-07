@@ -63,7 +63,7 @@ export async function checkCustomCohortContextDatabase(pool, identity) {
       'DELETE FROM app.neighborhood_custom_cohort_contexts WHERE organization_id=$1 AND context_id=$2',
       // Include referencing review, selection and prepared read-model tables explicitly
       // (never CASCADE), so PostgreSQL reaches the immutability trigger.
-      'TRUNCATE app.neighborhood_custom_cohort_contexts, app.custom_neighborhood_review_commands, app.neighborhood_custom_cohort_prepared_previews, app.neighborhood_custom_cohort_prepared_catalogs, app.neighborhood_custom_cohort_prepared_tile_manifests, app.neighborhood_custom_cohort_prepared_tiles, app.neighborhood_custom_cohort_group_selections, app.neighborhood_custom_cohort_group_selection_heads, app.neighborhood_custom_cohort_prepared_map_openings',
+      'TRUNCATE app.neighborhood_custom_cohort_contexts, app.custom_neighborhood_review_commands, app.neighborhood_custom_cohort_prepared_previews, app.neighborhood_custom_cohort_prepared_catalogs, app.neighborhood_custom_cohort_prepared_tile_manifests, app.neighborhood_custom_cohort_prepared_tiles, app.neighborhood_custom_cohort_group_selections, app.neighborhood_custom_cohort_group_selection_heads, app.neighborhood_custom_cohort_prepared_map_openings, app.neighborhood_custom_cohort_prepared_catalog_roots',
     ]) {
       await rejectsWithinSavepoint(() => client.query(sql, sql.startsWith('TRUNCATE') ? [] : [scope.organization_id, body.context_id]),
         error => error.code === '55000' && /custom_cohort_context_immutable/.test(error.message));

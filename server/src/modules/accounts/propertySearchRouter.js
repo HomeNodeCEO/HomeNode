@@ -46,6 +46,7 @@ export function createPropertySearchRouter({
   /** Search Dallas and reconciled non-Dallas accounts by identifiers or indexed address data. */
   router.get("/api/search", async (req, res) => {
     if (!requireApplicationReader(req, res)) return undefined;
+    res.set("cache-control", "no-store");
     try {
       await accountQualityReady;
       await salesReconciliationReady;

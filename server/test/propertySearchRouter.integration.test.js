@@ -120,6 +120,7 @@ test("entered address subjects are searchable only within readable appraisal org
 
   const response = await fetch(`${server.baseUrl}/api/search?city=plano`);
   assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
   const [{ sql, params }] = database.queries;
   assert.deepEqual(params, ["PLANO%", [org], 25, 0]);
   assert.match(sql, /manual_file\.organization_id = ANY\(\$2::uuid\[\]\)/);

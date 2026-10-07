@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID,createHash } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 import { prepareNeighborhoodCiDatabase } from './helpers/neighborhoodCiDatabase.js';
 import { NEIGHBORHOOD_CACHED_SOURCE_SCHEMA } from './fixtures/neighborhoodCachedSourceSchemaFixture.js';
 import { runNeighborhoodGroupIndex,getPreparedNeighborhoodGroupSummary }
@@ -26,6 +27,8 @@ import { createCustomCohortContextCapture }
   from '../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { createNeighborhoodFrozenJobStock }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStock.js';
+import { createNeighborhoodFrozenJobStockOriginals }
+  from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStockOriginals.js';
 import { createCustomNeighborhoodWitness2SourcePolicy, CUSTOM_NEIGHBORHOOD_WITNESS2_SOURCE_RIGHTS_KEY,
   CUSTOM_NEIGHBORHOOD_WITNESS2_SOURCE_PURPOSE } from '../src/security/customNeighborhoodWitness2SourcePolicy.js';
 import { CUSTOM_NEIGHBORHOOD_SOURCE_DATASET } from '../src/security/customNeighborhoodSourcePolicy.js';
@@ -295,6 +298,59 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
   } finally { await pool.end(); }
 });
 
+test('isolated PostgreSQL: refuses original geographic identity and EWKB discrepancies, without changing published rows',{
+  skip:!process.env.DATABASE_URL,timeout:180_000,
+},async()=>{
+  const target=await prepareNeighborhoodCiDatabase();const {default:pg}=await import('pg');
+  const pool=new pg.Pool({connectionString:target.connectionString,max:2,statement_timeout:120_000});
+  try{
+    await pool.query(NEIGHBORHOOD_CACHED_SOURCE_SCHEMA);
+    await pool.query('ALTER TABLE core.primary_improvements ADD COLUMN IF NOT EXISTS pool boolean');
+    await pool.query("INSERT INTO core.accounts(account_id,county,city,subdivision) VALUES('ORIGINAL-A','Dallas','Garland','Synthetic Originals')");
+    // Legitimate native object zero must not disappear behind a default cursor.
+    await pool.query(`INSERT INTO gis.dcad_parcels(object_id,account_id,subdivision_name,source_record_hash,geom)
+      VALUES(0,'ORIGINAL-A','Synthetic Originals','a',ST_Multi(ST_MakeEnvelope(-96.7,32.9,-96.699,32.901,4326)))`);
+    const organization=randomUUID(),actor=randomUUID(),report=randomUUID();
+    await pool.query("INSERT INTO app_auth.organizations(id,legal_name,display_name) VALUES($1,'Synthetic originals','Synthetic originals')",[organization]);
+    await pool.query("INSERT INTO app_auth.users(id,email,display_name) VALUES($1,$2,'Synthetic originals actor')",[actor,`${actor}@example.test`]);
+    const assignment=(await pool.query(`INSERT INTO app.assignment_files(organization_id,account_id,file_number,created_by_user_id,assigned_appraiser_user_id)
+      VALUES($1,'ORIGINAL-A',$2,$3,$3) RETURNING id::text`,[organization,`ORIGINALS-${randomUUID()}`,actor])).rows[0].id;
+    await pool.query(`INSERT INTO app.report_files(id,organization_id,account_id,workflow_type,file_number,custom_assignment_file_id)
+      VALUES($1,$2,'ORIGINAL-A','custom_appraisal',$3,$4)`,[report,organization,`ORIGINALS-${randomUUID()}`,assignment]);
+    const scope={organization_id:organization,report_file_id:report,assignment_file_id:assignment,account_id:'ORIGINAL-A'};
+    const subjectIntent={content_sha256:'f'.repeat(64),canonical_utf8_bytes:'100'};
+    for(const corruption of [null,'wrong_id','numeric_id','wrong_account','missing_ewkb','different_ewkb','invalid_ewkb']){
+      // Inject only while this disposable original generation is BUILDING.
+      // No trigger disabling, published-row update, production DB or fallback.
+      const writerPool={async connect(){const client=await pool.connect();return {release:client.release.bind(client),async query(sql,values){
+        const result=await client.query(sql,values),text=typeof sql==='string'?sql:sql.text,parameters=typeof sql==='string'?values:sql.values;
+        if(corruption&&text.includes('neighborhood-frozen-source:parcels')&&result.rows[0]?.copied===1){
+          const change={wrong_id:"jsonb_set(payload,'{object_id}','\"1\"')",numeric_id:"jsonb_set(payload,'{object_id}','0')",
+            wrong_account:"jsonb_set(payload,'{account_id}','\"ORIGINAL-B\"')",missing_ewkb:"payload-'stored_geometry_ewkb'",
+            different_ewkb:"jsonb_set(payload,'{stored_geometry_ewkb}',to_jsonb(encode(ST_AsEWKB(ST_Multi(ST_MakeEnvelope(-97.7,32.9,-97.699,32.901,4326))),'hex')))",
+            invalid_ewkb:"jsonb_set(payload,'{stored_geometry_ewkb}','\"00000000000000000000\"')"}[corruption];
+          await client.query(`UPDATE app.neighborhood_frozen_source_rows SET payload=${change} WHERE generation_id=$1 AND kind='parcels' AND row_key='0'`,[parameters[0]]);
+        }
+        return result;}};}};
+      await runNeighborhoodGroupIndex(writerPool,{batchSize:250,logger:{info(){}},retainOriginalSources:true});
+      const operation=randomUUID();
+      await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).enqueue({scope,actorUserId:actor,
+        request:{operation_id:operation,observation_period:{start_date:'2025-01-01',end_date:'2026-10-07'}}}));
+      const claim=await withCustomCohortJobTransaction(pool,async client=>{const [job]=await createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900});
+        assert.equal(job.operation_id,operation);return {operation_id:operation,claim_token:job.claim_token,attempts:job.attempts};});
+      const options={...frozenSpatialOptions({claim,scope,actorUserId:actor}),subjectIntent,checkBudget(){}};
+      await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).pinPreparedGeneration(claim,{scope,actorUserId:actor}));
+      await withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenJobStock(client,options).prepare());
+      const verify=()=>withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenJobStockOriginals(client,options).step(null));
+      if(corruption===null){const verified=await verify();assert.equal(verified.all_parcels_verified,true);assert.equal(verified.progress.after_object_id,'0');assert.equal(verified.progress.verified_parcels,1);}
+      else await assert.rejects(verify(),error=>corruption==='invalid_ewkb'?typeof error.code==='string':/original_mismatch/.test(error.message),
+        `${corruption} cannot verify a matching stock FK or original page hash`);
+      assert.equal((await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[operation])).rows[0].checkpoint,null);
+      assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1',[assignment])).rows[0].n,0);
+    }
+  }finally{await pool.end();}
+});
+
 test('isolated PostgreSQL: freezes a complete 60001-account original source population without Node row transfer',{
   skip:!process.env.DATABASE_URL,timeout:360_000,
 },async()=>{
@@ -411,6 +467,25 @@ test('isolated PostgreSQL: freezes a complete 60001-account original source popu
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1',[assignment])).rows[0].n,0);
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_custom_cohort_contexts WHERE context_id=$1',[operation])).rows[0].n,0);
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.custom_neighborhood_acceptances WHERE assignment_file_id=$1',[assignment])).rows[0].n,0);
+    // The native PK/original-geometry lane independently verifies EVERY one of
+    // the 60,001 stock originals across fresh SQL clients, not an array codec
+    // or selected-account graph. This DATA test does not establish a completed
+    // >50k current-authorized typed acquisition or a production latency claim.
+    const retainedCheckpoint=(await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[operation])).rows[0].checkpoint;
+    const retainedDefinition=(await pool.query('SELECT definition FROM app.neighborhood_custom_cohort_job_stocks WHERE operation_id=$1',[operation])).rows[0].definition;
+    let originalProgress=null,originalDone=false,originalSteps=0;
+    const originalsFrom=stockCalls.length;
+    const originalStarted=performance.now();
+    while(!originalDone){const step=await withCustomCohortJobTransaction(stockPool,client=>createNeighborhoodFrozenJobStockOriginals(client,
+      {claim,scope,actorUserId:actor,geometryInput:retainedDefinition.geometry_input,discovery,
+        subjectIntent:retainedCheckpoint.evidence_refs[0],checkBudget(){}}).step(originalProgress));
+      originalProgress=step.progress;originalDone=step.all_parcels_verified;assert.ok(++originalSteps<=242);
+      assert.equal(step.authority,'not_established');assert.equal(step.coverage,'geographic_originals_only');}
+    assert.equal(originalSteps,241);assert.equal(originalProgress.verified_parcels,60001);
+    assert.equal(originalProgress.verified_unassociated,0);assert.equal(originalProgress.after_object_id,'60001');
+    assert.ok(!stockCalls.slice(originalsFrom).some(sql=>/ST_DWithin|frozen-spatial:counts|job-stock:begin/.test(sql)));
+    console.info('[native-geographic-originals]',{parcels:60001,steps:originalSteps,duration_ms:Math.round(performance.now()-originalStarted),
+      maximum_transferred_rows:1,production_latency:false,typed_acquisition:false});
     await pool.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);
     const previousClaim=claim;
     claim=await withCustomCohortJobTransaction(pool,async client=>{const [job]=await createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900});
@@ -536,6 +611,9 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
   try {
     await pool.query(NEIGHBORHOOD_CACHED_SOURCE_SCHEMA);
     await pool.query('ALTER TABLE core.primary_improvements ADD COLUMN IF NOT EXISTS pool boolean');
+    // Only this disposable fixture accepts a Polygon CAD geometry, proving
+    // its exact EWKB survives while the frozen spatial column becomes Multi.
+    await pool.query('ALTER TABLE gis.dcad_parcels ALTER COLUMN geom TYPE geometry(Geometry,4326)');
     await pool.query(`INSERT INTO core.accounts(account_id,county,city,subdivision) VALUES
       ('CLOSURE-A','Dallas','Garland','Original Stock'),('CLOSURE-B','Dallas','Garland','Original Stock'),
       ('CLOSURE-OUTSIDE','Dallas','Garland','Outside Stock')`);
@@ -546,7 +624,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       (2,'CLOSURE-B','Original Stock','b',ST_Multi(ST_MakeEnvelope(-96.699,32.9,-96.698,32.901,4326))),
       (3,'CLOSURE-OUTSIDE','Outside Stock','c',ST_Multi(ST_MakeEnvelope(-97.7,32.9,-97.699,32.901,4326))),
       (4,'CLOSURE-A','Original Stock','d',ST_Multi(ST_MakeEnvelope(-97.71,32.9,-97.709,32.901,4326))),
-      (5,NULL,NULL,'e',ST_Multi(ST_MakeEnvelope(-96.7,32.901,-96.699,32.902,4326)))`);
+      (5,NULL,NULL,'e',ST_MakeEnvelope(-96.7,32.901,-96.699,32.902,4326))`);
     await pool.query(`INSERT INTO core.sales_source_records(id,primary_account_id,current_price,close_date,raw_payload) VALUES
       (501,'CLOSURE-A',9007199254740993,'2010-01-01','{"ClosePrice":9007199254740993}'::jsonb),
       (502,'CLOSURE-OUTSIDE',777777,'2026-01-01',NULL),
@@ -777,6 +855,11 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await assert.rejects(verificationOwner.verifyFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),error=>error.outcome_unknown===true);
     const committedCheckpoint=await readCheckpoint();assert.equal(committedCheckpoint.phase,'frozen_verify_v1');
     assert.equal(committedCheckpoint.evidence_refs.length,4);
+    const unfinishedGeoFrom=verificationCalls.length;
+    await assert.rejects(verificationOwner.verifyFrozenCaptureJobStockOriginals(sourceInput,{captureJobClaim:sourceClaim}),/unfinished_graph_verification/);
+    assert.deepEqual(await readCheckpoint(),committedCheckpoint);
+    assert.ok(!verificationCalls.slice(unfinishedGeoFrom).some(sql=>sql.includes('stock-originals:')),
+      'a partial graph cannot advance the separate geographic-original stage');
     const progressFrom=verificationCalls.length;
     let verified=await verificationOwner.verifyFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim});
     assert.equal(verified.verified_layer_count,2,'fresh-client lost-ACK recovery resumes at the next actual root head');
@@ -798,9 +881,54 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await assert.rejects(verificationOwner.verifyFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),/market_data_access_denied/,
       'a completed representation checkpoint is never a retained permission grant');
     await setFixtureGrant(pool,organization,fixtureGrant(organization));
+    const geographicCalls=[];let revokeGeographic=false,revokeGeographicRole=false,changeGeographicSubject=false,loseGeographicCommit=false;
+    const geographicPool={async connect(){const client=await pool.connect();return {release:client.release.bind(client),async query(config){
+      geographicCalls.push(config.text);const result=await client.query(config);
+      if(config.text.includes('stock-originals:page')){
+        assert.equal(result.rows.length,1);assert.equal(result.rows[0].page_count,3);assert.equal(result.rows[0].unassociated_count,1);
+        assert.equal(result.rows[0].invalid_count,0,'the retained Polygon EWKB is normalized before exact MultiPolygon equality');
+        assert.ok(!Object.hasOwn(result.rows[0],'geom')&&!Object.hasOwn(result.rows[0],'payload'),'no geometry blob enters the owner');
+        if(revokeGeographic){revokeGeographic=false;await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});}
+        if(revokeGeographicRole){revokeGeographicRole=false;await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);}
+        if(changeGeographicSubject){changeGeographicSubject=false;await client.query("UPDATE app.appraisal_subject_snapshots SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2000') WHERE id=$1",[sourceSnapshot]);}
+      }
+      if(config.text==='COMMIT'&&loseGeographicCommit){loseGeographicCommit=false;throw Error('synthetic geographic COMMIT acknowledgement lost');}
+      return result;}};}};
+    const geographicOwner=createCustomCohortContextCapture({pool:geographicPool,sourceMode:'combined-witness2-v1',authorizeMarketData:fixturePolicy()});
+    const beforeGeographic=await readCheckpoint();
+    await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+    await assert.rejects(geographicOwner.verifyFrozenCaptureJobStockOriginals(sourceInput,{captureJobClaim:sourceClaim}),/market_data_access_denied/);
+    assert.ok(!geographicCalls.some(sql=>sql.includes('stock-originals:')),'initial current denial reads no geographic original');
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));revokeGeographic=true;
+    await assert.rejects(geographicOwner.verifyFrozenCaptureJobStockOriginals(sourceInput,{captureJobClaim:sourceClaim}),/market_data_access_denied/);
+    assert.deepEqual(await readCheckpoint(),beforeGeographic,'ending denial rolls back geographic proof');
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));revokeGeographicRole=true;
+    await assert.rejects(geographicOwner.verifyFrozenCaptureJobStockOriginals(sourceInput,{captureJobClaim:sourceClaim}),/job_actor_access_revoked/);
+    assert.deepEqual(await readCheckpoint(),beforeGeographic);
+    await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    changeGeographicSubject=true;
+    await assert.rejects(geographicOwner.verifyFrozenCaptureJobStockOriginals(sourceInput,{captureJobClaim:sourceClaim}),/subject_changed/);
+    assert.deepEqual(await readCheckpoint(),beforeGeographic);
+    loseGeographicCommit=true;
+    await assert.rejects(geographicOwner.verifyFrozenCaptureJobStockOriginals(sourceInput,{captureJobClaim:sourceClaim}),error=>error.outcome_unknown===true);
+    const committedGeo=await readCheckpoint();assert.equal(committedGeo.phase,'frozen_geo_verify_v1');assert.equal(committedGeo.evidence_refs.length,5);
+    const geographicFrom=geographicCalls.length;
+    const geo=await geographicOwner.verifyFrozenCaptureJobStockOriginals(sourceInput,{captureJobClaim:sourceClaim});
+    assert.equal(geo.advanced,false);assert.equal(geo.all_parcels_verified,true);assert.equal(geo.verified_parcels,3);assert.equal(geo.verified_unassociated,1);
+    assert.equal(geo.geographic_stock_verification,'originals_verified');assert.equal(geo.original_graph_verification,'representation_verified');
+    assert.equal(geo.typed_identity_closure,'not_established');assert.equal(geo.source_acquisition,'not_established');assert.equal(geo.report_update,'none');
+    assert.ok(!geographicCalls.slice(geographicFrom).some(sql=>sql.includes('stock-originals:')),'lost-ACK completed replay reads no second geographic page');
+    assert.ok(!geographicCalls.some(sql=>/ST_DWithin|frozen-spatial:counts|job-stock:begin/.test(sql)));
+    await assert.rejects(verificationOwner.verifyFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),/checkpoint_conflict/,
+      'later geographic proof cannot be reinterpreted as a mutable graph checkpoint');
+    await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+    await assert.rejects(geographicOwner.verifyFrozenCaptureJobStockOriginals(sourceInput,{captureJobClaim:sourceClaim}),/market_data_access_denied/,
+      'finished geographic proof is not retained source authority');
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1',[assignment])).rows[0].n,0);
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,sourceOperation));
     await assert.rejects(verificationOwner.verifyFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),/claim_lost/);
+    await assert.rejects(geographicOwner.verifyFrozenCaptureJobStockOriginals(sourceInput,{captureJobClaim:sourceClaim}),/claim_lost/);
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,operation));
     await assert.rejects(withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSourceClosurePages(client,
       frozenSpatialOptions({...options,claim})).page({kind:'source_records',cursor:''})),/claim_lost/);

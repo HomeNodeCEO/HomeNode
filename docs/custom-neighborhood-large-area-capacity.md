@@ -2045,3 +2045,53 @@ deployment, worker or schedule is activated here. Partial large-area source
 acquisition, bounded exact numerical/geometry consumers, coherent report
 publication and real >50k/5-mile/10-mile/retrospective/live QA acceptance remain
 outstanding. No genuine appraisal choices or accepted reports are changed.
+
+### Current-authorized frozen job stock stage (2026-10-07)
+
+`prepareFrozenCaptureJobStock` now connects the actual context coordinator to
+the pinned original-sweep readers. It reloads the current database actor before
+assignment admission, locks the draft workfile in the existing lock order,
+reopens the exact live job request, retains/reopens the original subject and
+recorded point, and checks public CAD discovery permission. A worker cannot
+change the original radius, observation dates, actor, assignment, subject or
+generation on retry. Private-source/city studies are explicitly unsupported by
+this new stage; the installed capture method remains unchanged.
+
+The additive `20261107_custom_cohort_frozen_job_stock.sql` schema materializes
+whole-parcel spheroid membership and its unique account roster inside Postgres.
+The subject must actually be present. Unknown global parcel locations remain
+explicit counts, not silently outside. Each geographic stock identity references
+its immutable original parcel in the pinned sweep, including unassociated
+parcels. Other parcel parts belonging to a selected account but outside the
+circle remain source evidence only, not spatial members. Fixed operation/object
+and operation/account indexes support subsequent page reads without repeated
+distance scans or dense account arrays in Node.
+
+The versioned `frozen_stock_v1` checkpoint retains the subject intent and stock
+descriptor in the same transaction as membership publication. A fresh client
+reuses that exact completed stock without `ST_DWithin`; it never follows a newer
+nightly pointer or replaces missing originals. The owner rechecks current roles,
+assignment, draft/subject inputs, public CAD permission, live claim/request and
+pin before COMMIT. Lost COMMIT acknowledgment is reported as uncertain; an
+authorized retry reopens the committed checkpoint. Completed membership is
+immutable, with native original/pin/job scope FKs and statement-level guards.
+
+Focused local tests cover admission, closed inputs, serial settlement, counts,
+missing stock, original/definition/intent changes, current roles and claim loss.
+The isolated PostgreSQL fixture executes this **actual coordinator** with 60,001
+properties, ending role revocation/rollback, lost COMMIT/fresh-client replay,
+replacement claims, protected drafts and subject changes. A separate fixture
+checks null-account stock geometry versus out-of-circle account parts. These
+native tests must execute in CI; local mocks are not database acceptance.
+
+This is **public stock preparation only**, not licensed source acquisition or
+complete numerical/report publication. No source rows, current source grants,
+old dense-reader receipts, group selection, accepted report or Apply result are
+inferred from the stock descriptor. There is no HTTP/default/worker/schedule
+activation or live mutation. Legacy capture explicitly cannot decode this new
+checkpoint, and the new source/worker dispatcher must be composed before using
+it for application jobs. Subsequent current-purpose source stages must use the
+indexed roster, retain all original identities/geometry, independently verify
+whole graphs, and transfer/release the pin only after complete verified originals
+exist. Terminal retirement, exact statistics, coherent publication and full
+5/10-mile/retrospective/live QA acceptance remain outstanding.

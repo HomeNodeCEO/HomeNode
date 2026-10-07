@@ -22,6 +22,10 @@ import { createNeighborhoodCohortBlobRepository }
 import { canonicalAssessmentJson } from '../src/services/neighborhoodAssessment/contract.js';
 import { createCohortOriginalSourceChainV1Store }
   from '../src/services/neighborhoodAssessment/cohortOriginalSourceChainV1.js';
+import { createCustomCohortContextCapture }
+  from '../src/services/neighborhoodAssessment/customCohortContextCapture.js';
+import { createNeighborhoodFrozenJobStock }
+  from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStock.js';
 
 const frozenSpatialOptions = options => ({...options,
   geometryInput:{geometry_version:1,type:'Point',crs:'EPSG:4326',axis_order:'longitude_latitude',
@@ -326,13 +330,80 @@ test('isolated PostgreSQL: freezes a complete 60001-account original source popu
       VALUES($1,$2,'FROZEN-00001','custom_appraisal',$3,$4)`,[report,organization,`SPATIAL-${randomUUID()}`,assignment]);
     const scope={organization_id:organization,report_file_id:report,assignment_file_id:assignment,account_id:'FROZEN-00001'};
     const options={scope,actorUserId:actor};
+    const appraisalCase=randomUUID(),snapshot=randomUUID();
+    await pool.query('INSERT INTO app_auth.organization_memberships(organization_id,user_id) VALUES($1,$2)',[organization,actor]);
+    await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    await pool.query("INSERT INTO app.appraisal_cases(id,organization_id,account_id,effective_date) VALUES($1,$2,'FROZEN-00001','2026-10-07')",[appraisalCase,organization]);
+    const subjectData={custom_property_snapshot:{account:{account_id:scope.account_id},improvement:{living_area_sqft:1001},location:{
+      account_id:scope.account_id,latitude:32.9,longitude:-96.7,source:'dcad_parcel_query',precision:'parcel_centroid',
+      status:'matched',confidence:'high',review_required:false,review_reason:null,match_method:'parcel_id',source_parcel_id:scope.account_id,
+      feature_count:1,metadata:{address_agreement:true},geocoded_at:'2020-01-01T00:00:00.000Z',source_updated_at:'2019-12-31T00:00:00.000Z'}}};
+    await pool.query(`INSERT INTO app.appraisal_subject_snapshots(id,appraisal_case_id,snapshot_version,effective_date,subject_data)
+      VALUES($1,$2,1,'2026-10-07',$3::jsonb)`,[snapshot,appraisalCase,JSON.stringify(subjectData)]);
+    await pool.query('UPDATE app.report_files SET appraisal_case_id=$1,subject_snapshot_id=$2 WHERE id=$3',[appraisalCase,snapshot,report]);
+    await pool.query('INSERT INTO app.custom_appraisal_workfiles(assignment_file_id,canonical_file_name) VALUES($1,$2)',[assignment,`stock-${randomUUID()}`]);
+    const discovery={profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'};
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).enqueue({scope,actorUserId:actor,
-      request:{operation_id:operation,observation_period:{start_date:'2025-01-01',end_date:'2026-10-07'}}}));
-    const claim=await withCustomCohortJobTransaction(pool,async client=>{
+      request:{operation_id:operation,observation_period:{start_date:'2025-01-01',end_date:'2026-10-07'},discovery}}));
+    let claim=await withCustomCohortJobTransaction(pool,async client=>{
       const [job]=await createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900});
       return {operation_id:operation,claim_token:job.claim_token,attempts:job.attempts};
     });
-    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).pinPreparedGeneration(claim,options));
+    const stockCalls=[];
+    let revokeAtCompletion=false,loseStockCommit=false;
+    const stockPool={async connect(){const client=await pool.connect();return {
+      release:client.release.bind(client),async query(config){stockCalls.push(config.text);
+        const result=await client.query(config);
+        if(config.text.includes('neighborhood-frozen-job-stock:complete')&&revokeAtCompletion){revokeAtCompletion=false;
+          await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);}
+        if(config.text==='COMMIT'&&loseStockCommit){loseStockCommit=false;throw new Error('synthetic stock COMMIT acknowledgement lost');}
+        if(config.text.includes('neighborhood-frozen-job-stock:'))assert.ok(result.rows.length<=1,'stock computation does not transfer a dense roster');
+        return result;}};}};
+    const owner=createCustomCohortContextCapture({pool:stockPool,authorizeMarketData:()=>assert.fail('public stock does not read licensed market rows')});
+    const stockInput={auth:{userId:actor,organizations:[]},accountId:scope.account_id,assignmentFileId:assignment,operationId:operation,
+      observationPeriod:{start_date:'2025-01-01',end_date:'2026-10-07'},discovery};
+    await assert.rejects(owner.prepareFrozenCaptureJobStock({...stockInput,discovery:{...discovery,radius_metres:'16093.44'}},{captureJobClaim:claim}),/operation_conflict/,
+      'current job payload, not a new worker radius, owns the definition');
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_custom_cohort_job_stocks')).rows[0].n,0);
+    revokeAtCompletion=true;
+    await assert.rejects(owner.prepareFrozenCaptureJobStock(stockInput,{captureJobClaim:claim}),/job_actor_access_revoked/,
+      'role revocation after exact stock writes rolls back the entire unpublished stage');
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_custom_cohort_job_stocks')).rows[0].n,0);
+    assert.equal((await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[operation])).rows[0].checkpoint,null);
+    await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    loseStockCommit=true;
+    await assert.rejects(owner.prepareFrozenCaptureJobStock(stockInput,{captureJobClaim:claim}),error=>error.outcome_unknown===true);
+    const beforeReplay=stockCalls.length;
+    const prepared=await owner.prepareFrozenCaptureJobStock(stockInput,{captureJobClaim:claim});
+    assert.equal(prepared.reused,true);assert.equal(prepared.population.account_count,'60001');assert.equal(prepared.population.parcel_count,'60001');
+    assert.equal(prepared.population.unlocatable_global_parcels,'1');assert.equal(prepared.source_acquisition,'not_established');
+    assert.ok(!stockCalls.slice(beforeReplay).some(sql=>sql.includes('ST_DWithin')||sql.includes('neighborhood-frozen-spatial:counts')||sql.includes('neighborhood-frozen-job-stock:parcels')),
+      'fresh-client replay uses the indexed materialized stock, never another spatial sweep');
+    assert.equal((await pool.query('SELECT count(*)::text AS n FROM app.neighborhood_custom_cohort_stock_accounts WHERE operation_id=$1',[operation])).rows[0].n,'60001');
+    assert.equal((await pool.query('SELECT count(*)::text AS n FROM app.neighborhood_custom_cohort_stock_parcels WHERE operation_id=$1',[operation])).rows[0].n,'60001');
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1',[assignment])).rows[0].n,0);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_custom_cohort_contexts WHERE context_id=$1',[operation])).rows[0].n,0);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.custom_neighborhood_acceptances WHERE assignment_file_id=$1',[assignment])).rows[0].n,0);
+    await pool.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);
+    const previousClaim=claim;
+    claim=await withCustomCohortJobTransaction(pool,async client=>{const [job]=await createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900});
+      return {operation_id:operation,claim_token:job.claim_token,attempts:job.attempts};});
+    await assert.rejects(owner.prepareFrozenCaptureJobStock(stockInput,{captureJobClaim:previousClaim}),/claim_lost/);
+    assert.equal((await owner.prepareFrozenCaptureJobStock(stockInput,{captureJobClaim:claim})).reused,true);
+    await pool.query("UPDATE app.custom_appraisal_workfiles SET status='archived' WHERE assignment_file_id=$1",[assignment]);
+    await assert.rejects(owner.prepareFrozenCaptureJobStock(stockInput,{captureJobClaim:claim}),/private_source_read_only/);
+    await pool.query("UPDATE app.custom_appraisal_workfiles SET status='draft' WHERE assignment_file_id=$1",[assignment]);
+    await pool.query("UPDATE app.appraisal_subject_snapshots SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2000') WHERE id=$1",[snapshot]);
+    await assert.rejects(owner.prepareFrozenCaptureJobStock(stockInput,{captureJobClaim:claim}),/subject_changed/);
+    await pool.query('UPDATE app.appraisal_subject_snapshots SET subject_data=$1::jsonb WHERE id=$2',[JSON.stringify(subjectData),snapshot]);
+    for(const sql of [
+      'UPDATE app.neighborhood_custom_cohort_job_stocks SET parcel_count=parcel_count WHERE operation_id=$1',
+      'DELETE FROM app.neighborhood_custom_cohort_stock_accounts WHERE operation_id=$1',
+      'INSERT INTO app.neighborhood_custom_cohort_stock_accounts(operation_id,account_id,parcel_count) VALUES($1,\'fabricated\',1)',
+      'UPDATE app.neighborhood_custom_cohort_stock_parcels SET account_id=account_id WHERE operation_id=$1',
+    ])await assert.rejects(pool.query(sql,[operation]),error=>error.code==='55000','published exact stock is immutable');
+    assert.ok(!stockCalls.some(sql=>/FROM (?:core\.(?:sales|sales_source_records|sale_parcels)|gis\.dcad_parcels)/.test(sql)),
+      'the current owner never falls back to mutable CAD or licensed sales for this public-stock stage');
     // Traverse all 60,001 unique identities using fixed-width pages and a
     // running count/cursor only. No array of the population is held by Node.
     let after='',seen=0,done=false,maximumPageRows=0;
@@ -423,6 +494,20 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).pinPreparedGeneration(claim,options));
     const expected={parcels:['1','2','4'],accounts:['CLOSURE-A','CLOSURE-B'],source_records:['501','503','504'],
       sales:['1','3','4'],sale_links:['1','2','3','4'],sync_state:['dcad_parcels'],sync_runs:[run]};
+    // This storage-only fixture supplies a synthetic intent reference. The
+    // separate 60,001-property test above uses the actual current subject owner.
+    // Exact stock includes null-account parcel5 but NOT outside account-part4;
+    // source closure intentionally retains part4, never promoting it to stock.
+    const exactStock=await withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenJobStock(client,
+      {...frozenSpatialOptions({...options,claim}),subjectIntent:{content_sha256:'f'.repeat(64),canonical_utf8_bytes:'100'},checkBudget(){}}).prepare());
+    assert.equal(exactStock.population.parcel_count,'3');assert.equal(exactStock.population.unassociated_parcel_count,'1');
+    assert.deepEqual((await pool.query(`SELECT stock.object_id::text,stock.account_id,
+      original.payload->>'stored_geometry_ewkb' AS geometry_ewkb FROM app.neighborhood_custom_cohort_stock_parcels stock
+      JOIN app.neighborhood_frozen_source_rows original ON original.generation_id=stock.generation_id
+        AND original.kind=stock.kind AND original.row_key=stock.row_key
+      WHERE stock.operation_id=$1 ORDER BY stock.object_id`,[operation])).rows.map(row=>[row.object_id,row.account_id,typeof row.geometry_ewkb]),
+    [['1','CLOSURE-A','string'],['2','CLOSURE-B','string'],['5',null,'string']],
+    'every geographic stock original, including the unassociated geometry, remains retained behind the exact generation FK');
     let retainedPageManifest,retainedPageText,chainBinding,chainRoot;
     for(const [kind,keys] of Object.entries(expected))await withCustomCohortJobTransaction(pool,async client=>{
       const reader=createNeighborhoodFrozenSourceClosurePages(client,frozenSpatialOptions({...options,claim}));

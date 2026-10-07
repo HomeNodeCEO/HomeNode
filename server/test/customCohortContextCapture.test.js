@@ -33,6 +33,35 @@ test('Custom capture requires an explicit server market policy, without default 
   assert.throws(() => createCustomCohortContextCapture({ pool: { connect() {} } }), /dependencies_required/);
 });
 
+test('new frozen-stock owner requires a detached exact job claim and refuses unsupported inputs before any connection',async()=>{
+  const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}};
+  const claim={operation_id:base.operationId,claim_token:'33333333-3333-4333-8333-333333333333',attempts:1};
+  await assert.rejects(setup().prepareFrozenCaptureJobStock(base),/invalid_input/);
+  await assert.rejects(setup().prepareFrozenCaptureJobStock(base,{captureJobClaim:{...claim,operation_id:'44444444-4444-4444-8444-444444444444'}}),/operation_conflict/);
+  await assert.rejects(setup().prepareFrozenCaptureJobStock(input(),{captureJobClaim:claim}),/frozen_discovery_unsupported/);
+  await assert.rejects(setup().prepareFrozenCaptureJobStock({...base,account_ids:['untrusted']},{captureJobClaim:claim}),/invalid_input/);
+});
+
+test('frozen-stock owner ignores stale roles and reloads the current DB actor before assignment, draft or retained source reads',async()=>{
+  const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}};
+  const organization='11111111-1111-4111-8111-111111111111';
+  const claim={operation_id:base.operationId,claim_token:'33333333-3333-4333-8333-333333333333',attempts:1};
+  for(const currentRoles of [null,['read_only']]){
+    const calls=[];const service=setup(async()=>({release(){},async query({text}){
+      calls.push(text);
+      if(text.includes('job-organization'))return {rowCount:1,rows:[{organization_id:organization}]};
+      if(text.includes('current-actor'))return currentRoles===null?{rowCount:0,rows:[]}:{rowCount:1,rows:[{user_id:base.auth.userId,organization_id:organization,roles:currentRoles}]};
+      if(text.includes('custom-cohort-capture:assignment'))return {rowCount:1,rows:[{assignment_file_id:base.assignmentFileId,account_id:base.accountId,organization_id:organization,
+        assigned_appraiser_user_id:base.auth.userId,supervisory_appraiser_user_id:null}]};
+      return {rowCount:0,rows:[]};}}));
+    await assert.rejects(service.prepareFrozenCaptureJobStock({...base,auth:{...base.auth,organizations:[{organizationId:organization,roles:['appraiser']}]}},{captureJobClaim:claim}),
+      currentRoles===null?/job_actor_access_revoked/:/assignment_access_denied/);
+    assert.ok(calls.includes('ROLLBACK'));assert.ok(!calls.includes('COMMIT'));
+    assert.ok(!calls.some(sql=>/private-workfile|frozen-job-stock|neighborhood-cohort-blob|checkpoint-read|generation-pin/.test(sql)));
+    if(currentRoles!==null)assert.ok(calls.findIndex(sql=>sql.includes('current-actor'))<calls.findIndex(sql=>sql.includes('custom-cohort-capture:assignment')));
+  }
+});
+
 test('recorded-group selection refreshes current roles before retained facts or head reads/writes', async () => {
   const base = input(), organization = '11111111-1111-4111-8111-111111111111';
   const report = '22222222-2222-4222-8222-222222222222';

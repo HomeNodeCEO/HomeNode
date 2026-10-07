@@ -71,6 +71,7 @@ const MIGRATIONS = Object.freeze([
   "20261104_custom_cohort_prepared_generation_pins.sql",
   "20261105_neighborhood_frozen_original_sources.sql",
   "20261106_neighborhood_frozen_spatial_index.sql",
+  "20261107_custom_cohort_frozen_job_stock.sql",
 ]);
 const ADVISORY_LOCK_KEY = 3_603_600_821;
 

@@ -112,6 +112,8 @@ export function createCustomCohortCaptureJobRepository(client) {
     if (typeof row.transaction_id !== 'string' || !/^[1-9][0-9]{0,19}$/.test(row.transaction_id)) fail('caller_transaction_required');
     return row.transaction_id;
   };
+  /** Pin or reopen an exact prepared version in the caller's live scoped job
+   * transaction. Current assignment/source authorization remains with its owner. */
   const preparedGeneration = async (claim, options, preparing) => {
     const values = scopedClaimOf(claim, options);
     const started = await transactionId();

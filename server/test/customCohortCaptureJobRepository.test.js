@@ -24,6 +24,10 @@ test('prepared-generation pin migration is registered after its job and index pr
     assert.ok(registry.indexOf(name) > registry.indexOf(prerequisite));
   }
   const sql = readFileSync(new URL(`../migrations/${name}`, import.meta.url), 'utf8');
+  assert.match(sql, /CREATE INDEX neighborhood_cohort_prepared_pins_generation_idx/);
+  for (const match of sql.matchAll(/CREATE (?:INDEX|TRIGGER) ([a-z_]+)/g)) {
+    assert.ok(Buffer.byteLength(match[1]) <= 63, 'declared PostgreSQL identifiers must not be silently truncated');
+  }
   assert.match(sql, /FOREIGN KEY\(operation_id,organization_id,report_file_id,assignment_file_id,account_id,actor_user_id\)/);
   assert.match(sql, /ON DELETE RESTRICT ON UPDATE RESTRICT/);
   assert.match(sql, /BEFORE UPDATE OR DELETE OR TRUNCATE/);

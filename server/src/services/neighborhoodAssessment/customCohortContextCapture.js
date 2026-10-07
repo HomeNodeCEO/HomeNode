@@ -23,6 +23,7 @@ import { createCustomCohortCaptureJobRepository, prepareCustomCohortCaptureJobCl
 import { loadCurrentCustomCohortJobActor } from './customCohortJobActor.js';
 import { createCustomCohortRecordedGroupSelectionOwner,
   reopenCustomCohortRecordedGroupSelectionOriginal } from './customCohortRecordedGroupSelectionOwner.js';
+import { createCustomCohortPreparedCatalogOwner } from './customCohortPreparedCatalogOwner.js';
 import { createCustomCohortGroupSelectionRepository } from './customCohortGroupSelectionRepository.js';
 import { prepareCustomCohortGroupWorkspaceSave,
   prepareCustomCohortGroupCaptureCompletion } from './customCohortGroupWorkspaceSave.js';
@@ -692,6 +693,45 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if (!same(decision, loaded.privateAuthorization.decision)) fail('market_policy_changed');
     }
   }
+  const preparedCatalog = createCustomCohortPreparedCatalogOwner({ identityOf,
+    execute: async (originalInput, options, writing, work) => {
+      const budget = operationBudget(options), permission = writing ? 'write' : 'read';
+      return transaction(pool, 'READ COMMITTED', budget, async client => {
+        const initial = await resolveTarget(client, originalInput, false, permission);
+        const auth = await loadCurrentCustomCohortJobActor(client, originalInput.auth.userId, initial.organization_id);
+        const input = { ...originalInput, auth };
+        assertTarget(await resolveTarget(client, input, false, permission), initial);
+        // Match existing upload/sign/subject lock order without a SHARE upgrade.
+        // Read permission is NOT widened by taking the same NOWAIT parent lock.
+        const workfile = await privateCaptureWorkfile(client, input, { permission, writeLock: true });
+        if (writing) privateDraft(workfile);
+        const target = await resolveTarget(client, input, true, permission);
+        assertTarget(target, initial);
+        const scopeJson = canonicalAssessmentJson(Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])));
+        const licensed = await authorizedRetainedInputs(client, { scopeJson, reference: input.contextRef, input,
+          authorizeMarketData, authorizePrivateSales, budget, exposure: 'report_observation_catalog', loadInputs: false });
+        // Original metadata establishes whether this was a private-source study.
+        // Never inspect a shared derivative or compile a fallback for that case.
+        if (licensed.privateAuthorization) fail('prepared_catalog_private_source_unsupported');
+        if ((await createCustomCohortSubjectRepository(client, scopeJson)
+          .compareCurrent(licensed.subjectReference)).status !== 'matched') fail('subject_changed');
+        const result = await work({ client, scopeJson, budget });
+        // Reopen the SAME original context/dependencies and policy using fresh
+        // database roles before delivery/COMMIT, including an ordinary cache miss.
+        const finalAuth = await loadCurrentCustomCohortJobActor(client, input.auth.userId, target.organization_id);
+        const finalInput = { ...input, auth: finalAuth };
+        assertTarget(await resolveTarget(client, finalInput, true, permission), target);
+        if (writing) privateDraft(await privateCaptureWorkfile(client, finalInput));
+        const ending = await authorizedRetainedInputs(client, { scopeJson, reference: input.contextRef, input: finalInput,
+          authorizeMarketData, authorizePrivateSales, budget, exposure: 'report_observation_catalog', loadInputs: false });
+        if (ending.privateAuthorization || !same(ending.header, licensed.header)
+          || !same(ending.purpose, licensed.purpose) || !same(ending.decision, licensed.decision)
+          || !same(ending.subjectReference, licensed.subjectReference)) fail('operation_conflict');
+        if ((await createCustomCohortSubjectRepository(client, scopeJson)
+          .compareCurrent(ending.subjectReference)).status !== 'matched') fail('subject_changed');
+        budget.check(); return freeze(result);
+      });
+    } });
   const recordedGroupSelection = createCustomCohortRecordedGroupSelectionOwner({ identityOf,
     executeWorkspaceTransition: async (originalInput, options, work) => {
       const budget = operationBudget(options);
@@ -1449,6 +1489,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
   }
   return Object.freeze({
     ...recordedGroupSelection,
+    ...preparedCatalog,
     // These are intentionally not exposed by the HTTP router until a worker
     // can process queued jobs. Queue admission is not a source grant; every
     // operation rechecks current assignment access and the worker must recheck

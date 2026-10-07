@@ -73,7 +73,7 @@ test('prepared statistics compose actual complete partition, retained selection 
   assert.equal(d.observations.summary.selected.account_count, h.accounts.length);
   assert.deepEqual(d.selected, h.receipt); assert.equal(Object.hasOwn(d, 'manifest'), false);
   assert.equal(Object.hasOwn(d.catalog, 'pockets'), false); assert.equal(JSON.stringify(d).includes('"account_ids":'), false);
-  assert.deepEqual(h.calls.map(c => c.action), ['prepared-catalog', 'prepared-catalog', 'prepared-catalog-page',
+  assert.deepEqual(h.calls.map(c => c.action), ['prepared-catalog', 'prepared-catalog-page',
     'prepared-catalog', 'group-selection', 'selection-preview', 'prepared-catalog', 'group-selection']);
   assert.ok(h.calls.every(c => c.init.signal === options.signal && c.init.cache === 'no-store'));
   assert.ok(Object.isFrozen(result) && Object.isFrozen(d.observation_period));
@@ -88,6 +88,25 @@ test('empty, unresolved and whole-group choices preserve exact server medians/CO
     assert.equal(result.display.observations.summary.all.account_count, 501);
     assert.equal(result.display.selected.included_recorded_group_ids.length, h.receipt.included_recorded_group_ids.length);
   }
+});
+
+test('reordered wire context, selection reference and observation-period keys preserve semantic identity', async () => {
+  const reverse = value => Object.fromEntries(Object.entries(value).reverse());
+  const h = await harness({ hook: ({ out }) => {
+    out.context_ref = reverse(out.context_ref);
+    if (out.selection_ref) out.selection_ref = reverse({ ...out.selection_ref,
+      manifest_ref: reverse(out.selection_ref.manifest_ref) });
+    if (out.summary) {
+      out.summary.observation_period = reverse(out.summary.observation_period);
+      out.summary.binding.context_ref = reverse(out.summary.binding.context_ref);
+    }
+    return json(out);
+  } });
+  const result = await h.run(h.value, io());
+  assert.equal(result.status, 'available');
+  assert.deepEqual(result.display.observation_period, h.value.observationPeriod);
+  assert.deepEqual(result.display.selected.selection_ref, h.receipt.selection_ref);
+  assert.equal(result.display.observations.summary.selected.account_count, h.accounts.length);
 });
 
 test('initial cache miss returns explicitly with no selection/numeric fallback; late loss publishes no earlier observations', async () => {

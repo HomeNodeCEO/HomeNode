@@ -28,6 +28,8 @@ export interface CustomCohortPreparedStatisticsDisplay {
 export type CustomCohortPreparedStatisticsResult = { readonly status: 'not_prepared' } |
   { readonly status: 'available'; readonly display: CustomCohortPreparedStatisticsDisplay };
 const issued = new WeakSet<object>(), PROBE = '10000000-0000-4000-8000-000000000001';
+// Compare decoder-produced closed records (or sorted IDs), never raw wire key
+// order. Each admitted context/ref/period has its own canonical field order.
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 function fail(): never { throw new TypeError('invalid_custom_cohort_prepared_statistics_display'); }
 function check(v: unknown): asserts v { if (!v) fail(); }

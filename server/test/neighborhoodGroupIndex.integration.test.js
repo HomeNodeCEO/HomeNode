@@ -21,6 +21,10 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     // The isolated UAD fixture has bedroom/bath and secondary rows but omits
     // the DCAD pool column. Add it only inside this throwaway child database.
     await pool.query('ALTER TABLE core.primary_improvements ADD COLUMN IF NOT EXISTS pool boolean');
+    assert.equal((await pool.query(`SELECT count(*)::int AS count FROM pg_indexes
+      WHERE schemaname='app' AND tablename='neighborhood_custom_cohort_prepared_generation_pins'
+        AND indexname='neighborhood_cohort_prepared_pins_generation_idx'`)).rows[0].count,1,
+      'the declared generation pin index exists with its exact non-truncated name');
     await pool.query(`INSERT INTO core.accounts(account_id,county,city,subdivision) VALUES
       ('INDEX-A','Dallas','Garland','Monica Park 4'),
       ('INDEX-B','Dallas','Garland',' MONICA  PARK 4 '),

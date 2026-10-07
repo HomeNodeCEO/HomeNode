@@ -1,9 +1,13 @@
 import { performance } from 'node:perf_hooks';
 import { types } from 'node:util';
 import { createNeighborhoodFrozenSpatialPages } from './neighborhoodFrozenSpatialPages.js';
+import { NEIGHBORHOOD_FROZEN_PAGE_LIMITS } from './neighborhoodFrozenSourcePages.js';
 
 export const NEIGHBORHOOD_FROZEN_CLOSURE_LIMITS = Object.freeze({
-  rows:250,page_utf8_bytes:1_500_000,operation_utf8_bytes:32_000_000,pages:32,operation_ms:60_000,
+  // Share the retained-row envelope so a valid heavily escaped original cannot
+  // permanently block this scoped closure either. Total operation cap is fixed.
+  rows:250,page_utf8_bytes:NEIGHBORHOOD_FROZEN_PAGE_LIMITS.page_utf8_bytes,
+  operation_utf8_bytes:32_000_000,pages:32,operation_ms:60_000,
 });
 const KINDS = Object.freeze({parcels:'bigint',accounts:'text',source_records:'bigint',sales:'bigint',
   sale_links:'bigint',sync_state:'text',sync_runs:'uuid'});

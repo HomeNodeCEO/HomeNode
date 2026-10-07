@@ -41,7 +41,8 @@ test('actual pinned spatial reader surrounds each source page; raw original deci
   assert.equal(f.calls.filter(x=>x.text.includes('generation-fence')).length,8);
   assert.equal(f.calls.filter(x=>x.text.includes('frozen-spatial:header')).length,4);
   assert.equal(f.calls.filter(x=>x.text.includes('frozen-closure:')).length,1);
-  assert.deepEqual(f.calls.find(x=>x.text.includes('frozen-closure:')).values,[id,'-96.7','32.9','8046.72','',2,1500000]);
+  assert.deepEqual(f.calls.find(x=>x.text.includes('frozen-closure:')).values,
+    [id,'-96.7','32.9','8046.72','',2,NEIGHBORHOOD_FROZEN_CLOSURE_LIMITS.page_utf8_bytes]);
   assert.ok(Object.isFrozen(page.rows)&&Object.isFrozen(page.rows[0]));
 });
 
@@ -61,9 +62,18 @@ test('ending claim/header loss, corrupted payloads, byte overflow and read ACK l
     ({text,headers,header})=>text.includes('frozen-spatial:header')&&headers>=2?result({...header,source_snapshot:'2:3:'}):null,
     ({text,page})=>text.includes('frozen-closure:')?result({...page([]),candidate_count:1}):null,
     ({text,page})=>text.includes('frozen-closure:')?result(page([{row_key:'1',payload_text:'[1]'}])):null,
-    ({text,page})=>text.includes('frozen-closure:')?result({...page([]),page_utf8_bytes:1500001}):null,
+    ({text,page})=>text.includes('frozen-closure:')?result({...page([]),page_utf8_bytes:NEIGHBORHOOD_FROZEN_CLOSURE_LIMITS.page_utf8_bytes+1}):null,
     ({text})=>{if(text.includes('frozen-closure:'))throw Error('synthetic source read ACK lost');},
   ])await assert.rejects(fixture(hook).reader.page({kind:'sales',cursor:''}),/claim_lost|source_changed|page_|ACK lost/);
+});
+
+test('scoped closure carries a valid escaped original above the former byte ceiling',async()=>{
+  const payload_text=JSON.stringify({legal_description:'\\'.repeat(480_000)});
+  const f=fixture(({text,page})=>text.includes('frozen-closure:')?result(page([{row_key:'1',payload_text}])):null);
+  const page=await f.reader.page({kind:'accounts',cursor:'',rowLimit:2});
+  assert.equal(page.rows[0].payload_text,payload_text);
+  assert.ok(page.page_utf8_bytes>1_500_000);
+  assert.ok(page.page_utf8_bytes<=NEIGHBORHOOD_FROZEN_CLOSURE_LIMITS.page_utf8_bytes);
 });
 
 test('closed cursor/plan admission, cancellation and aggregate budgets hold before SQL and through settlement',async()=>{

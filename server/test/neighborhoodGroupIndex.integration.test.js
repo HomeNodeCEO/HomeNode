@@ -374,6 +374,8 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await pool.query(`INSERT INTO core.accounts(account_id,county,city,subdivision) VALUES
       ('CLOSURE-A','Dallas','Garland','Original Stock'),('CLOSURE-B','Dallas','Garland','Original Stock'),
       ('CLOSURE-OUTSIDE','Dallas','Garland','Outside Stock')`);
+    await pool.query(`UPDATE core.accounts SET legal_description=repeat(chr(92),480000)
+      WHERE account_id='CLOSURE-A'`);
     await pool.query(`INSERT INTO gis.dcad_parcels(object_id,account_id,subdivision_name,source_record_hash,geom) VALUES
       (1,'CLOSURE-A','Original Stock','a',ST_Multi(ST_MakeEnvelope(-96.7,32.9,-96.699,32.901,4326))),
       (2,'CLOSURE-B','Original Stock','b',ST_Multi(ST_MakeEnvelope(-96.699,32.9,-96.698,32.901,4326))),
@@ -422,9 +424,12 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         assert.equal(page.original.generation_id,frozen.generationId);assert.equal(page.stock_population.account_count,'2');
         assert.equal(page.stock_population.parcel_count,'3');assert.equal(page.stock_population.unassociated_parcel_count,'1');
         assert.equal(page.additional_cadastral_accounts,false);assert.equal(page.authority,'not_established');
+        if(kind==='accounts'&&after==='')assert.ok(page.page_utf8_bytes>1_500_000,
+          'scoped closure admits the heavily escaped original before continuing to the next stock account');
         rows.push(...page.rows);after=page.next_cursor;done=page.end_of_layer;
       }
       assert.equal(done,true);assert.deepEqual(rows.map(row=>row.row_key),keys,`${kind} is exact original-stock-seeded one-hop scope`);
+      if(kind==='accounts')assert.equal(JSON.parse(rows[0].payload_text).legal_description,'\\'.repeat(480000));
       if(kind==='source_records'){
         const payload=JSON.parse(rows[0].payload_text);assert.equal(payload.current_price,'9007199254740993');
         assert.equal(payload.close_date,'2010-01-01');assert.equal(payload.source_raw_witness.fields.ClosePrice.value_text,'9007199254740993');

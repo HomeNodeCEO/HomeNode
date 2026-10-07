@@ -14,7 +14,10 @@ added. DCAD sync state and the stock/state-referenced sync runs remain scoped.
 
 Only fixed seven-kind original projections run. Original JSON text preserves
 decimal/date/geometry literals, with SQL-side encoded-byte admission, stable native
-keysets and finite shared page/byte/time bounds. Each source page is surrounded
+keysets and finite shared page/byte/time bounds. The 2.1-MB encoded page envelope
+is shared with the original-source reader, so every valid retained 1-MB row fits
+alone even with worst-case second JSON escaping; the operation cap stays 32 MB.
+Each source page is surrounded
 by the actual pinned spatial reader's live scope/claim/header checks. No whole
 city account list crosses to Node, no dates/resolution flags remove source rows,
 and no arbitrary raw payload, provider query or browser source plan is admitted.
@@ -22,7 +25,8 @@ and no arbitrary raw payload, provider query or browser source plan is admitted.
 Local protocol tests cover source scoping, autocommit, initial/ending pin/header
 loss, outside subject, corrupt/oversized originals, cancellation and pending I/O.
 A new isolated native fixture independently checks all seven scopes, exact large
-decimal/old legacy values, outside package links, unresolved links, no second-hop
+decimal/old legacy values, a heavily escaped original above 1.5 MB followed by
+another stock account, outside package links, unresolved links, no second-hop
 sales or linked CAD expansion, and cancellation. Native proof is pending until CI.
 
 This remains storage **data**, not a current source grant, whole-closure acquisition

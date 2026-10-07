@@ -17,6 +17,7 @@ import { checkCustomCohortOriginalMetricRunDatabase } from "./helpers/customCoho
 import { checkCustomCohortCompleteMetricGroupDatabase } from "./helpers/customCohortCompleteMetricGroupDatabaseChecks.js";
 import { checkCustomCohortRecordedCatalogPageDatabase } from "./helpers/customCohortRecordedCatalogPageDatabaseChecks.js";
 import { checkCustomCohortCatalogMembershipWitnessDatabase } from "./helpers/customCohortCatalogMembershipWitnessDatabaseChecks.js";
+import { checkCustomCohortRetainedGroupSelectionStageDatabase } from "./helpers/customCohortRetainedGroupSelectionStageDatabaseChecks.js";
 import { checkCustomCohortPreparedCatalogRegistryDatabase } from "./helpers/customCohortPreparedCatalogRegistryDatabaseChecks.js";
 import { checkNeighborhoodCohortCompactAckDatabase } from "./helpers/neighborhoodCohortCompactAckDatabaseChecks.js";
 import { checkCustomCohortSubjectDatabase } from "./helpers/customCohortSubjectDatabaseChecks.js";
@@ -402,6 +403,8 @@ test("neighborhood persistence: real PostgreSQL canonical identities, publicatio
       checkCustomCohortRecordedCatalogPageDatabase(pool));
     await t.test("synthetic complete catalog membership witness retains every original through actual tenant SQL without changing reports or choices", () =>
       checkCustomCohortCatalogMembershipWitnessDatabase(pool));
+    await t.test("synthetic retained group selection stages exact existing command and page identity through tenant SQL without dense source replay or report changes", () =>
+      checkCustomCohortRetainedGroupSelectionStageDatabase(pool));
     await t.test("synthetic prepared catalog registry compiles checked originals once and reopens bounded pages through actual scoped SQL", async () =>
       checkCustomCohortPreparedCatalogRegistryDatabase(pool, await identityFixture(pool)));
     await t.test("cohort compact acknowledgments verify exact bytes and concurrent replay without returning evidence text", async () => {

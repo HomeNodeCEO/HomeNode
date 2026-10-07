@@ -76,6 +76,9 @@ test('source read binds account, assignment and document IDs and rejects a parti
   assert.match(query.text, /appraisal_case\.organization_id IS NOT DISTINCT FROM assignment\.organization_id/);
   assert.match(query.text, /saved_subject\.section_key = 'report.subject_identification'/);
   assert.match(query.text, /saved_evidence\.section_key = 'report.subject_evidence'/);
+  assert.match(query.text, /LEFT JOIN app\.custom_appraisal_workfile_sections saved_market\s+ON saved_market\.assignment_file_id = assignment\.id AND saved_market\.section_key = 'market_conditions'/);
+  assert.match(query.text, /LEFT JOIN app\.custom_appraisal_workfile_sections saved_workspace\s+ON saved_workspace\.assignment_file_id = assignment\.id AND saved_workspace\.section_key = 'neighborhood_workspace'/);
+  assert.doesNotMatch(query.text, /app\.custom_appraisal_sections saved_(?:market|workspace)/);
   assert.match(query.text, /'canonicalIdentity', jsonb_build_object\('accountId', subject\.account_id/);
   assert.match(query.text, /'county', subject\.county, 'assessorParcelNumber', subject\.account_id/);
   assert.match(query.text, /'state', to_jsonb\(subject\)->>'state'/);

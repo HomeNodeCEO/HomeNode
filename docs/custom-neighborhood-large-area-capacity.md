@@ -1,5 +1,62 @@
 # Complete larger-area Custom neighborhood studies
 
+## Opt-in frozen original-source sweep (2026-10-07, not activated)
+
+The nightly group-index writer has an explicit internal
+`retainOriginalSources: true` companion. Its default and shipped CLI remain
+**false**. The companion copies fixed original mirror projections into indexed
+Postgres rows in the **same repeatable-read source transaction** that prepares
+and publishes the descriptive generation. It does not fetch rows into Node or
+issue a report-level recapture. Each bounded SQL batch returns only one aggregate
+count/cursor/byte row. Native numeric/UUID keysets retain source primary-key
+ordering; account/source-purpose lookups and original geometry have separate
+indexes. Whole-table counts in that same snapshot independently verify every
+row was copied, including null-account parcels, unresolved parcel associations,
+all-date source records and legacy sales. Empty or invalid source keys refuse
+the generation instead of silently disappearing behind a cursor.
+
+The seven fixed layers are:
+
+- Parcel identity, original EWKB geometry, recorded subdivision/land-use/CAD
+  classification, GLA, year built, site area, market value and sync provenance.
+- CAD account identity, county, subdivision, neighborhood code and legal text.
+- MLS/source identity, original typed observations, dates, prices, sizes,
+  bedrooms/baths/garage/pool/DOM, matching/review flags and the existing bounded
+  **allowlisted** raw scalar witness. The whole raw MLS payload is never copied.
+- Normalized sales, preserving exact decimal price text and original dates.
+- Every sale-to-parcel association, including package and unresolved links.
+- Source sync state and source sync runs, preserving their actual observations.
+
+Original geometry and numeric text are not replaced by group medians, rounded
+Numbers or inferred historical stock. The saved version is immutable after
+publication. The database pin guard independently retains it for an unfinished
+job; retirement must be exclusively claimed before bounded original-row cleanup,
+and cleanup removes original rows/header with that obsolete generation.
+Autocommit, changed backend/snapshot, cancellation, oversized pages/populations,
+SQL failures or incomplete whole counts refuse materialization and require the
+caller's rollback. Publication leaves the previous active generation unchanged
+on failure. This writer is a fixed module-owned SQL plan, never a browser-chosen
+table, projection or provider query.
+
+Local protocol/source tests exercise the seven-layer copy, initial/ending
+snapshot fences, complete counts, byte/cursor guards, cancellation and the OFF
+default. The native fixture is extended to run actual frozen sweeps and preserve
+their original geometry/values through four sweeps and a retained job pin. A
+second isolated fixture materializes **60,001 accounts / 60,002 parcels**, exact
+large decimal prices, old observations and unresolved/package links, and checks
+that no original row payload crosses to the nightly Node process. Native CI
+must execute these tests before merge; local syntax/mock proof is not native
+capacity or live latency proof.
+
+Still required before activation: a current-authorized, exact job-pinned paged
+reader and new original-acquisition/retention format; complete source-closure
+mapping; finite terminal-pin release policy; selected whole-population numeric,
+map/member and coherent Apply consumers; live database storage/runtime and
+5-/10-mile/retrospective tests. No legacy weak receipt is recreated by persisted
+JSON, no historical coverage/source license is inferred, and neither installed
+50k acquisition limits nor genuine appraisal choices/accepted reports change.
+This sweep is not wired into the HTTP path or scheduled command yet.
+
 ## Stable prepared-generation retention (2026-10-07, internal only)
 
 The job ledger now has explicit `pinPreparedGeneration` and

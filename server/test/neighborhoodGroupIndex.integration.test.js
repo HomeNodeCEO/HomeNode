@@ -44,10 +44,20 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     await pool.query(`INSERT INTO core.secondary_improvements(id,account_id,sec_imp_type,sec_imp_sqft)
       VALUES (1,'INDEX-A','ATTACHED GARAGE',400),(2,'INDEX-B','DETACHED GARAGE',500),
              (3,'INDEX-A','STORAGE BUILDING',100),(4,'INDEX-C','POOL',250)`);
-    const first=await runNeighborhoodGroupIndex(pool,{batchSize:1,logger:{info(){}}});
+    await pool.query(`UPDATE gis.dcad_parcels SET geom=ST_Multi(ST_MakeEnvelope(-96.7,32.9,-96.699,32.901,4326)) WHERE object_id=1`);
+    const originalGeometry=(await pool.query("SELECT encode(ST_AsEWKB(geom),'hex') AS geometry FROM gis.dcad_parcels WHERE object_id=1")).rows[0].geometry;
+    const first=await runNeighborhoodGroupIndex(pool,{batchSize:1,logger:{info(){}},retainOriginalSources:true});
     assert.equal(first.status,'complete');
     assert.equal(first.parcels,5);
     assert.equal(first.sales,4);
+    const frozen=(await pool.query('SELECT * FROM app.neighborhood_frozen_source_generations WHERE generation_id=$1',[first.generationId])).rows[0];
+    assert.equal(frozen.status,'complete');assert.equal(frozen.format_version,1);
+    assert.equal(frozen.layer_counts.parcels.row_count,'5');assert.equal(frozen.layer_counts.sales.row_count,'4');
+    const original=(await pool.query("SELECT payload FROM app.neighborhood_frozen_source_rows WHERE generation_id=$1 AND kind='parcels' AND row_key='1'",[first.generationId])).rows[0].payload;
+    assert.equal(original.stored_geometry_ewkb,originalGeometry,'nightly materialization preserves exact original EWKB');
+    assert.equal(original.residential_area_sqft,'1000');
+    await assert.rejects(pool.query("UPDATE app.neighborhood_frozen_source_rows SET payload='{}' WHERE generation_id=$1",[first.generationId]),error=>error.code==='55000');
+    await assert.rejects(pool.query('TRUNCATE app.neighborhood_frozen_source_rows'),error=>error.code==='55000');
     const summary=await getPreparedNeighborhoodGroupSummary(pool,{county:'Dallas',city:'Garland',subdivision:'Monica Park 4'});
     assert.ok(summary.completed_at > summary.source_observed_at,
       'completion must record the end of the long source transaction');
@@ -143,7 +153,7 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
         .readPreparedGeneration(claim,wrong)),/claim_lost/);
     }
     await pool.query('UPDATE gis.dcad_parcels SET residential_area_sqft=4000 WHERE object_id=2');
-    const second=await runNeighborhoodGroupIndex(pool,{batchSize:2,logger:{info(){}}});
+    const second=await runNeighborhoodGroupIndex(pool,{batchSize:2,logger:{info(){}},retainOriginalSources:true});
     assert.equal(second.status,'complete');
     assert.equal((await getPreparedNeighborhoodGroupSummary(pool,{county:'Dallas',city:'Garland',subdivision:'Monica Park 4'})).median_living_area_sqft,2500);
     assert.notEqual(first.generationId,second.generationId);
@@ -152,6 +162,10 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     assert.equal(third.status,'complete');assert.equal(fourth.status,'complete');
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM app.neighborhood_group_generations WHERE generation_id=$1',[second.generationId])).rows[0].count,0,
       'an old unpinned generation is still pruned');
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM app.neighborhood_frozen_source_rows WHERE generation_id=$1',[second.generationId])).rows[0].count,0,
+      'obsolete unpinned original pages retire with their generation');
+    assert.equal((await pool.query("SELECT payload->>'residential_area_sqft' AS area FROM app.neighborhood_frozen_source_rows WHERE generation_id=$1 AND kind='parcels' AND row_key='2'",[first.generationId])).rows[0].area,'2000',
+      'a pinned original source snapshot survives later source edits and nightly sweeps');
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM app.neighborhood_group_parcel_facts WHERE generation_id=$1',[first.generationId])).rows[0].count,5,
       'later sweeps preserve every pinned parcel');
     assert.equal((await pool.query('SELECT living_area_sqft::text AS area FROM app.neighborhood_group_parcel_facts WHERE generation_id=$1 AND object_id=2',[first.generationId])).rows[0].area,'2000');
@@ -172,4 +186,70 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     await assert.rejects(withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client)
       .readPreparedGeneration(nextClaim,options)),/claim_lost/);
   } finally { await pool.end(); }
+});
+
+test('isolated PostgreSQL: freezes a complete 60001-account original source population without Node row transfer',{
+  skip:!process.env.DATABASE_URL,timeout:360_000,
+},async()=>{
+  const target=await prepareNeighborhoodCiDatabase();
+  const {default:pg}=await import('pg');
+  const pool=new pg.Pool({connectionString:target.connectionString,max:2,statement_timeout:120_000});
+  try {
+    await pool.query(NEIGHBORHOOD_CACHED_SOURCE_SCHEMA);
+    await pool.query('ALTER TABLE core.primary_improvements ADD COLUMN IF NOT EXISTS pool boolean');
+    await pool.query(`INSERT INTO core.accounts(account_id,county,city,subdivision)
+      SELECT 'FROZEN-'||lpad(n::text,5,'0'),'Dallas','Garland','Synthetic Source Park'
+      FROM generate_series(1,60001) n`);
+    await pool.query(`INSERT INTO gis.dcad_parcels(object_id,account_id,subdivision_name,residential_area_sqft,
+      residential_year_built,parcel_area_sqft,current_market_value,source_record_hash,source_updated_at,geom)
+      SELECT n,'FROZEN-'||lpad(n::text,5,'0'),'Synthetic Source Park',1000+n%100,1960+n%40,6000,200000,
+        'synthetic-'||n::text,now(),ST_Multi(ST_MakeEnvelope(-96.7+(n%250)*0.0001,32.9+(n/250)*0.0001,
+          -96.7+(n%250)*0.0001+0.00008,32.9+(n/250)*0.0001+0.00008,4326))
+      FROM generate_series(1,60001) n`);
+    await pool.query(`INSERT INTO gis.dcad_parcels(object_id,account_id,source_record_hash) VALUES(60002,NULL,'synthetic-unmatched')`);
+    await pool.query(`INSERT INTO core.sales_source_records(id,primary_account_id,current_price,close_date,raw_payload)
+      VALUES(501,'FROZEN-00001',9007199254740993,'2010-01-01',
+        '{"ClosePrice":9007199254740993,"Currency":"USD","PrivateFixtureKey":"must-not-be-retained"}'::jsonb),
+        (502,NULL,NULL,'2026-10-01',NULL)`);
+    await pool.query(`INSERT INTO core.sales(id,source_record_id,account_id,closing_date,sale_price)
+      VALUES(1,501,'FROZEN-00001','2010-01-01',9007199254740993),
+        (2,502,NULL,'2026-10-01',NULL),(3,NULL,'FROZEN-00002','2024-01-01',250000)`);
+    await pool.query(`INSERT INTO core.sale_parcels(id,source_record_id,source_position,parcel_sequence,account_id,is_resolved)
+      VALUES(1,501,1,1,'FROZEN-00001',true),(2,501,1,2,'FROZEN-00002',true),(3,502,1,1,NULL,false)`);
+    const runId=randomUUID();
+    await pool.query(`INSERT INTO gis.source_sync_runs(id,source_key,status,records_seen)
+      VALUES($1,'dcad_parcels','complete',60002)`,[runId]);
+    await pool.query(`INSERT INTO gis.source_sync_state(source_key,status,row_count,last_run_id)
+      VALUES('dcad_parcels','complete',60002,$1)`,[runId]);
+    let maxResultRows=0,sourcePageCount=0;
+    const measuredPool={async connect(){const raw=await pool.connect();return {
+      async query(sql,values){const result=await raw.query(sql,values);const text=typeof sql==='string'?sql:sql.text;
+        if(text.includes('neighborhood-frozen-source:')) {sourcePageCount++;maxResultRows=Math.max(maxResultRows,result.rows.length);
+          assert.ok(result.rows.every(row=>!Object.hasOwn(row,'payload')&&!Object.hasOwn(row,'geom')),
+            'original record payloads and geometry do not enter the nightly Node process');}
+        return result;},release:raw.release.bind(raw)};}};
+    const frozen=await runNeighborhoodGroupIndex(measuredPool,{batchSize:250,logger:{info(){}},retainOriginalSources:true});
+    assert.equal(frozen.status,'complete');assert.equal(frozen.parcels,60001);
+    assert.equal(maxResultRows,1);assert.ok(sourcePageCount>480);
+    const header=(await pool.query('SELECT * FROM app.neighborhood_frozen_source_generations WHERE generation_id=$1',[frozen.generationId])).rows[0];
+    assert.equal(header.status,'complete');assert.equal(header.row_count,'120013');
+    for(const [kind,count] of Object.entries({parcels:60002,accounts:60001,source_records:2,sales:3,sale_links:3,sync_state:1,sync_runs:1})) {
+      assert.equal(header.layer_counts[kind].row_count,String(count));
+      assert.equal((await pool.query('SELECT count(*)::text AS count FROM app.neighborhood_frozen_source_rows WHERE generation_id=$1 AND kind=$2',[frozen.generationId,kind])).rows[0].count,String(count));
+    }
+    const source=(await pool.query("SELECT payload FROM app.neighborhood_frozen_source_rows WHERE generation_id=$1 AND kind='source_records' AND row_key='501'",[frozen.generationId])).rows[0].payload;
+    assert.equal(source.current_price,'9007199254740993');
+    assert.equal(source.source_raw_witness.fields.ClosePrice.value_text,'9007199254740993');
+    assert.equal(JSON.stringify(source).includes('PrivateFixtureKey'),false);
+    assert.equal(source.close_date,'2010-01-01','old sales are preserved as observations, not represented as retrospective stock');
+    assert.equal((await pool.query("SELECT payload->>'is_resolved' AS resolved FROM app.neighborhood_frozen_source_rows WHERE generation_id=$1 AND kind='sale_links' AND row_key='3'",[frozen.generationId])).rows[0].resolved,'false');
+    await pool.query("UPDATE gis.dcad_parcels SET residential_area_sqft=9999 WHERE object_id=1");
+    assert.equal((await pool.query("SELECT payload->>'residential_area_sqft' AS area FROM app.neighborhood_frozen_source_rows WHERE generation_id=$1 AND kind='parcels' AND row_key='1'",[frozen.generationId])).rows[0].area,'1001');
+    await pool.query("INSERT INTO core.accounts(account_id) VALUES('')");
+    await assert.rejects(runNeighborhoodGroupIndex(pool,{batchSize:250,logger:{info(){},warn(){}},retainOriginalSources:true}),/source_population_invalid/);
+    assert.equal((await pool.query('SELECT generation_id::text FROM app.neighborhood_group_active WHERE id=true')).rows[0].generation_id,frozen.generationId,
+      'a refused incomplete source sweep cannot replace the active complete generation');
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM app.neighborhood_group_generations')).rows[0].count,1,
+      'failed source snapshot and generation header roll back together');
+  } finally {await pool.end();}
 });

@@ -11,6 +11,12 @@ page width. Complete v2 command/catalog identity, metadata, page bytes and union
 digests match the existing source compiler exactly. Empty and unresolved choices
 remain explicit. Neither counts nor map viewport predicates replace members.
 
+The separate read-only `describe` method supplies exact existing command/catalog
+and metadata identity to a future selected-head verifier, without staged writes
+or a selected-manifest claim. It verifies the whole source graph at both ends;
+the consumer still must verify the actual selected manifest/pages and current
+head independently. Both methods share one finite budget and settlement lane.
+
 Every selected page passes the existing complete verifier before a fresh ending
 whole-original verification. Catalog command originals and all source/selected
 cleanup references are retained in the caller's transaction; lost acknowledgments,

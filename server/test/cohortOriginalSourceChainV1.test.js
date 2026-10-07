@@ -47,6 +47,19 @@ test('one small root retains all seven layers and exact text across independent 
   assert.equal(JSON.parse(f.originals.get(root.content_sha256)).layers.sync_runs.ended,true);
 });
 
+test('bounded prefix description reports metadata only and does not read source chunks or infer completeness',async()=>{
+  const f=fixture();let root=(await f.store().create()).root;
+  const empty=await f.store().describe(root);
+  assert.equal(empty.layers.parcels.page_count,0);assert.equal(empty.layers.parcels.ended,false);
+  root=(await f.store().append({root,original_text:page('parcels','',['1'],false)})).root;
+  const from=f.calls.length,metadata=await f.store().describe(root);
+  assert.equal(metadata.layers.parcels.row_count,1);assert.equal(metadata.layers.parcels.cursor,'1');
+  assert.equal(metadata.layers.accounts.head,null);assert.equal(metadata.authority,'not_established');
+  assert.equal(metadata.coverage,'stored_pages_only');assert.ok(Object.isFrozen(metadata.layers));
+  assert.equal(f.calls.slice(from).length,1);assert.equal(f.calls.at(-1).hash,root.content_sha256);
+  await assert.rejects(createCohortOriginalSourceChainV1Store(f.repository,{...binding,operation_id:binding.report_file_id}).describe(root),/binding_changed/);
+});
+
 test('60001 synthetic stock rows span 241 original pages, one checkpoint ref and constant-size layer heads',async()=>{
   const f=fixture();let root=(await f.store().create()).root;
   root=(await f.store().append({root,original_text:page('parcels','',[])})).root;

@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createNeighborhoodFrozenSourceClosurePages,NEIGHBORHOOD_FROZEN_CLOSURE_SQL,
-  NEIGHBORHOOD_FROZEN_CLOSURE_LIMITS } from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourceClosurePages.js';
+  NEIGHBORHOOD_FROZEN_CLOSURE_LIMITS,createNeighborhoodFrozenJobSourcePages,NEIGHBORHOOD_FROZEN_JOB_CLOSURE_SQL }
+  from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourceClosurePages.js';
+import { neighborhoodFrozenSpatialDefinition } from '../src/services/neighborhoodAssessment/neighborhoodFrozenSpatialPages.js';
+import { assessmentEvidenceDigest } from '../src/services/neighborhoodAssessment/contract.js';
 
 const id='70000000-0000-4000-8000-000000000001',date='2026-10-07T00:00:00.000000Z';
 const options={claim:{operation_id:id,claim_token:'70000000-0000-4000-8000-000000000002',attempts:1},
@@ -10,7 +13,7 @@ const options={claim:{operation_id:id,claim_token:'70000000-0000-4000-8000-00000
   geometryInput:{geometry_version:1,type:'Point',crs:'EPSG:4326',axis_order:'longitude_latitude',coordinate_encoding:'decimal_string_v1',
     coordinates:['-96.7','32.9'],source_sha256:'a'.repeat(64)},discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}};
 const result=row=>({rowCount:1,rows:[row]});
-function fixture(hook=()=>{}) {
+function fixture(hook=()=>{},indexed=false) {
   const calls=[];let headers=0,fences=0;
   const pin={generation_id:id,status:'complete',retirement_started_at:null,source_observed_at:date,completed_at:date,parcel_count:'1',sale_count:'1',group_count:'1'};
   const header={generation_id:id,format_version:1,status:'complete',source_snapshot:'1:2:',started_at:date,completed_at:date,
@@ -18,20 +21,63 @@ function fixture(hook=()=>{}) {
       .map(kind=>[kind,{row_count:'1',payload_utf8_bytes:'100'}]))};
   const page=rows=>{const page_json=JSON.stringify(rows);return {page_json,page_count:rows.length,candidate_count:rows.length,
     next_cursor:rows.at(-1)?.row_key??rows.at(-1)?.object_id??'',page_utf8_bytes:Buffer.byteLength(page_json)};};
-  const client={async query(config){const text=config.text;calls.push(config);
+  const client={async query(raw,values){const config=typeof raw==='string'?{text:raw,values}:raw;
+    const text=config.text;calls.push(config);
     const supplied=await hook({text,config,calls,headers,fences,header,page});if(supplied)return supplied;
     if(text.includes('generation-transaction'))return result({transaction_id:'123'});
     if(text.includes('generation-fence')){fences++;return result({operation_id:id});}
     if(text.includes('generation-read'))return result(pin);
     if(text.includes('frozen-spatial:header')){headers++;return result(structuredClone(header));}
+    if(text.includes('job-stock:read')){
+      const original={generation_id:id,source_format_version:1,source_snapshot:header.source_snapshot,
+        source_transaction_started_at:date,completed_at:date,row_count:header.row_count,
+        payload_utf8_bytes:header.payload_utf8_bytes,layer_counts:header.layer_counts};
+      const definition=neighborhoodFrozenSpatialDefinition(options.claim,id,options.geometryInput,options.discovery);
+      return result({status:'complete',definition,definition_sha256:assessmentEvidenceDigest(definition),
+        source_original_sha256:assessmentEvidenceDigest(original),subject_intent_sha256:'b'.repeat(64),subject_intent_utf8_bytes:'100',
+        parcel_count:'1',account_count:'1',unassociated_parcel_count:'0',unlocatable_global_parcels:'0'});
+    }
     if(text.includes('frozen-spatial:validity'))return result({unlocatable_global_parcels:'0',invalid_geometries:'0'});
     if(text.includes('frozen-spatial:counts'))return result({parcel_count:'1',account_count:'1',unassociated_parcel_count:'0',subject_included:true});
     if(text.includes('frozen-spatial:parcels'))return result(page([{object_id:'1',account_id:'STOCK-A',geometry_sha256:'b'.repeat(64),source_record_hash:null}]));
-    if(text.includes('frozen-closure:'))return result(page([{row_key:'1',payload_text:'{"price":"9007199254740993","date":"2010-01-01"}'}]));
+    if(text.includes('frozen-closure:')||text.includes('frozen-job-closure:'))return result(page([{row_key:'1',payload_text:'{"price":"9007199254740993","date":"2010-01-01"}'}]));
     throw Error(`unexpected ${text.slice(0,60)}`);
   }};
-  return {calls,client,reader:createNeighborhoodFrozenSourceClosurePages(client,options)};
+  return {calls,client,reader:indexed?createNeighborhoodFrozenJobSourcePages(client,{...options,
+    subjectIntent:{content_sha256:'b'.repeat(64),canonical_utf8_bytes:'100'}}):createNeighborhoodFrozenSourceClosurePages(client,options)};
 }
+
+test('indexed original pages reuse actual retained stock at both ends without ST_DWithin or a dense roster',async()=>{
+  const f=fixture(()=>{},true),page=await f.reader.page({kind:'source_records',cursor:'',rowLimit:2});
+  assert.equal(page.stock_population.account_count,'1');assert.equal(page.end_of_layer,true);
+  assert.equal(page.authority,'not_established');assert.equal(page.additional_cadastral_accounts,false);
+  assert.match(page.rows[0].payload_text,/9007199254740993/);
+  assert.equal(f.calls.filter(c=>c.text.includes('job-stock:read')).length,2);
+  assert.ok(!f.calls.some(c=>/ST_DWithin|job-stock:begin|frozen-spatial:counts/.test(c.text)));
+  assert.deepEqual(f.calls.find(c=>c.text.includes('frozen-job-closure:')).values,[id,id,'',2,NEIGHBORHOOD_FROZEN_CLOSURE_LIMITS.page_utf8_bytes]);
+  for(const sql of Object.values(NEIGHBORHOOD_FROZEN_JOB_CLOSURE_SQL)){
+    assert.match(sql,/stock_accounts WHERE operation_id=\$2::uuid/);assert.match(sql,/seeds AS MATERIALIZED/);
+    assert.match(sql,/prefix_bytes\+2<=\$5::bigint/);
+    assert.doesNotMatch(sql,/ST_DWithin|core\.|gis\.|RECURSIVE|raw_payload|close_date|closing_date/);
+  }
+});
+
+test('indexed source pages never rebuild missing stock or deliver after ending claim/header/stock loss',async()=>{
+  const missing=fixture(({text})=>text.includes('job-stock:read')?{rowCount:0,rows:[]}:null,true);
+  await assert.rejects(missing.reader.page({kind:'sales',cursor:''}),/unavailable/);
+  assert.ok(!missing.calls.some(c=>/frozen-job-closure|INSERT|ST_DWithin/.test(c.text)));
+  for(const failure of ['claim','header','stock']){
+    let read=false;
+    const f=fixture(({text,header})=>{
+      if(text.includes('frozen-job-closure:'))read=true;
+      if(!read)return null;
+      if(failure==='claim'&&text.includes('generation-fence'))return {rowCount:0,rows:[]};
+      if(failure==='header'&&text.includes('frozen-spatial:header'))return result({...header,source_snapshot:'2:3:'});
+      if(failure==='stock'&&text.includes('job-stock:read'))return {rowCount:0,rows:[]};
+    },true);
+    await assert.rejects(f.reader.page({kind:'sales',cursor:''}),/claim_lost|conflict|unavailable/);
+  }
+});
 
 test('actual pinned spatial reader surrounds each source page; raw original decimals/dates survive',async()=>{
   const f=fixture(),page=await f.reader.page({kind:'source_records',cursor:'',rowLimit:2});

@@ -26,6 +26,25 @@ import { createCustomCohortContextCapture }
   from '../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { createNeighborhoodFrozenJobStock }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStock.js';
+import { createCustomNeighborhoodWitness2SourcePolicy, CUSTOM_NEIGHBORHOOD_WITNESS2_SOURCE_RIGHTS_KEY,
+  CUSTOM_NEIGHBORHOOD_WITNESS2_SOURCE_PURPOSE } from '../src/security/customNeighborhoodWitness2SourcePolicy.js';
+import { CUSTOM_NEIGHBORHOOD_SOURCE_DATASET } from '../src/security/customNeighborhoodSourcePolicy.js';
+
+// Disposable native fixture only, never production rights provisioning. The
+// real evaluator reads current organization metadata/time on every admission.
+const fixtureProviders=[{provider_id:'synthetic-originals-only',revision:'fixture-1'}];
+const fixtureGrant=organization=>({policy_version:1,organization_id:organization,grant_id:'synthetic-frozen-source',
+  dataset:{id:CUSTOM_NEIGHBORHOOD_SOURCE_DATASET,revision:'synthetic-original-1',
+    coverage:'entire_integrated_source_mix_including_prior_merged_values',provider_revisions:fixtureProviders},
+  purpose_version:1,purpose_scope:CUSTOM_NEIGHBORHOOD_WITNESS2_SOURCE_PURPOSE,
+  rights_basis:{owner_id:'synthetic-fixture',basis_reference:'disposable-native-fixture-not-a-production-grant',
+    approved_by:'native-fixture',approved_at:'2026-01-01T00:00:00.000000Z'},
+  valid_from:'2026-01-01T00:00:00.000000Z',expires_at:'2027-01-01T00:00:00.000000Z',revoked_at:null,
+  retention:'immutable_originals_without_automated_deletion',exposures:{none:true,report_observation_summary:false,
+    report_observation_members:false,report_observation_catalog:false}});
+const fixturePolicy=()=>createCustomNeighborhoodWitness2SourcePolicy({datasetRevision:'synthetic-original-1',providerRevisions:fixtureProviders});
+const setFixtureGrant=(pool,organization,grant)=>pool.query('UPDATE app_auth.organizations SET metadata=jsonb_build_object($1::text,$2::jsonb) WHERE id=$3',
+  [CUSTOM_NEIGHBORHOOD_WITNESS2_SOURCE_RIGHTS_KEY,JSON.stringify(grant),organization]);
 
 const frozenSpatialOptions = options => ({...options,
   geometryInput:{geometry_version:1,type:'Point',crs:'EPSG:4326',axis_order:'longitude_latitude',
@@ -412,6 +431,61 @@ test('isolated PostgreSQL: freezes a complete 60001-account original source popu
     ])await assert.rejects(pool.query(sql,[operation]),error=>error.code==='55000','published exact stock is immutable');
     assert.ok(!stockCalls.some(sql=>/FROM (?:core\.(?:sales|sales_source_records|sale_parcels)|gis\.dcad_parcels)/.test(sql)),
       'the current owner never falls back to mutable CAD or licensed sales for this public-stock stage');
+    // A separate actual combined owner starts an explicit durable indexed
+    // source prefix on the >50k stock. Real current policy runs at both ends;
+    // the old CAD-only intent/capability is never silently reinterpreted.
+    const sourceOperation=randomUUID(),sourceInput={...stockInput,operationId:sourceOperation},sourceCalls=[];
+    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).enqueue({scope,actorUserId:actor,
+      request:{operation_id:sourceOperation,observation_period:sourceInput.observationPeriod,discovery}}));
+    const sourceClaim=await withCustomCohortJobTransaction(pool,async client=>{
+      const [job]=await createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900});
+      assert.equal(job.operation_id,sourceOperation);return {operation_id:sourceOperation,claim_token:job.claim_token,attempts:job.attempts};});
+    let revokeAfterSource=false,revokeRoleAfterSource=false,changeSubjectAfterSource=false,loseSourceCommit=false;
+    const sourcePool={async connect(){const client=await pool.connect();return {release:client.release.bind(client),async query(config){
+      sourceCalls.push(config.text);const result=await client.query(config);
+      if(config.text.includes('neighborhood-frozen-job-closure:')&&revokeAfterSource){revokeAfterSource=false;
+        await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});}
+      if(config.text.includes('neighborhood-frozen-job-closure:')&&revokeRoleAfterSource){revokeRoleAfterSource=false;
+        await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);}
+      if(config.text.includes('neighborhood-frozen-job-closure:')&&changeSubjectAfterSource){changeSubjectAfterSource=false;
+        // Current snapshots are held FOR SHARE by this owner, so a real
+        // external update is blocked. A same-transaction fixture hook proves
+        // the ending material comparison independently, without weakening locks.
+        await client.query("UPDATE app.appraisal_subject_snapshots SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2000') WHERE id=$1",[snapshot]);}
+      if(config.text==='COMMIT'&&loseSourceCommit){loseSourceCommit=false;throw Error('synthetic source COMMIT acknowledgement lost');}
+      return result;}};}};
+    const sourceOwner=createCustomCohortContextCapture({pool:sourcePool,sourceMode:'combined-witness2-v1',authorizeMarketData:fixturePolicy()});
+    await sourceOwner.prepareFrozenCaptureJobStock(sourceInput,{captureJobClaim:sourceClaim});
+    const checkpointBefore=(await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[sourceOperation])).rows[0].checkpoint;
+    await assert.rejects(sourceOwner.prepareFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),/market_data_access_denied/);
+    assert.ok(!sourceCalls.some(sql=>sql.includes('neighborhood-frozen-job-closure:')),'initial denied license reads no source page');
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));revokeAfterSource=true;
+    await assert.rejects(sourceOwner.prepareFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),/market_data_access_denied/);
+    assert.deepEqual((await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[sourceOperation])).rows[0].checkpoint,checkpointBefore,
+      'ending current policy revocation rolls back the entire source prefix/checkpoint, not the already retained stock');
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));revokeRoleAfterSource=true;
+    await assert.rejects(sourceOwner.prepareFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),/job_actor_access_revoked/);
+    assert.deepEqual((await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[sourceOperation])).rows[0].checkpoint,checkpointBefore);
+    await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    changeSubjectAfterSource=true;
+    await assert.rejects(sourceOwner.prepareFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),/subject_changed/);
+    assert.deepEqual((await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[sourceOperation])).rows[0].checkpoint,checkpointBefore);
+    await pool.query('UPDATE app.appraisal_subject_snapshots SET subject_data=$1::jsonb WHERE id=$2',[JSON.stringify(subjectData),snapshot]);
+    loseSourceCommit=true;
+    const sourceFrom=sourceCalls.length;
+    await assert.rejects(sourceOwner.prepareFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),error=>error.outcome_unknown===true);
+    const prefix=await sourceOwner.prepareFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim});
+    assert.equal(prefix.layers.parcels.row_count,500);assert.equal(prefix.layers.parcels.page_count,2);
+    assert.equal(prefix.layers.parcels.cursor,'500');assert.equal(prefix.all_layers_ended,false);
+    assert.equal(prefix.source_acquisition,'not_established');assert.equal(prefix.original_graph_verification,'not_established');
+    assert.equal(prefix.report_update,'none');
+    assert.ok(!sourceCalls.slice(sourceFrom).some(sql=>/ST_DWithin|frozen-spatial:counts|job-stock:begin/.test(sql)),
+      'fresh actual source transactions use retained indexed membership without another spatial sweep');
+    const sourceCheckpoint=(await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[sourceOperation])).rows[0].checkpoint;
+    assert.equal(sourceCheckpoint.phase,'frozen_source_v1');assert.equal(sourceCheckpoint.evidence_refs.length,3);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1',[assignment])).rows[0].n,0);
+    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,sourceOperation));
+    await assert.rejects(sourceOwner.prepareFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),/claim_lost/);
     // Traverse all 60,001 unique identities using fixed-width pages and a
     // running count/cursor only. No array of the population is held by Node.
     let after='',seen=0,done=false,maximumPageRows=0;
@@ -612,6 +686,60 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await assert.rejects(withCustomCohortJobTransaction(pool,client=>createCohortOriginalTextChunksV1Store(
       createNeighborhoodCohortBlobRepository(client,randomUUID())).get(retainedPageManifest)),/missing_original/,
     'content addressing never makes retained originals cross organization boundaries');
+    // Full seven-layer actual owner prefix on the small but adversarial native
+    // population. This is still not a completed typed identity/coverage receipt.
+    await pool.query('INSERT INTO app_auth.organization_memberships(organization_id,user_id) VALUES($1,$2)',[organization,actor]);
+    await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    const sourceCase=randomUUID(),sourceSnapshot=randomUUID();
+    await pool.query("INSERT INTO app.appraisal_cases(id,organization_id,account_id,effective_date) VALUES($1,$2,'CLOSURE-A','2026-10-07')",[sourceCase,organization]);
+    const subjectData={custom_property_snapshot:{account:{account_id:'CLOSURE-A'},improvement:{living_area_sqft:1001},location:{
+      account_id:'CLOSURE-A',latitude:32.9,longitude:-96.7,source:'dcad_parcel_query',precision:'parcel_centroid',
+      status:'matched',confidence:'high',review_required:false,review_reason:null,match_method:'parcel_id',source_parcel_id:'CLOSURE-A',
+      feature_count:1,metadata:{address_agreement:true},geocoded_at:'2020-01-01T00:00:00.000Z',source_updated_at:'2019-12-31T00:00:00.000Z'}}};
+    await pool.query(`INSERT INTO app.appraisal_subject_snapshots(id,appraisal_case_id,snapshot_version,effective_date,subject_data)
+      VALUES($1,$2,1,'2026-10-07',$3::jsonb)`,[sourceSnapshot,sourceCase,JSON.stringify(subjectData)]);
+    await pool.query('UPDATE app.report_files SET appraisal_case_id=$1,subject_snapshot_id=$2 WHERE id=$3',[sourceCase,sourceSnapshot,report]);
+    await pool.query('INSERT INTO app.custom_appraisal_workfiles(assignment_file_id,canonical_file_name) VALUES($1,$2)',[assignment,`source-${randomUUID()}`]);
+    const sourceOperation=randomUUID(),discovery={profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'};
+    const sourceInput={auth:{userId:actor,organizations:[]},accountId:scope.account_id,assignmentFileId:assignment,operationId:sourceOperation,
+      observationPeriod:{start_date:'2025-01-01',end_date:'2026-10-07'},discovery};
+    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).enqueue({scope,actorUserId:actor,
+      request:{operation_id:sourceOperation,observation_period:sourceInput.observationPeriod,discovery}}));
+    const sourceClaim=await withCustomCohortJobTransaction(pool,async client=>{
+      const [job]=await createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900});assert.equal(job.operation_id,sourceOperation);
+      return {operation_id:sourceOperation,claim_token:job.claim_token,attempts:job.attempts};});
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));
+    const sourceOwner=createCustomCohortContextCapture({pool,sourceMode:'combined-witness2-v1',authorizeMarketData:fixturePolicy()});
+    await sourceOwner.prepareFrozenCaptureJobStock(sourceInput,{captureJobClaim:sourceClaim});
+    let prefix;
+    for(let step=0;step<10;step++){
+      prefix=await sourceOwner.prepareFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim});
+      assert.equal(prefix.source_acquisition,'not_established');if(prefix.all_layers_ended)break;
+    }
+    assert.equal(prefix.all_layers_ended,true);assert.equal(prefix.original_graph_verification,'not_established');
+    assert.deepEqual(Object.fromEntries(Object.entries(prefix.layers).map(([kind,layer])=>[kind,layer.row_count])),
+      Object.fromEntries(Object.entries(expected).map(([kind,keys])=>[kind,keys.length])));
+    assert.equal((await sourceOwner.prepareFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim})).advanced,false,
+      'a saved ended prefix reopens without re-reading or appending a source page');
+    const ownedCheckpoint=(await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[sourceOperation])).rows[0].checkpoint;
+    const ownedHeader=await withCustomCohortJobTransaction(pool,async client=>{
+      const ref=ownedCheckpoint.evidence_refs[2];return JSON.parse(await createNeighborhoodCohortBlobRepository(client,organization).get(ref.content_sha256,ref.canonical_utf8_bytes));});
+    const ownedBinding={...scope,operation_id:sourceOperation,generation_id:frozen.generationId,
+      spatial_definition_sha256:ownedHeader.selection.spatial_definition_sha256,source_original_sha256:ownedHeader.selection.source_original_sha256};
+    for(const [kind,keys] of Object.entries(expected)){
+      let position=null;const seen=[];
+      do{
+        const stored=await withCustomCohortJobTransaction(pool,client=>createCohortOriginalSourceChainV1Store(
+          createNeighborhoodCohortBlobRepository(client,organization),ownedBinding).read({root:ownedHeader.root,kind,position}));
+        const page=JSON.parse(stored.original_text).page;seen.unshift(...page.rows.map(row=>row.row_key));position=stored.next_position;
+        if(kind==='accounts'&&page.after==='')assert.equal(JSON.parse(page.rows[0].payload_text).legal_description,'\\'.repeat(480000));
+        if(kind==='source_records'&&page.after==='')assert.match(page.rows[0].payload_text,/9007199254740993/);
+      }while(position!==null);
+      assert.deepEqual(seen,keys,`${kind} actual authorized indexed prefix retains exact all-date one-hop originals`);
+    }
+    assert.equal(ownedHeader.selection.stock_population.unassociated_parcel_count,'1');
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1',[assignment])).rows[0].n,0);
+    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,sourceOperation));
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,operation));
     await assert.rejects(withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSourceClosurePages(client,
       frozenSpatialOptions({...options,claim})).page({kind:'source_records',cursor:''})),/claim_lost/);

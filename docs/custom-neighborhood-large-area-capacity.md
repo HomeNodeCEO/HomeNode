@@ -2046,6 +2046,50 @@ acquisition, bounded exact numerical/geometry consumers, coherent report
 publication and real >50k/5-mile/10-mile/retrospective/live QA acceptance remain
 outstanding. No genuine appraisal choices or accepted reports are changed.
 
+### Current-authorized indexed source prefix stage (2026-10-07)
+
+The internal `prepareFrozenCaptureJobSourcePage` method now connects the actual
+current assignment/subject/job owner, the retained SQL stock and the original
+source chain. Each transaction retains one bounded next source page and its
+three-reference `frozen_source_v1` checkpoint atomically. Retries read the actual
+saved prefix, not caller cursors or another spatial sweep. The indexed seven
+fixed SQL plans seed one-hop, all-date transaction evidence only from the saved
+stock-account index; no dense account list enters Node and no `ST_DWithin` runs
+on this path. Seeds are fixed indexed queries, not a second acquisition hop.
+
+The explicit `frozen_job_stock_source_v1` selection digest includes actual scope,
+operation, subject intent, stock reference, immutable generation, original header
+and spatial definition hashes and original population. It requests the same
+independently approved fixed mapping5/witness2 purpose: immutable original
+retention, all seeded dates/links, no extra cadastral accounts or private overlay.
+No legacy <=50k account-array capability is minted or reinterpreted. The combined
+composition is required; CAD-only intents/defaults do not silently upgrade.
+The current policy is checked before source originals and again before commit;
+an earlier recorded policy decision does not authorize a reopen. A changed grant
+revision cannot relabel an already stored prefix.
+
+Current DB actor, exact assignment, draft protection, original subject, original
+job request/claim and pinned stock are also fenced at both ends. Ending refusal
+rolls back the source page and checkpoint; an uncertain successful COMMIT is
+recovered by the next saved-prefix reopen. Prefix description reads bounded
+metadata only and explicitly establishes no graph completeness or authority.
+
+Native acceptance must execute the actual coordinator/current policy on the
+60,001-property population (initial and ending license refusal, ending role and
+subject changes, lost COMMIT acknowledgment and fresh indexed continuation) and
+the full seven-layer adversarial fixture (outside/unresolved one-hop links,
+unsafe decimal literals, >1.5-MB escaped original and null-account geographic
+stock kept distinct). Local/mock success does not replace that execution.
+
+This method remains unmounted and undispatched. The legacy worker cannot decode
+`frozen_source_v1`; do not enqueue it there. Even an all-layers-ended prefix is
+**not** complete acquisition: every root edge, original key/count and typed
+identity closure still needs independent verification, as do separately retained
+null-account geographic originals. Complete-population numerics, coherent
+publication, terminal original transfer/pin retirement, worker integration and
+live acceptance remain unfinished. No installed source cap, source right,
+scanner/blob limit, route/default, cron, Render or genuine report choice changes.
+
 ### Current-authorized frozen job stock stage (2026-10-07)
 
 `prepareFrozenCaptureJobStock` now connects the actual context coordinator to

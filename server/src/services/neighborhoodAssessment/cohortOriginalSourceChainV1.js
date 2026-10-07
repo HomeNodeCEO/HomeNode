@@ -134,6 +134,11 @@ export function createCohortOriginalSourceChainV1Store(repository,rawBinding,opt
   const exclusive=async work=>{check();if(busy)fail('concurrent_operation');busy=true;try{return await work();}finally{busy=false;}};
   const output=(root,more={})=>Object.freeze({status:'source_prefix_data',authority:'not_established',coverage:'stored_pages_only',root,...more});
   return Object.freeze({
+    /** Bounded original prefix metadata only. Not whole root reachability,
+     * original identity closure, current permission or completed acquisition. */
+    describe:raw=>exclusive(async()=>{const rootRef=ref(raw);
+      const root=rootOf(await get(rootRef,LIMITS.root_utf8_bytes),bindingJson);
+      return output(rootRef,{layers:root.layers});}),
     /** Create an empty seven-layer original root, not a completed study. */
     create:()=>exclusive(async()=>{const layers=Object.fromEntries(KINDS.map(k=>[k,{head:null,page_count:0,row_count:0,
       original_utf8_bytes:0,cursor:'',ended:false}]));return output(await put(rootOf({format:FORMAT,binding,layers},bindingJson),LIMITS.root_utf8_bytes));}),

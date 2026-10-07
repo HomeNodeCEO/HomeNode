@@ -108,4 +108,8 @@ test('source snapshot migration registers fixed indexes, pinned guards and post-
   assert.match(sql,/USING gist\(geom\)/);assert.match(sql,/source_record_id,row_key COLLATE "C"/);
   assert.match(sql,/reject_pinned_neighborhood_group_mutation/);assert.match(sql,/retirement_started_at IS NULL/);
   assert.match(sql,/generation.status<>'building'/);assert.doesNotMatch(sql,/FOR EACH ROW|DISABLE TRIGGER|DROP TABLE/);
+  // INSERT transition tables have only new_rows. PostgreSQL resolves relation
+  // references before boolean short-circuiting, so UPDATE needs its own branch.
+  assert.match(sql,/IF TG_OP='UPDATE' THEN\s+IF EXISTS \(SELECT 1 FROM old_rows/);
+  assert.doesNotMatch(sql,/TG_OP='UPDATE'\s+AND\s+EXISTS/);
 });

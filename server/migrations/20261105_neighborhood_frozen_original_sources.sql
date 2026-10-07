@@ -53,9 +53,13 @@ BEGIN
       WHERE generation.status<>'building') THEN
       RAISE EXCEPTION 'neighborhood_frozen_source_published' USING ERRCODE='55000';
     END IF;
-    IF TG_OP='UPDATE' AND EXISTS (SELECT 1 FROM old_rows changed
-      JOIN app.neighborhood_group_generations generation USING(generation_id) WHERE generation.status<>'building') THEN
-      RAISE EXCEPTION 'neighborhood_frozen_source_published' USING ERRCODE='55000';
+    -- INSERT has no old_rows transition relation. Keep this a separate branch:
+    -- PostgreSQL resolves query relations before evaluating a boolean AND.
+    IF TG_OP='UPDATE' THEN
+      IF EXISTS (SELECT 1 FROM old_rows changed
+        JOIN app.neighborhood_group_generations generation USING(generation_id) WHERE generation.status<>'building') THEN
+        RAISE EXCEPTION 'neighborhood_frozen_source_published' USING ERRCODE='55000';
+      END IF;
     END IF;
   END IF;
   RETURN NULL;

@@ -1,6 +1,6 @@
 import { createCustomCohortJsonTransport } from './customCohortPreviewTransport.ts';
 import { prepareCustomCohortRecordedGroupWrite } from './customCohortRecordedGroupTransport.ts';
-import { createCustomCohortPagedCatalogReader } from './customCohortPagedCatalog.ts';
+import { createCustomCohortPagedCatalogReader, requireCustomCohortPagedCatalog } from './customCohortPagedCatalog.ts';
 import type { CheckedCustomCohortPagedCatalog, CustomCohortPagedCatalogRequest } from './customCohortPagedCatalog';
 import type { CustomCohortRecordedGroupRead } from './customCohortRecordedGroupTransport';
 import type { CustomWorkspaceOperationOptions } from './customWorkspaceLifecycle';
@@ -56,6 +56,45 @@ function response(value: unknown, request: CustomCohortRecordedGroupRead, index?
   if (d.status !== 'display_directory' || d.authority !== 'not_established') fail();
   return Object.freeze({ status: 'display_directory', authority: 'not_established', manifest_ref: reference(d.manifest_ref, 16_000),
     manifest_json: encoded(d.manifest_json, 16_000), metadata_json: encoded(d.metadata_json, 32_000) });
+}
+
+/** A final current-owner directory fence for an ACTUAL already checked complete
+ * catalog, not another catalog load or permanent source/member authority. The
+ * root names the same original metadata/pages. No supplied root travels to the
+ * server, no pages are fabricated/cached, and this never issues a new catalog.
+ * Missing preparation returns false; changed/corrupt originals refuse. */
+export function createCustomCohortPreparedCatalogRecheck(options: Parameters<typeof createCustomCohortJsonTransport>[0]) {
+  const post = createCustomCohortJsonTransport(options);
+  return async (value: CheckedCustomCohortPagedCatalog, io: CustomWorkspaceOperationOptions): Promise<boolean> => {
+    const catalog = requireCustomCohortPagedCatalog(value);
+    const request = input({ accountId: catalog.request.accountId, assignmentFileId: catalog.request.assignmentFileId,
+      contextRef: catalog.request.contextRef });
+    const signal = io?.signal, deadline = io?.deadline;
+    const live = () => {
+      if (!(signal instanceof AbortSignal) || !Number.isFinite(deadline) || performance.now() >= deadline)
+        throw new Error('custom_workspace_deadline');
+      if (signal.aborted) throw new DOMException('Neighborhood catalog cancelled', 'AbortError');
+    };
+    live();
+    const out = response(await post(request.accountId, 'prepared-catalog', {
+      assignment_file_id: request.assignmentFileId, context_ref: request.contextRef,
+    }, Object.freeze({ signal, deadline })), request);
+    live(); if (out === null) return false; if (!('manifest_ref' in out)) fail();
+    const expected = catalog.request.catalogRef;
+    if (out.manifest_ref.content_sha256 !== expected.content_sha256
+      || out.manifest_ref.canonical_utf8_bytes !== expected.canonical_utf8_bytes) fail();
+    const verified = async (original: string, ref: Ref) => {
+      live(); const b = utf8.encode(original); if (b.length !== Number(ref.canonical_utf8_bytes)) fail();
+      const digest = await globalThis.crypto.subtle.digest('SHA-256', b); live();
+      if ([...new Uint8Array(digest)].map(n => n.toString(16).padStart(2, '0')).join('') !== ref.content_sha256) fail();
+    };
+    await verified(out.manifest_json, expected);
+    // The exact previously admitted root pins the original metadata's grammar,
+    // scope/context and source identity; verify its actual bytes again, too.
+    const root: unknown = JSON.parse(out.manifest_json);
+    const r = closed(root, ['recorded_catalog_version', 'kind', 'metadata_ref', 'group_count', 'account_count', 'pages']);
+    await verified(out.metadata_json, reference(r.metadata_ref, 32_000)); live(); return true;
+  };
 }
 
 /** Fixed authenticated, byte-bounded application transport + actual whole-page

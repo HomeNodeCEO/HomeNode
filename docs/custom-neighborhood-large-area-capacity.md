@@ -1,5 +1,34 @@
 # Complete larger-area Custom neighborhood studies
 
+## Prepared statistics-only coherent display (not map/member/host activation)
+
+`customCohortPreparedStatisticsDisplay.ts` composes the actual issued complete
+paged catalog, current saved recorded-group selection and unchanged exact-reference
+summary transport. It validates target/context/selection and the appraiser's
+exact observation period. Selected count is the exact sum of the compiler-verified
+nonoverlapping partition descriptors, including explicit unresolved or empty
+choices. Medians, CODs, missing/conflicting observations and every other numeric
+field stay the server's whole-population projection. Group medians are never
+averaged or used to reconstruct another statistic.
+
+Before any bundle can be delivered, one small current-owner directory read
+rechecks the previously issued root and original metadata hash/UTF-8 bytes, then
+another current selection read must agree with the exact saved head and choices.
+The directory fence cannot issue a new catalog or claim other pages were reread.
+Cache miss, changed originals/head, ending rights denial or cancellation/deadline
+discards all pending observations. Inputs and the finite caller I/O are detached
+before authentication; host keyed session/workspace admission remains mandatory
+at both ends. No retries, independent timer, selections, writes or partial update.
+
+This is a NEW statistics-only local witness, not a legacy display/catalog cast.
+It supplies NO map or individual-member proof and changes none of those existing
+admission checks. No route/UI/host/default/V7/50k cap is activated. Synthetic
+tests use actual source mapping/index, complete catalog/selection compilers,
+staged/verified selection originals, public numeric projection and HTTP decoders.
+They do not prove source grants, native authorization or complete >50k/live SLA.
+Corresponding map/member/opening consumers and whole large-area publication/
+recurring worker/live acceptance remain required.
+
 ## Opt-in prepared catalog browser client (not a UI/route switch)
 
 `customCohortPreparedCatalogClient.ts` composes the existing authenticated,

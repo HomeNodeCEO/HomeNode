@@ -1388,6 +1388,26 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     assert.ok(sharedCalls.includes('BEGIN ISOLATION LEVEL READ COMMITTED'),'current revocations are not hidden in an old repeatable-read snapshot');
     console.info('[native-shared-stock-metrics]',{accounts:2,rows:sharedA.rows.length+sharedB.rows.length,
       duration_ms:Math.round(performance.now()-sharedStarted),job_typed_copies:await sharedRowCount(),production_latency:false});
+    // A real completed cache remains DATA. Neither a foreign actor's forged
+    // organization claims nor its authorized workfile can borrow this job pin.
+    const foreignOrganization=randomUUID(),foreignActor=randomUUID(),foreignReport=randomUUID();
+    await pool.query("INSERT INTO app_auth.organizations(id,legal_name,display_name) VALUES($1,'Foreign shared fixture','Foreign shared fixture')",[foreignOrganization]);
+    await pool.query("INSERT INTO app_auth.users(id,email,display_name) VALUES($1,$2,'Foreign shared actor')",[foreignActor,`${foreignActor}@example.test`]);
+    await pool.query('INSERT INTO app_auth.organization_memberships(organization_id,user_id) VALUES($1,$2)',[foreignOrganization,foreignActor]);
+    await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[foreignOrganization,foreignActor]);
+    const foreignAssignment=(await pool.query(`INSERT INTO app.assignment_files(organization_id,account_id,file_number,created_by_user_id,assigned_appraiser_user_id)
+      VALUES($1,'CLOSURE-A',$2,$3,$3) RETURNING id::text`,[foreignOrganization,`FOREIGN-${randomUUID()}`,foreignActor])).rows[0].id;
+    await pool.query(`INSERT INTO app.report_files(id,organization_id,account_id,workflow_type,file_number,custom_assignment_file_id)
+      VALUES($1,$2,'CLOSURE-A','custom_appraisal',$3,$4)`,[foreignReport,foreignOrganization,`FOREIGN-${randomUUID()}`,foreignAssignment]);
+    await pool.query('INSERT INTO app.custom_appraisal_workfiles(assignment_file_id,canonical_file_name) VALUES($1,$2)',[foreignAssignment,`foreign-${randomUUID()}`]);
+    const foreignSharedFrom=sharedCalls.length;
+    await assert.rejects(sharedOwner.readSharedFrozenCaptureJobStockMetrics({...sourceInput,
+      auth:{userId:foreignActor,organizations:[{organizationId:organization,roles:['appraiser']}]}},sharedOptions),/job_actor_access_revoked/);
+    await assert.rejects(sharedOwner.readSharedFrozenCaptureJobStockMetrics({...sourceInput,assignmentFileId:foreignAssignment,
+      auth:{userId:foreignActor,organizations:[]}},sharedOptions),/claim_lost/);
+    assert.ok(!sharedCalls.slice(foreignSharedFrom).some(sql=>/shared-typed:read|shared-stock-metrics:page/.test(sql)),
+      'completed shared cache access is denied before reading its header or rows across organizations');
+    assert.deepEqual(await readCheckpoint(),beforeShared);assert.equal(await sharedRowCount(),0);
     const deniedSharedFrom=sharedCalls.length;
     await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
     await assert.rejects(sharedOwner.readSharedFrozenCaptureJobStockMetrics(sourceInput,sharedOptions),/market_data_access_denied/);

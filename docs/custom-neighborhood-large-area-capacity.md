@@ -28,7 +28,8 @@ Local tests cover exact reuse/reference binding, changed/unfinished metadata,
 bounded admission and lack of writes. The native actual-owner fixture must
 execute before release: verify equality to the old per-job results, zero per-job
 typed copies, unchanged checkpoints, initial/ending current license denial,
-two-client role revocation, subject/claim changes and cancellation. A small
+two-client role revocation, completed-cache cross-organization denial before
+header/row access, subject/claim changes and cancellation. A small
 fixture is not whole authorized >50k acquisition or production map latency.
 
 Still outstanding: referencing scoped original acquisition without per-report

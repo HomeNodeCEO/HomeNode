@@ -81,6 +81,19 @@ test('geographic original owner accepts no caller continuation, geometry roster,
   await assert.rejects(service.verifyFrozenCaptureJobStockOriginals(input(),{captureJobClaim:claim}),/frozen_discovery_unsupported/);
 });
 
+test('source identity owner admits no caller graph, numerical observations, continuation or permission grant',async()=>{
+  const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}};
+  const claim={operation_id:base.operationId,claim_token:'33333333-3333-4333-8333-333333333333',attempts:1};
+  await assert.rejects(setup().verifyFrozenCaptureJobSourceIdentityClosure(base,{captureJobClaim:claim}),/frozen_source_profile_unsupported/);
+  const service=createCustomCohortContextCapture({pool:{connect(){assert.fail('must not connect');}},
+    sourceMode:'combined-witness2-v1',authorizeMarketData:()=>assert.fail('must not authorize')});
+  await assert.rejects(service.verifyFrozenCaptureJobSourceIdentityClosure(base),/invalid_input/);
+  for(const field of ['root','layer_counts','progress','observations','source_rows','market_decision','source_acquisition'])
+    await assert.rejects(service.verifyFrozenCaptureJobSourceIdentityClosure({...base,[field]:{}},{captureJobClaim:claim}),/invalid_input/);
+  await assert.rejects(service.verifyFrozenCaptureJobSourceIdentityClosure({...base,operationId:claim.claim_token},{captureJobClaim:claim}),/operation_conflict/);
+  await assert.rejects(service.verifyFrozenCaptureJobSourceIdentityClosure(input(),{captureJobClaim:claim}),/frozen_discovery_unsupported/);
+});
+
 test('frozen-stock owner ignores stale roles and reloads the current DB actor before assignment, draft or retained source reads',async()=>{
   const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}};
   const organization='11111111-1111-4111-8111-111111111111';

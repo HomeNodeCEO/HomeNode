@@ -91,6 +91,74 @@ function plans(stock,indexed=false) { return Object.freeze(Object.fromEntries(Ob
 export const NEIGHBORHOOD_FROZEN_CLOSURE_SQL = plans(STOCK);
 export const NEIGHBORHOOD_FROZEN_JOB_CLOSURE_SQL = plans(INDEXED_STOCK,true);
 
+// Independent identity validation uses EXACTLY the same indexed one-hop scope.
+// SQL reads bounded originals, but returns only one constant-size aggregate.
+// Missing optional facts are not fabricated, numeric observations are not
+// interpreted here, and outside package accounts never become new stock seeds.
+const accountValue=expression=>`(${expression} IS NULL OR (length(${expression}) BETWEEN 1 AND 64
+  AND ${expression} !~ '^[[:space:]]|[[:space:]]$|[[:cntrl:]]'))`;
+const field=(name,type,nullable=false)=>`(original.payload ? '${name}' AND jsonb_typeof(original.payload->'${name}')
+  ${nullable?`IN ('${type}','null')`:`='${type}'`})`;
+const accountField=name=>`${field(name,'string',true)} AND original.payload->>'${name}' IS NOT DISTINCT FROM original.account_id`;
+const positiveId=expression=>`(${expression} ~ '^[1-9][0-9]{0,18}$'
+  AND (length(${expression})<19 OR ${expression} COLLATE "C"<='9223372036854775807' COLLATE "C"))`;
+const nativeId=()=>`${positiveId('original.row_key')} AND ${field('id','string')} AND original.payload->>'id'=original.row_key`;
+const sourceExists=`EXISTS(SELECT 1 FROM app.neighborhood_frozen_source_rows source
+  WHERE source.generation_id=$1::uuid AND source.kind='source_records' AND source.row_key=original.source_record_id::text
+    AND source.source_record_id=original.source_record_id)`;
+const sourceField=`${field('source_record_id','string',true)}
+  AND original.payload->>'source_record_id' IS NOT DISTINCT FROM original.source_record_id::text
+  AND (original.source_record_id IS NULL OR (${positiveId('original.source_record_id::text')} AND ${sourceExists}))`;
+const runExists=name=>`(${field(name,'string',true)} AND (original.payload->>'${name}' IS NULL OR
+  (original.payload->>'${name}' ~ '^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$' AND EXISTS(
+    SELECT 1 FROM app.neighborhood_frozen_source_rows run WHERE run.generation_id=$1::uuid AND run.kind='sync_runs'
+      AND run.row_key=original.payload->>'${name}' AND run.payload->>'id'=run.row_key
+      AND run.payload->>'source_key'='dcad_parcels'))))`;
+const positionField=name=>`${field(name,'number')} AND CASE WHEN original.payload->>'${name}' ~ '^[1-9][0-9]{0,4}$'
+  THEN (original.payload->>'${name}')::integer<=32767 ELSE false END`;
+const IDENTITY=Object.freeze({
+  parcels:`original.row_key ~ '^(0|[1-9][0-9]{0,18})$' AND original.source_record_id IS NULL
+    AND ${field('object_id','string')} AND original.payload->>'object_id'=original.row_key
+    AND ${accountField('account_id')} AND ${runExists('sync_run_id')}`,
+  accounts:`original.account_id=original.row_key AND original.source_record_id IS NULL
+    AND ${field('account_id','string')} AND original.payload->>'account_id'=original.row_key`,
+  source_records:`${nativeId()} AND original.source_record_id::text=original.row_key AND ${accountField('primary_account_id')}`,
+  sales:`${nativeId()} AND ${accountField('account_id')} AND ${sourceField}`,
+  sale_links:`${nativeId()} AND ${accountField('account_id')} AND ${sourceField} AND original.source_record_id IS NOT NULL
+    AND ${positionField('source_position')} AND ${positionField('parcel_sequence')} AND ${field('is_resolved','boolean',true)}
+    AND NOT EXISTS(SELECT 1 FROM app.neighborhood_frozen_source_rows other
+      WHERE other.generation_id=$1::uuid AND other.kind='sale_links' AND other.source_record_id=original.source_record_id
+        AND other.row_key<>original.row_key AND other.payload->>'source_position'=original.payload->>'source_position'
+        AND other.payload->>'parcel_sequence'=original.payload->>'parcel_sequence')`,
+  sync_state:`original.row_key='dcad_parcels' AND original.account_id IS NULL AND original.source_record_id IS NULL
+    AND ${field('source_key','string')} AND original.payload->>'source_key'=original.row_key AND ${runExists('last_run_id')}`,
+  sync_runs:`original.account_id IS NULL AND original.source_record_id IS NULL AND ${field('id','string')}
+    AND original.payload->>'id'=original.row_key AND ${field('source_key','string')} AND original.payload->>'source_key'='dcad_parcels'`,
+});
+export const NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL=Object.freeze(Object.fromEntries(Object.entries(KINDS).map(([kind,type])=>{
+  const order=type==='text'?'original.row_key COLLATE "C"':`original.row_key::${type}`;
+  return [kind,`/* neighborhood-frozen-job-identity:${kind} */ WITH ${INDEXED_STOCK}, candidates AS MATERIALIZED (
+    SELECT original.row_key,original.account_id,original.source_record_id,original.payload FROM app.neighborhood_frozen_source_rows original
+    WHERE original.generation_id=$1::uuid AND original.kind='${kind}' AND (${FILTER[kind]})
+      AND ($3::text='' OR ${order}>NULLIF($3,'')::${type}${type==='text'?' COLLATE "C"':''})
+    ORDER BY ${order} LIMIT 250
+  ), sized AS (SELECT original.*,sum(octet_length(original.payload::text)+512)
+      OVER(ORDER BY ${order}) AS prefix_bytes FROM candidates original),
+  admitted AS MATERIALIZED (SELECT * FROM sized WHERE prefix_bytes<=8000000), checked AS MATERIALIZED (
+    SELECT original.row_key,${order} AS ordering,
+      (jsonb_typeof(original.payload)='object' AND ${accountValue('original.account_id')} AND (${IDENTITY[kind]})) AS valid,
+      ${kind==='parcels'?"(original.payload->>'sync_run_id' IS NULL)":'false'} AS origin_unknown FROM admitted original
+  ) SELECT count(*)::integer AS page_count,count(*) FILTER(WHERE valid IS NOT TRUE)::integer AS invalid_count,
+    count(*) FILTER(WHERE origin_unknown)::integer AS unknown_origin_count,
+    (SELECT row_key FROM checked ORDER BY ordering DESC LIMIT 1) AS last_row_key,
+    (SELECT count(*)::integer FROM candidates) AS candidate_count FROM checked`];
+})));
+export const NEIGHBORHOOD_FROZEN_JOB_IDENTITY_COVERAGE_SQL=`/* neighborhood-frozen-job-identity:coverage */
+  SELECT count(*)::integer AS missing_account_count FROM app.neighborhood_custom_cohort_stock_accounts stock
+  WHERE stock.operation_id=$2::uuid AND NOT EXISTS(SELECT 1 FROM app.neighborhood_frozen_source_rows original
+    WHERE original.generation_id=$1::uuid AND original.kind='accounts' AND original.row_key=stock.account_id
+      AND original.account_id=stock.account_id)`;
+
 /** Internal fixed SQL source-closure DATA primitive, not a source grant.
  * A current-authorized owner must independently admit the NEW pinned spatial
  * roster purpose and original projection at both ends; the old account-array

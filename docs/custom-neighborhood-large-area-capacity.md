@@ -2046,6 +2046,74 @@ acquisition, bounded exact numerical/geometry consumers, coherent report
 publication and real >50k/5-mile/10-mile/retrospective/live QA acceptance remain
 outstanding. No genuine appraisal choices or accepted reports are changed.
 
+### Independent source-identity / one-hop association stage (2026-10-07)
+
+The internal `verifyFrozenCaptureJobSourceIdentityClosure` method follows the
+completed original-graph and geographic-original stages under the **same actual
+capture owner**. It accepts only the ordinary request and fenced worker claim;
+its six-reference `frozen_identity_v1` checkpoint binds the existing subject,
+stock, source graph, graph verification, geographic verification and a small
+identity continuation. Neither unfinished prerequisite can be advanced or
+rewritten by this stage. It remains unmounted and undispatched; the legacy
+worker does not decode this new phase.
+
+Each fresh transaction reloads the current database actor, assignment/draft,
+subject intent, request, job claim, original generation/stock and independently
+approved mapping5/witness2 source purpose before reading originals and again
+before commit. A saved policy decision or finished progress is not a grant.
+Unknown COMMIT acknowledgements resume the actual persisted continuation.
+
+Fixed SQL reuses the **same original-stock account / all-date one-hop filters**
+as the retained source graph. It compares native row keys, account metadata and
+source IDs to their exact payload string identities across all seven layers;
+identifiers retain case, punctuation and leading zeros, with no fuzzy matching
+or JavaScript number coercion. Seeded sales/links must have the exact retained
+source record. Package positions are bounded positive integers and must be
+unique within each source. Optional NULL accounts and unresolved links remain
+in their original scope. Non-NULL parcel/state sync references must identify
+the retained `dcad_parcels` run. A linked outside account never becomes a new
+cadastral account or a second-hop source seed.
+
+An additive shared-registry migration adds an original-link identity expression
+index on generation, source ID, source position, parcel sequence and row key.
+Duplicate-position probes therefore need not rescan a large multi-parcel
+package once for each candidate. This changes no original data or immutability
+guard; it is not a source-rights, mobile-application or native-publishing change.
+
+Only one constant-size aggregate crosses into Node per query: at most 250
+originals, an 8-MB payload validation prefix and a five-second query timeout.
+Byte-limited prefixes are not mistaken for layer end, full 250-row pages need
+an independent terminal query, and each completed layer count must match the
+already independently verified graph. Progress is under 450 bytes. Geometry
+and decimal observations are not transferred or reinterpreted by this stage,
+and it never repeats spatial discovery, reconstructs stock, or queries mutable
+`core`/`gis` sources.
+
+Missing core-account rows are **counted explicitly**, not silently removed from
+geographic stock. Unknown parcel sync origins remain explicit counts. Finished
+origin counts concern **source-graph account parcel parts**, including outside
+parts and excluding NULL-account geographic parcels; the owner labels this
+scope explicitly. They must not become a geographic-stock denominator. Finished
+identity verification proves neither source freshness nor historical stock,
+complete amenity coverage, typed numerical/date observations, acquisition,
+statistics, map/report publication or Apply. Those remain subsequent stages.
+
+Local unit proof traverses 60,001 synthetic parcel identities and 60,000 account
+identities over 487 fresh steps. Native CI must separately execute the 60,001
+parcel/account DATA validator with independently known fixture counts; this is
+not a completed >50k actual-owner source graph/acquisition or production timing
+claim. The small native actual-owner fixture must cover all seven scopes,
+initial/ending rights denial, role revocation, subject change, rollback, lost
+COMMIT acknowledgement, finished replay and cancellation. A separate isolated
+BUILDING-generation corruption fixture must reject numeric IDs, inconsistent
+account/source metadata, orphan sources, duplicate/invalid positions, wrong
+resolved-value types and missing sync runs without disabling immutability or
+altering published originals. Native execution is pending until the protected
+PR checks pass.
+
+No dependencies, existing caps, HTTP/default behavior, live deployment, worker
+schedule, report choices or accepted reports are changed by this stage.
+
 ### Independent geographic-original verification stage (2026-10-07)
 
 The internal `verifyFrozenCaptureJobStockOriginals` method continues the actual

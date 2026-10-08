@@ -7,11 +7,18 @@ import { compileNeighborhoodFrozenTypedOriginalV1, getNeighborhoodFrozenTypedOri
 export const NEIGHBORHOOD_SHARED_TYPED_LIMITS = Object.freeze({
   rows: 250, page_utf8_bytes: 2_100_000, step_utf8_bytes: 32_000_000,
   rows_per_layer: 2_000_000, total_rows: 14_000_000, total_typed_utf8_bytes: 8_000_000_000,
+  total_payload_utf8_bytes: 8_000_000_000, row_key_bytes: 256, snapshot_text_bytes: 65536,
   step_ms: 60_000, queries: 16,
 });
 const L = NEIGHBORHOOD_SHARED_TYPED_LIMITS, FORMAT = 'shared_frozen_typed_progress_v1';
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+const SNAPSHOT_TEXT = /^[0-9]+:[0-9]+:(?:[0-9]+(?:,[0-9]+)*)?$/;
+const ROW_KEY_CONTROLS = /[\u0000-\u001f\u007f]/;
+const isSnapshotText = value => typeof value === 'string' && Buffer.byteLength(value) <= L.snapshot_text_bytes && SNAPSHOT_TEXT.test(value);
+const isRowKey = value => typeof value === 'string' && Buffer.byteLength(value) <= L.row_key_bytes && !ROW_KEY_CONTROLS.test(value);
+// Fixed internal column identifiers only; never interpolate a caller-supplied name.
+const utcTimestamp = column => `to_char(${column} AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 function fail(reason) { throw new TypeError(`neighborhood_shared_typed_${reason}`); }
 function data(value, keys, optional = []) {
   if (!value || types.isProxy(value) || Object.getPrototypeOf(value) !== Object.prototype) fail('invalid_input');
@@ -35,7 +42,7 @@ function progressOf(raw) {
     || !Number.isSafeInteger(p.layer_rows) || p.layer_rows < 0 || p.layer_rows > L.rows_per_layer
     || !count(p.typed_rows, L.total_rows) || !count(p.typed_utf8_bytes, L.total_typed_utf8_bytes)
     || Number(p.typed_utf8_bytes) < Number(p.typed_rows)
-    || typeof p.after !== 'string' || Buffer.byteLength(p.after) > 256 || /[\u0000-\u001f\u007f]/.test(p.after)
+    || !isRowKey(p.after)
     || (p.after === '') !== (p.layer_rows === 0) || p.kind_index === KINDS.length && p.after !== '') fail('invalid_progress');
   return Object.freeze(p);
 }
@@ -45,14 +52,13 @@ const SNAPSHOT = `/* neighborhood-shared-typed:snapshot */ SELECT txid_current()
 function snapshot(result) {
   const r = data(one(result), ['transaction_id', 'source_snapshot', 'isolation', 'read_only', 'timezone', 'backend_pid']);
   if (r.isolation !== 'repeatable read' || r.read_only !== 'off' || r.timezone !== 'UTC'
-    || !/^[1-9][0-9]{0,19}$/.test(r.transaction_id ?? '') || typeof r.source_snapshot !== 'string'
-    || r.source_snapshot.length > 65536 || !/^[0-9]+:[0-9]+:(?:[0-9]+(?:,[0-9]+)*)?$/.test(r.source_snapshot)
+    || !/^[1-9][0-9]{0,19}$/.test(r.transaction_id ?? '') || !isSnapshotText(r.source_snapshot)
     || !Number.isInteger(r.backend_pid) || r.backend_pid < 1) fail('caller_transaction_required');
   return r;
 }
 const SOURCE = `/* neighborhood-shared-typed:source */ SELECT source.generation_id::text,source.format_version,source.status,
-  source.source_snapshot,to_char(source.source_transaction_started_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS started_at,
-  to_char(source.completed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS completed_at,
+  source.source_snapshot,${utcTimestamp('source.source_transaction_started_at')} AS started_at,
+  ${utcTimestamp('source.completed_at')} AS completed_at,
   source.layer_counts,source.row_count::text,source.payload_utf8_bytes::text
   FROM app.neighborhood_frozen_source_generations source JOIN app.neighborhood_group_generations generation USING(generation_id)
   WHERE source.generation_id=$1::uuid AND generation.status='complete' AND generation.retirement_started_at IS NULL
@@ -61,14 +67,13 @@ function sourceOf(result, generation) {
   const r = data(one(result), ['generation_id', 'format_version', 'status', 'source_snapshot', 'started_at',
     'completed_at', 'layer_counts', 'row_count', 'payload_utf8_bytes']);
   if (r.generation_id !== generation || r.format_version !== 1 || r.status !== 'complete'
-    || typeof r.source_snapshot !== 'string' || r.source_snapshot.length > 65536
-    || !/^[0-9]+:[0-9]+:(?:[0-9]+(?:,[0-9]+)*)?$/.test(r.source_snapshot)
+    || !isSnapshotText(r.source_snapshot)
     || !DATE.test(r.started_at ?? '') || !DATE.test(r.completed_at ?? '') || r.completed_at < r.started_at
-    || !count(r.row_count, L.total_rows) || !count(r.payload_utf8_bytes, 8_000_000_000)) fail('source_unavailable');
+    || !count(r.row_count, L.total_rows) || !count(r.payload_utf8_bytes, L.total_payload_utf8_bytes)) fail('source_unavailable');
   const layers = data(r.layer_counts, KINDS); let rows = 0, bytes = 0;
   for (const k of KINDS) {
     const c = data(layers[k], ['row_count', 'payload_utf8_bytes']);
-    if (!count(c.row_count, L.rows_per_layer) || !count(c.payload_utf8_bytes, 8_000_000_000)
+    if (!count(c.row_count, L.rows_per_layer) || !count(c.payload_utf8_bytes, L.total_payload_utf8_bytes)
       || (c.row_count === '0' ? c.payload_utf8_bytes !== '0' : Number(c.payload_utf8_bytes) < Number(c.row_count))) fail('source_unavailable');
     layers[k] = c; rows += Number(c.row_count); bytes += Number(c.payload_utf8_bytes);
   }
@@ -76,7 +81,7 @@ function sourceOf(result, generation) {
   return freeze({ ...r, layer_counts: layers });
 }
 const READ = `/* neighborhood-shared-typed:read */ SELECT binding_sha256,source_metadata,definition_json,progress,status,
-  to_char(completed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS completed_at
+  ${utcTimestamp('completed_at')} AS completed_at
   FROM app.neighborhood_frozen_typed_generations WHERE generation_id=$1::uuid AND profile_sha256=$2 AND effective_date=$3::date`;
 const LOCK = `${READ} FOR UPDATE NOWAIT`;
 // All seven source layers use their existing C-collated native-text PK here.
@@ -104,9 +109,6 @@ const INSERT = `/* neighborhood-shared-typed:rows */ WITH input AS (
     AND original.source_record_id::text IS NOT DISTINCT FROM input.typed->>'source_record_id'
   RETURNING typed_utf8_bytes AS bytes
 ) SELECT count(*)::integer AS inserted_count,coalesce(sum(bytes),0)::text AS typed_utf8_bytes FROM written`;
-const COUNTS = `/* neighborhood-shared-typed:counts */ SELECT kind,count(*)::text AS row_count,
-  sum(typed_utf8_bytes)::text AS typed_utf8_bytes FROM app.neighborhood_frozen_typed_rows
-  WHERE generation_id=$1::uuid AND profile_sha256=$2 AND effective_date=$3::date GROUP BY kind`;
 
 /** OFF/unmounted storage builder. Its trusted offline owner must authorize the
  * integrated source mix before and after the caller-owned transaction. No pool,
@@ -133,6 +135,9 @@ export function createNeighborhoodSharedTypedGeneration(client, rawOptions) {
     const supplied = progressOf(rawProgress); check(); if (busy) fail('concurrent_operation'); busy = true;
     try {
       const tx = snapshot(await query(SNAPSHOT));
+      // An autocommit client can report repeatable-read defaults but commits each
+      // statement. A second probe must detect it BEFORE the first cache write;
+      // an ending-only probe would be too late to roll those writes back.
       if (!same(tx, snapshot(await query(SNAPSHOT)))) fail('caller_transaction_changed');
       const source = sourceOf(await query(SOURCE, [generation]), generation);
       const binding = assessmentEvidenceDigest({ source, profile, effective_date: effective });
@@ -171,8 +176,7 @@ export function createNeighborhoodSharedTypedGeneration(client, rawOptions) {
       let last = p.after;
       const input = rows.map(raw => {
         const row = data(raw, ['row_key', 'payload_text']);
-        if (typeof row.row_key !== 'string' || !row.row_key || Buffer.byteLength(row.row_key) > 256
-          || /[\u0000-\u001f\u007f]/.test(row.row_key) || Buffer.compare(Buffer.from(row.row_key), Buffer.from(last)) <= 0) fail('page_corrupt');
+        if (!isRowKey(row.row_key) || !row.row_key || Buffer.compare(Buffer.from(row.row_key), Buffer.from(last)) <= 0) fail('page_corrupt');
         last = row.row_key; check();
         return { row_key: row.row_key, original_text: row.payload_text,
           typed: compileNeighborhoodFrozenTypedOriginalV1({ kind, ...row, effective_date: effective }) };
@@ -191,21 +195,18 @@ export function createNeighborhoodSharedTypedGeneration(client, rawOptions) {
       if (seen > Number(source.layer_counts[kind].row_count) || end && seen !== Number(source.layer_counts[kind].row_count)) fail('layer_count_mismatch');
       const next = progressOf({ ...p, kind_index: p.kind_index + (end ? 1 : 0), after: end ? '' : last, layer_rows: end ? 0 : seen,
         typed_rows: String(Number(p.typed_rows) + input.length), typed_utf8_bytes: String(Number(p.typed_utf8_bytes) + writtenBytes) });
-      if (next.kind_index === KINDS.length) {
-        const totals = await query(COUNTS, key), foundCounts = new Map(); let actualBytes = 0;
-        if (!Array.isArray(totals.rows) || totals.rowCount !== totals.rows.length || totals.rows.length > KINDS.length) fail('invalid_result');
-        for (const r of totals.rows) {
-          if (!KINDS.includes(r.kind) || foundCounts.has(r.kind) || !count(r.row_count, L.rows_per_layer) || r.row_count === '0'
-            || !count(r.typed_utf8_bytes, L.total_typed_utf8_bytes) || Number(r.typed_utf8_bytes) < Number(r.row_count)) fail('invalid_result');
-          foundCounts.set(r.kind, r.row_count); actualBytes += Number(r.typed_utf8_bytes);
-        }
-        if (KINDS.some(k => (foundCounts.get(k) ?? '0') !== source.layer_counts[k].row_count)
-          || next.typed_rows !== source.row_count || next.typed_utf8_bytes !== String(actualBytes)) fail('population_incomplete');
-      }
-      const update = await query(`/* neighborhood-shared-typed:progress */ UPDATE app.neighborhood_frozen_typed_generations
+      // The database completion trigger independently reconciles every layer
+      // and the exact stored-byte total. Do not scan the same city cache a second
+      // time in JavaScript, or let the trigger trust caller-verified progress.
+      let update;
+      try { update = await query(`/* neighborhood-shared-typed:progress */ UPDATE app.neighborhood_frozen_typed_generations
         SET progress=$4::jsonb,status=$5,completed_at=CASE WHEN $5='complete' THEN clock_timestamp() ELSE NULL END
         WHERE generation_id=$1::uuid AND profile_sha256=$2 AND effective_date=$3::date AND status='building' AND progress=$6::jsonb`,
-      [...key, JSON.stringify(next), next.kind_index === KINDS.length ? 'complete' : 'building', JSON.stringify(p)]);
+      [...key, JSON.stringify(next), next.kind_index === KINDS.length ? 'complete' : 'building', JSON.stringify(p)]); }
+      catch (error) {
+        if (error?.code === '55000' && error.message === 'neighborhood_shared_typed_population_incomplete') fail('population_incomplete');
+        throw error;
+      }
       if (update?.rowCount !== 1) fail('write_lost');
       await ending(); return receipt(next, true, false);
 
@@ -223,4 +224,4 @@ export function createNeighborhoodSharedTypedGeneration(client, rawOptions) {
   } });
 }
 
-export const NEIGHBORHOOD_SHARED_TYPED_SQL = Object.freeze({ snapshot: SNAPSHOT, source: SOURCE, read: READ, lock: LOCK, page: PAGE, insert: INSERT, counts: COUNTS });
+export const NEIGHBORHOOD_SHARED_TYPED_SQL = Object.freeze({ snapshot: SNAPSHOT, source: SOURCE, read: READ, lock: LOCK, page: PAGE, insert: INSERT });

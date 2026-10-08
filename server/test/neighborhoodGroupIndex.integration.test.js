@@ -146,6 +146,20 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     await assert.rejects(createNeighborhoodSharedTypedGeneration(pool,{generationId:first.generationId,effectiveDate:'2026-10-07'}).step(),
       /caller_transaction_required/,'autocommit must leave no shared cache header or rows');
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_typed_generations')).rows[0].n,0);
+    // Even matching session defaults do not turn autocommit into a caller-owned
+    // transaction. The two pre-write probes must catch its changing txid.
+    const autocommitShared=await pool.connect();
+    try {
+      await autocommitShared.query("SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+      await autocommitShared.query("SET TIME ZONE 'UTC'");
+      await assert.rejects(createNeighborhoodSharedTypedGeneration(autocommitShared,{generationId:first.generationId,effectiveDate:'2026-10-07'}).step(),
+        /caller_transaction_changed/);
+    } finally {
+      await autocommitShared.query('RESET default_transaction_isolation');
+      await autocommitShared.query('RESET TIME ZONE');
+      autocommitShared.release();
+    }
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_typed_generations')).rows[0].n,0);
     let loseSharedCommit=true;
     const lostAckPool={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
       const result=await raw.query(c);if(c.text==='COMMIT'&&loseSharedCommit){loseSharedCommit=false;throw Error('synthetic shared cache ACK loss');}
@@ -158,6 +172,20 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     await assert.rejects(pool.query("UPDATE app.neighborhood_frozen_typed_generations SET status='complete',completed_at=now() WHERE generation_id=$1",[first.generationId]),
       error=>error.code==='55000'&&/population_incomplete/.test(error.message));
     let sharedProgress=reopenedShared.progress,sharedResult;
+    while(sharedProgress.kind_index<6){sharedResult=await sharedTypedStep(pool,first.generationId,sharedProgress);sharedProgress=sharedResult.progress;}
+    // The authoritative trigger, rather than a duplicate JS city recount,
+    // independently catches a corrupt running-byte total on actual completion.
+    const badSharedProgress={...sharedProgress,typed_utf8_bytes:String(BigInt(sharedProgress.typed_utf8_bytes)+1n)};
+    const sharedCountBefore=(await pool.query('SELECT count(*)::text AS n FROM app.neighborhood_frozen_typed_rows WHERE generation_id=$1',[first.generationId])).rows[0].n;
+    await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
+      await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+      await client.query("SET LOCAL TIME ZONE 'UTC'");
+      await client.query('UPDATE app.neighborhood_frozen_typed_generations SET progress=$2::jsonb WHERE generation_id=$1',
+        [first.generationId,JSON.stringify(badSharedProgress)]);
+      return createNeighborhoodSharedTypedGeneration(client,{generationId:first.generationId,effectiveDate:'2026-10-07'}).step(badSharedProgress);
+    }),/neighborhood_shared_typed_population_incomplete/);
+    assert.deepEqual((await pool.query('SELECT progress FROM app.neighborhood_frozen_typed_generations WHERE generation_id=$1',[first.generationId])).rows[0].progress,sharedProgress);
+    assert.equal((await pool.query('SELECT count(*)::text AS n FROM app.neighborhood_frozen_typed_rows WHERE generation_id=$1',[first.generationId])).rows[0].n,sharedCountBefore);
     do{sharedResult=await sharedTypedStep(pool,first.generationId,sharedProgress);sharedProgress=sharedResult.progress;}while(!sharedResult.all_layers_typed);
     const retainedSharedCount=(await pool.query('SELECT count(*)::text AS n FROM app.neighborhood_frozen_typed_rows WHERE generation_id=$1',[first.generationId])).rows[0].n;
     assert.equal(retainedSharedCount,frozen.row_count);

@@ -27,8 +27,6 @@ function fixture(hook=()=>null) {
       return result({page_json:JSON.stringify(rows),page_count:rows.length,candidate_count:rows.length,next_cursor:rows.at(-1)?.row_key??v[2]});}
     if(text===SQL.insert){const rows=JSON.parse(v[4]);typed.push(...rows.map(r=>({kind:v[3],...r})));
       return result({inserted_count:rows.length,typed_utf8_bytes:String(rows.reduce((n,r)=>n+Buffer.byteLength(JSON.stringify(r.typed)),0))});}
-    if(text===SQL.counts){const rows=typed.length?[{kind:'parcels',row_count:String(typed.length),
-      typed_utf8_bytes:String(typed.reduce((n,r)=>n+Buffer.byteLength(JSON.stringify(r.typed)),0))}]:[];return {rowCount:rows.length,rows};}
     if(text.includes('shared-typed:progress')){header.progress=JSON.parse(v[3]);header.status=v[4];header.completed_at=v[4]==='complete'?timestamp:null;
       return {rowCount:1,rows:[]};}assert.fail(text);
   }};
@@ -49,6 +47,7 @@ test('one shared exact generation/profile/date prepares all layers once and reop
   assert.equal(f.calls.slice(from).length,6);assert.ok(Object.isFrozen(reused.source_metadata.layer_counts.parcels));
   assert.ok(!f.calls.slice(from).some(c=>c.text.includes('FOR UPDATE')),'immutable cache reuse does not serialize on a header write lock');
   assert.ok(!f.calls.some(c=>/ST_DWithin|FROM core\.|FROM gis\.|COMMIT|capture_jobs|group_active/.test(c.text)));
+  assert.ok(!f.calls.some(c=>c.text.includes('shared-typed:counts')),'one authoritative database completion scan, not two');
 });
 test('persisted building progress can be read after a lost acknowledgement without repeating writes',async()=>{
   const f=fixture(),first=await f.builder().step(),from=f.calls.length;
@@ -91,11 +90,18 @@ test('bounded page decoding rejects malformed counts, order, oversized originals
     await assert.rejects(f.builder().step(),/page_corrupt|page_unavailable|invalid_input/);
     assert.equal(f.typed.length,0);}
 });
-test('original exact-text acknowledgements, aggregate totals and progress CAS remain independently required',async()=>{
+test('original exact-text acknowledgements, database completion verification and progress CAS remain independently required',async()=>{
   for(const override of [result({inserted_count:1,typed_utf8_bytes:'100'}),result({inserted_count:2,typed_utf8_bytes:'0'})]){
     const f=fixture(({text})=>text===SQL.insert?override:null);await assert.rejects(f.builder().step(),/original_mismatch/);}
-  const totals=fixture(({text})=>text===SQL.counts?{rowCount:0,rows:[]}:null);
+  const totals=fixture(({text,values})=>{
+    if(text.includes('shared-typed:progress')&&values[4]==='complete')
+      throw Object.assign(new Error('neighborhood_shared_typed_population_incomplete'),{code:'55000'});
+  });
   await assert.rejects(complete(totals),/population_incomplete/);
+  assert.equal(totals.header().status,'building','failed database verification cannot publish completion');
+  const other=Object.assign(new Error('another_database_error'),{code:'55000'});
+  const untouched=fixture(({text})=>{if(text.includes('shared-typed:progress'))throw other;});
+  await assert.rejects(untouched.builder().step(),error=>error===other);
   const lost=fixture(({text})=>text.includes('shared-typed:progress')?{rowCount:0,rows:[]}:null);
   await assert.rejects(lost.builder().step(),/write_lost/);
 });
@@ -130,7 +136,8 @@ test('shared schema is additive, immutable, indexed and retires before originals
   assert.match(sql,/PRIMARY KEY\(generation_id,profile_sha256,effective_date,kind,row_key\)/);
   assert.match(sql,/generation_id,kind,row_key/);assert.match(sql,/neighborhood_shared_typed_population_incomplete/);
   assert.match(sql,/typed_utf8_bytes integer GENERATED ALWAYS AS \(octet_length\(typed::text\)\) STORED/);
-  assert.match(SQL.counts,/sum\(typed_utf8_bytes\)/);assert.doesNotMatch(SQL.counts,/octet_length\(typed::text\)/);
+  assert.match(sql,/sum\(typed_utf8_bytes\)/);
+  assert.equal(Object.hasOwn(SQL,'counts'),false,'completion counting belongs to the authoritative database trigger');
   assert.match(sql,/reject_pinned_neighborhood_group_mutation/);assert.match(sql,/retirement_started_at IS NULL/);
   assert.doesNotMatch(sql,/ALTER TABLE|DROP TABLE|DISABLE|ON DELETE CASCADE/);
   assert.match(SQL.insert,/original.payload::text=input.original_text/);

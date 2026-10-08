@@ -21,6 +21,8 @@ without repeating inserts. A closed C-collated original-key plan admits at most
 250 rows and 2.1 MB of encoded originals before transport. Original text is
 matched independently by SQL before each insert. Every complete layer count,
 whole row count and exact typed-text byte total is reconciled before publication.
+The authoritative database completion trigger performs that full-cache scan
+once; the builder does not repeat it or ask the trigger to trust its progress.
 SQL-generated immutable row byte counts avoid repeatedly decompressing the whole
 typed payload collection just to sum its size.
 The database additionally refuses premature completion and makes completed

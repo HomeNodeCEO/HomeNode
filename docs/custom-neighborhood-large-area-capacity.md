@@ -20,8 +20,10 @@ allows fresh-client continuation and reopens after lost COMMIT acknowledgement
 without repeating inserts. A closed C-collated original-key plan admits at most
 250 rows and 2.1 MB of encoded originals before transport. Original text is
 matched independently by SQL before each insert. Every complete layer count,
-whole row count and exact typed-text byte total is reconciled before publication;
-the database additionally refuses premature completion and makes completed
+whole row count and exact typed-text byte total is reconciled before publication.
+SQL-generated immutable row byte counts avoid repeatedly decompressing the whole
+typed payload collection just to sum its size.
+The database additionally refuses premature completion and makes completed
 headers/rows immutable. Finite 60-second, 16-query, 32-MB step limits, shared
 logical row/byte ceilings, cancellation and serial settlement apply.
 

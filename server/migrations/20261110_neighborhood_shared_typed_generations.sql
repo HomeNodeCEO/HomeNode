@@ -23,6 +23,7 @@ CREATE TABLE app.neighborhood_frozen_typed_rows (
   source_record_id bigint,
   original_payload_sha256 text NOT NULL CHECK(original_payload_sha256 ~ '^[a-f0-9]{64}$'),
   typed jsonb NOT NULL CHECK(jsonb_typeof(typed)='object' AND octet_length(typed::text)<=131072),
+  typed_utf8_bytes integer GENERATED ALWAYS AS (octet_length(typed::text)) STORED,
   CHECK(coalesce(typed->>'typed_original_version'='1' AND typed->'original'->>'kind'=kind
     AND typed->'original'->>'row_key'=row_key AND typed->'original'->>'payload_sha256'=original_payload_sha256
     AND typed->'interpretation_profile_ref'->>'content_sha256'=profile_sha256
@@ -67,7 +68,7 @@ BEGIN
   IF NEW.status='complete' THEN
     SELECT jsonb_object_agg(kind,row_count),coalesce(sum(row_count),0),coalesce(sum(bytes),0)
       INTO totals,actual_rows,actual_bytes FROM (
-        SELECT kind,count(*) AS row_count,sum(octet_length(typed::text)) AS bytes FROM app.neighborhood_frozen_typed_rows
+        SELECT kind,count(*) AS row_count,sum(typed_utf8_bytes) AS bytes FROM app.neighborhood_frozen_typed_rows
         WHERE generation_id=NEW.generation_id AND profile_sha256=NEW.profile_sha256 AND effective_date=NEW.effective_date GROUP BY kind
       ) counted;
     SELECT layer_counts INTO originals FROM app.neighborhood_frozen_source_generations WHERE generation_id=NEW.generation_id;

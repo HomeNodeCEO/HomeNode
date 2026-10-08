@@ -102,10 +102,10 @@ const INSERT = `/* neighborhood-shared-typed:rows */ WITH input AS (
   JOIN app.neighborhood_frozen_source_rows original ON original.generation_id=$1::uuid AND original.kind=$4 AND original.row_key=input.row_key
   WHERE original.payload::text=input.original_text AND original.account_id IS NOT DISTINCT FROM input.typed->>'account_id'
     AND original.source_record_id::text IS NOT DISTINCT FROM input.typed->>'source_record_id'
-  RETURNING octet_length(typed::text) AS bytes
+  RETURNING typed_utf8_bytes AS bytes
 ) SELECT count(*)::integer AS inserted_count,coalesce(sum(bytes),0)::text AS typed_utf8_bytes FROM written`;
 const COUNTS = `/* neighborhood-shared-typed:counts */ SELECT kind,count(*)::text AS row_count,
-  sum(octet_length(typed::text))::text AS typed_utf8_bytes FROM app.neighborhood_frozen_typed_rows
+  sum(typed_utf8_bytes)::text AS typed_utf8_bytes FROM app.neighborhood_frozen_typed_rows
   WHERE generation_id=$1::uuid AND profile_sha256=$2 AND effective_date=$3::date GROUP BY kind`;
 
 /** OFF/unmounted storage builder. Its trusted offline owner must authorize the

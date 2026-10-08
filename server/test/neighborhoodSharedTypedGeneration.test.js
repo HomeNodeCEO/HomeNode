@@ -129,6 +129,8 @@ test('shared schema is additive, immutable, indexed and retires before originals
   const sql=readFileSync(new URL('../migrations/20261110_neighborhood_shared_typed_generations.sql',import.meta.url),'utf8');
   assert.match(sql,/PRIMARY KEY\(generation_id,profile_sha256,effective_date,kind,row_key\)/);
   assert.match(sql,/generation_id,kind,row_key/);assert.match(sql,/neighborhood_shared_typed_population_incomplete/);
+  assert.match(sql,/typed_utf8_bytes integer GENERATED ALWAYS AS \(octet_length\(typed::text\)\) STORED/);
+  assert.match(SQL.counts,/sum\(typed_utf8_bytes\)/);assert.doesNotMatch(SQL.counts,/octet_length\(typed::text\)/);
   assert.match(sql,/reject_pinned_neighborhood_group_mutation/);assert.match(sql,/retirement_started_at IS NULL/);
   assert.doesNotMatch(sql,/ALTER TABLE|DROP TABLE|DISABLE|ON DELETE CASCADE/);
   assert.match(SQL.insert,/original.payload::text=input.original_text/);

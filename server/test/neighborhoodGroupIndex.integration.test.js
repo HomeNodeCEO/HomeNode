@@ -524,7 +524,8 @@ test('isolated PostgreSQL: prepares and reuses one indexed shared interpretation
     const verification=(await pool.query(`SELECT count(*)::text AS rows,
       count(*) FILTER(WHERE typed.original_payload_sha256<>encode(sha256(convert_to(original.payload::text,'UTF8')),'hex')
         OR typed.account_id IS DISTINCT FROM original.account_id
-        OR typed.source_record_id IS DISTINCT FROM original.source_record_id)::text AS invalid
+        OR typed.source_record_id IS DISTINCT FROM original.source_record_id
+        OR typed.typed_utf8_bytes<>octet_length(typed.typed::text))::text AS invalid
       FROM app.neighborhood_frozen_typed_rows typed JOIN app.neighborhood_frozen_source_rows original
         USING(generation_id,kind,row_key) WHERE typed.generation_id=$1`,[frozen.generationId])).rows[0];
     assert.equal(verification.rows,source.row_count);assert.equal(verification.invalid,'0');

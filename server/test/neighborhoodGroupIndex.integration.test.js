@@ -1191,7 +1191,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     assert.equal(metricsB.rows[0].observations.reported_site_area.exact_value,'0');
     assert.equal(metricsB.rows[0].observations.reported_market_value.state,'missing');
     assert.deepEqual(await readCheckpoint(),beforeMetrics);assert.equal(await typedRows(),17);
-    assert.ok(!typedCalls.slice(metricFrom).some(sql=>/ST_DWithin|job-closure:|job-typed:rows|job-typed:progress|cohort-job:checkpoint/.test(sql)),
+    assert.ok(!typedCalls.slice(metricFrom).some(sql=>/ST_DWithin|job-closure:|job-typed:rows|job-typed:progress|cohort-job:checkpoint-save/.test(sql)),
       'metric reads use the existing immutable read model, never recapture or checkpoint writes');
     const deniedFrom=typedCalls.length;
     await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});

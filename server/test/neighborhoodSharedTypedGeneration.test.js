@@ -112,6 +112,14 @@ test('only building continuations lock and independently recheck the exact check
   assert.ok(!f.calls.slice(from).some(c=>c.text===SQL.page||c.text===SQL.insert));
   assert.match(SQL.lock,/FOR UPDATE NOWAIT$/);assert.doesNotMatch(SQL.read,/FOR UPDATE/);
 });
+test('a builder permits one settled step, including failures, without resetting transaction budgets',async()=>{
+  const f=fixture(),builder=f.builder(),first=await builder.step(),from=f.calls.length;
+  await assert.rejects(builder.step(first.progress),/builder_already_used/);assert.equal(f.calls.length,from);
+  const failed=fixture();failed.tx.isolation='read committed';const attempted=failed.builder();
+  await assert.rejects(attempted.step(),/caller_transaction_required/);const after=failed.calls.length;
+  failed.tx.isolation='repeatable read';await assert.rejects(attempted.step(),/builder_already_used/);
+  assert.equal(failed.calls.length,after,'an uncertain/failed attempt requires a fresh bounded transaction and builder');
+});
 test('closed options/progress detach input, never invoke getters and serialize pending settlement with cancellation',async()=>{
   const f=fixture();let invoked=false;
   const opts={generationId,effectiveDate};Object.defineProperty(opts,'generationId',{enumerable:true,get(){invoked=true;return generationId;}});
@@ -137,12 +145,17 @@ test('shared schema is additive, immutable, indexed and retires before originals
   assert.match(sql,/generation_id,kind,row_key/);assert.match(sql,/neighborhood_shared_typed_population_incomplete/);
   assert.match(sql,/typed_utf8_bytes integer GENERATED ALWAYS AS \(octet_length\(typed::text\)\) STORED/);
   assert.match(sql,/sum\(typed_utf8_bytes\)/);
+  assert.match(sql,/FROM app.neighborhood_frozen_typed_totals/);
+  assert.match(sql,/pg_trigger_depth\(\)<>2/);
+  assert.match(sql,/FROM new_rows GROUP BY generation_id,profile_sha256,effective_date,kind/);
+  const header=sql.slice(sql.indexOf('CREATE FUNCTION app.guard_neighborhood_shared_typed_header'),sql.indexOf('CREATE TRIGGER neighborhood_shared_typed_header_guard'));
+  assert.doesNotMatch(header,/FROM app.neighborhood_frozen_typed_rows/,'final publication only reads up to seven exact derived totals');
   assert.equal(Object.hasOwn(SQL,'counts'),false,'completion counting belongs to the authoritative database trigger');
   assert.match(sql,/reject_pinned_neighborhood_group_mutation/);assert.match(sql,/retirement_started_at IS NULL/);
   assert.doesNotMatch(sql,/ALTER TABLE|DROP TABLE|DISABLE|ON DELETE CASCADE/);
   assert.match(SQL.insert,/original.payload::text=input.original_text/);
   assert.match(SQL.page,/row_key>\$3::text COLLATE "C" ORDER BY row_key LIMIT/);
   const worker=readFileSync(new URL('../src/services/neighborhoodAssessment/neighborhoodGroupIndex.js',import.meta.url),'utf8');
-  assert.match(worker,/\[PRUNE_SHARED_TYPED,PRUNE_SHARED_TYPED_HEADERS,PRUNE_ORIGINALS,PRUNE_PARCELS,PRUNE_SALES\]/);
+  assert.match(worker,/\[PRUNE_SHARED_TYPED,PRUNE_SHARED_TYPED_TOTALS,PRUNE_SHARED_TYPED_HEADERS,PRUNE_ORIGINALS,PRUNE_PARCELS,PRUNE_SALES\]/);
   assert.equal(worker.includes('createNeighborhoodSharedTypedGeneration'),false,'cleanup integration does not turn on a new sweep');
 });

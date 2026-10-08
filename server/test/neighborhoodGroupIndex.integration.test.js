@@ -168,6 +168,13 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     const reopenedShared=await sharedTypedStep(pool,first.generationId);
     assert.equal(reopenedShared.advanced,false);assert.equal(reopenedShared.reused,true);
     assert.equal(reopenedShared.progress.typed_rows,'5');
+    const ackTotals=(await pool.query('SELECT row_count::text AS n FROM app.neighborhood_frozen_typed_totals WHERE generation_id=$1 AND kind=\'parcels\'',[first.generationId])).rows[0];
+    assert.equal(ackTotals.n,'5','lost acknowledgement/reopen cannot double transition totals');
+    for(const sql of ['UPDATE app.neighborhood_frozen_typed_totals SET row_count=row_count+1 WHERE generation_id=$1',
+      'INSERT INTO app.neighborhood_frozen_typed_totals SELECT * FROM app.neighborhood_frozen_typed_totals WHERE generation_id=$1',
+      'DELETE FROM app.neighborhood_frozen_typed_totals WHERE generation_id=$1'])
+      await assert.rejects(pool.query(sql,[first.generationId]),error=>error.code==='55000');
+    await assert.rejects(pool.query('TRUNCATE app.neighborhood_frozen_typed_totals'),error=>error.code==='55000');
     // The database independently refuses a premature cache publication too.
     await assert.rejects(pool.query("UPDATE app.neighborhood_frozen_typed_generations SET status='complete',completed_at=now() WHERE generation_id=$1",[first.generationId]),
       error=>error.code==='55000'&&/population_incomplete/.test(error.message));
@@ -177,6 +184,7 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     // independently catches a corrupt running-byte total on actual completion.
     const badSharedProgress={...sharedProgress,typed_utf8_bytes:String(BigInt(sharedProgress.typed_utf8_bytes)+1n)};
     const sharedCountBefore=(await pool.query('SELECT count(*)::text AS n FROM app.neighborhood_frozen_typed_rows WHERE generation_id=$1',[first.generationId])).rows[0].n;
+    const sharedTotalsBefore=(await pool.query('SELECT * FROM app.neighborhood_frozen_typed_totals WHERE generation_id=$1 ORDER BY kind',[first.generationId])).rows;
     await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
       await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
       await client.query("SET LOCAL TIME ZONE 'UTC'");
@@ -186,6 +194,7 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     }),/neighborhood_shared_typed_population_incomplete/);
     assert.deepEqual((await pool.query('SELECT progress FROM app.neighborhood_frozen_typed_generations WHERE generation_id=$1',[first.generationId])).rows[0].progress,sharedProgress);
     assert.equal((await pool.query('SELECT count(*)::text AS n FROM app.neighborhood_frozen_typed_rows WHERE generation_id=$1',[first.generationId])).rows[0].n,sharedCountBefore);
+    assert.deepEqual((await pool.query('SELECT * FROM app.neighborhood_frozen_typed_totals WHERE generation_id=$1 ORDER BY kind',[first.generationId])).rows,sharedTotalsBefore);
     do{sharedResult=await sharedTypedStep(pool,first.generationId,sharedProgress);sharedProgress=sharedResult.progress;}while(!sharedResult.all_layers_typed);
     const retainedSharedCount=(await pool.query('SELECT count(*)::text AS n FROM app.neighborhood_frozen_typed_rows WHERE generation_id=$1',[first.generationId])).rows[0].n;
     assert.equal(retainedSharedCount,frozen.row_count);
@@ -343,6 +352,7 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM app.neighborhood_frozen_source_rows WHERE generation_id=$1',[second.generationId])).rows[0].count,0,
       'obsolete unpinned original pages retire with their generation');
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_typed_rows WHERE generation_id=$1',[second.generationId])).rows[0].n,0);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_typed_totals WHERE generation_id=$1',[second.generationId])).rows[0].n,0);
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_typed_generations WHERE generation_id=$1',[second.generationId])).rows[0].n,0,
       'partial shared cache rows/header retire before originals without disabling restrictive FKs');
     const reusedShared=await sharedTypedStep(pool,first.generationId);
@@ -536,9 +546,10 @@ test('isolated PostgreSQL: prepares and reuses one indexed shared interpretation
     await pool.query("INSERT INTO core.sale_parcels(id,source_record_id,account_id,is_resolved) VALUES(1,501,'SHARED-00001',true)");
     const frozen=await runNeighborhoodGroupIndex(pool,{batchSize:250,logger:{info(){}},retainOriginalSources:true});
     const source=(await pool.query('SELECT * FROM app.neighborhood_frozen_source_generations WHERE generation_id=$1',[frozen.generationId])).rows[0];
-    let pageCount=0,maximumOriginals=0,originalQueries=0,writeQueries=0;const calls=[];
+    let pageCount=0,maximumOriginals=0,originalQueries=0,writeQueries=0,completionMs=null;const calls=[];
     const measured={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){calls.push(c.text);
-      const result=await raw.query(c);
+      const queryStarted=performance.now(),result=await raw.query(c);
+      if(c.text.includes('shared-typed:progress')&&c.values?.[4]==='complete')completionMs=Math.round(performance.now()-queryStarted);
       if(c.text.includes('shared-typed:page')){pageCount++;originalQueries++;assert.equal(result.rows.length,1);
         maximumOriginals=Math.max(maximumOriginals,result.rows[0].page_count);assert.ok(Buffer.byteLength(result.rows[0].page_json)<=2_100_000);}
       if(c.text.includes('shared-typed:rows'))writeQueries++;
@@ -559,6 +570,15 @@ test('isolated PostgreSQL: prepares and reuses one indexed shared interpretation
     assert.equal(verification.rows,source.row_count);assert.equal(verification.invalid,'0');
     for(const [kind,c] of Object.entries(source.layer_counts))
       assert.equal((await pool.query('SELECT count(*)::text AS n FROM app.neighborhood_frozen_typed_rows WHERE generation_id=$1 AND kind=$2',[frozen.generationId,kind])).rows[0].n,c.row_count);
+    const verifiedTotals=(await pool.query(`SELECT actual.kind,actual.n::text AS n,actual.bytes::text AS bytes,
+      totals.row_count::text AS recorded_rows,totals.typed_utf8_bytes::text AS recorded_bytes
+      FROM (SELECT kind,count(*) AS n,sum(typed_utf8_bytes) AS bytes FROM app.neighborhood_frozen_typed_rows
+        WHERE generation_id=$1 GROUP BY kind) actual
+      FULL JOIN app.neighborhood_frozen_typed_totals totals ON totals.generation_id=$1 AND totals.kind=actual.kind
+      WHERE totals.generation_id=$1 OR actual.kind IS NOT NULL`,[frozen.generationId])).rows;
+    assert.ok(verifiedTotals.length<=7);
+    for(const totals of verifiedTotals){assert.equal(totals.recorded_rows,totals.n);assert.equal(totals.recorded_bytes,totals.bytes);}
+    assert.ok(Number.isSafeInteger(completionMs)&&completionMs>=0,'actual bounded completion query was measured');
     assert.equal((await pool.query(`SELECT count(*)::text AS n FROM app.neighborhood_frozen_typed_rows
       WHERE generation_id=$1 AND kind='parcels' AND row_key<>'60002'
         AND typed->'observations'->'reported_residential_area'->>'exact_value'=(1000+row_key::bigint%100)::text
@@ -582,6 +602,7 @@ test('isolated PostgreSQL: prepares and reuses one indexed shared interpretation
     }finally{await held.query('ROLLBACK');held.release();}
     console.info('[native-shared-typed-generation]',{accounts:60001,original_rows:Number(source.row_count),steps:prepared.steps,
       maximum_page_originals:maximumOriginals,duration_ms:Math.round(performance.now()-started),reuse_ms:reuseMs,
+      completion_ms:completionMs,completion_totals_rows:verifiedTotals.length,
       reuse_original_queries:originalQueries-beforeOriginals,reuse_write_queries:writeQueries-beforeWrites,relation_bytes:typedBytes,
       production_latency:false,source_acquisition:false,report_integration:false});
   }finally{await pool.end();}

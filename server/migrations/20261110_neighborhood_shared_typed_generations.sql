@@ -45,6 +45,33 @@ CREATE INDEX neighborhood_shared_typed_source_idx
 CREATE INDEX neighborhood_shared_typed_original_idx
   ON app.neighborhood_frozen_typed_rows(generation_id,kind,row_key);
 
+-- Exact INSERT-transition totals, not caller-supplied progress. Seven small
+-- rows per cache keep final verification bounded even at the logical ceiling.
+CREATE TABLE app.neighborhood_frozen_typed_totals (
+  generation_id uuid NOT NULL,
+  profile_sha256 text NOT NULL,
+  effective_date date NOT NULL,
+  kind text NOT NULL CHECK(kind IN ('parcels','accounts','source_records','sales','sale_links','sync_state','sync_runs')),
+  row_count bigint NOT NULL CHECK(row_count BETWEEN 1 AND 2000000),
+  typed_utf8_bytes bigint NOT NULL CHECK(typed_utf8_bytes BETWEEN row_count AND 8000000000),
+  PRIMARY KEY(generation_id,profile_sha256,effective_date,kind),
+  FOREIGN KEY(generation_id,profile_sha256,effective_date)
+    REFERENCES app.neighborhood_frozen_typed_generations(generation_id,profile_sha256,effective_date) ON DELETE RESTRICT ON UPDATE RESTRICT
+);
+CREATE FUNCTION app.guard_neighborhood_shared_typed_totals() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  -- The cache-row AFTER INSERT statement trigger is the only DML producer.
+  -- Direct application writes, session flags and caller progress cannot change
+  -- totals. Privileged database-owner DDL is outside this storage contract.
+  IF pg_trigger_depth()<>2 THEN
+    RAISE EXCEPTION 'neighborhood_shared_typed_totals_derived_only' USING ERRCODE='55000';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER neighborhood_shared_typed_totals_derived BEFORE INSERT OR UPDATE
+  ON app.neighborhood_frozen_typed_totals FOR EACH ROW EXECUTE FUNCTION app.guard_neighborhood_shared_typed_totals();
+
 CREATE FUNCTION app.guard_neighborhood_shared_typed_header() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE totals jsonb; actual_rows bigint; actual_bytes bigint; originals jsonb;
 BEGIN
@@ -66,11 +93,9 @@ BEGIN
     RAISE EXCEPTION 'neighborhood_shared_typed_immutable' USING ERRCODE='55000';
   END IF;
   IF NEW.status='complete' THEN
-    SELECT jsonb_object_agg(kind,row_count),coalesce(sum(row_count),0),coalesce(sum(bytes),0)
-      INTO totals,actual_rows,actual_bytes FROM (
-        SELECT kind,count(*) AS row_count,sum(typed_utf8_bytes) AS bytes FROM app.neighborhood_frozen_typed_rows
-        WHERE generation_id=NEW.generation_id AND profile_sha256=NEW.profile_sha256 AND effective_date=NEW.effective_date GROUP BY kind
-      ) counted;
+    SELECT jsonb_object_agg(kind,row_count),coalesce(sum(row_count),0),coalesce(sum(typed_utf8_bytes),0)
+      INTO totals,actual_rows,actual_bytes FROM app.neighborhood_frozen_typed_totals
+      WHERE generation_id=NEW.generation_id AND profile_sha256=NEW.profile_sha256 AND effective_date=NEW.effective_date;
     SELECT layer_counts INTO originals FROM app.neighborhood_frozen_source_generations WHERE generation_id=NEW.generation_id;
     IF EXISTS(SELECT 1 FROM jsonb_each(originals) layer
         WHERE coalesce(totals->>layer.key,'0') IS DISTINCT FROM layer.value->>'row_count')
@@ -103,6 +128,14 @@ BEGIN
     USING(generation_id,profile_sha256,effective_date) WHERE header.status<>'building') THEN
     RAISE EXCEPTION 'neighborhood_shared_typed_immutable' USING ERRCODE='55000';
   END IF;
+  INSERT INTO app.neighborhood_frozen_typed_totals AS totals
+    (generation_id,profile_sha256,effective_date,kind,row_count,typed_utf8_bytes)
+    SELECT generation_id,profile_sha256,effective_date,kind,count(*),sum(typed_utf8_bytes)
+      FROM new_rows GROUP BY generation_id,profile_sha256,effective_date,kind
+      ORDER BY generation_id,profile_sha256,effective_date,kind
+    ON CONFLICT(generation_id,profile_sha256,effective_date,kind) DO UPDATE
+      SET row_count=totals.row_count+EXCLUDED.row_count,
+          typed_utf8_bytes=totals.typed_utf8_bytes+EXCLUDED.typed_utf8_bytes;
   RETURN NULL;
 END;
 $$;
@@ -123,7 +156,7 @@ $$;
 DO $$
 DECLARE relation text;
 BEGIN
-  FOREACH relation IN ARRAY ARRAY['neighborhood_frozen_typed_generations','neighborhood_frozen_typed_rows'] LOOP
+  FOREACH relation IN ARRAY ARRAY['neighborhood_frozen_typed_generations','neighborhood_frozen_typed_rows','neighborhood_frozen_typed_totals'] LOOP
     EXECUTE format('CREATE TRIGGER %I AFTER DELETE ON app.%I REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION app.reject_pinned_neighborhood_group_mutation()',relation||'_pin_delete',relation);
     EXECUTE format('CREATE TRIGGER %I AFTER DELETE ON app.%I REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION app.guard_neighborhood_shared_typed_retirement()',relation||'_retire_delete',relation);
     EXECUTE format('CREATE TRIGGER %I BEFORE TRUNCATE ON app.%I FOR EACH STATEMENT EXECUTE FUNCTION app.reject_neighborhood_custom_cohort_context_mutation()',relation||'_truncate',relation);
@@ -132,5 +165,6 @@ END;
 $$;
 REVOKE UPDATE,DELETE,TRUNCATE ON app.neighborhood_frozen_typed_rows FROM PUBLIC;
 REVOKE DELETE,TRUNCATE ON app.neighborhood_frozen_typed_generations FROM PUBLIC;
+REVOKE INSERT,UPDATE,DELETE,TRUNCATE ON app.neighborhood_frozen_typed_totals FROM PUBLIC;
 COMMENT ON TABLE app.neighborhood_frozen_typed_generations IS
   'Reusable immutable whole-generation individual-row interpretations, exact profile and effective date. Not acquisition, current rights, historical stock, selected statistics or report evidence. No schedule, worker, job or HTTP activation.';

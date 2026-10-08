@@ -198,6 +198,7 @@ const PRUNE_PARCELS=PRUNE_FACTS('neighborhood_group_parcel_facts');
 const PRUNE_SALES=PRUNE_FACTS('neighborhood_group_sale_facts');
 const PRUNE_ORIGINALS=PRUNE_FACTS('neighborhood_frozen_source_rows');
 const PRUNE_SHARED_TYPED=PRUNE_FACTS('neighborhood_frozen_typed_rows');
+const PRUNE_SHARED_TYPED_TOTALS=PRUNE_FACTS('neighborhood_frozen_typed_totals');
 const PRUNE_SHARED_TYPED_HEADERS=PRUNE_FACTS('neighborhood_frozen_typed_generations');
 
 /** Retire an unpinned prior generation after publication. A short exclusive
@@ -222,7 +223,7 @@ async function pruneObsoleteGeneration(client,batchSize,deadline) {
   if (!old) return {status:'none'};
   // Reusable interpretations reference originals, so retire their bounded rows
   // first. The same exclusive-generation/no-pin database guards apply.
-  for (const sql of [PRUNE_SHARED_TYPED,PRUNE_SHARED_TYPED_HEADERS,PRUNE_ORIGINALS,PRUNE_PARCELS,PRUNE_SALES]) for (;;) {
+  for (const sql of [PRUNE_SHARED_TYPED,PRUNE_SHARED_TYPED_TOTALS,PRUNE_SHARED_TYPED_HEADERS,PRUNE_ORIGINALS,PRUNE_PARCELS,PRUNE_SALES]) for (;;) {
     if (Date.now()>deadline) return {status:'deferred',generationId:old};
     const count=(await client.query({text:sql,values:[old,batchSize],query_timeout:120_000})).rows?.[0]?.removed;
     if (!Number.isSafeInteger(count) || count<0 || count>batchSize) throw new Error('neighborhood_group_index_prune_invalid');

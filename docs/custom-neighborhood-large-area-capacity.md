@@ -21,17 +21,22 @@ without repeating inserts. A closed C-collated original-key plan admits at most
 250 rows and 2.1 MB of encoded originals before transport. Original text is
 matched independently by SQL before each insert. Every complete layer count,
 whole row count and exact typed-text byte total is reconciled before publication.
-The authoritative database completion trigger performs that full-cache scan
-once; the builder does not repeat it or ask the trigger to trust its progress.
+The authoritative database completion trigger reads at most seven indexed totals
+derived transactionally from the actual row INSERT transition table. It does
+not scan the whole cache or trust caller progress. Direct total edits and
+truncation are refused; failed inserts roll back their totals in the same
+transaction. Final publication no longer scales with city row count.
 SQL-generated immutable row byte counts avoid repeatedly decompressing the whole
 typed payload collection just to sum its size.
 The database additionally refuses premature completion and makes completed
-headers/rows immutable. Finite 60-second, 16-query, 32-MB step limits, shared
-logical row/byte ceilings, cancellation and serial settlement apply.
+headers/rows immutable. Each builder allows exactly one step, including failures;
+fresh-client continuation uses a new builder rather than resetting transaction
+budgets. Finite 60-second, 16-query, 32-MB builder/step limits, shared logical
+row/byte ceilings, cancellation and serial settlement apply.
 
 The additive shared tables have original-identity FKs and generation/profile/
 date/account/source/key indexes. Bounded obsolete-generation cleanup removes
-cached rows and headers **before** originals. Existing exclusive-retirement and
+cached rows, derived totals and headers **before** originals. Existing exclusive-retirement and
 no-pin guards apply; partial cache construction cannot strand original FKs.
 Retained job pins preserve the exact cache through later nightly sweeps. Nothing
 widens the installed 50k legacy consumer or existing evidence-blob ceilings.

@@ -117,6 +117,8 @@ const INSERT = `/* neighborhood-shared-typed:rows */ WITH input AS (
  * a different date cannot borrow future-year interpretations. A completed cache
  * is immutable; report owners must still prove scoped originals/closure and live
  * rights. This stage does not yet replace the per-job typed rows or graph copy.
+ * Each builder permits one step, successful or failed. Fresh-client bounded
+ * continuation requires a fresh builder, not a reset of a transaction budget.
  */
 export function createNeighborhoodSharedTypedGeneration(client, rawOptions) {
   if (typeof client?.query !== 'function') fail('client_required');
@@ -126,13 +128,14 @@ export function createNeighborhoodSharedTypedGeneration(client, rawOptions) {
     || o.checkBudget !== undefined && typeof o.checkBudget !== 'function') fail('invalid_input');
   const generation = o.generationId, effective = assessmentDate(o.effectiveDate), signal = o.signal;
   const profile = getNeighborhoodFrozenTypedOriginalV1Profile(), key = [generation, profile.profile_ref.content_sha256, effective];
-  const deadline = performance.now() + L.step_ms; let busy = false, queries = 0, bytes = 0;
+  const deadline = performance.now() + L.step_ms; let busy = false, used = false, queries = 0, bytes = 0;
   const check = () => { if (signal?.aborted) fail('cancelled'); o.checkBudget?.();
     if (signal?.aborted) fail('cancelled'); if (performance.now() >= deadline) fail('deadline'); };
   const query = async (text, values) => { check(); if (++queries > L.queries) fail('query_limit');
     const r = await client.query({ text, values, query_timeout: Math.max(1, Math.min(5000, Math.ceil(deadline - performance.now()))) }); check(); return r; };
   return Object.freeze({ async step(rawProgress = null) {
-    const supplied = progressOf(rawProgress); check(); if (busy) fail('concurrent_operation'); busy = true;
+    const supplied = progressOf(rawProgress);
+    if (busy) fail('concurrent_operation'); if (used) fail('builder_already_used'); check(); busy = true; used = true;
     try {
       const tx = snapshot(await query(SNAPSHOT));
       // An autocommit client can report repeatable-read defaults but commits each
@@ -196,8 +199,8 @@ export function createNeighborhoodSharedTypedGeneration(client, rawOptions) {
       const next = progressOf({ ...p, kind_index: p.kind_index + (end ? 1 : 0), after: end ? '' : last, layer_rows: end ? 0 : seen,
         typed_rows: String(Number(p.typed_rows) + input.length), typed_utf8_bytes: String(Number(p.typed_utf8_bytes) + writtenBytes) });
       // The database completion trigger independently reconciles every layer
-      // and the exact stored-byte total. Do not scan the same city cache a second
-      // time in JavaScript, or let the trigger trust caller-verified progress.
+      // against exact INSERT-transition totals (at most seven indexed rows).
+      // It neither scans the city cache nor trusts caller-verified progress.
       let update;
       try { update = await query(`/* neighborhood-shared-typed:progress */ UPDATE app.neighborhood_frozen_typed_generations
         SET progress=$4::jsonb,status=$5,completed_at=CASE WHEN $5='complete' THEN clock_timestamp() ELSE NULL END

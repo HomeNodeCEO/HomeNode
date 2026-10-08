@@ -2046,6 +2046,59 @@ acquisition, bounded exact numerical/geometry consumers, coherent report
 publication and real >50k/5-mile/10-mile/retrospective/live QA acceptance remain
 outstanding. No genuine appraisal choices or accepted reports are changed.
 
+### Indexed stock-account metric pages (2026-10-08, not activated)
+
+`readFrozenCaptureJobStockMetrics` is a read-only internal owner over the finished
+seven-layer typed-original stage. It reopens the actual retained source graph,
+geographic and identity proofs, exact typed definition and checkpoint. Current
+database actor, assignment, draft, subject, CAD permission, live job/pin and the
+independently approved combined source purpose are checked before and after the
+read. Partial typing refuses without advancing a layer or replacing a checkpoint.
+No HTTP route, worker dispatch, source grant, legacy capability, installed limit,
+appraisal choice or accepted report changes.
+
+The fixed `neighborhood-frozen-stock-account-metrics-v1` profile resolves four
+recorded CAD metrics: year built, residential area, site area and market value.
+One numerical member is one exact geographic-stock **account**, not one parcel
+part. All retained parcel parts for that account are considered, including parts
+outside the study geometry; those outside parts do not become geographic members.
+Equal replicated numbers are counted once as the account's observation, never
+summed. Different exact numbers yield a conflict with bounded min/max witnesses.
+Missing, invalid and unsupported parts remain separate counters, including when
+the other parts agree. A valid zero site area remains zero; a zero residential
+area is invalid, not missing. Accounts without source parts stay explicit missing
+members. Null-account geographic parcels remain in the geographic population
+counts, without invented account identities or measurements.
+
+The existing account PK and typed account index provide stable 250-account
+keyset pages. SQL performs exact `numeric` comparisons with guarded casts and
+admits encoded response bytes before transfer. No raw CAD/MLS rows, full account
+roster, parcel-part array, new spatial predicate or source recapture crosses into
+Node. The page is bound to the original graph, generation, stock definition,
+effective date and exact nested typed-original profile. A terminal cursor alone
+does not prove that the caller traversed every preceding page; a future numeric
+owner must reconcile the complete ordered account and source-part counts.
+
+Area units remain **reported square feet**, not verified GLA or a measurement
+standard. Market-value currency is not established by the original projection,
+so an exact value is retained as unsupported, not converted into USD or made
+eligible for aggregation. Dates do not turn the current retained CAD stock into
+historical stock. No transaction/package price, sales count, amenity, median,
+COD, selected-union statistics, complete acquisition or report result is inferred.
+
+Local tests cover fixed SQL, exact decimal transport, missing/invalid/conflicting
+protocols, wrong units/counts/order, UTF-8 C collation, terminal and empty pages,
+initial/ending typed-header and claim changes, getters/proxies, cancellation,
+pending SQL settlement and bounded bytes. Native CI must execute the extended
+60,001-account DATA fixture, checking every account value over fresh clients,
+and the small actual-owner fixture with replicated and conflicting outside CAD
+parts, exact 9007199254740993 value, partial missing parts, initial/ending license
+denial, role revocation, subject change, cancellation and unchanged checkpoints.
+The large fixture uses known graph/count bindings and is not a full authorized
+>50k acquisition or a production latency/SLA claim. Activation still requires
+shared generation/profile reuse, all remaining metrics/transactions and complete
+numeric/publication/retirement/worker and live acceptance work.
+
 ### Indexed typed-original interpretation stage (2026-10-08)
 
 `prepareFrozenCaptureJobTypedOriginals` adds a dormant, internal stage after the

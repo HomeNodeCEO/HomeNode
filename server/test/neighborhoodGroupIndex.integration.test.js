@@ -35,6 +35,8 @@ import { createNeighborhoodFrozenJobTypedOriginals }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobTypedOriginals.js';
 import { createNeighborhoodFrozenJobStockMetricPages }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStockMetricPages.js';
+import { createNeighborhoodSharedTypedGeneration }
+  from '../src/services/neighborhoodAssessment/neighborhoodSharedTypedGeneration.js';
 import { NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL, NEIGHBORHOOD_FROZEN_JOB_IDENTITY_COVERAGE_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourceClosurePages.js';
 import { createCustomNeighborhoodWitness2SourcePolicy, CUSTOM_NEIGHBORHOOD_WITNESS2_SOURCE_RIGHTS_KEY,
@@ -61,6 +63,21 @@ const frozenSpatialOptions = options => ({...options,
   geometryInput:{geometry_version:1,type:'Point',crs:'EPSG:4326',axis_order:'longitude_latitude',
     coordinate_encoding:'decimal_string_v1',coordinates:['-96.7','32.9'],source_sha256:'a'.repeat(64)},
   discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}});
+
+// The cache builder requires an explicit stable caller transaction even though
+// published originals are immutable. This fixture does not provide a source
+// grant or mount it in a current-user/report worker.
+const sharedTypedStep=(pool,generationId,progress=null,effectiveDate='2026-10-07',signal)=>
+  withCustomCohortJobTransaction(pool,async client=>{
+    await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+    await client.query("SET LOCAL TIME ZONE 'UTC'");
+    return createNeighborhoodSharedTypedGeneration(client,{generationId,effectiveDate,signal}).step(progress);
+  });
+async function sharedTypedComplete(pool,generationId,effectiveDate='2026-10-07') {
+  let p=null,r,steps=0;
+  do {r=await sharedTypedStep(pool,generationId,p,effectiveDate);p=r.progress;assert.ok(++steps<60000);} while(!r.all_layers_typed);
+  return {receipt:r,steps};
+}
 
 test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserves exact sale dates',{
   skip:!process.env.DATABASE_URL,timeout:360_000,
@@ -126,6 +143,73 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     const original=(await pool.query("SELECT payload FROM app.neighborhood_frozen_source_rows WHERE generation_id=$1 AND kind='parcels' AND row_key='1'",[first.generationId])).rows[0].payload;
     assert.equal(original.stored_geometry_ewkb,originalGeometry,'nightly materialization preserves exact original EWKB');
     assert.equal(original.residential_area_sqft,'1000');
+    await assert.rejects(createNeighborhoodSharedTypedGeneration(pool,{generationId:first.generationId,effectiveDate:'2026-10-07'}).step(),
+      /caller_transaction_required/,'autocommit must leave no shared cache header or rows');
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_typed_generations')).rows[0].n,0);
+    // Even matching session defaults do not turn autocommit into a caller-owned
+    // transaction. The two pre-write probes must catch its changing txid.
+    const autocommitShared=await pool.connect();
+    try {
+      await autocommitShared.query("SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+      await autocommitShared.query("SET TIME ZONE 'UTC'");
+      await assert.rejects(createNeighborhoodSharedTypedGeneration(autocommitShared,{generationId:first.generationId,effectiveDate:'2026-10-07'}).step(),
+        /caller_transaction_changed/);
+    } finally {
+      await autocommitShared.query('RESET default_transaction_isolation');
+      await autocommitShared.query('RESET TIME ZONE');
+      autocommitShared.release();
+    }
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_typed_generations')).rows[0].n,0);
+    let loseSharedCommit=true;
+    const lostAckPool={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
+      const result=await raw.query(c);if(c.text==='COMMIT'&&loseSharedCommit){loseSharedCommit=false;throw Error('synthetic shared cache ACK loss');}
+      return result;}};}};
+    await assert.rejects(sharedTypedStep(lostAckPool,first.generationId),error=>error.outcome_unknown===true);
+    const reopenedShared=await sharedTypedStep(pool,first.generationId);
+    assert.equal(reopenedShared.advanced,false);assert.equal(reopenedShared.reused,true);
+    assert.equal(reopenedShared.progress.typed_rows,'5');
+    const ackTotals=(await pool.query('SELECT row_count::text AS n FROM app.neighborhood_frozen_typed_totals WHERE generation_id=$1 AND kind=\'parcels\'',[first.generationId])).rows[0];
+    assert.equal(ackTotals.n,'5','lost acknowledgement/reopen cannot double transition totals');
+    for(const sql of ['UPDATE app.neighborhood_frozen_typed_totals SET row_count=row_count+1 WHERE generation_id=$1',
+      'INSERT INTO app.neighborhood_frozen_typed_totals SELECT * FROM app.neighborhood_frozen_typed_totals WHERE generation_id=$1',
+      'DELETE FROM app.neighborhood_frozen_typed_totals WHERE generation_id=$1'])
+      await assert.rejects(pool.query(sql,[first.generationId]),error=>error.code==='55000');
+    await assert.rejects(pool.query('TRUNCATE app.neighborhood_frozen_typed_totals'),error=>error.code==='55000');
+    // The database independently refuses a premature cache publication too.
+    await assert.rejects(pool.query("UPDATE app.neighborhood_frozen_typed_generations SET status='complete',completed_at=now() WHERE generation_id=$1",[first.generationId]),
+      error=>error.code==='55000'&&/population_incomplete/.test(error.message));
+    let sharedProgress=reopenedShared.progress,sharedResult;
+    while(sharedProgress.kind_index<6){sharedResult=await sharedTypedStep(pool,first.generationId,sharedProgress);sharedProgress=sharedResult.progress;}
+    // The authoritative trigger, rather than a duplicate JS city recount,
+    // independently catches a corrupt running-byte total on actual completion.
+    const badSharedProgress={...sharedProgress,typed_utf8_bytes:String(BigInt(sharedProgress.typed_utf8_bytes)+1n)};
+    const sharedCountBefore=(await pool.query('SELECT count(*)::text AS n FROM app.neighborhood_frozen_typed_rows WHERE generation_id=$1',[first.generationId])).rows[0].n;
+    const sharedTotalsBefore=(await pool.query('SELECT * FROM app.neighborhood_frozen_typed_totals WHERE generation_id=$1 ORDER BY kind',[first.generationId])).rows;
+    await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
+      await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+      await client.query("SET LOCAL TIME ZONE 'UTC'");
+      await client.query('UPDATE app.neighborhood_frozen_typed_generations SET progress=$2::jsonb WHERE generation_id=$1',
+        [first.generationId,JSON.stringify(badSharedProgress)]);
+      return createNeighborhoodSharedTypedGeneration(client,{generationId:first.generationId,effectiveDate:'2026-10-07'}).step(badSharedProgress);
+    }),/neighborhood_shared_typed_population_incomplete/);
+    assert.deepEqual((await pool.query('SELECT progress FROM app.neighborhood_frozen_typed_generations WHERE generation_id=$1',[first.generationId])).rows[0].progress,sharedProgress);
+    assert.equal((await pool.query('SELECT count(*)::text AS n FROM app.neighborhood_frozen_typed_rows WHERE generation_id=$1',[first.generationId])).rows[0].n,sharedCountBefore);
+    assert.deepEqual((await pool.query('SELECT * FROM app.neighborhood_frozen_typed_totals WHERE generation_id=$1 ORDER BY kind',[first.generationId])).rows,sharedTotalsBefore);
+    do{sharedResult=await sharedTypedStep(pool,first.generationId,sharedProgress);sharedProgress=sharedResult.progress;}while(!sharedResult.all_layers_typed);
+    const retainedSharedCount=(await pool.query('SELECT count(*)::text AS n FROM app.neighborhood_frozen_typed_rows WHERE generation_id=$1',[first.generationId])).rows[0].n;
+    assert.equal(retainedSharedCount,frozen.row_count);
+    const originalCached=(await pool.query("SELECT typed->'observations'->'reported_residential_area'->>'exact_value' AS area FROM app.neighborhood_frozen_typed_rows WHERE generation_id=$1 AND kind='parcels' AND row_key='2'",[first.generationId])).rows[0].area;
+    assert.equal(originalCached,'2000');
+    const cancelledShared=new AbortController();cancelledShared.abort();
+    await assert.rejects(sharedTypedStep(pool,first.generationId,null,'2025-10-07',cancelledShared.signal),/cancelled/);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_typed_generations WHERE generation_id=$1',[first.generationId])).rows[0].n,1);
+    await assert.rejects(sharedTypedStep(pool,first.generationId,sharedProgress,'2025-10-07'),/checkpoint_mismatch/);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_typed_generations WHERE generation_id=$1',[first.generationId])).rows[0].n,1,
+      'a mismatched date/progress cannot leave a partially committed extra profile');
+    for(const sql of ['UPDATE app.neighborhood_frozen_typed_rows SET typed=typed WHERE generation_id=$1',
+      'DELETE FROM app.neighborhood_frozen_typed_rows WHERE generation_id=$1',
+      'UPDATE app.neighborhood_frozen_typed_generations SET progress=progress WHERE generation_id=$1'])
+      await assert.rejects(pool.query(sql,[first.generationId]),error=>error.code==='55000');
     await assert.rejects(pool.query("UPDATE app.neighborhood_frozen_source_rows SET payload='{}' WHERE generation_id=$1",[first.generationId]),error=>error.code==='55000');
     // The stock's new original-row FK refuses plain TRUNCATE before PostgreSQL
     // even runs our immutable trigger. CASCADE must still hit that guard.
@@ -256,6 +340,8 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     await pool.query('UPDATE gis.dcad_parcels SET residential_area_sqft=4000 WHERE object_id=2');
     const second=await runNeighborhoodGroupIndex(pool,{batchSize:2,logger:{info(){}},retainOriginalSources:true});
     assert.equal(second.status,'complete');
+    const secondCache=await sharedTypedStep(pool,second.generationId);
+    assert.equal(secondCache.all_layers_typed,false,'bounded partial shared generation is not complete');
     assert.equal((await getPreparedNeighborhoodGroupSummary(pool,{county:'Dallas',city:'Garland',subdivision:'Monica Park 4'})).median_living_area_sqft,2500);
     assert.notEqual(first.generationId,second.generationId);
     const third=await runNeighborhoodGroupIndex(pool,{batchSize:2,logger:{info(){}}});
@@ -265,6 +351,15 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
       'an old unpinned generation is still pruned');
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM app.neighborhood_frozen_source_rows WHERE generation_id=$1',[second.generationId])).rows[0].count,0,
       'obsolete unpinned original pages retire with their generation');
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_typed_rows WHERE generation_id=$1',[second.generationId])).rows[0].n,0);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_typed_totals WHERE generation_id=$1',[second.generationId])).rows[0].n,0);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_typed_generations WHERE generation_id=$1',[second.generationId])).rows[0].n,0,
+      'partial shared cache rows/header retire before originals without disabling restrictive FKs');
+    const reusedShared=await sharedTypedStep(pool,first.generationId);
+    assert.equal(reusedShared.all_layers_typed,true);assert.equal(reusedShared.reused,true);
+    assert.deepEqual(reusedShared.progress,sharedProgress,'later sweeps cannot replace the exact retained interpretation');
+    assert.equal((await pool.query('SELECT count(*)::text AS n FROM app.neighborhood_frozen_typed_rows WHERE generation_id=$1',[first.generationId])).rows[0].n,retainedSharedCount);
+    await assert.rejects(pool.query('DELETE FROM app.neighborhood_frozen_typed_rows WHERE generation_id=$1',[first.generationId]),error=>error.code==='55000');
     assert.equal((await pool.query("SELECT payload->>'residential_area_sqft' AS area FROM app.neighborhood_frozen_source_rows WHERE generation_id=$1 AND kind='parcels' AND row_key='2'",[first.generationId])).rows[0].area,'2000',
       'a pinned original source snapshot survives later source edits and nightly sweeps');
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM app.neighborhood_group_parcel_facts WHERE generation_id=$1',[first.generationId])).rows[0].count,5,
@@ -426,6 +521,90 @@ test('isolated PostgreSQL: independent source identity SQL rejects malformed met
       assert.equal((await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[operation])).rows[0].checkpoint,null);
     }
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1',[assignment])).rows[0].n,0);
+  }finally{await pool.end();}
+});
+
+test('isolated PostgreSQL: prepares and reuses one indexed shared interpretation for 60001 accounts',{
+  skip:!process.env.DATABASE_URL,timeout:360_000,
+},async()=>{
+  const target=await prepareNeighborhoodCiDatabase(),{default:pg}=await import('pg');
+  const pool=new pg.Pool({connectionString:target.connectionString,max:2,statement_timeout:120_000});
+  try{
+    await pool.query(NEIGHBORHOOD_CACHED_SOURCE_SCHEMA);
+    await pool.query('ALTER TABLE core.primary_improvements ADD COLUMN IF NOT EXISTS pool boolean');
+    await pool.query(`INSERT INTO core.accounts(account_id,county,city,subdivision)
+      SELECT 'SHARED-'||lpad(n::text,5,'0'),'Dallas','Garland','Synthetic Shared Park' FROM generate_series(1,60001) n`);
+    await pool.query(`INSERT INTO gis.dcad_parcels(object_id,account_id,subdivision_name,residential_area_sqft,
+      residential_year_built,parcel_area_sqft,current_market_value)
+      SELECT n,'SHARED-'||lpad(n::text,5,'0'),'Synthetic Shared Park',1000+n%100,1960+n%40,6000,200000
+      FROM generate_series(1,60001) n`);
+    await pool.query("INSERT INTO gis.dcad_parcels(object_id,account_id) VALUES(60002,NULL)");
+    await pool.query(`INSERT INTO core.sales_source_records(id,primary_account_id,current_price,close_date,raw_payload)
+      VALUES(501,'SHARED-00001',9007199254740993,'2010-01-01','{"ClosePrice":9007199254740993}'::jsonb)`);
+    await pool.query(`INSERT INTO core.sales(id,source_record_id,account_id,closing_date,sale_price)
+      VALUES(10,501,'SHARED-00001','2010-01-01',9007199254740993),(11,NULL,'SHARED-00002','2000-01-01',123456.78)`);
+    await pool.query("INSERT INTO core.sale_parcels(id,source_record_id,account_id,is_resolved) VALUES(1,501,'SHARED-00001',true)");
+    const frozen=await runNeighborhoodGroupIndex(pool,{batchSize:250,logger:{info(){}},retainOriginalSources:true});
+    const source=(await pool.query('SELECT * FROM app.neighborhood_frozen_source_generations WHERE generation_id=$1',[frozen.generationId])).rows[0];
+    let pageCount=0,maximumOriginals=0,originalQueries=0,writeQueries=0,completionMs=null;const calls=[];
+    const measured={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){calls.push(c.text);
+      const queryStarted=performance.now(),result=await raw.query(c);
+      if(c.text.includes('shared-typed:progress')&&c.values?.[4]==='complete')completionMs=Math.round(performance.now()-queryStarted);
+      if(c.text.includes('shared-typed:page')){pageCount++;originalQueries++;assert.equal(result.rows.length,1);
+        maximumOriginals=Math.max(maximumOriginals,result.rows[0].page_count);assert.ok(Buffer.byteLength(result.rows[0].page_json)<=2_100_000);}
+      if(c.text.includes('shared-typed:rows'))writeQueries++;
+      return result;}};}};
+    const started=performance.now(),prepared=await sharedTypedComplete(measured,frozen.generationId);
+    assert.equal(prepared.receipt.progress.typed_rows,source.row_count);
+    assert.equal(prepared.receipt.all_layers_typed,true);assert.equal(maximumOriginals,250);
+    assert.ok(pageCount>480);assert.equal(pageCount,prepared.steps);
+    // Independently reconcile all original keys, payload bytes and native source
+    // identities in SQL. No city-sized list or original payload goes to Node.
+    const verification=(await pool.query(`SELECT count(*)::text AS rows,
+      count(*) FILTER(WHERE typed.original_payload_sha256<>encode(sha256(convert_to(original.payload::text,'UTF8')),'hex')
+        OR typed.account_id IS DISTINCT FROM original.account_id
+        OR typed.source_record_id IS DISTINCT FROM original.source_record_id
+        OR typed.typed_utf8_bytes<>octet_length(typed.typed::text))::text AS invalid
+      FROM app.neighborhood_frozen_typed_rows typed JOIN app.neighborhood_frozen_source_rows original
+        USING(generation_id,kind,row_key) WHERE typed.generation_id=$1`,[frozen.generationId])).rows[0];
+    assert.equal(verification.rows,source.row_count);assert.equal(verification.invalid,'0');
+    for(const [kind,c] of Object.entries(source.layer_counts))
+      assert.equal((await pool.query('SELECT count(*)::text AS n FROM app.neighborhood_frozen_typed_rows WHERE generation_id=$1 AND kind=$2',[frozen.generationId,kind])).rows[0].n,c.row_count);
+    const verifiedTotals=(await pool.query(`SELECT actual.kind,actual.n::text AS n,actual.bytes::text AS bytes,
+      totals.row_count::text AS recorded_rows,totals.typed_utf8_bytes::text AS recorded_bytes
+      FROM (SELECT kind,count(*) AS n,sum(typed_utf8_bytes) AS bytes FROM app.neighborhood_frozen_typed_rows
+        WHERE generation_id=$1 GROUP BY kind) actual
+      FULL JOIN app.neighborhood_frozen_typed_totals totals ON totals.generation_id=$1 AND totals.kind=actual.kind
+      WHERE totals.generation_id=$1 OR actual.kind IS NOT NULL`,[frozen.generationId])).rows;
+    assert.ok(verifiedTotals.length<=7);
+    for(const totals of verifiedTotals){assert.equal(totals.recorded_rows,totals.n);assert.equal(totals.recorded_bytes,totals.bytes);}
+    assert.ok(Number.isSafeInteger(completionMs)&&completionMs>=0,'actual bounded completion query was measured');
+    assert.equal((await pool.query(`SELECT count(*)::text AS n FROM app.neighborhood_frozen_typed_rows
+      WHERE generation_id=$1 AND kind='parcels' AND row_key<>'60002'
+        AND typed->'observations'->'reported_residential_area'->>'exact_value'=(1000+row_key::bigint%100)::text
+        AND typed->'observations'->'reported_year_built'->>'exact_value'=(1960+row_key::bigint%40)::text`,[frozen.generationId])).rows[0].n,'60001');
+    assert.equal((await pool.query(`SELECT typed->'observations'->'normalized_current_price'->>'exact_value' AS price
+      FROM app.neighborhood_frozen_typed_rows WHERE generation_id=$1 AND kind='source_records' AND row_key='501'`,[frozen.generationId])).rows[0].price,'9007199254740993');
+    const typedBytes=(await pool.query("SELECT pg_total_relation_size('app.neighborhood_frozen_typed_rows')::text AS n")).rows[0].n;
+    const beforeOriginals=originalQueries,beforeWrites=writeQueries,beforeCalls=calls.length,reusedAt=performance.now();
+    const reused=await sharedTypedStep(measured,frozen.generationId),reuseMs=Math.round(performance.now()-reusedAt);
+    assert.equal(reused.reused,true);assert.equal(reused.advanced,false);assert.deepEqual(reused.progress,prepared.receipt.progress);
+    assert.equal(originalQueries,beforeOriginals);assert.equal(writeQueries,beforeWrites);
+    assert.ok(!calls.slice(beforeCalls).some(sql=>/shared-typed:(?:page|rows|begin|progress|counts)/.test(sql)),
+      'fresh-client exact cache reuse reads metadata only, without retyping, recopying or recounting the city');
+    assert.equal((await pool.query('SELECT count(*)::text AS n FROM app.neighborhood_frozen_typed_rows WHERE generation_id=$1',[frozen.generationId])).rows[0].n,source.row_count);
+    const held=await pool.connect();
+    try{
+      await held.query('BEGIN');
+      await held.query('SELECT 1 FROM app.neighborhood_frozen_typed_generations WHERE generation_id=$1 FOR UPDATE',[frozen.generationId]);
+      assert.equal((await sharedTypedStep(measured,frozen.generationId)).all_layers_typed,true,
+        'a completed immutable cache can be reused while another client holds its header write lock');
+    }finally{await held.query('ROLLBACK');held.release();}
+    console.info('[native-shared-typed-generation]',{accounts:60001,original_rows:Number(source.row_count),steps:prepared.steps,
+      maximum_page_originals:maximumOriginals,duration_ms:Math.round(performance.now()-started),reuse_ms:reuseMs,
+      completion_ms:completionMs,completion_totals_rows:verifiedTotals.length,
+      reuse_original_queries:originalQueries-beforeOriginals,reuse_write_queries:writeQueries-beforeWrites,relation_bytes:typedBytes,
+      production_latency:false,source_acquisition:false,report_integration:false});
   }finally{await pool.end();}
 });
 

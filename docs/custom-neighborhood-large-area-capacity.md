@@ -7,7 +7,7 @@ interpretations once per **exact frozen generation, complete retained profile
 definition and effective date**, independently of any report/job ID. A second
 offline owner reopens the completed immutable header on a fresh SQL client:
 there is no original-page transfer, compiler work, typed-row copy, or city-wide
-recount on that reuse path. Different dates never borrow year/date-dependent
+recount or exclusive cache-header lock on that reuse path. Different dates never borrow year/date-dependent
 interpretations. This is reusable DATA, not a current source grant or proof of
 a report's spatial/source closure. No new scheduler, CLI, job phase, default,
 HTTP route, source rights or report update is enabled.

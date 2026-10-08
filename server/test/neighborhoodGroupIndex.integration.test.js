@@ -544,6 +544,13 @@ test('isolated PostgreSQL: prepares and reuses one indexed shared interpretation
     assert.ok(!calls.slice(beforeCalls).some(sql=>/shared-typed:(?:page|rows|begin|progress|counts)/.test(sql)),
       'fresh-client exact cache reuse reads metadata only, without retyping, recopying or recounting the city');
     assert.equal((await pool.query('SELECT count(*)::text AS n FROM app.neighborhood_frozen_typed_rows WHERE generation_id=$1',[frozen.generationId])).rows[0].n,source.row_count);
+    const held=await pool.connect();
+    try{
+      await held.query('BEGIN');
+      await held.query('SELECT 1 FROM app.neighborhood_frozen_typed_generations WHERE generation_id=$1 FOR UPDATE',[frozen.generationId]);
+      assert.equal((await sharedTypedStep(measured,frozen.generationId)).all_layers_typed,true,
+        'a completed immutable cache can be reused while another client holds its header write lock');
+    }finally{await held.query('ROLLBACK');held.release();}
     console.info('[native-shared-typed-generation]',{accounts:60001,original_rows:Number(source.row_count),steps:prepared.steps,
       maximum_page_originals:maximumOriginals,duration_ms:Math.round(performance.now()-started),reuse_ms:reuseMs,
       reuse_original_queries:originalQueries-beforeOriginals,reuse_write_queries:writeQueries-beforeWrites,relation_bytes:typedBytes,

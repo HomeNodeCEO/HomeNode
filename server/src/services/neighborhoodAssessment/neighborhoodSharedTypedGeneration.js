@@ -77,7 +77,8 @@ function sourceOf(result, generation) {
 }
 const READ = `/* neighborhood-shared-typed:read */ SELECT binding_sha256,source_metadata,definition_json,progress,status,
   to_char(completed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS completed_at
-  FROM app.neighborhood_frozen_typed_generations WHERE generation_id=$1::uuid AND profile_sha256=$2 AND effective_date=$3::date FOR UPDATE NOWAIT`;
+  FROM app.neighborhood_frozen_typed_generations WHERE generation_id=$1::uuid AND profile_sha256=$2 AND effective_date=$3::date`;
+const LOCK = `${READ} FOR UPDATE NOWAIT`;
 // All seven source layers use their existing C-collated native-text PK here.
 // This cache order is distinct from the job's native-numeric acquisition order;
 // it neither skips originals nor supplies a job continuation or source grant.
@@ -156,6 +157,10 @@ export function createNeighborhoodSharedTypedGeneration(client, rawOptions) {
         if (!supplied || p.kind_index === KINDS.length) {
           await ending(); return receipt(p, false, true);
         }
+        // Completed immutable metadata can be reused concurrently. Only a
+        // building-cache continuation needs an exclusive header lock; verify
+        // that it is still the same persisted checkpoint before inserting rows.
+        if (!same(one(await query(LOCK, key)), h)) fail('checkpoint_mismatch');
       }
       const kind = KINDS[p.kind_index], r = one(await query(PAGE, [generation, kind, p.after, L.rows, L.page_utf8_bytes]));
       if (typeof r.page_json !== 'string' || Buffer.byteLength(r.page_json) > L.page_utf8_bytes
@@ -218,4 +223,4 @@ export function createNeighborhoodSharedTypedGeneration(client, rawOptions) {
   } });
 }
 
-export const NEIGHBORHOOD_SHARED_TYPED_SQL = Object.freeze({ snapshot: SNAPSHOT, source: SOURCE, read: READ, page: PAGE, insert: INSERT, counts: COUNTS });
+export const NEIGHBORHOOD_SHARED_TYPED_SQL = Object.freeze({ snapshot: SNAPSHOT, source: SOURCE, read: READ, lock: LOCK, page: PAGE, insert: INSERT, counts: COUNTS });

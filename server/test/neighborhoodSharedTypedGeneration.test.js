@@ -20,7 +20,7 @@ function fixture(hook=()=>null) {
     const {text,values:v}=call;
     if(text===SQL.snapshot)return result(clone(tx));
     if(text===SQL.source)return result(clone(source));
-    if(text===SQL.read)return header?result(clone(header)):{rowCount:0,rows:[]};
+    if(text===SQL.read||text===SQL.lock)return header?result(clone(header)):{rowCount:0,rows:[]};
     if(text.includes('shared-typed:begin')){header={binding_sha256:v[3],source_metadata:JSON.parse(v[4]),definition_json:v[5],
       progress:JSON.parse(v[6]),status:'building',completed_at:null};return {rowCount:1,rows:[]};}
     if(text===SQL.page){const rows=v[1]==='parcels'&&v[2]===''?[original(1),original(2)]:[];
@@ -47,6 +47,7 @@ test('one shared exact generation/profile/date prepares all layers once and reop
   assert.equal(reused.reused,true);assert.equal(reused.advanced,false);assert.deepEqual(reused.progress,finished.progress);
   assert.ok(!f.calls.slice(from).some(c=>/shared-typed:(?:page|rows|begin|progress|counts)/.test(c.text)));
   assert.equal(f.calls.slice(from).length,6);assert.ok(Object.isFrozen(reused.source_metadata.layer_counts.parcels));
+  assert.ok(!f.calls.slice(from).some(c=>c.text.includes('FOR UPDATE')),'immutable cache reuse does not serialize on a header write lock');
   assert.ok(!f.calls.some(c=>/ST_DWithin|FROM core\.|FROM gis\.|COMMIT|capture_jobs|group_active/.test(c.text)));
 });
 test('persisted building progress can be read after a lost acknowledgement without repeating writes',async()=>{
@@ -97,6 +98,13 @@ test('original exact-text acknowledgements, aggregate totals and progress CAS re
   await assert.rejects(complete(totals),/population_incomplete/);
   const lost=fixture(({text})=>text.includes('shared-typed:progress')?{rowCount:0,rows:[]}:null);
   await assert.rejects(lost.builder().step(),/write_lost/);
+});
+test('only building continuations lock and independently recheck the exact checkpoint before row writes',async()=>{
+  let change=false;const f=fixture(({text},{header})=>change&&text===SQL.lock?result({...clone(header),binding_sha256:'e'.repeat(64)}):null);
+  const first=await f.builder().step(),from=f.calls.length;change=true;
+  await assert.rejects(f.builder().step(first.progress),/checkpoint_mismatch/);
+  assert.ok(!f.calls.slice(from).some(c=>c.text===SQL.page||c.text===SQL.insert));
+  assert.match(SQL.lock,/FOR UPDATE NOWAIT$/);assert.doesNotMatch(SQL.read,/FOR UPDATE/);
 });
 test('closed options/progress detach input, never invoke getters and serialize pending settlement with cancellation',async()=>{
   const f=fixture();let invoked=false;

@@ -1052,6 +1052,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     for(let i=0;i<10&&!identified.all_layers_verified;i++)identified=await identityOwner.verifyFrozenCaptureJobSourceIdentityClosure(sourceInput,{captureJobClaim:sourceClaim});
     assert.equal(identified.all_layers_verified,true);assert.equal(identified.source_identity_closure,'identities_and_one_hop_verified');
     assert.equal(identified.unknown_parcel_origins,3);assert.equal(identified.missing_account_count,0);
+    assert.equal(identified.origin_count_scope,'source_graph_account_parcel_parts_not_geographic_stock');
     assert.equal(identified.typed_numerical_observations,'not_established');assert.equal(identified.source_freshness,'not_established');
     assert.equal(identified.source_acquisition,'not_established');assert.equal(identified.report_update,'none');
     const identityReplayFrom=identityCalls.length;

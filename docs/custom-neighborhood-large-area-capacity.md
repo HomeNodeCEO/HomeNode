@@ -2091,6 +2091,9 @@ and it never repeats spatial discovery, reconstructs stock, or queries mutable
 
 Missing core-account rows are **counted explicitly**, not silently removed from
 geographic stock. Unknown parcel sync origins remain explicit counts. Finished
+origin counts concern **source-graph account parcel parts**, including outside
+parts and excluding NULL-account geographic parcels; the owner labels this
+scope explicitly. They must not become a geographic-stock denominator. Finished
 identity verification proves neither source freshness nor historical stock,
 complete amenity coverage, typed numerical/date observations, acquisition,
 statistics, map/report publication or Apply. Those remain subsequent stages.

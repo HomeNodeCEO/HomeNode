@@ -1701,6 +1701,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         geographic_stock_verification:'originals_verified',
         source_identity_closure:identityVerification.all_layers_verified?'identities_and_one_hop_verified':'in_progress',
         unknown_parcel_origins:identityVerification.progress.unknown_parcel_origins,
+        origin_count_scope:'source_graph_account_parcel_parts_not_geographic_stock',
         missing_account_count:identityVerification.progress.missing_account_count,
         typed_numerical_observations:'not_established',source_freshness:'not_established',source_acquisition:'not_established',report_update:'none'});
       if(stockVerifying) return freeze({status:'geographic_original_progress_retained',operation_id:input.operationId,

@@ -290,3 +290,14 @@ test('fixed identity scope uses original stock and one-hop seeds, preserves NULL
   assert.match(NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL.sales,/IS NOT DISTINCT FROM original\.source_record_id::text/);
   assert.match(NEIGHBORHOOD_FROZEN_JOB_IDENTITY_COVERAGE_SQL,/NOT EXISTS/);
 });
+
+test('additive original link identity index keeps duplicate-position probes bounded within large packages',()=>{
+  const name='20261108_neighborhood_frozen_link_identity_index.sql';
+  const migration=readFileSync(new URL(`../migrations/${name}`,import.meta.url),'utf8');
+  const registry=readFileSync(new URL('../src/database/mobileMigrations.js',import.meta.url),'utf8');
+  assert.ok(registry.includes(name));assert.ok(registry.indexOf(name)>registry.indexOf('20261107_custom_cohort_frozen_job_stock.sql'));
+  assert.match(migration,/CREATE INDEX IF NOT EXISTS neighborhood_frozen_link_identity_idx/);
+  assert.match(migration,/generation_id, source_record_id, \(payload->>'source_position'\), \(payload->>'parcel_sequence'\), row_key/);
+  assert.match(migration,/WHERE kind='sale_links'/);
+  assert.doesNotMatch(migration,/DROP|DELETE|UPDATE|TRUNCATE|DISABLE|CONCURRENTLY/);
+});

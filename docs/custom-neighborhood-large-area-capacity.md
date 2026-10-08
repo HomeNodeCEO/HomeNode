@@ -2074,6 +2074,12 @@ in their original scope. Non-NULL parcel/state sync references must identify
 the retained `dcad_parcels` run. A linked outside account never becomes a new
 cadastral account or a second-hop source seed.
 
+An additive shared-registry migration adds an original-link identity expression
+index on generation, source ID, source position, parcel sequence and row key.
+Duplicate-position probes therefore need not rescan a large multi-parcel
+package once for each candidate. This changes no original data or immutability
+guard; it is not a source-rights, mobile-application or native-publishing change.
+
 Only one constant-size aggregate crosses into Node per query: at most 250
 originals, an 8-MB payload validation prefix and a five-second query timeout.
 Byte-limited prefixes are not mistaken for layer end, full 250-row pages need

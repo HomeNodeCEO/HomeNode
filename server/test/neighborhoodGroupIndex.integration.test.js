@@ -362,6 +362,9 @@ test('isolated PostgreSQL: independent source identity SQL rejects malformed met
   const pool=new pg.Pool({connectionString:target.connectionString,max:2,statement_timeout:120_000});
   try{
     await pool.query(NEIGHBORHOOD_CACHED_SOURCE_SCHEMA);
+    const identityIndex=(await pool.query("SELECT indexdef FROM pg_indexes WHERE schemaname='app' AND indexname='neighborhood_frozen_link_identity_idx'")).rows;
+    assert.equal(identityIndex.length,1);assert.match(identityIndex[0].indexdef,/source_record_id/);
+    assert.match(identityIndex[0].indexdef,/source_position/);assert.match(identityIndex[0].indexdef,/parcel_sequence/);
     await pool.query('ALTER TABLE core.primary_improvements ADD COLUMN IF NOT EXISTS pool boolean');
     await pool.query("INSERT INTO core.accounts(account_id,county,city,subdivision) VALUES('IDENTITY-A','Dallas','Garland','Synthetic Identity')");
     await pool.query(`INSERT INTO gis.dcad_parcels(object_id,account_id,subdivision_name,source_record_hash,geom) VALUES

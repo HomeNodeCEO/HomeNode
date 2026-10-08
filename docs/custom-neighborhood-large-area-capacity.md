@@ -1,5 +1,60 @@
 # Complete larger-area Custom neighborhood studies
 
+## Issued-head V2 original graph verification (2026-10-08, not activated)
+
+`verifyFrozenCaptureJobSourceReferencesV2Page` is a distinct internal stage that
+accepts only a completed V2 reference prefix or its own `frozen_verify_refs_v2`
+checkpoint. It does not upgrade a V1 job or invoke the legacy verifier. The
+current actor/assignment/draft/subject, exact request/claim/pin/stock, CAD and
+combined source-purpose checks remain before original reads and before commit.
+Every step reproduces exactly one stored fixed-plan original query against the
+pinned generation, checks its complete bytes/digest, and follows the root edge.
+All seven layers must reconcile their exact page, row and original-byte counts.
+This verifies original representation, not geographic/identity/typed coverage,
+source acquisition, source freshness, market observations or a report result.
+
+A supplied non-head node, a matching hash and a free progress JSON blob cannot
+establish root reachability. The owner starts each layer at its actual root head
+and retains an immutable transition receipt containing the scope/job/generation/
+stock binding, frozen source/root, sequence, previous receipt, before-state,
+consumed node, exact returned edge and after-state. An independent indexed
+database anchor identifies the **last owner-issued receipt**, not a checkpoint
+pointer that can be redirected to an arbitrary inserted blob. Resume derives
+all counters and the next position from that issued receipt. No backward scan
+to the head is needed on each page; the work is bounded and linear overall.
+
+Receipt, monotonic anchor CAS and scoped fenced checkpoint share one transaction
+with ending authorization. The additive database guard independently anchors
+the first real head, follows the last issued after-state/metadata edge, checks
+exact counts, and refuses changed source/root/scope, skipped or detached nodes,
+rewind, delete and truncate. Blob existence/SHA alone is still not issuance or
+an original-read/source-rights receipt. The trusted server owner must perform
+the independent original read; a fully compromised database able to rewrite
+originals, roles and triggers is not protected by unkeyed content hashes. More
+precisely, issuance provenance trusts server-owner/anchor DML integrity:
+application SQL credentials able to insert blobs and advance the anchor could
+falsely assert an original replay even without disabling its metadata guards.
+There is no generic checkpoint/blob/anchor write API; the trusted internal owner
+remains mandatory.
+Ending refusal rolls back all three writes. A real successful-COMMIT/lost-ACK
+reopens the issued next edge. Ended replay checks current rights and pins but
+reads no additional original and writes neither anchor nor checkpoint.
+
+Unit tests exercise 60,001 synthetic rows with one original query per step,
+bounded no-payload metadata, all seven exact layers, changed/missing late
+originals, malformed receipts and closed inputs. The native CI fixture must
+exercise the actual owner, source-rights policy and database guards: a readable
+same-binding detached non-head branch, refused unissued/missing/corrupt receipt
+and source/root substitution before licensed reads, initial and ending current
+rights refusal, full rollback, real lost-COMMIT continuation, exact counts,
+ended replay and unchanged legacy checkpoints. A small adversarial native
+fixture is not whole licensed >50k/5-mile/10-mile or production latency QA.
+
+No route, worker dispatch, UI default, schedule, source grant, Apply, pin release
+or production deployment changes. Next: explicit V2 geographic and identity
+verification, shared date-neutral typing, amenities/transaction resolution,
+complete selected-union statistics, coherent publication and live acceptance.
+
 ## Current-authorized V2 reference-prefix owner (2026-10-08, not activated)
 
 `prepareFrozenCaptureJobSourceReferencesV2Page` is a separate internal owner
@@ -9,8 +64,9 @@ It resumes only a completed `frozen_stock_v1` checkpoint or its own explicit
 scope, exact immutable subject, completed geographic stock, generation/header/
 spatial hashes, request and approved combined source purpose. Existing V1
 source/verification/identity/typed/metric paths reject this phase; V2 refuses
-V1 source checkpoints and roots. The phase allowlist gains just this DATA phase,
-not a permissive version namespace or an unimplemented verification/Apply phase.
+V1 source checkpoints and roots. The prefix phase is DATA only; the separate
+issued-head verifier above adds one explicit verification phase, not a
+permissive version namespace or an unimplemented Apply phase.
 An immutable internal named-stage table carries the behavior flags and allowed
 checkpoint phases together; no positional boolean combination or caller stage
 selection can accidentally enter a legacy verifier or change representation.
@@ -44,9 +100,9 @@ generation pin. This is the small adversarial source fixture, not a whole
 licensed >50k/5-mile/10-mile study or production map latency acceptance.
 
 No HTTP route, worker dispatch, UI default, schedule, source grant, Apply or
-production deployment is changed. The next stage is explicit V2 full root-edge
-and original-query verification, including detached/skipped continuation refusal,
-then geographic/identity completeness and shared typed/date-neutral processing.
+production deployment is changed. The separate stage above implements explicit
+V2 root-edge/original-query verification with issued continuation receipts;
+geographic/identity completeness and shared typed/date-neutral processing remain.
 The broader exact statistics/publication/worker/retirement/live roadmap remains.
 
 ## Shared-original page references V2 (2026-10-08, representation only)
@@ -82,7 +138,8 @@ layer counts and independently establish original source/identity completeness.
 
 The initial codec change did not implement an authorized V2 owner/checkpoint.
 The separate prefix owner above now checks current actor/assignment/draft/subject,
-but independent V2 graph/geographic/identity verification is still remaining.
+and the issued-head graph owner above now verifies original representation.
+Independent V2 geographic/identity verification is still remaining.
 Any later owner must continue to check current database actor/assignment/draft/subject, exact
 request/claim, live generation pin, CAD and combined source-purpose rights at
 both ends; stage the root/checkpoint in one transaction; and keep the exact
@@ -103,7 +160,7 @@ licensed >50k acquisition, source-rights activation or production map timing.
 
 The codec-only change did not alter any HTTP route, worker, job phase, UI
 default, schedule, source grant, Apply or production deployment. Still remaining:
-independent full V2 verification, shared typed/date-neutral interpretation,
+V2 geographic/identity verification, shared typed/date-neutral interpretation,
 amenities and transaction resolution, exact selected-union statistics, coherent
 publication, durable workers/retirement, physical load and large-area/live QA.
 

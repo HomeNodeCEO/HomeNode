@@ -34,6 +34,8 @@ import { createCohortOriginalSourceChainV1Store, COHORT_ORIGINAL_SOURCE_CHAIN_V1
   from './cohortOriginalSourceChainV1.js';
 import { verifyCohortOriginalSourceGraphStep } from './cohortOriginalSourceGraphV1.js';
 import { createCohortOriginalSourceReferencesV2Store } from './cohortOriginalSourceReferencesV2.js';
+import { verifyCohortOriginalSourceGraphV2Step } from './cohortOriginalSourceGraphV2.js';
+import { createCustomCohortGraphV2AnchorRepository } from './customCohortGraphV2AnchorRepository.js';
 import { createCustomCohortRecordedGroupSelectionOwner,
   reopenCustomCohortRecordedGroupSelectionOriginal } from './customCohortRecordedGroupSelectionOwner.js';
 import { createCustomCohortPreparedCatalogOwner } from './customCohortPreparedCatalogOwner.js';
@@ -117,6 +119,7 @@ const freeze = value => {
 const FROZEN_SOURCE_STAGES = freeze({
   prefix_v1: { allowedPhases: ['frozen_stock_v1', 'frozen_source_v1'] },
   prefix_refs_v2: { referencesV2: true, allowedPhases: ['frozen_stock_v1', 'frozen_source_refs_v2'] },
+  verify_refs_v2: { referencesV2: true, verifying: true, allowedPhases: ['frozen_source_refs_v2', 'frozen_verify_refs_v2'] },
   verify_v1: { verifying: true, allowedPhases: ['frozen_source_v1', 'frozen_verify_v1'] },
   geographic_v1: { verifying: true, stockVerifying: true, allowedPhases: ['frozen_verify_v1', 'frozen_geo_verify_v1'] },
   identity_v1: { verifying: true, stockVerifying: true, identityVerifying: true,
@@ -1586,7 +1589,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(!same(await jobs.readRequest(claim,jobOptions),requested)) fail('operation_conflict');
       const checkpoint=await jobs.readCheckpoint(claim,jobOptions);
       if(!checkpoint || !allowedPhases.includes(checkpoint.phase)
-        ||checkpoint.evidence_refs.length!==({frozen_stock_v1:2,frozen_source_v1:3,frozen_source_refs_v2:3,frozen_verify_v1:4,frozen_geo_verify_v1:5,frozen_identity_v1:6,frozen_typed_v1:7}[checkpoint.phase]))
+        ||checkpoint.evidence_refs.length!==({frozen_stock_v1:2,frozen_source_v1:3,frozen_source_refs_v2:3,frozen_verify_refs_v2:4,frozen_verify_v1:4,frozen_geo_verify_v1:5,frozen_identity_v1:6,frozen_typed_v1:7}[checkpoint.phase]))
         fail('checkpoint_conflict');
       const subjects=createCustomCohortSubjectRepository(client,canonicalAssessmentJson(scope));
       const blobs=createNeighborhoodCohortBlobRepository(client,scope.organization_id);
@@ -1625,8 +1628,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           signal:budget.signal,checkBudget:budget.check,
           // Fixed old indexed closure against THIS live claim and pinned stock.
           // No caller callback, SQL plan, current/latest generation or fallback.
-          // Prefix append/describe never invokes this adapter. Future explicit
-          // V2 graph verification must start at real heads and follow all edges.
+          // Prefix append/describe never invokes this adapter. The explicit
+          // V2 graph owner starts at real heads and follows issued edges only.
           async readOriginal(request){
             if(request.plan!=='neighborhood_frozen_job_closure_v1')fail('checkpoint_conflict');
             const page=await createNeighborhoodFrozenJobSourcePages(client,{...stockOptions,signal:budget.signal})
@@ -1664,7 +1667,33 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         reference=await blobs.put(canonicalAssessmentJson(body));
         await jobs.saveCheckpoint(claim,jobOptions,{phase:sourcePhase,evidence_refs:[retained.intent.reference,stockReference,reference]});
       }
-      if(verifying) {
+      let graphAnchorStore=null,graphAnchor=null;
+      if(verifying&&referencesV2) {
+        graphAnchorStore=createCustomCohortGraphV2AnchorRepository({client,claim,scope,actorUserId:input.auth.userId,
+          source_reference:reference,root_reference:root});
+        graphAnchor=await graphAnchorStore.read();
+        // The independent issued head is authoritative, not a free progress
+        // blob, a valid hash or a caller-supplied continuation. Refuse a swapped
+        // checkpoint BEFORE the fixed original adapter can read licensed data.
+        if(checkpoint.phase==='frozen_source_refs_v2'?graphAnchor!==null
+          :graphAnchor===null||!same(graphAnchor.receipt_reference,verificationReference)) fail('checkpoint_conflict');
+        let issued=null;
+        if(graphAnchor){
+          const text=await blobs.get(graphAnchor.receipt_reference.content_sha256,graphAnchor.receipt_reference.canonical_utf8_bytes);
+          if(text===null||Buffer.byteLength(text)>16_000)fail('checkpoint_conflict');
+          try{issued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
+          if(issued.sequence!==graphAnchor.sequence)fail('checkpoint_conflict');
+        }
+        verification=await verifyCohortOriginalSourceGraphV2Step({chain,binding,source_reference:reference,
+          root,issued_receipt:issued,issued_reference:graphAnchor?.receipt_reference??null,checkBudget:budget.check});
+        if(verification.advanced){
+          verificationReference=await blobs.put(canonicalAssessmentJson(verification.receipt));
+          graphAnchor=await graphAnchorStore.advance(graphAnchor,verificationReference);
+          await jobs.saveCheckpoint(claim,jobOptions,{phase:'frozen_verify_refs_v2',
+            evidence_refs:[retained.intent.reference,stockReference,reference,verificationReference]});
+        }
+      }
+      if(verifying&&!referencesV2) {
         let progress=null;
         if(verificationReference) {
           const text=await blobs.get(verificationReference.content_sha256,verificationReference.canonical_utf8_bytes);
@@ -1791,6 +1820,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(!same(await boundedPolicy(authorizeMarketData,client,input.auth,context,purpose,budget),decision)) fail('market_policy_changed');
       if(!same(await jobs.readRequest(claim,jobOptions),requested)||!same(await stockStore.read(),stock)) fail('checkpoint_conflict');
       if(!same((await chain.describe(root)).layers,prefix.layers)) fail('checkpoint_conflict');
+      if(graphAnchorStore&&!same(await graphAnchorStore.read(),graphAnchor))fail('checkpoint_conflict');
       budget.check();
       if(readingStockMetrics||readingSharedStockMetrics) return freeze({...stockMetricResult,...(readingStockMetrics?{typed_original_reference:typedReference}:{}),
         source_reference:reference,verification_reference:verificationReference,stock_verification_reference:stockVerificationReference,
@@ -1960,6 +1990,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * grant, verification receipt, HTTP/worker activation or Apply is implied. */
     prepareFrozenCaptureJobSourceReferencesV2Page: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'prefix_refs_v2'),
+    /** Explicit V2 original-query/root-edge verifier. Continuation is derived
+     * only from a separately fenced owner-issued receipt anchor, never arbitrary
+     * checkpoint progress. No legacy cast, source grant, worker dispatch or Apply. */
+    verifyFrozenCaptureJobSourceReferencesV2Page: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'verify_refs_v2'),
     /** Independent current-authorized root-edge/original-representation validation.
      * Not typed identity closure, complete geographic stock, source acquisition,
      * report publication or Apply. Progress is loaded only from this job's fence. */

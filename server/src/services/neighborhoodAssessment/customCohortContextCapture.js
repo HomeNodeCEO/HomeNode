@@ -33,6 +33,7 @@ import { createNeighborhoodFrozenJobSourceSeeds } from './neighborhoodFrozenJobS
 import { createCohortOriginalSourceChainV1Store, COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS }
   from './cohortOriginalSourceChainV1.js';
 import { verifyCohortOriginalSourceGraphStep } from './cohortOriginalSourceGraphV1.js';
+import { createCohortOriginalSourceReferencesV2Store } from './cohortOriginalSourceReferencesV2.js';
 import { createCustomCohortRecordedGroupSelectionOwner,
   reopenCustomCohortRecordedGroupSelectionOriginal } from './customCohortRecordedGroupSelectionOwner.js';
 import { createCustomCohortPreparedCatalogOwner } from './customCohortPreparedCatalogOwner.js';
@@ -1532,7 +1533,21 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     }
     return response;
   }
-  async function frozenCaptureJobSourceStage(value, options = {}, verifying = false, stockVerifying = false, identityVerifying = false, typing = false, readingStockMetrics = false, readingSharedStockMetrics = false) {
+  async function frozenCaptureJobSourceStage(value, options = {}, verifying = false, stockVerifying = false, identityVerifying = false, typing = false, readingStockMetrics = false, readingSharedStockMetrics = false, sourceRepresentation = 'payload_v1') {
+    // Representation is selected ONLY by the private server entrypoint, never
+    // by an input/options flag. V2 prefix DATA cannot enter any legacy verifier,
+    // typed path or metric stage; explicit V2 root-edge verification comes next.
+    const referencesV2=sourceRepresentation==='references_v2';
+    if(!['payload_v1','references_v2'].includes(sourceRepresentation)
+      ||referencesV2&&(verifying||stockVerifying||identityVerifying||typing||readingStockMetrics||readingSharedStockMetrics))
+      fail('frozen_source_representation_unsupported');
+    if(referencesV2){
+      if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
+      const descriptors=Object.getOwnPropertyDescriptors(options),keys=Reflect.ownKeys(descriptors);
+      if(keys.some(key=>!['captureJobClaim','signal','deadline'].includes(key)
+        ||!descriptors[key].enumerable||!Object.hasOwn(descriptors[key],'value')))fail('invalid_options');
+      options=Object.fromEntries(keys.map(key=>[key,descriptors[key].value]));
+    }
     if (!options || Object.getPrototypeOf(options)!==Object.prototype) fail('invalid_options');
     const {captureJobClaim:providedClaim,stockMetricPage,...budgetOptions}=options;
     const metricPage=readingStockMetrics||readingSharedStockMetrics?prepareNeighborhoodFrozenStockMetricPage(stockMetricPage):null;
@@ -1554,10 +1569,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       const requested={operation_id:input.operationId,observation_period:input.observationPeriod,discovery:input.discovery};
       if(!same(await jobs.readRequest(claim,jobOptions),requested)) fail('operation_conflict');
       const checkpoint=await jobs.readCheckpoint(claim,jobOptions);
-      const allowedPhases=readingSharedStockMetrics?['frozen_identity_v1','frozen_typed_v1']:readingStockMetrics?['frozen_typed_v1']:typing?['frozen_identity_v1','frozen_typed_v1']:identityVerifying?['frozen_geo_verify_v1','frozen_identity_v1']:stockVerifying?['frozen_verify_v1','frozen_geo_verify_v1']
+      const allowedPhases=referencesV2?['frozen_stock_v1','frozen_source_refs_v2']:readingSharedStockMetrics?['frozen_identity_v1','frozen_typed_v1']:readingStockMetrics?['frozen_typed_v1']:typing?['frozen_identity_v1','frozen_typed_v1']:identityVerifying?['frozen_geo_verify_v1','frozen_identity_v1']:stockVerifying?['frozen_verify_v1','frozen_geo_verify_v1']
         :verifying?['frozen_source_v1','frozen_verify_v1']:['frozen_stock_v1','frozen_source_v1'];
       if(!checkpoint || !allowedPhases.includes(checkpoint.phase)
-        ||checkpoint.evidence_refs.length!==({frozen_stock_v1:2,frozen_source_v1:3,frozen_verify_v1:4,frozen_geo_verify_v1:5,frozen_identity_v1:6,frozen_typed_v1:7}[checkpoint.phase]))
+        ||checkpoint.evidence_refs.length!==({frozen_stock_v1:2,frozen_source_v1:3,frozen_source_refs_v2:3,frozen_verify_v1:4,frozen_geo_verify_v1:5,frozen_identity_v1:6,frozen_typed_v1:7}[checkpoint.phase]))
         fail('checkpoint_conflict');
       const subjects=createCustomCohortSubjectRepository(client,canonicalAssessmentJson(scope));
       const blobs=createNeighborhoodCohortBlobRepository(client,scope.organization_id);
@@ -1589,14 +1604,29 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       const decision=await boundedPolicy(authorizeMarketData,client,input.auth,context,purpose,budget);
       const binding={...scope,operation_id:input.operationId,generation_id:stock.generation_id,
         spatial_definition_sha256:stock.definition_sha256,source_original_sha256:stock.source_original_sha256};
-      const chain=createCohortOriginalSourceChainV1Store(blobs,binding,{signal:budget.signal,checkBudget:budget.check});
+      const sourceVersion=referencesV2?2:1,sourceUsage=referencesV2?'frozen_source_reference_prefix_only':'frozen_source_prefix_only';
+      const sourcePhase=referencesV2?'frozen_source_refs_v2':'frozen_source_v1';
+      const chain=referencesV2?createCohortOriginalSourceReferencesV2Store(
+        {put:text=>blobs.put(text),get:(hash,size)=>blobs.get(hash,size)},binding,{
+          signal:budget.signal,checkBudget:budget.check,
+          // Fixed old indexed closure against THIS live claim and pinned stock.
+          // No caller callback, SQL plan, current/latest generation or fallback.
+          // Prefix append/describe never invokes this adapter. Future explicit
+          // V2 graph verification must start at real heads and follow all edges.
+          async readOriginal(request){
+            if(request.plan!=='neighborhood_frozen_job_closure_v1')fail('checkpoint_conflict');
+            const page=await createNeighborhoodFrozenJobSourcePages(client,{...stockOptions,signal:budget.signal})
+              .page({kind:request.kind,cursor:request.after,rowLimit:request.row_limit});
+            return JSON.stringify({binding,page});
+          },
+        }):createCohortOriginalSourceChainV1Store(blobs,binding,{signal:budget.signal,checkBudget:budget.check});
       let root,reference=checkpoint.evidence_refs[2]??null;
       if(reference) {
         const text=await blobs.get(reference.content_sha256,reference.canonical_utf8_bytes);
         if(text===null||Buffer.byteLength(text)>16_000) fail('checkpoint_conflict');
         let previous;try{previous=JSON.parse(text);}catch{fail('checkpoint_conflict');}
         exactKeys(previous,['source_stage_version','usage','selection','purpose','market_decision','root']);
-        if(previous.source_stage_version!==1||previous.usage!=='frozen_source_prefix_only'
+        if(previous.source_stage_version!==sourceVersion||previous.usage!==sourceUsage
           ||!same(previous.selection,selection)||!same(previous.purpose,purpose)||!same(previous.market_decision,decision)) fail('market_policy_changed');
         root=previous.root;
       }else root=(await chain.create()).root;
@@ -1614,11 +1644,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         await createNeighborhoodFrozenJobSourceSeeds(client,{...stockOptions,signal:budget.signal}).prepare();
         const page=await createNeighborhoodPreparedJobSourcePages(client,{...stockOptions,signal:budget.signal})
           .page({kind,cursor:prefix.layers[kind].cursor,rowLimit:250});
-        root=(await chain.append({root,original_text:JSON.stringify({binding,page})})).root;
+        root=(await chain.append({root,original_text:JSON.stringify({binding,page}),...(referencesV2?{row_limit:250}:{})})).root;
         prefix=await chain.describe(root);
-        const body={source_stage_version:1,usage:'frozen_source_prefix_only',selection,purpose,market_decision:decision,root};
+        const body={source_stage_version:sourceVersion,usage:sourceUsage,selection,purpose,market_decision:decision,root};
         reference=await blobs.put(canonicalAssessmentJson(body));
-        await jobs.saveCheckpoint(claim,jobOptions,{phase:'frozen_source_v1',evidence_refs:[retained.intent.reference,stockReference,reference]});
+        await jobs.saveCheckpoint(claim,jobOptions,{phase:sourcePhase,evidence_refs:[retained.intent.reference,stockReference,reference]});
       }
       if(verifying) {
         let progress=null;
@@ -1782,7 +1812,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         original_graph_verification:verification.all_layers_verified?'representation_verified':'in_progress',
         geographic_stock_verification:'not_established',typed_identity_closure:'not_established',
         source_acquisition:'not_established',report_update:'none'});
-      return freeze({status:'source_prefix_retained',operation_id:input.operationId,source_reference:reference,
+      return freeze({status:referencesV2?'source_reference_prefix_retained':'source_prefix_retained',operation_id:input.operationId,source_reference:reference,
         generation_id:stock.generation_id,advanced:kind!==undefined,layers:prefix.layers,
         all_layers_ended:COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.every(key=>prefix.layers[key].ended),
         original_graph_verification:'not_established',source_acquisition:'not_established',report_update:'none'});
@@ -1910,6 +1940,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     },
     /** Internal source-prefix DATA stage; never dispatched by the legacy worker. */
     prepareFrozenCaptureJobSourcePage: (value, options = {}) => frozenCaptureJobSourceStage(value, options),
+    /** Explicit V2 prefix DATA owner. Retain exact fixed-plan metadata only,
+     * not per-report originals. Both-end current rights and the live generation/
+     * stock pin are identical to V1; no V1 checkpoint conversion, new source
+     * grant, verification receipt, HTTP/worker activation or Apply is implied. */
+    prepareFrozenCaptureJobSourceReferencesV2Page: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, false, false, false, false, false, false, 'references_v2'),
     /** Independent current-authorized root-edge/original-representation validation.
      * Not typed identity closure, complete geographic stock, source acquisition,
      * report publication or Apply. Progress is loaded only from this job's fence. */

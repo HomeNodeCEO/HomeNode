@@ -1,5 +1,51 @@
 # Complete larger-area Custom neighborhood studies
 
+## Current-authorized V2 reference-prefix owner (2026-10-08, not activated)
+
+`prepareFrozenCaptureJobSourceReferencesV2Page` is a separate internal owner
+entrypoint, not a browser codec switch or an upgrade of an existing V1 job.
+It resumes only a completed `frozen_stock_v1` checkpoint or its own explicit
+`frozen_source_refs_v2` phase. The version-two source header binds the same
+scope, exact immutable subject, completed geographic stock, generation/header/
+spatial hashes, request and approved combined source purpose. Existing V1
+source/verification/identity/typed/metric paths reject this phase; V2 refuses
+V1 source checkpoints and roots. The phase allowlist gains just this DATA phase,
+not a permissive version namespace or an unimplemented verification/Apply phase.
+
+Every bounded page transaction reloads the actual current database actor and
+checks assignment/draft/subject, exact request and live claim, CAD and combined
+source rights, exact original-generation pin and stock before licensed source
+I/O and again before commit. It reuses the exact prepared all-date one-hop seed
+index and original-page projection. Only the metadata node/root and source
+checkpoint are retained; immutable payloads/text chunks are not copied per job.
+The fixed adapter is constructed by the owner against its exact pinned stock,
+never supplied by input/options or a current/latest/mutable fallback. Metadata
+append/describe does not invoke it or claim independent original verification.
+
+First seed preparation, reference metadata and the scoped fenced checkpoint
+commit together. Ending rights/claim/subject/cancellation refusal rolls all of
+them back. Unknown successful-COMMIT acknowledgment reopens the actual saved
+phase and advances the next unfinished layer, without duplicating the first
+source page or seed index. A complete prefix rechecks current rights/pin but
+reads no additional source page and writes no checkpoint. All seven end flags
+still mean **prefix DATA only**: graph, geographic/identity/typed completeness,
+source acquisition and report coverage remain unestablished. No generation or
+geographic-stock pin is released and no automated cleanup is introduced.
+
+The native CI addition must exercise this real owner, fresh connections and
+database source-rights policy, initial/ending license and role refusal, ending
+subject/claim/cancellation rollback including first seeds and all metadata,
+actual successful-COMMIT/lost-ACK continuation, exact seven-layer counts and
+small/no-payload puts, ended replay, version/root/V1 separation and a retained
+generation pin. This is the small adversarial source fixture, not a whole
+licensed >50k/5-mile/10-mile study or production map latency acceptance.
+
+No HTTP route, worker dispatch, UI default, schedule, source grant, Apply or
+production deployment is changed. The next stage is explicit V2 full root-edge
+and original-query verification, including detached/skipped continuation refusal,
+then geographic/identity completeness and shared typed/date-neutral processing.
+The broader exact statistics/publication/worker/retirement/live roadmap remains.
+
 ## Shared-original page references V2 (2026-10-08, representation only)
 
 `cohortOriginalSourceReferencesV2` is an explicit new representation, not a cast
@@ -31,8 +77,10 @@ A caller-supplied continuation position is still DATA, not root reachability:
 the new owner must start at each actual head, follow every edge, reconcile all
 layer counts and independently establish original source/identity completeness.
 
-The actual authorized V2 owner/checkpoint phases are **not implemented here**.
-That owner must check current database actor/assignment/draft/subject, exact
+The initial codec change did not implement an authorized V2 owner/checkpoint.
+The separate prefix owner above now checks current actor/assignment/draft/subject,
+but independent V2 graph/geographic/identity verification is still remaining.
+Any later owner must continue to check current database actor/assignment/draft/subject, exact
 request/claim, live generation pin, CAD and combined source-purpose rights at
 both ends; stage the root/checkpoint in one transaction; and keep the exact
 generation AND stock reachable until terminal transfer/retirement is proven.
@@ -50,9 +98,9 @@ blob inspection, unchanged V1 checkpoints and foreign-organization refusal.
 That small representation fixture and synthetic >50k traversal are not whole
 licensed >50k acquisition, source-rights activation or production map timing.
 
-No HTTP route, worker, job phase, UI default, schedule, source grant, Apply or
-production deployment is changed. Still remaining: the fresh-authorized V2
-owner/independent full verification, shared typed/date-neutral interpretation,
+The codec-only change did not alter any HTTP route, worker, job phase, UI
+default, schedule, source grant, Apply or production deployment. Still remaining:
+independent full V2 verification, shared typed/date-neutral interpretation,
 amenities and transaction resolution, exact selected-union statistics, coherent
 publication, durable workers/retirement, physical load and large-area/live QA.
 

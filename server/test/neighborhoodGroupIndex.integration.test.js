@@ -1355,6 +1355,131 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     console.log('[native-original-source-references-v2]',{layers:7,pages:referencePages,
       metadata_maximum_bytes:metadataRows.maximum,original_payload_copies:0,lost_commit_reuse:true,
       reopen_ms:Math.ceil(performance.now()-referenceStarted),source_acquisition:false,production_latency:false});
+    // Separate actual V2 prefix owner: the V1 job/root/progress is never cast or
+    // changed. This is a small adversarial native capture, not >50k completion,
+    // independent V2 graph verification, source acquisition or production QA.
+    const refsOperation=randomUUID(),refsInput={...sourceInput,operationId:refsOperation};
+    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).enqueue({scope,actorUserId:actor,
+      request:{operation_id:refsOperation,observation_period:refsInput.observationPeriod,discovery}}));
+    const refsClaim=await withCustomCohortJobTransaction(pool,async client=>{
+      const [job]=await createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900});assert.equal(job.operation_id,refsOperation);
+      return {operation_id:refsOperation,claim_token:job.claim_token,attempts:job.attempts};});
+    const refsCalls=[],refsBlobPuts=[];let refsFault=null,refsAbort=null;
+    const refsPool={async connect(){const client=await pool.connect();return {release:client.release.bind(client),async query(config){
+      refsCalls.push(config.text);
+      if(config.text.includes('neighborhood-cohort-blob:insert */'))refsBlobPuts.push(config.values[3]);
+      const result=await client.query(config);
+      if(config.text.includes('neighborhood-frozen-job-closure:parcels')){
+        const fault=refsFault;if(fault!=='commit')refsFault=null;
+        if(fault==='license')await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+        if(fault==='role')await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);
+        if(fault==='subject')await client.query("UPDATE app.appraisal_subject_snapshots SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2000') WHERE id=$1",[sourceSnapshot]);
+        if(fault==='claim')await client.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET claim_token=$1 WHERE operation_id=$2',[randomUUID(),refsOperation]);
+        if(fault==='cancel')refsAbort.abort();
+      }
+      if(config.text==='COMMIT'&&refsFault==='commit'){refsFault=null;throw Error('synthetic V2 owner COMMIT acknowledgment lost');}
+      return result;}};}};
+    const refsOwner=createCustomCohortContextCapture({pool:refsPool,sourceMode:'combined-witness2-v1',authorizeMarketData:fixturePolicy()});
+    const refsOptions={captureJobClaim:refsClaim};
+    await refsOwner.prepareFrozenCaptureJobStock(refsInput,refsOptions);
+    const readRefsCheckpoint=async()=>(await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[refsOperation])).rows[0].checkpoint;
+    const refsStockCheckpoint=await readRefsCheckpoint();
+    assert.equal(refsStockCheckpoint.phase,'frozen_stock_v1');
+    const refsBlobCount=async()=>(await pool.query('SELECT count(*)::integer AS n FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1',[organization])).rows[0].n;
+    const refsSeedsCount=async()=>(await pool.query('SELECT count(*)::integer AS n FROM app.neighborhood_custom_cohort_seed_indexes WHERE operation_id=$1',[refsOperation])).rows[0].n;
+    const beforeRefsBlobs=await refsBlobCount();
+    const refsDeniedFrom=refsCalls.length;
+    await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+    await assert.rejects(refsOwner.prepareFrozenCaptureJobSourceReferencesV2Page(refsInput,refsOptions),/market_data_access_denied/);
+    assert.ok(!refsCalls.slice(refsDeniedFrom).some(sql=>/neighborhood-frozen-job-closure:|neighborhood-frozen-job-seeds:/.test(sql)),
+      'initial denied rights do not query licensed originals or prepare seeds');
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));
+    const roleDeniedFrom=refsCalls.length;
+    await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);
+    await assert.rejects(refsOwner.prepareFrozenCaptureJobSourceReferencesV2Page(refsInput,refsOptions),/job_actor_access_revoked/);
+    assert.ok(!refsCalls.slice(roleDeniedFrom).some(sql=>/neighborhood-cohort-blob:|neighborhood-frozen-job-closure:|neighborhood-frozen-job-seeds:/.test(sql)));
+    await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    for(const [fault,reason] of [['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],
+      ['subject',/subject_changed/],['claim',/claim_lost/],['cancel',/cancelled/]]){
+      refsFault=fault;refsAbort=new AbortController();
+      await assert.rejects(refsOwner.prepareFrozenCaptureJobSourceReferencesV2Page(refsInput,
+        {...refsOptions,signal:refsAbort.signal}),reason);
+      assert.equal(refsFault,null,'the actual original page was reached before the ending refusal');
+      assert.deepEqual(await readRefsCheckpoint(),refsStockCheckpoint,`${fault} rolls back the root/checkpoint`);
+      assert.equal(await refsSeedsCount(),0,`${fault} rolls back first seed preparation`);
+      assert.equal(await refsBlobCount(),beforeRefsBlobs,`${fault} retains no new prefix metadata blobs`);
+      if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+      if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    }
+    refsBlobPuts.length=0;const refsCommitFrom=refsCalls.length;
+    refsFault='commit';
+    await assert.rejects(refsOwner.prepareFrozenCaptureJobSourceReferencesV2Page(refsInput,refsOptions),error=>error.outcome_unknown===true);
+    const refsCommitted=await readRefsCheckpoint();
+    assert.equal(refsCommitted.phase,'frozen_source_refs_v2');assert.equal(refsCommitted.evidence_refs.length,3);
+    const freshRefsOwner=()=>createCustomCohortContextCapture({pool:refsPool,sourceMode:'combined-witness2-v1',authorizeMarketData:fixturePolicy()});
+    let refsPrefix=await freshRefsOwner().prepareFrozenCaptureJobSourceReferencesV2Page(refsInput,refsOptions);
+    assert.equal(refsPrefix.layers.parcels.page_count,1,'lost real COMMIT ACK resumes at the next unfinished layer');
+    assert.equal(refsPrefix.layers.accounts.page_count,1);
+    for(let i=0;i<10&&!refsPrefix.all_layers_ended;i++)refsPrefix=await freshRefsOwner().prepareFrozenCaptureJobSourceReferencesV2Page(refsInput,refsOptions);
+    assert.equal(refsPrefix.all_layers_ended,true);assert.equal(refsPrefix.status,'source_reference_prefix_retained');
+    assert.equal(refsPrefix.original_graph_verification,'not_established');assert.equal(refsPrefix.source_acquisition,'not_established');
+    assert.equal(refsPrefix.report_update,'none');
+    assert.deepEqual(Object.fromEntries(Object.entries(refsPrefix.layers).map(([kind,l])=>[kind,l.row_count])),
+      Object.fromEntries(Object.entries(expected).map(([kind,keys])=>[kind,keys.length])));
+    const refsCommittedCalls=refsCalls.slice(refsCommitFrom);
+    assert.equal(refsCommittedCalls.filter(sql=>sql.includes('neighborhood-frozen-job-seeds:rows')).length,1,
+      'fresh owner/lost-ACK continuation reuses exactly one committed seed cache');
+    assert.equal(refsCommittedCalls.filter(sql=>sql.includes('neighborhood-frozen-job-closure:parcels')).length,1);
+    assert.ok(!refsCommittedCalls.some(sql=>/ST_DWithin|frozen-spatial:counts|job-stock:begin/.test(sql)));
+    assert.equal(refsBlobPuts.length,22,'empty root plus seven node/root/checkpoint triples; no payload/chunk puts');
+    assert.ok(refsBlobPuts.every(text=>Buffer.byteLength(text)<16_000&&!text.includes('payload_text')&&!text.includes('cohort_original_text_chunks')));
+    const refsEndedCheckpoint=await readRefsCheckpoint();
+    const endedFrom=refsCalls.length,endedBlobs=await refsBlobCount();
+    assert.equal((await freshRefsOwner().prepareFrozenCaptureJobSourceReferencesV2Page(refsInput,refsOptions)).advanced,false);
+    assert.deepEqual(await readRefsCheckpoint(),refsEndedCheckpoint);assert.equal(await refsBlobCount(),endedBlobs);
+    assert.ok(!refsCalls.slice(endedFrom).some(sql=>/neighborhood-frozen-job-closure:|neighborhood-frozen-job-seeds:/.test(sql)),
+      'ended prefix replay reads no source page and prepares no seed set');
+    for(const method of ['prepareFrozenCaptureJobSourcePage','verifyFrozenCaptureJobSourcePage',
+      'verifyFrozenCaptureJobStockOriginals','verifyFrozenCaptureJobSourceIdentityClosure','prepareFrozenCaptureJobTypedOriginals']){
+      const from=refsCalls.length;
+      await assert.rejects(refsOwner[method](refsInput,refsOptions),/checkpoint_conflict/);
+      assert.ok(!refsCalls.slice(from).some(sql=>/neighborhood-cohort-blob:|neighborhood-frozen-job-closure:/.test(sql)),
+        `${method} refuses a V2 phase before reading originals`);
+    }
+    await assert.rejects(refsOwner.prepareFrozenCaptureJobSourceReferencesV2Page(sourceInput,{captureJobClaim:sourceClaim}),/checkpoint_conflict/);
+    assert.deepEqual((await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[sourceOperation])).rows[0].checkpoint,ownedCheckpoint);
+    // A changed source version or same-binding V1 root is not a V2 checkpoint.
+    const refsHeader=await withCustomCohortJobTransaction(pool,async client=>{
+      const r=refsEndedCheckpoint.evidence_refs[2];return JSON.parse(await createNeighborhoodCohortBlobRepository(client,organization).get(r.content_sha256,r.canonical_utf8_bytes));});
+    const refsBinding={...ownedBinding,operation_id:refsOperation};
+    for(const corrupt of ['version','root']){
+      const wrong=await withCustomCohortJobTransaction(pool,async client=>{
+        const blobs=createNeighborhoodCohortBlobRepository(client,organization),header={...refsHeader};
+        if(corrupt==='version')header.source_stage_version=1;
+        else header.root=(await createCohortOriginalSourceChainV1Store(blobs,refsBinding).create()).root;
+        const r=await blobs.put(canonicalAssessmentJson(header));
+        return createCustomCohortCaptureJobRepository(client).saveCheckpoint(refsClaim,options,
+          {phase:'frozen_source_refs_v2',evidence_refs:[...refsEndedCheckpoint.evidence_refs.slice(0,2),r]});});
+      const from=refsCalls.length;
+      await assert.rejects(refsOwner.prepareFrozenCaptureJobSourceReferencesV2Page(refsInput,refsOptions),
+        corrupt==='version'?/market_policy_changed/:/binding_changed/);
+      assert.deepEqual(await readRefsCheckpoint(),wrong);
+      assert.ok(!refsCalls.slice(from).some(sql=>/neighborhood-frozen-job-closure:|neighborhood-frozen-job-seeds:/.test(sql)));
+      await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).saveCheckpoint(refsClaim,options,refsEndedCheckpoint));
+    }
+    await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+    const endedDeniedFrom=refsCalls.length;
+    await assert.rejects(refsOwner.prepareFrozenCaptureJobSourceReferencesV2Page(refsInput,refsOptions),/market_data_access_denied/);
+    assert.deepEqual(await readRefsCheckpoint(),refsEndedCheckpoint);
+    assert.ok(!refsCalls.slice(endedDeniedFrom).some(sql=>/neighborhood-frozen-job-closure:|neighborhood-frozen-job-seeds:/.test(sql)));
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));
+    await withCustomCohortJobTransaction(pool,async client=>{
+      assert.equal((await createCustomCohortCaptureJobRepository(client).readPreparedGeneration(refsClaim,options)).generation_id,frozen.generationId);
+    });
+    console.log('[native-reference-prefix-owner-v2]',{layers:7,metadata_puts:refsBlobPuts.length,
+      original_payload_copies:0,initial_rights_refused:true,ending_rights_claim_subject_cancel_rollback:true,
+      lost_commit_next_layer:true,legacy_cast_refused:true,generation_pin_retained:true,
+      graph_verification:false,source_acquisition:false,production_latency:false});
     for(const [kind,keys] of Object.entries(expected)){
       let position=null;const seen=[];
       do{

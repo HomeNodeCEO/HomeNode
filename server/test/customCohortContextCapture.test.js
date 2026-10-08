@@ -68,6 +68,29 @@ test('original graph verifier admits no caller root, progress, source rows, perm
   await assert.rejects(service.verifyFrozenCaptureJobSourcePage(input(),{captureJobClaim:claim}),/frozen_discovery_unsupported/);
 });
 
+test('explicit V2 source-reference owner accepts no caller codec, plan, originals, root, progress or authority',async()=>{
+  const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}};
+  const claim={operation_id:base.operationId,claim_token:'33333333-3333-4333-8333-333333333333',attempts:1};
+  const method='prepareFrozenCaptureJobSourceReferencesV2Page';
+  await assert.rejects(setup()[method](base,{captureJobClaim:claim}),/frozen_source_profile_unsupported/);
+  const service=createCustomCohortContextCapture({pool:{connect(){assert.fail('must not connect');}},
+    sourceMode:'combined-witness2-v1',authorizeMarketData:()=>assert.fail('must not authorize')});
+  await assert.rejects(service[method](base),/invalid_input/);
+  for(const field of ['sourceRepresentation','generation_id','root','progress','source_rows','market_decision','source_acquisition'])
+    await assert.rejects(service[method]({...base,[field]:{}},{captureJobClaim:claim}),/invalid_input/);
+  for(const field of ['sourceRepresentation','readOriginal','plan','root','progress','row_limit','stockMetricPage'])
+    await assert.rejects(service[method](base,{captureJobClaim:claim,[field]:()=>assert.fail('untrusted callback')}),/invalid_options/);
+  for(const options of [new Proxy({captureJobClaim:claim},{getPrototypeOf(){assert.fail('proxy executed');}}),
+    {get captureJobClaim(){assert.fail('getter executed');}},
+    {captureJobClaim:claim,[Symbol('readOriginal')]:()=>assert.fail('symbol callback')},
+    Object.defineProperty({captureJobClaim:claim},'readOriginal',{value:()=>assert.fail('hidden callback')})])
+    await assert.rejects(service[method](base,options),/invalid_options/);
+  await assert.rejects(service[method]({...base,operationId:claim.claim_token},{captureJobClaim:claim}),/operation_conflict/);
+  await assert.rejects(service[method](input(),{captureJobClaim:claim}),/frozen_discovery_unsupported/);
+  const aborted=new AbortController();aborted.abort();
+  await assert.rejects(service[method](base,{captureJobClaim:claim,signal:aborted.signal}),/cancelled/);
+});
+
 test('geographic original owner accepts no caller continuation, geometry roster, grant or acquisition receipt',async()=>{
   const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}};
   const claim={operation_id:base.operationId,claim_token:'33333333-3333-4333-8333-333333333333',attempts:1};

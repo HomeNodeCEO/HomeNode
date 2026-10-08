@@ -3,6 +3,7 @@ import { assessmentDate, assessmentEvidenceDigest, canonicalAssessmentJson } fro
 import { prepareNeighborhoodCohortBlob, prepareNeighborhoodCohortBlobReference } from './cohortEvidenceBlobRepository.js';
 import { createNeighborhoodFrozenJobStock } from './neighborhoodFrozenJobStock.js';
 import { getNeighborhoodFrozenTypedOriginalV1Profile } from './neighborhoodFrozenTypedOriginalV1.js';
+import { NEIGHBORHOOD_SHARED_TYPED_SQL } from './neighborhoodSharedTypedGeneration.js';
 
 const METRICS = Object.freeze({ reported_year_built: 'year', reported_residential_area: 'reported_sqft',
   reported_site_area: 'reported_sqft', reported_market_value: null });
@@ -60,7 +61,10 @@ const READ = `/* neighborhood-frozen-stock-metrics:header */ SELECT binding_sha2
 // association work in SQL. A large account's parts never become a Node array.
 // CASE protects numeric casts even if stored cells are malformed. Such cells
 // refuse the entire page, rather than being silently dropped from statistics.
-export const NEIGHBORHOOD_FROZEN_STOCK_METRIC_PAGE_SQL = `/* neighborhood-frozen-stock-metrics:page */
+// Both projections share the same account resolution and transport contract.
+// Only these two fixed internal relations/predicates can supply parts; callers
+// cannot choose a SQL source, effective date, profile, or account population.
+const stockMetricSql = (partsSql, shared = false) => `/* neighborhood-frozen-${shared ? 'shared-' : ''}stock-metrics:page */
 WITH accounts AS MATERIALIZED (
   SELECT account_id,parcel_count FROM app.neighborhood_custom_cohort_stock_accounts
   WHERE operation_id=$1::uuid AND account_id>$3 COLLATE "C" ORDER BY account_id LIMIT $4
@@ -69,8 +73,7 @@ WITH accounts AS MATERIALIZED (
     'source_part_count',r.part_count::text,'observations',r.cells)::text AS encoded, r.invalid_count
   FROM accounts a CROSS JOIN LATERAL (
     WITH parts AS MATERIALIZED (
-      SELECT typed->'observations' AS observations FROM app.neighborhood_custom_cohort_typed_original_rows
-      WHERE operation_id=$1::uuid AND generation_id=$2::uuid AND kind='parcels' AND account_id=a.account_id
+      ${partsSql}
     ), cells AS (
       SELECT m.key,m.unit,p.observations->m.key AS cell
       FROM parts p CROSS JOIN (VALUES ('reported_year_built','year'),('reported_residential_area','reported_sqft'),
@@ -126,6 +129,13 @@ SELECT coalesce('['||string_agg(encoded,',' ORDER BY account_id)||']','[]') AS p
   (SELECT coalesce(sum(invalid_count),0)::integer FROM rendered) AS invalid_count,
   (SELECT count(*)::integer FROM lengths WHERE bytes>$7) AS oversized_count,
   max(account_id) AS next_cursor FROM admitted`;
+export const NEIGHBORHOOD_FROZEN_STOCK_METRIC_PAGE_SQL = stockMetricSql(`
+      SELECT typed->'observations' AS observations FROM app.neighborhood_custom_cohort_typed_original_rows
+      WHERE operation_id=$1::uuid AND generation_id=$2::uuid AND kind='parcels' AND account_id=a.account_id`);
+export const NEIGHBORHOOD_SHARED_STOCK_METRIC_PAGE_SQL = stockMetricSql(`
+      SELECT typed->'observations' AS observations FROM app.neighborhood_frozen_typed_rows
+      WHERE generation_id=$2::uuid AND profile_sha256=$8 AND effective_date=$5::date
+        AND kind='parcels' AND account_id=a.account_id`, true);
 
 function exactDecimal(value) {
   return typeof value === 'string' && /^(?:0|[1-9][0-9]{0,29})(?:\.[0-9]{1,12})?$/.test(value)
@@ -170,13 +180,27 @@ function decodeMember(raw, effective) {
  * caller traversed the full population. The original graph remains required.
  */
 export function createNeighborhoodFrozenJobStockMetricPages(client, rawOptions, rawGraph, effectiveDate) {
+  return stockMetricPages(client, rawOptions, rawGraph, effectiveDate, false);
+}
+
+/** Read the exact prepared shared cache, never build it on a report/cache miss.
+ * The job's already pinned stock and complete verified source graph are still
+ * required. The current-authorized owner rechecks all rights at both ends.
+ * This avoids per-job typing/copies, not scoped original acquisition or report
+ * publication. Exact-date V1 semantics and the old per-job reader are unchanged.
+ */
+export function createNeighborhoodSharedJobStockMetricPages(client, rawOptions, rawGraph, effectiveDate) {
+  return stockMetricPages(client, rawOptions, rawGraph, effectiveDate, true);
+}
+
+function stockMetricPages(client, rawOptions, rawGraph, effectiveDate, shared) {
   const options = data(rawOptions, ['claim','scope','actorUserId','geometryInput','discovery','subjectIntent','checkBudget']);
   if (typeof options.checkBudget !== 'function') fail('invalid_input');
   const graph = data(rawGraph, ['root','layer_counts']), ref = data(graph.root, ['content_sha256','canonical_utf8_bytes']);
   const root = prepareNeighborhoodCohortBlobReference(ref.content_sha256,ref.canonical_utf8_bytes);
   const kinds = ['parcels','accounts','source_records','sales','sale_links','sync_state','sync_runs'];
   const counts = data(graph.layer_counts, kinds); if (!kinds.every(k => integer(counts[k]))) fail('invalid_input');
-  const effective = assessmentDate(effectiveDate), typedProfile = getNeighborhoodFrozenTypedOriginalV1Profile().profile_ref;
+  const effective = assessmentDate(effectiveDate), completeProfile = getNeighborhoodFrozenTypedOriginalV1Profile(), typedProfile = completeProfile.profile_ref;
   const stockStore = createNeighborhoodFrozenJobStock(client, options), check = options.checkBudget;
   let busy = false, queries = 0, bytes = 0;
   const query = async (text, values) => {
@@ -189,15 +213,38 @@ export function createNeighborhoodFrozenJobStockMetricPages(client, rawOptions, 
       const stock = await stockStore.read(); check();
       const binding = { stock, graph: { root, layer_counts: counts }, effective_date: effective, profile_ref: typedProfile };
       const parameters = [stock.operation_id, stock.generation_id];
+      const original = stock.original;
+      const sharedSource = { generation_id: original.generation_id, format_version: original.source_format_version,
+        status: 'complete', source_snapshot: original.source_snapshot, started_at: original.source_transaction_started_at,
+        completed_at: original.completed_at, layer_counts: original.layer_counts,
+        row_count: original.row_count, payload_utf8_bytes: original.payload_utf8_bytes };
+      const sharedBinding = assessmentEvidenceDigest({ source: sharedSource, profile: completeProfile, effective_date: effective });
+      const headerSql = shared ? NEIGHBORHOOD_SHARED_TYPED_SQL.read : READ;
+      const headerValues = shared ? [stock.generation_id, typedProfile.content_sha256, effective] : parameters;
       const validateHeader = row => {
+        if (shared) {
+          const h = data(row, ['binding_sha256','source_metadata','definition_json','progress','status','completed_at']);
+          const p = data(h.progress, ['format','binding_sha256','kind_index','after','layer_rows','typed_rows','typed_utf8_bytes']);
+          const bytes = p.typed_utf8_bytes;
+          if (h.status !== 'complete' || h.binding_sha256 !== sharedBinding || !same(h.source_metadata, sharedSource)
+            || h.definition_json !== completeProfile.definition_blob.canonical_json
+            || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(h.completed_at ?? '')
+            || p.format !== 'shared_frozen_typed_progress_v1' || p.binding_sha256 !== sharedBinding
+            || p.kind_index !== 7 || p.after !== '' || p.layer_rows !== 0 || p.typed_rows !== original.row_count
+            || typeof bytes !== 'string' || !/^(?:0|[1-9][0-9]{0,18})$/.test(bytes)
+            || BigInt(bytes) > 8_000_000_000n || BigInt(bytes) < BigInt(p.typed_rows)
+            || kinds.some(k => counts[k] > Number(original.layer_counts[k].row_count))) fail('unfinished_or_changed_typing');
+          return;
+        }
         if (row.status !== 'complete' || row.binding_sha256 !== assessmentEvidenceDigest(binding)
           || row.profile_sha256 !== typedProfile.content_sha256 || row.effective_date !== effective
           || !same(row.expected_counts, counts) || !same(row.progress, { format: 'frozen_job_typed_original_progress_v1',
             binding_sha256: row.binding_sha256, kind_index: 7, after: '', layer_rows: 0 })) fail('unfinished_or_changed_typing');
       };
-      validateHeader(await query(READ, parameters));
-      const result = await query(NEIGHBORHOOD_FROZEN_STOCK_METRIC_PAGE_SQL,
-        [...parameters, page.cursor, page.rowLimit, effective, L.encoded_bytes, L.account_bytes]);
+      validateHeader(await query(headerSql, headerValues));
+      const values = [...parameters, page.cursor, page.rowLimit, effective, L.encoded_bytes, L.account_bytes];
+      if (shared) values.push(typedProfile.content_sha256);
+      const result = await query(shared ? NEIGHBORHOOD_SHARED_STOCK_METRIC_PAGE_SQL : NEIGHBORHOOD_FROZEN_STOCK_METRIC_PAGE_SQL, values);
       if (!Number.isInteger(result.page_count) || !Number.isInteger(result.candidate_count)
         || result.page_count < 0 || result.candidate_count < result.page_count || result.candidate_count > page.rowLimit
         || result.invalid_count !== 0 || result.oversized_count !== 0 || typeof result.page_json !== 'string') fail('invalid_result');
@@ -210,7 +257,7 @@ export function createNeighborhoodFrozenJobStockMetricPages(client, rawOptions, 
         if (Buffer.compare(Buffer.from(decoded.account_id),Buffer.from(previous)) <= 0) fail('invalid_result');
         previous = decoded.account_id; return decoded; });
       if (result.next_cursor !== (rows.length ? previous : null) || rows.length === 0 && result.candidate_count !== 0) fail('invalid_result');
-      if (!same(await stockStore.read(), stock)) fail('binding_changed'); check(); validateHeader(await query(READ, parameters));
+      if (!same(await stockStore.read(), stock)) fail('binding_changed'); check(); validateHeader(await query(headerSql, headerValues));
       return freeze({ status: 'stock_account_metric_page', authority: 'not_established', coverage: 'one_account_page_only',
         profile: PROFILE, typed_original_profile_ref: typedProfile, source_graph_root: root,
         operation_id: stock.operation_id, generation_id: stock.generation_id, spatial_definition_sha256: stock.definition_sha256,
@@ -218,6 +265,9 @@ export function createNeighborhoodFrozenJobStockMetricPages(client, rawOptions, 
         population: stock.population, source_part_population_count: String(counts.parcels),
         cursor: page.cursor, row_limit: page.rowLimit, rows, next_cursor: rows.length ? previous : page.cursor,
         end_of_population: result.candidate_count < page.rowLimit && result.page_count === result.candidate_count,
+        ...(shared ? { shared_typed_generation_reference: { shared_typed_reference_version: 1,
+          generation_id: stock.generation_id, profile_ref: typedProfile, effective_date: effective,
+          binding_sha256: sharedBinding, source_original_sha256: stock.source_original_sha256 } } : {}),
         source_freshness: 'not_established', source_acquisition: 'not_established', report_update: 'none' });
     } finally { busy = false; }
   } });

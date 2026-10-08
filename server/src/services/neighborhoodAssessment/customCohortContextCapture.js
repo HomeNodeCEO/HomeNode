@@ -26,7 +26,7 @@ import { createNeighborhoodFrozenJobStockOriginals } from './neighborhoodFrozenJ
 import { createNeighborhoodFrozenJobSourceIdentity } from './neighborhoodFrozenJobSourceIdentity.js';
 import { createNeighborhoodFrozenJobTypedOriginals } from './neighborhoodFrozenJobTypedOriginals.js';
 import { getNeighborhoodFrozenTypedOriginalV1Profile } from './neighborhoodFrozenTypedOriginalV1.js';
-import { createNeighborhoodFrozenJobStockMetricPages, prepareNeighborhoodFrozenStockMetricPage }
+import { createNeighborhoodFrozenJobStockMetricPages, createNeighborhoodSharedJobStockMetricPages, prepareNeighborhoodFrozenStockMetricPage }
   from './neighborhoodFrozenJobStockMetricPages.js';
 import { createNeighborhoodFrozenJobSourcePages } from './neighborhoodFrozenSourceClosurePages.js';
 import { createCohortOriginalSourceChainV1Store, COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS }
@@ -1531,11 +1531,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     }
     return response;
   }
-  async function frozenCaptureJobSourceStage(value, options = {}, verifying = false, stockVerifying = false, identityVerifying = false, typing = false, readingStockMetrics = false) {
+  async function frozenCaptureJobSourceStage(value, options = {}, verifying = false, stockVerifying = false, identityVerifying = false, typing = false, readingStockMetrics = false, readingSharedStockMetrics = false) {
     if (!options || Object.getPrototypeOf(options)!==Object.prototype) fail('invalid_options');
     const {captureJobClaim:providedClaim,stockMetricPage,...budgetOptions}=options;
-    const metricPage=readingStockMetrics?prepareNeighborhoodFrozenStockMetricPage(stockMetricPage):null;
-    if(!readingStockMetrics&&stockMetricPage!==undefined) fail('invalid_options');
+    const metricPage=readingStockMetrics||readingSharedStockMetrics?prepareNeighborhoodFrozenStockMetricPage(stockMetricPage):null;
+    if(!readingStockMetrics&&!readingSharedStockMetrics&&stockMetricPage!==undefined) fail('invalid_options');
     const originalInput=inputOf(value),claim=prepareCustomCohortCaptureJobClaim(providedClaim);
     if(claim.operation_id!==originalInput.operationId.toLowerCase()) fail('operation_conflict');
     if(!reportedProfile) fail('frozen_source_profile_unsupported');
@@ -1553,7 +1553,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       const requested={operation_id:input.operationId,observation_period:input.observationPeriod,discovery:input.discovery};
       if(!same(await jobs.readRequest(claim,jobOptions),requested)) fail('operation_conflict');
       const checkpoint=await jobs.readCheckpoint(claim,jobOptions);
-      const allowedPhases=readingStockMetrics?['frozen_typed_v1']:typing?['frozen_identity_v1','frozen_typed_v1']:identityVerifying?['frozen_geo_verify_v1','frozen_identity_v1']:stockVerifying?['frozen_verify_v1','frozen_geo_verify_v1']
+      const allowedPhases=readingSharedStockMetrics?['frozen_identity_v1','frozen_typed_v1']:readingStockMetrics?['frozen_typed_v1']:typing?['frozen_identity_v1','frozen_typed_v1']:identityVerifying?['frozen_geo_verify_v1','frozen_identity_v1']:stockVerifying?['frozen_verify_v1','frozen_geo_verify_v1']
         :verifying?['frozen_source_v1','frozen_verify_v1']:['frozen_stock_v1','frozen_source_v1'];
       if(!checkpoint || !allowedPhases.includes(checkpoint.phase)
         ||checkpoint.evidence_refs.length!==({frozen_stock_v1:2,frozen_source_v1:3,frozen_verify_v1:4,frozen_geo_verify_v1:5,frozen_identity_v1:6,frozen_typed_v1:7}[checkpoint.phase]))
@@ -1679,7 +1679,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             ||!same(previous.purpose,purpose)||!same(previous.market_decision,decision)) fail('market_policy_changed');
           progress=previous.progress;
         }
-        if(typing&&progress?.kind_index!==COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.length) fail('unfinished_identity_verification');
+        if((typing||readingSharedStockMetrics)&&progress?.kind_index!==COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.length) fail('unfinished_identity_verification');
         const graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
         identityVerification=await createNeighborhoodFrozenJobSourceIdentity(client,stockOptions,graph).step(progress);
         if(identityVerification.advanced) {
@@ -1724,6 +1724,14 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         }
         if(readingStockMetrics) stockMetricResult=await createNeighborhoodFrozenJobStockMetricPages(client,stockOptions,graph,context.effective_date).page(metricPage);
       }
+      if(readingSharedStockMetrics) {
+        // A completed shared cache is DATA, not a source grant. All existing
+        // original graph/geography/identity prerequisites and ending rights
+        // checks remain mandatory. Never materialize on a cache miss or copy
+        // typed payloads/profile blobs/checkpoints into this report's job.
+        const graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
+        stockMetricResult=await createNeighborhoodSharedJobStockMetricPages(client,stockOptions,graph,context.effective_date).page(metricPage);
+      }
       input=freeze({...input,auth:await loadCurrentCustomCohortJobActor(client,input.auth.userId,scope.organization_id)});
       assertTarget(await resolveTarget(client,input,true),target);
       privateDraft(await privateCaptureWorkfile(client,input));
@@ -1734,7 +1742,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(!same(await jobs.readRequest(claim,jobOptions),requested)||!same(await stockStore.read(),stock)) fail('checkpoint_conflict');
       if(!same((await chain.describe(root)).layers,prefix.layers)) fail('checkpoint_conflict');
       budget.check();
-      if(readingStockMetrics) return freeze({...stockMetricResult,typed_original_reference:typedReference,
+      if(readingStockMetrics||readingSharedStockMetrics) return freeze({...stockMetricResult,...(readingStockMetrics?{typed_original_reference:typedReference}:{}),
         source_reference:reference,verification_reference:verificationReference,stock_verification_reference:stockVerificationReference,
         identity_verification_reference:identityVerificationReference});
       if(typing) return freeze({status:'typed_original_progress_retained',operation_id:input.operationId,
@@ -1911,6 +1919,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     // Internal numerical pages only. No API/browser exposure, checkpoint write,
     // acquisition receipt or accepted report is established by reading a page.
     readFrozenCaptureJobStockMetrics: (value, options = {}) => frozenCaptureJobSourceStage(value, options, true, true, true, true, true),
+    // Exact prepared-cache reuse is separate from the per-job V1 typed path.
+    // Still internal/unmounted: no new job phase, builder, schedule or Apply.
+    readSharedFrozenCaptureJobStockMetrics: (value, options = {}) => frozenCaptureJobSourceStage(value, options, true, true, true, false, false, true),
     async capture(value, options = {}) {
     if (!options || Object.getPrototypeOf(options) !== Object.prototype)
       fail('invalid_options');

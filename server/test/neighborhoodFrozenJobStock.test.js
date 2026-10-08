@@ -8,8 +8,9 @@ import { createNeighborhoodFrozenJobStockOriginals, NEIGHBORHOOD_FROZEN_STOCK_OR
 import { neighborhoodFrozenSpatialDefinition } from '../src/services/neighborhoodAssessment/neighborhoodFrozenSpatialPages.js';
 import { createNeighborhoodFrozenJobSourceIdentity } from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobSourceIdentity.js';
 import { createNeighborhoodFrozenJobTypedOriginals } from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobTypedOriginals.js';
-import { createNeighborhoodFrozenJobStockMetricPages, getNeighborhoodFrozenStockMetricProfile,
-  NEIGHBORHOOD_FROZEN_STOCK_METRIC_PAGE_SQL } from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStockMetricPages.js';
+import { createNeighborhoodFrozenJobStockMetricPages, createNeighborhoodSharedJobStockMetricPages, getNeighborhoodFrozenStockMetricProfile,
+  NEIGHBORHOOD_FROZEN_STOCK_METRIC_PAGE_SQL, NEIGHBORHOOD_SHARED_STOCK_METRIC_PAGE_SQL } from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStockMetricPages.js';
+import { NEIGHBORHOOD_SHARED_TYPED_SQL } from '../src/services/neighborhoodAssessment/neighborhoodSharedTypedGeneration.js';
 import { getNeighborhoodFrozenTypedOriginalV1Profile } from '../src/services/neighborhoodAssessment/neighborhoodFrozenTypedOriginalV1.js';
 import { NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL, NEIGHBORHOOD_FROZEN_JOB_IDENTITY_COVERAGE_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourceClosurePages.js';
@@ -46,6 +47,76 @@ async function metricFixture(hook=()=>{}) {
     progress:{format:'frozen_job_typed_original_progress_v1',binding_sha256,kind_index:7,after:'',layer_rows:0}};
   return {...f,rows,graph,metrics:()=>createNeighborhoodFrozenJobStockMetricPages(f.client,options,graph,'2026-10-07')};
 }
+
+async function sharedMetricFixture(hook=()=>{}) {
+  let sharedHeader;
+  const rows=[metricMember()],graph={root:{content_sha256:'c'.repeat(64),canonical_utf8_bytes:'100'},
+    layer_counts:{parcels:60001,accounts:0,source_records:0,sales:0,sale_links:0,sync_state:0,sync_runs:0}};
+  const f=fixture(async call=>{
+    const supplied=await hook({...call,sharedHeader,rows});if(supplied)return supplied;
+    if(call.text===NEIGHBORHOOD_SHARED_TYPED_SQL.read)return result(structuredClone(sharedHeader));
+    if(call.text===NEIGHBORHOOD_SHARED_STOCK_METRIC_PAGE_SQL)return result({page_json:JSON.stringify(rows),page_count:rows.length,
+      candidate_count:rows.length,invalid_count:0,oversized_count:0,next_cursor:rows.at(-1)?.account_id??null});
+  },true);
+  const stock=await f.store.read(),original=stock.original,profile=getNeighborhoodFrozenTypedOriginalV1Profile();
+  const source={generation_id:original.generation_id,format_version:original.source_format_version,status:'complete',
+    source_snapshot:original.source_snapshot,started_at:original.source_transaction_started_at,completed_at:original.completed_at,
+    layer_counts:original.layer_counts,row_count:original.row_count,payload_utf8_bytes:original.payload_utf8_bytes};
+  const binding=assessmentEvidenceDigest({source,profile,effective_date:'2026-10-07'});
+  sharedHeader={binding_sha256:binding,source_metadata:source,definition_json:profile.definition_blob.canonical_json,
+    progress:{format:'shared_frozen_typed_progress_v1',binding_sha256:binding,kind_index:7,after:'',layer_rows:0,
+      typed_rows:source.row_count,typed_utf8_bytes:'12000400'},status:'complete',completed_at:date};
+  return {...f,rows,graph,sharedHeader,metrics:()=>createNeighborhoodSharedJobStockMetricPages(f.client,options,graph,'2026-10-07')};
+}
+
+test('shared stock metrics reuse exact immutable prepared data without per-job typing or cache-miss preparation',async()=>{
+  const f=await sharedMetricFixture(),from=f.calls.length,r=await f.metrics().page({cursor:'',rowLimit:250});
+  assert.equal(r.rows[0].observations.reported_market_value.exact_value,'9007199254740993');
+  assert.equal(r.profile.definition_blob.canonical_json,getNeighborhoodFrozenStockMetricProfile().definition_blob.canonical_json);
+  assert.equal(r.shared_typed_generation_reference.generation_id,id);
+  assert.equal(r.shared_typed_generation_reference.effective_date,'2026-10-07');
+  assert.equal(r.shared_typed_generation_reference.profile_ref.content_sha256,getNeighborhoodFrozenTypedOriginalV1Profile().profile_ref.content_sha256);
+  assert.equal(r.shared_typed_generation_reference.binding_sha256,f.sharedHeader.binding_sha256);
+  assert.equal(r.source_acquisition,'not_established');assert.equal(r.report_update,'none');
+  assert.ok(Object.isFrozen(r.shared_typed_generation_reference));
+  assert.equal(f.calls.slice(from).filter(c=>c.text===NEIGHBORHOOD_SHARED_TYPED_SQL.read).length,2);
+  assert.ok(!f.calls.slice(from).some(c=>/INSERT|UPDATE|DELETE|ST_DWithin|job-closure:|job-typed:|shared-typed:page/.test(c.text)));
+  const missing=await sharedMetricFixture(({text})=>text===NEIGHBORHOOD_SHARED_TYPED_SQL.read?{rowCount:0,rows:[]}:null);
+  const start=missing.calls.length;await assert.rejects(missing.metrics().page({cursor:'',rowLimit:1}),/invalid_result/);
+  assert.ok(!missing.calls.slice(start).some(c=>/INSERT|UPDATE|shared-stock-metrics:page/.test(c.text)));
+});
+
+test('shared headers cannot substitute a different source snapshot/profile/date, partial cache, or inflated scope',async()=>{
+  for(const mutate of [h=>h.status='building',h=>h.binding_sha256='e'.repeat(64),h=>h.definition_json+=' ',
+    h=>h.source_metadata.generation_id='70000000-0000-4000-8000-000000000006',h=>h.source_metadata.source_snapshot='2:3:',
+    h=>h.progress.binding_sha256='f'.repeat(64),h=>h.progress.kind_index=6,h=>h.progress.after='1',h=>h.progress.layer_rows=1,
+    h=>h.progress.typed_rows='60001',h=>h.progress.typed_utf8_bytes='8000000001',h=>h.progress.typed_utf8_bytes='1',
+    h=>h.completed_at=null,h=>h.source_metadata.format_version=2,h=>h.source_metadata.started_at='2026-10-06T00:00:00.000000Z']) {
+    const f=await sharedMetricFixture(({text,sharedHeader})=>{if(text===NEIGHBORHOOD_SHARED_TYPED_SQL.read){
+      const h=structuredClone(sharedHeader);mutate(h);return result(h);}});
+    await assert.rejects(f.metrics().page({cursor:'',rowLimit:1}),/unfinished_or_changed_typing/);
+    assert.ok(!f.calls.some(c=>c.text===NEIGHBORHOOD_SHARED_STOCK_METRIC_PAGE_SQL));
+  }
+  const f=await sharedMetricFixture();f.graph.layer_counts.accounts=1;
+  await assert.rejects(f.metrics().page({cursor:'',rowLimit:1}),/unfinished_or_changed_typing/);
+  const changedDate=createNeighborhoodSharedJobStockMetricPages(f.client,options,{...f.graph,layer_counts:{...f.graph.layer_counts,accounts:0}},'2026-10-06');
+  await assert.rejects(changedDate.page({cursor:'',rowLimit:1}),/unfinished_or_changed_typing/);
+  let headers=0;
+  const ending=await sharedMetricFixture(({text,sharedHeader})=>text===NEIGHBORHOOD_SHARED_TYPED_SQL.read&&++headers===2?
+    result({...sharedHeader,binding_sha256:'e'.repeat(64)}):null);
+  await assert.rejects(ending.metrics().page({cursor:'',rowLimit:1}),/unfinished_or_changed_typing/);
+});
+
+test('shared metric SQL is a fixed exact-date/account-index projection with identical numerical resolution',()=>{
+  assert.match(NEIGHBORHOOD_SHARED_STOCK_METRIC_PAGE_SQL,/FROM app\.neighborhood_frozen_typed_rows/);
+  assert.match(NEIGHBORHOOD_SHARED_STOCK_METRIC_PAGE_SQL,/generation_id=\$2::uuid AND profile_sha256=\$8 AND effective_date=\$5::date/);
+  assert.match(NEIGHBORHOOD_SHARED_STOCK_METRIC_PAGE_SQL,/kind='parcels' AND account_id=a.account_id/);
+  assert.doesNotMatch(NEIGHBORHOOD_SHARED_STOCK_METRIC_PAGE_SQL,/FROM app\.neighborhood_custom_cohort_typed_original_rows|ST_DWithin|INSERT|UPDATE/);
+  for(const fragment of ['CASE WHEN valid_numeric THEN literal::numeric END',"WHEN low<>high THEN 'conflicting'",'cumulative+1<=$6 AND bytes<=$7']) {
+    assert.ok(NEIGHBORHOOD_SHARED_STOCK_METRIC_PAGE_SQL.includes(fragment));
+    assert.ok(NEIGHBORHOOD_FROZEN_STOCK_METRIC_PAGE_SQL.includes(fragment));
+  }
+});
 
 test('bounded stock metric pages preserve exact cells and original profile/provenance without rescanning geometry or acquiring',async()=>{
   const f=await metricFixture();const from=f.calls.length;

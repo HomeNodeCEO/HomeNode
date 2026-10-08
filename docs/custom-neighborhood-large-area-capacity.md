@@ -34,14 +34,18 @@ Ended replay rechecks current rights/binding but reads no original or new proof.
 
 Focused tests cover closed metadata, native zero keys, short/full-tail/empty
 terminal receipts, 60,001 synthetic rows, stale CAS, autocommit/current claim
-refusal and source/root/graph/stock substitutions. Native CI must actually run
-the small real-owner fixture: unfinished graph refusal before geometry SQL,
-unissued done checkpoint, exact next-key/NULL-count guard, rolled-back short
+refusal and source/root/graph/stock substitutions. Protected native CI ran
+the small real-owner fixture successfully: unfinished graph refusal before
+geometry SQL, unissued done checkpoint, exact next-key/NULL-count guard, rolled-back short
 prefix guard-only DATA test, both-end license/role/subject/claim/cancel rollback,
 real lost-COMMIT/ended replay, small no-payload receipt, V1 separation and pin.
 That fixture is not a completed licensed >50k capture or production latency test;
 the 250-row full-tail rule is currently unit/source-guard coverage, not native
-large-area acceptance. Actual execution is pending until protected CI completes.
+large-area acceptance. Job `113200263268` on code head `3a604600` emitted the
+`native-reference-geographic-owner-v2` receipt: three stock parcels, one
+NULL-account parcel, one small metadata put and zero original payload copies.
+The prepared-index suite passed 7/7 with no failures or skips; the migration
+suite passed 417/417. Any later code change requires fresh protected verification.
 
 No HTTP route, worker dispatch, UI/default, schedule, source grant, Apply, pin
 release or production deployment. Still remaining: explicit V2 source identity,

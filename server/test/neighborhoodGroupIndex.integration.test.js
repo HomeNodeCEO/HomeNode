@@ -1573,7 +1573,37 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       scope,actorUserId:actor,source_reference:refsGraphCheckpoint.evidence_refs[2],root_reference:refsGraphRoot})
       .advance(graphFirstAnchor,unissuedReference)),error=>error.code==='55000'&&/anchor_detached_node/.test(error.message));
     assert.deepEqual(await readRefsAnchor(),graphFirstAnchor,'SQL guard refuses a detached owner-head replacement');
-    for(const wrong of [unissuedReference,{content_sha256:'0'.repeat(64),canonical_utf8_bytes:'123'}]){
+    // Harder same-index/same-cursor case from cybersecurity review. Copy the
+    // EXACT expected non-head descriptor and change ONLY its previous ref to a
+    // distinct same-binding branch. Its current original/digest/bounds/counts
+    // and returned next index/cursor are otherwise correct. Simpler index or
+    // count checks alone cannot reject this first detached step.
+    const samePositionForgery=await withCustomCohortJobTransaction(pool,async client=>{
+      const blobs=createNeighborhoodCohortBlobRepository(client,organization),store=refsGraphStore(client);
+      const expectedPosition=graphFirstReceipt.after.position;
+      const expectedStep=await store.read({root:refsGraphRoot,kind:'parcels',position:expectedPosition});
+      const readNode=async r=>JSON.parse(await blobs.get(r.content_sha256,r.canonical_utf8_bytes));
+      const expectedNode=await readNode(expectedPosition.node),previousNode=await readNode(expectedNode.previous);
+      const forkPrevious=await blobs.put(canonicalAssessmentJson({...previousNode,previous:detached.node}));
+      const forkNode=await blobs.put(canonicalAssessmentJson({...expectedNode,previous:forkPrevious}));
+      const forgedPosition={...expectedPosition,node:forkNode};
+      const bare=await store.read({root:refsGraphRoot,kind:'parcels',position:forgedPosition});
+      assert.equal(bare.index,expectedStep.index);assert.equal(bare.original_text,expectedStep.original_text);
+      assert.equal(bare.next_position.index,expectedStep.next_position.index);
+      assert.equal(bare.next_position.next_cursor,expectedStep.next_position.next_cursor);
+      assert.notDeepEqual(bare.next_position.node,expectedStep.next_position.node);
+      const before=graphFirstReceipt.after,after={...before,position:bare.next_position,
+        page_count:before.page_count+1,row_count:before.row_count+JSON.parse(bare.original_text).page.rows.length,
+        original_utf8_bytes:before.original_utf8_bytes+Buffer.byteLength(bare.original_text)};
+      const receipt={...unissuedReceipt,before,consumed_node:forkNode,next_position:bare.next_position,after};
+      return blobs.put(canonicalAssessmentJson(receipt));
+    });
+    await assert.rejects(withCustomCohortJobTransaction(pool,client=>createCustomCohortGraphV2AnchorRepository({client,claim:refsClaim,
+      scope,actorUserId:actor,source_reference:refsGraphCheckpoint.evidence_refs[2],root_reference:refsGraphRoot})
+      .advance(graphFirstAnchor,samePositionForgery)),error=>error.code==='55000'&&/anchor_detached_node/.test(error.message),
+      'same index/cursor/digest/count transition is refused because its node is NOT the issued next node');
+    assert.deepEqual(await readRefsAnchor(),graphFirstAnchor);
+    for(const wrong of [unissuedReference,samePositionForgery,{content_sha256:'0'.repeat(64),canonical_utf8_bytes:'123'}]){
       const swapped={...graphFirstCheckpoint,evidence_refs:[...graphFirstCheckpoint.evidence_refs.slice(0,3),wrong]};
       await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).saveCheckpoint(refsClaim,options,swapped));
       const from=refsCalls.length;
@@ -1634,6 +1664,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       .readPreparedGeneration(refsClaim,options)).generation_id,frozen.generationId));
     console.log('[native-reference-graph-owner-v2]',{layers:7,pages:graphPages,metadata_puts:refsBlobPuts.length,
       original_payload_copies:0,independent_issued_head:true,detached_bare_data_read:true,detached_head_refused:true,
+      same_index_cursor_digest_counts_detached_refused:true,
       unissued_checkpoint_refused_before_original:true,both_end_rights_rollback:true,lost_commit_next_edge:true,
       exact_layer_counts:true,ended_replay_no_original:true,legacy_cast_refused:true,generation_pin_retained:true,
       source_acquisition:false,production_latency:false});

@@ -30,7 +30,12 @@ exact counts, and refuses changed source/root/scope, skipped or detached nodes,
 rewind, delete and truncate. Blob existence/SHA alone is still not issuance or
 an original-read/source-rights receipt. The trusted server owner must perform
 the independent original read; a fully compromised database able to rewrite
-originals, roles and triggers is not protected by unkeyed content hashes.
+originals, roles and triggers is not protected by unkeyed content hashes. More
+precisely, issuance provenance trusts server-owner/anchor DML integrity:
+application SQL credentials able to insert blobs and advance the anchor could
+falsely assert an original replay even without disabling its metadata guards.
+There is no generic checkpoint/blob/anchor write API; the trusted internal owner
+remains mandatory.
 Ending refusal rolls back all three writes. A real successful-COMMIT/lost-ACK
 reopens the issued next edge. Ended replay checks current rights and pins but
 reads no additional original and writes neither anchor nor checkpoint.

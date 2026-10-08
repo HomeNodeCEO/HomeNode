@@ -80,8 +80,8 @@ BEGIN
     RAISE EXCEPTION 'neighborhood_graph_v2_anchor_transition_conflict' USING ERRCODE='55000';
   END IF;
   layer:=root_body->'layers'->(receipt->>'kind');
-  IF receipt->'consumed_node' IS DISTINCT FROM CASE WHEN before_state->'position'='null'::jsonb
-    THEN layer->'head' ELSE before_state->'position'->'node' END THEN
+  IF receipt->'consumed_node' IS DISTINCT FROM (CASE WHEN before_state->'position'='null'::jsonb
+    THEN layer->'head' ELSE before_state->'position'->'node' END) THEN
     RAISE EXCEPTION 'neighborhood_graph_v2_anchor_detached_node' USING ERRCODE='55000';
   END IF;
   SELECT canonical_utf8::jsonb INTO STRICT node_body FROM app.neighborhood_cohort_evidence_blobs
@@ -91,8 +91,8 @@ BEGIN
     OR node_body->>'plan' IS DISTINCT FROM 'neighborhood_frozen_job_closure_v1'
     OR node_body->>'kind' IS DISTINCT FROM receipt->>'kind'
     OR (node_body->>'index')::bigint IS DISTINCT FROM (layer->>'page_count')::bigint-1-(before_state->>'page_count')::bigint
-    OR node_body->>'next_cursor' IS DISTINCT FROM CASE WHEN before_state->'position'='null'::jsonb
-      THEN layer->>'cursor' ELSE before_state->'position'->>'next_cursor' END THEN
+    OR node_body->>'next_cursor' IS DISTINCT FROM (CASE WHEN before_state->'position'='null'::jsonb
+      THEN layer->>'cursor' ELSE before_state->'position'->>'next_cursor' END) THEN
     RAISE EXCEPTION 'neighborhood_graph_v2_anchor_detached_node' USING ERRCODE='55000';
   END IF;
   expected_next:=CASE WHEN node_body->'previous'='null'::jsonb THEN 'null'::jsonb ELSE jsonb_build_object(

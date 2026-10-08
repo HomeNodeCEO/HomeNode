@@ -1458,7 +1458,12 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     // A changed source version or same-binding V1 root is not a V2 checkpoint.
     const refsHeader=await withCustomCohortJobTransaction(pool,async client=>{
       const r=refsEndedCheckpoint.evidence_refs[2];return JSON.parse(await createNeighborhoodCohortBlobRepository(client,organization).get(r.content_sha256,r.canonical_utf8_bytes));});
-    const refsBinding={...ownedBinding,operation_id:refsOperation};
+    // The stock definition hash includes the operation ID. Rebinding a V1
+    // job's dictionary by changing only operation_id is intentionally invalid;
+    // use THIS V2 owner's exact frozen source header for every native replay.
+    const refsBinding={...scope,operation_id:refsOperation,generation_id:refsHeader.selection.generation_id,
+      spatial_definition_sha256:refsHeader.selection.spatial_definition_sha256,
+      source_original_sha256:refsHeader.selection.source_original_sha256};
     for(const corrupt of ['version','root']){
       const wrong=await withCustomCohortJobTransaction(pool,async client=>{
         const blobs=createNeighborhoodCohortBlobRepository(client,organization),header={...refsHeader};
@@ -1507,6 +1512,8 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       while(!done){
         const page=await withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenJobSourcePages(client,refsGraphOptions)
           .page({kind,cursor,rowLimit:1}));
+        assert.equal(page.spatial_definition_sha256,refsBinding.spatial_definition_sha256);
+        assert.equal(assessmentEvidenceDigest(page.original),refsBinding.source_original_sha256);
         refsGraphRoot=(await withCustomCohortJobTransaction(pool,client=>refsGraphStore(client).append({root:refsGraphRoot,
           original_text:JSON.stringify({binding:refsBinding,page}),row_limit:1}))).root;
         cursor=page.next_cursor;done=page.end_of_layer;

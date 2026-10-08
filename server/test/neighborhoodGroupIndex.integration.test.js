@@ -31,6 +31,8 @@ import { createCohortOriginalSourceReferencesV2Store }
   from '../src/services/neighborhoodAssessment/cohortOriginalSourceReferencesV2.js';
 import { createCustomCohortGraphV2AnchorRepository }
   from '../src/services/neighborhoodAssessment/customCohortGraphV2AnchorRepository.js';
+import { createCustomCohortGeographicV2AnchorRepository }
+  from '../src/services/neighborhoodAssessment/customCohortGeographicV2AnchorRepository.js';
 import { createCustomCohortContextCapture }
   from '../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { createNeighborhoodFrozenJobStock }
@@ -1376,7 +1378,12 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         const fault=refsFault;refsFault=null;
         return fault==='missing_receipt'?{rowCount:0,rows:[]}:{...result,rows:result.rows.map(row=>({...row,canonical_utf8:'{}'}))};
       }
-      if(config.text.includes('neighborhood-frozen-job-closure:parcels')){
+      if(['missing_geo_receipt','corrupt_geo_receipt'].includes(refsFault)&&config.text.includes('neighborhood-cohort-blob:read */')
+        &&config.values[1]===(await client.query('SELECT receipt_reference->>\'content_sha256\' AS hash FROM app.neighborhood_custom_cohort_geo_v2_anchors WHERE operation_id=$1',[refsOperation])).rows[0]?.hash){
+        const fault=refsFault;refsFault=null;
+        return fault==='missing_geo_receipt'?{rowCount:0,rows:[]}:{...result,rows:result.rows.map(row=>({...row,canonical_utf8:'{}'}))};
+      }
+      if(config.text.includes('neighborhood-frozen-job-closure:parcels')||config.text.includes('neighborhood-frozen-stock-originals:page')){
         const fault=refsFault;if(fault!=='commit')refsFault=null;
         if(fault==='license')await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
         if(fault==='role')await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);
@@ -1554,6 +1561,10 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     const graphFirstCheckpoint=await readRefsCheckpoint(),graphFirstAnchor=await readRefsAnchor();
     assert.equal(graphFirstCheckpoint.phase,'frozen_verify_refs_v2');assert.equal(graphFirstAnchor.sequence,1);
     assert.deepEqual(graphFirstCheckpoint.evidence_refs[3],graphFirstAnchor.receipt_reference);
+    const unfinishedV2GeoFrom=refsCalls.length;
+    await assert.rejects(freshRefsOwner().verifyFrozenCaptureJobStockOriginalReferencesV2(refsInput,refsOptions),/unfinished_graph_verification/);
+    assert.deepEqual(await readRefsCheckpoint(),graphFirstCheckpoint);
+    assert.ok(!refsCalls.slice(unfinishedV2GeoFrom).some(sql=>/stock-originals:|custom-cohort-geographic-v2:/.test(sql)));
     const graphFirstReceipt=await withCustomCohortJobTransaction(pool,async client=>{
       const r=graphFirstAnchor.receipt_reference;return JSON.parse(await createNeighborhoodCohortBlobRepository(client,organization)
         .get(r.content_sha256,r.canonical_utf8_bytes));});
@@ -1674,6 +1685,124 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       same_index_cursor_digest_counts_detached_refused:true,
       unissued_checkpoint_refused_before_original:true,both_end_rights_rollback:true,lost_commit_next_edge:true,
       exact_layer_counts:true,ended_replay_no_original:true,legacy_cast_refused:true,generation_pin_retained:true,
+      source_acquisition:false,production_latency:false});
+    // Actual V2 geographic owner starts only from the independently issued
+    // complete graph, retains NULL-account stock, excludes outside account
+    // parts, and does not treat an inserted done blob as an issued receipt.
+    const geoV2Method='verifyFrozenCaptureJobStockOriginalReferencesV2';
+    const readGeoAnchor=async()=>((await pool.query('SELECT source_reference,root_reference,graph_reference,stock_reference,receipt_reference,sequence FROM app.neighborhood_custom_cohort_geo_v2_anchors WHERE operation_id=$1',[refsOperation])).rows[0]??null);
+    const geoRepository=client=>createCustomCohortGeographicV2AnchorRepository({client,claim:refsClaim,scope,actorUserId:actor,
+      source_reference:finalCheckpoint.evidence_refs[2],root_reference:refsGraphRoot,
+      graph_reference:finalCheckpoint.evidence_refs[3],stock_reference:finalCheckpoint.evidence_refs[1]});
+    const geoZero={format:'frozen_job_stock_original_progress_v1',
+      stock_sha256:createHash('sha256').update(canonicalAssessmentJson(refsGraphStock.stock)).digest('hex'),
+      after_object_id:null,verified_parcels:0,verified_unassociated:0,done:false};
+    const geoTemplate={format:'cohort_geographic_original_receipt_v2',binding:refsBinding,
+      source_reference:finalCheckpoint.evidence_refs[2],root:refsGraphRoot,
+      graph_verification_reference:finalCheckpoint.evidence_refs[3],stock_reference:finalCheckpoint.evidence_refs[1],
+      sequence:1,previous:null,before:geoZero,after:{...geoZero,after_object_id:'5',verified_parcels:3,verified_unassociated:1,done:true}};
+    const retainGeo=body=>withCustomCohortJobTransaction(pool,client=>createNeighborhoodCohortBlobRepository(client,organization).put(canonicalAssessmentJson(body)));
+    for(const after of [{...geoTemplate.after,verified_parcels:1},
+      {...geoTemplate.after,verified_unassociated:0},{...geoTemplate.after,done:false}]){
+      const wrong=await retainGeo({...geoTemplate,after});
+      await assert.rejects(withCustomCohortJobTransaction(pool,client=>geoRepository(client).advance(null,wrong)),
+        error=>error.code==='55000'&&/geo_v2_anchor_prefix_conflict|geo_v2_anchor_count_conflict/.test(error.message));
+      assert.equal(await readGeoAnchor(),null);
+    }
+    // Guard-only metadata experiment in a rolled-back disposable transaction:
+    // exact short next-prefix succeeds without requiring 250 rows. This is NOT
+    // an original-geometry/source-rights verification claim.
+    await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
+      const body={...geoTemplate,after:{...geoZero,after_object_id:'1',verified_parcels:1}};
+      const r=await createNeighborhoodCohortBlobRepository(client,organization).put(canonicalAssessmentJson(body));
+      assert.equal((await geoRepository(client).advance(null,r)).sequence,1);
+      throw Error('synthetic short-prefix guard rollback');
+    }),/synthetic short-prefix guard rollback/);
+    assert.equal(await readGeoAnchor(),null);assert.deepEqual(await readRefsCheckpoint(),finalCheckpoint);
+    const forgedGeo=await retainGeo({...geoTemplate,after:{...geoTemplate.after,verified_unassociated:0}});
+    const unissuedGeoCheckpoint={phase:'frozen_geo_verify_refs_v2',evidence_refs:[...finalCheckpoint.evidence_refs,forgedGeo]};
+    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).saveCheckpoint(refsClaim,options,unissuedGeoCheckpoint));
+    const unissuedGeoFrom=refsCalls.length;
+    await assert.rejects(freshRefsOwner()[geoV2Method](refsInput,refsOptions),/checkpoint_conflict/);
+    assert.ok(!refsCalls.slice(unissuedGeoFrom).some(sql=>/stock-originals:|neighborhood-frozen-job-closure:/.test(sql)));
+    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).saveCheckpoint(refsClaim,options,finalCheckpoint));
+    const initialGeoDenied=refsCalls.length;
+    await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+    await assert.rejects(freshRefsOwner()[geoV2Method](refsInput,refsOptions),/market_data_access_denied/);
+    assert.ok(!refsCalls.slice(initialGeoDenied).some(sql=>/stock-originals:|custom-cohort-geographic-v2:/.test(sql)));
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));
+    const initialGeoRoleDenied=refsCalls.length;
+    await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);
+    await assert.rejects(freshRefsOwner()[geoV2Method](refsInput,refsOptions),/job_actor_access_revoked/);
+    assert.ok(!refsCalls.slice(initialGeoRoleDenied).some(sql=>/stock-originals:|neighborhood-cohort-blob:|custom-cohort-geographic-v2:/.test(sql)));
+    await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    const geoBeforeBlobs=await refsBlobCount();
+    for(const [fault,reason] of [['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],
+      ['subject',/subject_changed/],['claim',/claim_lost/],['cancel',/cancelled/]]){
+      refsFault=fault;refsAbort=new AbortController();
+      await assert.rejects(freshRefsOwner()[geoV2Method](refsInput,{...refsOptions,signal:refsAbort.signal}),reason);
+      assert.equal(refsFault,null,'actual geographic-original SQL ran before ending refusal');
+      assert.equal(await readGeoAnchor(),null);assert.deepEqual(await readRefsCheckpoint(),finalCheckpoint);
+      assert.deepEqual(await readRefsAnchor(),finalAnchor);assert.equal(await refsBlobCount(),geoBeforeBlobs);
+      if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+      if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    }
+    refsBlobPuts.length=0;const geoCommitFrom=refsCalls.length;refsFault='commit';
+    await assert.rejects(freshRefsOwner()[geoV2Method](refsInput,refsOptions),error=>error.outcome_unknown===true);
+    const geoCommitted=await readRefsCheckpoint(),geoIssued=await readGeoAnchor();
+    assert.equal(geoCommitted.phase,'frozen_geo_verify_refs_v2');assert.equal(geoIssued.sequence,1);
+    assert.deepEqual(geoCommitted.evidence_refs[4],geoIssued.receipt_reference);
+    assert.equal(refsBlobPuts.length,1);assert.ok(Buffer.byteLength(refsBlobPuts[0])<4000&&!refsBlobPuts[0].includes('stored_geometry_ewkb'));
+    const geoEndedFrom=refsCalls.length,geoReplay=await freshRefsOwner()[geoV2Method](refsInput,refsOptions);
+    assert.equal(geoReplay.advanced,false);assert.equal(geoReplay.all_parcels_verified,true);
+    assert.equal(geoReplay.verified_parcels,3);assert.equal(geoReplay.verified_unassociated,1);
+    assert.equal(geoReplay.source_acquisition,'not_established');assert.equal(geoReplay.typed_identity_closure,'not_established');
+    assert.equal(geoReplay.report_update,'none');assert.deepEqual(await readGeoAnchor(),geoIssued);
+    assert.ok(!refsCalls.slice(geoEndedFrom).some(sql=>/stock-originals:|neighborhood-frozen-job-closure:|anchor-insert|anchor-advance|checkpoint-save/.test(sql)));
+    assert.equal(refsCalls.slice(geoCommitFrom).filter(sql=>sql.includes('neighborhood-frozen-stock-originals:page')).length,1);
+    for(const fault of ['missing_geo_receipt','corrupt_geo_receipt']){
+      refsFault=fault;const from=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[geoV2Method](refsInput,refsOptions),/checkpoint_conflict|storage_conflict|invalid_receipt/);
+      assert.equal(refsFault,null);assert.deepEqual(await readRefsCheckpoint(),geoCommitted);assert.deepEqual(await readGeoAnchor(),geoIssued);
+      assert.ok(!refsCalls.slice(from).some(sql=>/stock-originals:|neighborhood-frozen-job-closure:/.test(sql)));
+    }
+    for(const wrong of [forgedGeo,{content_sha256:'0'.repeat(64),canonical_utf8_bytes:'123'}]){
+      const swapped={...geoCommitted,evidence_refs:[...geoCommitted.evidence_refs.slice(0,4),wrong]};
+      await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).saveCheckpoint(refsClaim,options,swapped));
+      const from=refsCalls.length;await assert.rejects(freshRefsOwner()[geoV2Method](refsInput,refsOptions),/checkpoint_conflict/);
+      assert.ok(!refsCalls.slice(from).some(sql=>/stock-originals:|neighborhood-frozen-job-closure:/.test(sql)));
+    }
+    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).saveCheckpoint(refsClaim,options,geoCommitted));
+    for(const [index,replacement] of [[1,ownedCheckpoint.evidence_refs[1]],
+      [2,refsEndedCheckpoint.evidence_refs[2]],[3,graphFirstCheckpoint.evidence_refs[3]]]){
+      const swapped={...geoCommitted,evidence_refs:[...geoCommitted.evidence_refs]};swapped.evidence_refs[index]=replacement;
+      await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).saveCheckpoint(refsClaim,options,swapped));
+      const from=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[geoV2Method](refsInput,refsOptions),/checkpoint_conflict|anchor_binding_changed/);
+      assert.ok(!refsCalls.slice(from).some(sql=>/stock-originals:|neighborhood-frozen-job-closure:/.test(sql)));
+      assert.deepEqual(await readGeoAnchor(),geoIssued);
+    }
+    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).saveCheckpoint(refsClaim,options,geoCommitted));
+    const geoEndedDeniedFrom=refsCalls.length;
+    await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+    await assert.rejects(freshRefsOwner()[geoV2Method](refsInput,refsOptions),/market_data_access_denied/);
+    assert.deepEqual(await readRefsCheckpoint(),geoCommitted);assert.deepEqual(await readGeoAnchor(),geoIssued);
+    assert.ok(!refsCalls.slice(geoEndedDeniedFrom).some(sql=>/stock-originals:|neighborhood-frozen-job-closure:/.test(sql)));
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));
+    for(const sql of ['UPDATE app.neighborhood_custom_cohort_geo_v2_anchors SET sequence=sequence-1 WHERE operation_id=$1',
+      'DELETE FROM app.neighborhood_custom_cohort_geo_v2_anchors WHERE operation_id=$1'])
+      await assert.rejects(pool.query(sql,[refsOperation]),error=>error.code==='55000');
+    await assert.rejects(pool.query('TRUNCATE app.neighborhood_custom_cohort_geo_v2_anchors'),error=>error.code==='55000');
+    for(const method of ['verifyFrozenCaptureJobSourceReferencesV2Page','verifyFrozenCaptureJobStockOriginals','verifyFrozenCaptureJobSourceIdentityClosure'])
+      await assert.rejects(freshRefsOwner()[method](refsInput,refsOptions),/checkpoint_conflict/);
+    await assert.rejects(freshRefsOwner()[geoV2Method](sourceInput,{captureJobClaim:sourceClaim}),/checkpoint_conflict/);
+    assert.deepEqual((await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[sourceOperation])).rows[0].checkpoint,ownedCheckpoint);
+    await withCustomCohortJobTransaction(pool,async client=>assert.equal((await createCustomCohortCaptureJobRepository(client)
+      .readPreparedGeneration(refsClaim,options)).generation_id,frozen.generationId));
+    console.log('[native-reference-geographic-owner-v2]',{parcels:3,unassociated:1,metadata_puts:1,original_payload_copies:0,
+      completed_issued_graph_required:true,independent_geographic_head:true,unissued_done_refused_before_original:true,
+      next_prefix_and_null_counts_guarded:true,short_prefix_guard_only_rollback:true,both_end_rights_rollback:true,
+      lost_commit_resumes_issued_done:true,ended_replay_no_original:true,legacy_cast_refused:true,generation_pin_retained:true,
       source_acquisition:false,production_latency:false});
     for(const [kind,keys] of Object.entries(expected)){
       let position=null;const seen=[];

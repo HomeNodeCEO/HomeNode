@@ -23,6 +23,9 @@ function progressOf(raw){
     ||(p.after_object_id===null)!==(p.verified_parcels===0))fail('invalid_progress');
   return Object.freeze(p);
 }
+// Reuse the exact V1 geographic DATA shape in a separately issued V2 receipt.
+// This validates representation only; it cannot establish issuance or rights.
+export const prepareNeighborhoodFrozenStockOriginalProgress = progressOf;
 function one(result){if(result?.rowCount!==1||result.rows?.length!==1)fail('invalid_result');return result.rows[0];}
 
 // The exact stock PK, not selected-account source parts, is the sole roster.

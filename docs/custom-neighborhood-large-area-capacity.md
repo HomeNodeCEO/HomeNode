@@ -1,5 +1,54 @@
 # Complete larger-area Custom neighborhood studies
 
+## Prepared exact job-stock source seeds (2026-10-08, not activated)
+
+The internal frozen-source acquisition owner prepares the exact all-date,
+one-hop source-record seed set once per completed geographic job stock.
+Following acquisition pages use its `(operation_id, source_record_id)` index,
+not a repeated distinct scan through all stock accounts and their original
+transactions. This is a small-key cache: it neither copies payloads nor grants
+access to them. Outside and unresolved members of seeded packages remain in
+the original closure; they never seed a second hop or become geographic stock.
+Dangling source IDs are retained for later independent identity refusal.
+
+The additive header binds the exact original generation, completed stock,
+subject intent and fixed seed definition. Actual current database actor,
+assignment/draft/subject, claim/pin, CAD and combined source-purpose checks
+remain before preparation/use and before commit. First preparation, original
+page append and checkpoint commit in the same owner transaction. Ending
+revocation or claim loss rolls them all back. A lost commit acknowledgment
+reopens the saved index and page continuation, without another seed insert.
+Missing/incomplete/changed caches refuse on the read-only path; there is no
+mutable-source, active/latest generation, spatial or dense-array fallback.
+
+The database independently checks **both exact set differences** against the
+immutable original-stock account associations before completing the index,
+as well as its count. Equal counts alone cannot publish a wrong seed set.
+Published rows/headers refuse edits, additions, deletes and truncation.
+Preparation is one atomic bounded query stage with a six-million-seed ceiling,
+five-second query timeouts and finite query/cancellation/serial-settlement
+limits. Exceeding a bound rolls back rather than publishing a partial index;
+this stage does not claim resumable multi-million-seed construction.
+
+The old recomputed source-page reader and source-identity reader remain the
+independent verification paths. Protocol tests check one-time preparation,
+fresh-cache reuse, unchanged raw-decimal/date payloads, malformed metadata,
+acknowledgment errors, missing stock, cancellation and concurrent settlement.
+Native CI must execute exact seven-layer byte parity, outside/unresolved
+one-hop cases, initial/ending rights and role refusal, subject/claim changes,
+lost-commit continuation, direct database guards and a same-count/wrong-set
+publication attempt. The 60,001-stock-account fixture has only one seeded
+transaction: its prepare/fresh-page measurements are not a complete large
+sales graph, production latency or whole authorized >50k acquisition claim.
+
+No route, worker, schedule, job phase, source grant, UI default, Apply behavior
+or production deployment is enabled. Job pin/terminal transfer and seed-cache
+retirement still need the later owner lifecycle; no automatic deletion is
+introduced. Still remaining: shared scoped original references without graph
+payload copies, explicit date-neutral interpretation, amenities and transaction
+resolution, exact selected-union statistics, coherent publication, workers,
+physical load/retirement and whole large-area/live QA acceptance.
+
 ## Current-authorized shared stock metric reuse (2026-10-08, not activated)
 
 `readSharedFrozenCaptureJobStockMetrics` reads the exact completed shared typed

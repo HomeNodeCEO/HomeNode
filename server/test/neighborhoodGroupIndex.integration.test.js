@@ -16,6 +16,10 @@ import { createNeighborhoodFrozenSpatialPages }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenSpatialPages.js';
 import { createNeighborhoodFrozenSourceClosurePages }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourceClosurePages.js';
+import { createNeighborhoodFrozenJobSourcePages, createNeighborhoodPreparedJobSourcePages }
+  from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourceClosurePages.js';
+import { createNeighborhoodFrozenJobSourceSeeds }
+  from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobSourceSeeds.js';
 import { createCohortOriginalTextChunksV1Store }
   from '../src/services/neighborhoodAssessment/cohortOriginalTextChunksV1.js';
 import { createNeighborhoodCohortBlobRepository }
@@ -878,11 +882,11 @@ test('isolated PostgreSQL: freezes a complete 60001-account original source popu
     let revokeAfterSource=false,revokeRoleAfterSource=false,changeSubjectAfterSource=false,loseSourceCommit=false;
     const sourcePool={async connect(){const client=await pool.connect();return {release:client.release.bind(client),async query(config){
       sourceCalls.push(config.text);const result=await client.query(config);
-      if(config.text.includes('neighborhood-frozen-job-closure:')&&revokeAfterSource){revokeAfterSource=false;
+      if(config.text.includes('neighborhood-frozen-job-seeds:rows')&&revokeAfterSource){revokeAfterSource=false;
         await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});}
-      if(config.text.includes('neighborhood-frozen-job-closure:')&&revokeRoleAfterSource){revokeRoleAfterSource=false;
+      if(config.text.includes('neighborhood-frozen-job-seeds:rows')&&revokeRoleAfterSource){revokeRoleAfterSource=false;
         await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);}
-      if(config.text.includes('neighborhood-frozen-job-closure:')&&changeSubjectAfterSource){changeSubjectAfterSource=false;
+      if(config.text.includes('neighborhood-frozen-job-seeds:rows')&&changeSubjectAfterSource){changeSubjectAfterSource=false;
         // Current snapshots are held FOR SHARE by this owner, so a real
         // external update is blocked. A same-transaction fixture hook proves
         // the ending material comparison independently, without weakening locks.
@@ -894,22 +898,42 @@ test('isolated PostgreSQL: freezes a complete 60001-account original source popu
     const checkpointBefore=(await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[sourceOperation])).rows[0].checkpoint;
     await assert.rejects(sourceOwner.prepareFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),/market_data_access_denied/);
     assert.ok(!sourceCalls.some(sql=>sql.includes('neighborhood-frozen-job-closure:')),'initial denied license reads no source page');
+    assert.ok(!sourceCalls.some(sql=>sql.includes('neighborhood-frozen-job-seeds:')),'initial denied license does not inspect or prepare seeds');
+    const seedCounts=async()=>(await pool.query(`SELECT
+      (SELECT count(*)::int FROM app.neighborhood_custom_cohort_seed_indexes WHERE operation_id=$1) AS headers,
+      (SELECT count(*)::int FROM app.neighborhood_custom_cohort_source_seeds WHERE operation_id=$1) AS seeds`,[sourceOperation])).rows[0];
+    assert.deepEqual(await seedCounts(),{headers:0,seeds:0});
     await setFixtureGrant(pool,organization,fixtureGrant(organization));revokeAfterSource=true;
     await assert.rejects(sourceOwner.prepareFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),/market_data_access_denied/);
     assert.deepEqual((await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[sourceOperation])).rows[0].checkpoint,checkpointBefore,
       'ending current policy revocation rolls back the entire source prefix/checkpoint, not the already retained stock');
+    assert.deepEqual(await seedCounts(),{headers:0,seeds:0},'first seed construction rolls back with the refused source page');
     await setFixtureGrant(pool,organization,fixtureGrant(organization));revokeRoleAfterSource=true;
     await assert.rejects(sourceOwner.prepareFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),/job_actor_access_revoked/);
     assert.deepEqual((await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[sourceOperation])).rows[0].checkpoint,checkpointBefore);
+    assert.deepEqual(await seedCounts(),{headers:0,seeds:0});
     await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
     changeSubjectAfterSource=true;
     await assert.rejects(sourceOwner.prepareFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),/subject_changed/);
     assert.deepEqual((await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[sourceOperation])).rows[0].checkpoint,checkpointBefore);
+    assert.deepEqual(await seedCounts(),{headers:0,seeds:0});
     await pool.query('UPDATE app.appraisal_subject_snapshots SET subject_data=$1::jsonb WHERE id=$2',[JSON.stringify(subjectData),snapshot]);
     loseSourceCommit=true;
     const sourceFrom=sourceCalls.length;
+    const seedStarted=performance.now();
     await assert.rejects(sourceOwner.prepareFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),error=>error.outcome_unknown===true);
+    const seedPreparePageMs=Math.round(performance.now()-seedStarted),seedReuseFrom=sourceCalls.length,seedReuseStarted=performance.now();
     const prefix=await sourceOwner.prepareFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim});
+    const seedReusePageMs=Math.round(performance.now()-seedReuseStarted);
+    assert.deepEqual(await seedCounts(),{headers:1,seeds:1});
+    assert.deepEqual((await pool.query('SELECT source_record_id::text AS id FROM app.neighborhood_custom_cohort_source_seeds WHERE operation_id=$1 ORDER BY source_record_id',[sourceOperation])).rows,
+      [{id:'501'}],'all-date source 501 is the only stock seed; unrelated unresolved source 502 is not seeded');
+    assert.equal(sourceCalls.slice(sourceFrom).filter(sql=>sql.includes('neighborhood-frozen-job-seeds:rows')).length,1);
+    assert.ok(!sourceCalls.slice(seedReuseFrom).some(sql=>/neighborhood-frozen-job-seeds:(?:begin|rows|complete)|SELECT DISTINCT original.source_record_id/.test(sql)),
+      'fresh source-page continuation neither rebuilds the completed seed index nor recomputes all account seeds');
+    console.info('[native-prepared-source-seeds-large-stock]',{stock_accounts:60001,seed_count:1,
+      initial_seed_and_page_ms:seedPreparePageMs,fresh_page_ms:seedReusePageMs,seed_builds_after_ack_loss:1,
+      complete_source_graph:false,production_latency:false});
     assert.equal(prefix.layers.parcels.row_count,500);assert.equal(prefix.layers.parcels.page_count,2);
     assert.equal(prefix.layers.parcels.cursor,'500');assert.equal(prefix.all_layers_ended,false);
     assert.equal(prefix.source_acquisition,'not_established');assert.equal(prefix.original_graph_verification,'not_established');
@@ -1157,14 +1181,84 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       const [job]=await createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900});assert.equal(job.operation_id,sourceOperation);
       return {operation_id:sourceOperation,claim_token:job.claim_token,attempts:job.attempts};});
     await setFixtureGrant(pool,organization,fixtureGrant(organization));
-    const sourceOwner=createCustomCohortContextCapture({pool,sourceMode:'combined-witness2-v1',authorizeMarketData:fixturePolicy()});
+    const seedCalls=[];let loseSeedClaim=false,loseSeedCommit=false;
+    const seedPool={async connect(){const client=await pool.connect();return {release:client.release.bind(client),async query(config){
+      seedCalls.push(config.text);const result=await client.query(config);
+      if(config.text.includes('neighborhood-frozen-job-seeds:rows')&&loseSeedClaim){loseSeedClaim=false;
+        await client.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET claim_token=$1 WHERE operation_id=$2',[randomUUID(),sourceOperation]);}
+      if(config.text==='COMMIT'&&loseSeedCommit){loseSeedCommit=false;throw Error('synthetic seed/page COMMIT acknowledgement lost');}
+      return result;}};}};
+    const sourceOwner=createCustomCohortContextCapture({pool:seedPool,sourceMode:'combined-witness2-v1',authorizeMarketData:fixturePolicy()});
     await sourceOwner.prepareFrozenCaptureJobStock(sourceInput,{captureJobClaim:sourceClaim});
+    const seedCheckpoint=(await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[sourceOperation])).rows[0].checkpoint;
+    loseSeedClaim=true;
+    await assert.rejects(sourceOwner.prepareFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),/claim_lost/);
+    assert.deepEqual((await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[sourceOperation])).rows[0].checkpoint,seedCheckpoint);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_custom_cohort_seed_indexes WHERE operation_id=$1',[sourceOperation])).rows[0].n,0,
+      'an ending lost claim rolls back first seed publication and source/checkpoint in the same transaction');
+    const seedCommitFrom=seedCalls.length;
+    loseSeedCommit=true;
+    await assert.rejects(sourceOwner.prepareFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),error=>error.outcome_unknown===true);
+    const committedSeed=(await pool.query(`SELECT status,seed_count::text FROM app.neighborhood_custom_cohort_seed_indexes
+      WHERE operation_id=$1 AND generation_id=$2`,[sourceOperation,frozen.generationId])).rows[0];
+    assert.deepEqual(committedSeed,{status:'complete',seed_count:'3'});
     let prefix;
     for(let step=0;step<10;step++){
       prefix=await sourceOwner.prepareFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim});
       assert.equal(prefix.source_acquisition,'not_established');if(prefix.all_layers_ended)break;
     }
     assert.equal(prefix.all_layers_ended,true);assert.equal(prefix.original_graph_verification,'not_established');
+    assert.equal(seedCalls.slice(seedCommitFrom).filter(sql=>sql.includes('neighborhood-frozen-job-seeds:rows')).length,1,
+      'lost commit acknowledgment and fresh page continuation do not rebuild or duplicate the source seeds');
+    assert.deepEqual((await pool.query(`SELECT source_record_id::text AS id FROM app.neighborhood_custom_cohort_source_seeds
+      WHERE operation_id=$1 ORDER BY source_record_id`,[sourceOperation])).rows,[{id:'501'},{id:'503'},{id:'504'}],
+      'outside/unresolved package members are retained but outside-only source 502 never seeds a second hop');
+    const sourceStockBody=await withCustomCohortJobTransaction(pool,async client=>{
+      const ref=seedCheckpoint.evidence_refs[1];return JSON.parse(await createNeighborhoodCohortBlobRepository(client,organization)
+        .get(ref.content_sha256,ref.canonical_utf8_bytes));});
+    const preparedOptions={...options,claim:sourceClaim,geometryInput:sourceStockBody.stock.definition.geometry_input,
+      discovery,subjectIntent:seedCheckpoint.evidence_refs[0],checkBudget(){}};
+    const parityCalls=[];const parityPool={async connect(){const client=await pool.connect();return {release:client.release.bind(client),async query(config){
+      parityCalls.push(config.text);return client.query(config);}};}};
+    for(const kind of Object.keys(expected)){
+      let cursor='',done=false;
+      for(let i=0;i<12&&!done;i++){
+        const pageInput={kind,cursor,rowLimit:1};
+        const original=await withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenJobSourcePages(client,preparedOptions).page(pageInput));
+        const prepared=await withCustomCohortJobTransaction(parityPool,client=>createNeighborhoodPreparedJobSourcePages(client,preparedOptions).page(pageInput));
+        assert.deepEqual(prepared,original,`${kind} independently matches old recomputed closure byte-for-byte`);
+        cursor=prepared.next_cursor;done=prepared.end_of_layer;
+      }
+      assert.equal(done,true);
+    }
+    assert.ok(!parityCalls.some(sql=>/neighborhood-frozen-job-seeds:(?:begin|rows|complete)|SELECT DISTINCT original.source_record_id|ST_DWithin/.test(sql)));
+    await assert.rejects(withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenJobSourceSeeds(client,
+      {...preparedOptions,scope:{...scope,organization_id:randomUUID()}}).read()),/claim_lost/,
+    'a completed source seed cache cannot authorize a foreign scope');
+    for(const sql of [
+      'UPDATE app.neighborhood_custom_cohort_source_seeds SET source_record_id=source_record_id WHERE operation_id=$1',
+      'DELETE FROM app.neighborhood_custom_cohort_source_seeds WHERE operation_id=$1',
+      'UPDATE app.neighborhood_custom_cohort_seed_indexes SET seed_count=seed_count WHERE operation_id=$1',
+      'DELETE FROM app.neighborhood_custom_cohort_seed_indexes WHERE operation_id=$1',
+      `INSERT INTO app.neighborhood_custom_cohort_source_seeds(operation_id,generation_id,source_record_id)
+        SELECT operation_id,generation_id,999 FROM app.neighborhood_custom_cohort_seed_indexes WHERE operation_id=$1`,
+    ])await assert.rejects(pool.query(sql,[sourceOperation]),error=>error.code==='55000');
+    for(const sql of ['TRUNCATE app.neighborhood_custom_cohort_source_seeds',
+      'TRUNCATE app.neighborhood_custom_cohort_seed_indexes,app.neighborhood_custom_cohort_source_seeds'])await assert.rejects(pool.query(sql),
+      error=>error.code==='55000','direct truncation is refused without changing any retained cache');
+    // Disposable incomplete header on the separate storage-only stock above.
+    // Same count, one wrong key: independent exact-set verification must refuse.
+    await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
+      await client.query(`INSERT INTO app.neighborhood_custom_cohort_seed_indexes
+        (operation_id,generation_id,binding_sha256,definition_sha256,definition_json) VALUES($1,$2,$3,$3,'{}')`,[operation,frozen.generationId,'d'.repeat(64)]);
+      await client.query(`INSERT INTO app.neighborhood_custom_cohort_source_seeds(operation_id,generation_id,source_record_id)
+        SELECT $1,$2,n FROM unnest(ARRAY[501,503,999]::bigint[]) n`,[operation,frozen.generationId]);
+      await client.query(`UPDATE app.neighborhood_custom_cohort_seed_indexes SET status='complete',seed_count=3,completed_at=clock_timestamp()
+        WHERE operation_id=$1`,[operation]);
+    }),error=>error.code==='55000'&&/neighborhood_seed_index_incomplete/.test(error.message));
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_custom_cohort_seed_indexes WHERE operation_id=$1',[operation])).rows[0].n,0);
+    console.info('[native-prepared-source-seeds]',{stock_accounts:2,seed_count:3,seven_layer_exact_parity:true,
+      lost_claim_rollback:true,lost_commit_reuse:true,same_count_wrong_set_refused:true,production_latency:false});
     assert.deepEqual(Object.fromEntries(Object.entries(prefix.layers).map(([kind,layer])=>[kind,layer.row_count])),
       Object.fromEntries(Object.entries(expected).map(([kind,keys])=>[kind,keys.length])));
     assert.equal((await sourceOwner.prepareFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim})).advanced,false,

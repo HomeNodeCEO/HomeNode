@@ -28,7 +28,8 @@ import { createNeighborhoodFrozenJobTypedOriginals } from './neighborhoodFrozenJ
 import { getNeighborhoodFrozenTypedOriginalV1Profile } from './neighborhoodFrozenTypedOriginalV1.js';
 import { createNeighborhoodFrozenJobStockMetricPages, createNeighborhoodSharedJobStockMetricPages, prepareNeighborhoodFrozenStockMetricPage }
   from './neighborhoodFrozenJobStockMetricPages.js';
-import { createNeighborhoodFrozenJobSourcePages } from './neighborhoodFrozenSourceClosurePages.js';
+import { createNeighborhoodFrozenJobSourcePages,createNeighborhoodPreparedJobSourcePages } from './neighborhoodFrozenSourceClosurePages.js';
+import { createNeighborhoodFrozenJobSourceSeeds } from './neighborhoodFrozenJobSourceSeeds.js';
 import { createCohortOriginalSourceChainV1Store, COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS }
   from './cohortOriginalSourceChainV1.js';
 import { verifyCohortOriginalSourceGraphStep } from './cohortOriginalSourceGraphV1.js';
@@ -1606,7 +1607,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         identityVerification=null,identityVerificationReference=checkpoint.evidence_refs[5]??null,
         typedOriginals=null,typedReference=checkpoint.evidence_refs[6]??null,stockMetricResult=null;
       if(!verifying&&kind) {
-        const page=await createNeighborhoodFrozenJobSourcePages(client,{...stockOptions,signal:budget.signal})
+        // Current all-date one-hop source rights have already been checked.
+        // Prepare only once per exact stock; later pages reopen the immutable
+        // index without rediscovering all seeds. Ending owner checks roll back
+        // first preparation with the source page/checkpoint on any refusal.
+        await createNeighborhoodFrozenJobSourceSeeds(client,{...stockOptions,signal:budget.signal}).prepare();
+        const page=await createNeighborhoodPreparedJobSourcePages(client,{...stockOptions,signal:budget.signal})
           .page({kind,cursor:prefix.layers[kind].cursor,rowLimit:250});
         root=(await chain.append({root,original_text:JSON.stringify({binding,page})})).root;
         prefix=await chain.describe(root);

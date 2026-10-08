@@ -1,5 +1,56 @@
 # Complete larger-area Custom neighborhood studies
 
+## Shared exact typed generation (2026-10-08, not activated)
+
+`neighborhoodSharedTypedGeneration` prepares the fixed individual-original
+interpretations once per **exact frozen generation, complete retained profile
+definition and effective date**, independently of any report/job ID. A second
+offline owner reopens the completed immutable header on a fresh SQL client:
+there is no original-page transfer, compiler work, typed-row copy, or city-wide
+recount on that reuse path. Different dates never borrow year/date-dependent
+interpretations. This is reusable DATA, not a current source grant or proof of
+a report's spatial/source closure. No new scheduler, CLI, job phase, default,
+HTTP route, source rights or report update is enabled.
+
+The builder takes an explicitly caller-owned repeatable-read, UTC, writable
+transaction. Two stable transaction/backend probes precede writes. The exact
+completed original generation is share-locked against retirement at both ends;
+there is no mutable-source or active-pointer fallback. Persisted small progress
+allows fresh-client continuation and reopens after lost COMMIT acknowledgement
+without repeating inserts. A closed C-collated original-key plan admits at most
+250 rows and 2.1 MB of encoded originals before transport. Original text is
+matched independently by SQL before each insert. Every complete layer count,
+whole row count and exact typed-text byte total is reconciled before publication;
+the database additionally refuses premature completion and makes completed
+headers/rows immutable. Finite 60-second, 16-query, 32-MB step limits, shared
+logical row/byte ceilings, cancellation and serial settlement apply.
+
+The additive shared tables have original-identity FKs and generation/profile/
+date/account/source/key indexes. Bounded obsolete-generation cleanup removes
+cached rows and headers **before** originals. Existing exclusive-retirement and
+no-pin guards apply; partial cache construction cannot strand original FKs.
+Retained job pins preserve the exact cache through later nightly sweeps. Nothing
+widens the installed 50k legacy consumer or existing evidence-blob ceilings.
+
+Protocol tests cover exact decimal strings, full seven-layer completion,
+metadata-only reuse, changed dates/profile/source, lost acknowledgement,
+autocommit, malformed/oversized pages, count/byte/CAS errors, cancellation and
+pending settlement. The isolated native fixture must additionally prepare and
+independently check all originals for 60,001 accounts, measure fresh-client reuse,
+exercise actual lost COMMIT acknowledgement, premature database publication,
+partial-cache retirement, pinned-version survival and source edit isolation.
+Those assertions are pending until their real CI execution, not local mock proof.
+
+Still needed: a current-authorized **scoped job reference** into this shared layer,
+so reports do not duplicate its typed payloads or copy every city original into
+their blob graphs; prepared one-hop seed reuse; explicit CAD improvement/amenity
+original lineage; exact account/source/transaction resolution and complete
+selected-union medians/CODs; coherent map/workspace/Apply publication; bounded
+worker continuation, terminal retained-original transfer/retirement, physical
+storage/load budgets and whole large-area/live QA acceptance. The existing
+per-job typed path is unchanged in this stage. A synthetic shared-cache timing
+is not production map latency, licensed acquisition or a final instant-map SLA.
+
 ## Resumable seven-layer original chain (2026-10-07, representation only)
 
 `cohortOriginalSourceChainV1` stores the seven fixed scoped source layers as

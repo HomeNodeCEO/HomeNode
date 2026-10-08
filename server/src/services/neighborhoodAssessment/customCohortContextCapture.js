@@ -24,6 +24,8 @@ import { loadCurrentCustomCohortJobActor } from './customCohortJobActor.js';
 import { createNeighborhoodFrozenJobStock } from './neighborhoodFrozenJobStock.js';
 import { createNeighborhoodFrozenJobStockOriginals } from './neighborhoodFrozenJobStockOriginals.js';
 import { createNeighborhoodFrozenJobSourceIdentity } from './neighborhoodFrozenJobSourceIdentity.js';
+import { createNeighborhoodFrozenJobTypedOriginals } from './neighborhoodFrozenJobTypedOriginals.js';
+import { getNeighborhoodFrozenTypedOriginalV1Profile } from './neighborhoodFrozenTypedOriginalV1.js';
 import { createNeighborhoodFrozenJobSourcePages } from './neighborhoodFrozenSourceClosurePages.js';
 import { createCohortOriginalSourceChainV1Store, COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS }
   from './cohortOriginalSourceChainV1.js';
@@ -1527,7 +1529,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     }
     return response;
   }
-  async function frozenCaptureJobSourceStage(value, options = {}, verifying = false, stockVerifying = false, identityVerifying = false) {
+  async function frozenCaptureJobSourceStage(value, options = {}, verifying = false, stockVerifying = false, identityVerifying = false, typing = false) {
     if (!options || Object.getPrototypeOf(options)!==Object.prototype) fail('invalid_options');
     const {captureJobClaim:providedClaim,...budgetOptions}=options;
     const originalInput=inputOf(value),claim=prepareCustomCohortCaptureJobClaim(providedClaim);
@@ -1547,10 +1549,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       const requested={operation_id:input.operationId,observation_period:input.observationPeriod,discovery:input.discovery};
       if(!same(await jobs.readRequest(claim,jobOptions),requested)) fail('operation_conflict');
       const checkpoint=await jobs.readCheckpoint(claim,jobOptions);
-      const allowedPhases=identityVerifying?['frozen_geo_verify_v1','frozen_identity_v1']:stockVerifying?['frozen_verify_v1','frozen_geo_verify_v1']
+      const allowedPhases=typing?['frozen_identity_v1','frozen_typed_v1']:identityVerifying?['frozen_geo_verify_v1','frozen_identity_v1']:stockVerifying?['frozen_verify_v1','frozen_geo_verify_v1']
         :verifying?['frozen_source_v1','frozen_verify_v1']:['frozen_stock_v1','frozen_source_v1'];
       if(!checkpoint || !allowedPhases.includes(checkpoint.phase)
-        ||checkpoint.evidence_refs.length!==({frozen_stock_v1:2,frozen_source_v1:3,frozen_verify_v1:4,frozen_geo_verify_v1:5,frozen_identity_v1:6}[checkpoint.phase]))
+        ||checkpoint.evidence_refs.length!==({frozen_stock_v1:2,frozen_source_v1:3,frozen_verify_v1:4,frozen_geo_verify_v1:5,frozen_identity_v1:6,frozen_typed_v1:7}[checkpoint.phase]))
         fail('checkpoint_conflict');
       const subjects=createCustomCohortSubjectRepository(client,canonicalAssessmentJson(scope));
       const blobs=createNeighborhoodCohortBlobRepository(client,scope.organization_id);
@@ -1597,7 +1599,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       const kind=COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.find(key=>!prefix.layers[key].ended);
       let verification=null,verificationReference=checkpoint.evidence_refs[3]??null,
         stockVerification=null,stockVerificationReference=checkpoint.evidence_refs[4]??null,
-        identityVerification=null,identityVerificationReference=checkpoint.evidence_refs[5]??null;
+        identityVerification=null,identityVerificationReference=checkpoint.evidence_refs[5]??null,
+        typedOriginals=null,typedReference=checkpoint.evidence_refs[6]??null;
       if(!verifying&&kind) {
         const page=await createNeighborhoodFrozenJobSourcePages(client,{...stockOptions,signal:budget.signal})
           .page({kind,cursor:prefix.layers[kind].cursor,rowLimit:250});
@@ -1672,6 +1675,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             ||!same(previous.purpose,purpose)||!same(previous.market_decision,decision)) fail('market_policy_changed');
           progress=previous.progress;
         }
+        if(typing&&progress?.kind_index!==COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.length) fail('unfinished_identity_verification');
         const graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
         identityVerification=await createNeighborhoodFrozenJobSourceIdentity(client,stockOptions,graph).step(progress);
         if(identityVerification.advanced) {
@@ -1681,6 +1685,37 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           identityVerificationReference=await blobs.put(canonicalAssessmentJson(body));
           await jobs.saveCheckpoint(claim,jobOptions,{phase:'frozen_identity_v1',
             evidence_refs:[retained.intent.reference,stockReference,reference,verificationReference,stockVerificationReference,identityVerificationReference]});
+        }
+      }
+      if(typing) {
+        const profile=getNeighborhoodFrozenTypedOriginalV1Profile();let progress=null;
+        if(typedReference) {
+          const text=await blobs.get(typedReference.content_sha256,typedReference.canonical_utf8_bytes);
+          if(text===null||Buffer.byteLength(text)>16_000) fail('checkpoint_conflict');
+          let previous;try{previous=JSON.parse(text);}catch{fail('checkpoint_conflict');}
+          exactKeys(previous,['typed_stage_version','usage','source_reference','graph_verification_reference','stock_verification_reference',
+            'identity_verification_reference','profile_reference','selection','purpose','market_decision','progress']);
+          if(previous.typed_stage_version!==1||previous.usage!=='frozen_typed_original_progress_only'
+            ||!same(previous.source_reference,reference)||!same(previous.graph_verification_reference,verificationReference)
+            ||!same(previous.stock_verification_reference,stockVerificationReference)||!same(previous.identity_verification_reference,identityVerificationReference)
+            ||!same(previous.profile_reference,profile.definition_blob.ref)||!same(previous.selection,selection)
+            ||!same(previous.purpose,purpose)||!same(previous.market_decision,decision)) fail('market_policy_changed');
+          if(await blobs.get(previous.profile_reference.content_sha256,previous.profile_reference.canonical_utf8_bytes)!==profile.definition_blob.canonical_json)
+            fail('checkpoint_conflict');
+          progress=previous.progress;
+        }
+        const graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
+        typedOriginals=await createNeighborhoodFrozenJobTypedOriginals(client,stockOptions,graph,context.effective_date).step(progress);
+        if(typedOriginals.advanced) {
+          const profileReference=await blobs.put(profile.definition_blob.canonical_json);
+          if(!same(profileReference,profile.definition_blob.ref)) fail('checkpoint_conflict');
+          const body={typed_stage_version:1,usage:'frozen_typed_original_progress_only',source_reference:reference,
+            graph_verification_reference:verificationReference,stock_verification_reference:stockVerificationReference,
+            identity_verification_reference:identityVerificationReference,profile_reference:profileReference,
+            selection,purpose,market_decision:decision,progress:typedOriginals.progress};
+          typedReference=await blobs.put(canonicalAssessmentJson(body));
+          await jobs.saveCheckpoint(claim,jobOptions,{phase:'frozen_typed_v1',
+            evidence_refs:[retained.intent.reference,stockReference,reference,verificationReference,stockVerificationReference,identityVerificationReference,typedReference]});
         }
       }
       input=freeze({...input,auth:await loadCurrentCustomCohortJobActor(client,input.auth.userId,scope.organization_id)});
@@ -1693,6 +1728,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(!same(await jobs.readRequest(claim,jobOptions),requested)||!same(await stockStore.read(),stock)) fail('checkpoint_conflict');
       if(!same((await chain.describe(root)).layers,prefix.layers)) fail('checkpoint_conflict');
       budget.check();
+      if(typing) return freeze({status:'typed_original_progress_retained',operation_id:input.operationId,
+        source_reference:reference,verification_reference:verificationReference,stock_verification_reference:stockVerificationReference,
+        identity_verification_reference:identityVerificationReference,typed_original_reference:typedReference,generation_id:stock.generation_id,
+        advanced:typedOriginals.advanced,typed_layer_count:typedOriginals.progress.kind_index,all_layers_typed:typedOriginals.all_layers_typed,
+        typed_profile_ref:typedOriginals.profile_ref,individual_original_interpretation:typedOriginals.all_layers_typed?'complete':'in_progress',
+        property_transaction_observations:'not_established',source_freshness:'not_established',source_acquisition:'not_established',report_update:'none'});
       if(identityVerifying) return freeze({status:'source_identity_progress_retained',operation_id:input.operationId,
         source_reference:reference,verification_reference:verificationReference,stock_verification_reference:stockVerificationReference,
         identity_verification_reference:identityVerificationReference,generation_id:stock.generation_id,
@@ -1857,6 +1898,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     /** Current-authorized exact identity/one-hop validation, not numerical facts,
      * historical/freshness coverage or a legacy acquisition capability. */
     verifyFrozenCaptureJobSourceIdentityClosure: (value, options = {}) => frozenCaptureJobSourceStage(value, options, true, true, true),
+    prepareFrozenCaptureJobTypedOriginals: (value, options = {}) => frozenCaptureJobSourceStage(value, options, true, true, true, true),
     async capture(value, options = {}) {
     if (!options || Object.getPrototypeOf(options) !== Object.prototype)
       fail('invalid_options');

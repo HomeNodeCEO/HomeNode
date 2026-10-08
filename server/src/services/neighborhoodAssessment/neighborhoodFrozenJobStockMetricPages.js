@@ -127,7 +127,14 @@ SELECT coalesce('['||string_agg(encoded,',' ORDER BY account_id)||']','[]') AS p
   (SELECT count(*)::integer FROM lengths WHERE bytes>$7) AS oversized_count,
   max(account_id) AS next_cursor FROM admitted`;
 
-function decodeMember(raw) {
+function exactDecimal(value) {
+  return typeof value === 'string' && /^(?:0|[1-9][0-9]{0,29})(?:\.[0-9]{1,12})?$/.test(value)
+    && value.replace('.','').length <= 30 && (!value.includes('.') || !value.endsWith('0'));
+}
+function decimalOrder(value) {
+  const [whole,fraction=''] = value.split('.'); return BigInt(whole)*1_000_000_000_000n+BigInt(fraction.padEnd(12,'0'));
+}
+function decodeMember(raw, effective) {
   const row = data(raw, ['account_id', 'geographic_parcel_count', 'source_part_count', 'observations']); account(row.account_id);
   const count = value => typeof value === 'string' && /^(?:0|[1-9][0-9]{0,6})$/.test(value) && Number(value) <= MAX;
   if (!count(row.geographic_parcel_count) || row.geographic_parcel_count === '0' || !count(row.source_part_count)) fail('invalid_result');
@@ -140,11 +147,17 @@ function decodeMember(raw) {
       || ['observed_part_count','missing_part_count','invalid_part_count','unsupported_part_count']
         .reduce((n,k) => n+Number(cell[k]),0) !== Number(row.source_part_count)
       || (cell.state === 'observed' ? cell.unit !== METRICS[key] || cell.unit === null : cell.unit !== null)
-      || (cell.exact_value !== null && (typeof cell.exact_value !== 'string' || !/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(cell.exact_value)
-        || cell.exact_value.length > 43))
+      || cell.exact_value !== null && !exactDecimal(cell.exact_value)
       || (cell.state === 'observed' ? cell.exact_value === null : !['unsupported'].includes(cell.state) && cell.exact_value !== null)
       || !Array.isArray(cell.conflict_values) || cell.conflict_values.length !== (cell.state === 'conflicting' ? 2 : 0)
-      || cell.conflict_values.some(v => typeof v !== 'string' || !/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(v) || v.length > 43)) fail('invalid_result');
+      || cell.conflict_values.some(v => !exactDecimal(v))) fail('invalid_result');
+    const observed = Number(cell.observed_part_count), unsupported = Number(cell.unsupported_part_count), invalid = Number(cell.invalid_part_count);
+    if (cell.state === 'conflicting'
+      ? observed+unsupported<2 || decimalOrder(cell.conflict_values[0])>=decimalOrder(cell.conflict_values[1])
+      : cell.state !== (observed>0?'observed':unsupported>0?'unsupported':invalid>0?'invalid':'missing')) fail('invalid_result');
+    const values = [...cell.conflict_values,...(cell.exact_value===null?[]:[cell.exact_value])];
+    if (key==='reported_residential_area' && values.includes('0')
+      || key==='reported_year_built' && values.some(v=>!/^\d{4}$/.test(v) || v<'1600' || v>effective.slice(0,4))) fail('invalid_result');
   }
   return freeze(row);
 }
@@ -193,7 +206,7 @@ export function createNeighborhoodFrozenJobStockMetricPages(client, rawOptions, 
       let rows; try { rows = JSON.parse(result.page_json); } catch { fail('invalid_result'); }
       if (!Array.isArray(rows) || rows.length !== result.page_count) fail('invalid_result');
       let previous = page.cursor;
-      rows = rows.map(row => { const decoded = decodeMember(row);
+      rows = rows.map(row => { const decoded = decodeMember(row,effective);
         if (Buffer.compare(Buffer.from(decoded.account_id),Buffer.from(previous)) <= 0) fail('invalid_result');
         previous = decoded.account_id; return decoded; });
       if (result.next_cursor !== (rows.length ? previous : null) || rows.length === 0 && result.candidate_count !== 0) fail('invalid_result');

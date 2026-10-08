@@ -89,11 +89,20 @@ test('metric transport refuses corrupt counts/order/units and malformed or overs
   }
   for(const mutate of [row=>row.observations.reported_site_area.unit='acre',
     row=>row.observations.reported_site_area.exact_value=0,row=>row.source_part_count='2',
-    row=>row.observations.reported_market_value.state='observed',row=>row.extra=true]) {
+    row=>row.observations.reported_market_value.state='observed',row=>row.extra=true,
+    row=>row.observations.reported_residential_area.exact_value='1000.0100',
+    row=>row.observations.reported_residential_area.exact_value='0',row=>row.observations.reported_year_built.exact_value='2050',
+    row=>{row.observations.reported_site_area.observed_part_count='0';row.observations.reported_site_area.missing_part_count='1';}]) {
     const f=await metricFixture();mutate(f.rows[0]);await assert.rejects(f.metrics().page({cursor:'',rowLimit:250}),/invalid_result|invalid_input/);
   }
   const duplicate=await metricFixture();duplicate.rows.push(metricMember());
   await assert.rejects(duplicate.metrics().page({cursor:'',rowLimit:250}),/invalid_result/);
+  for(const witnesses of [['2','2'],['10','2']]) {
+    const f=await metricFixture();f.rows[0].source_part_count='2';
+    for(const cell of Object.values(f.rows[0].observations))cell[cell.state==='observed'?'observed_part_count':'unsupported_part_count']='2';
+    Object.assign(f.rows[0].observations.reported_site_area,{state:'conflicting',unit:null,exact_value:null,conflict_values:witnesses});
+    await assert.rejects(f.metrics().page({cursor:'',rowLimit:250}),/invalid_result/);
+  }
 });
 
 test('full pages require a later terminal read; account order follows UTF8 C collation and empty pages retain cursor',async()=>{

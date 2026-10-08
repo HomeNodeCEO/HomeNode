@@ -76,9 +76,9 @@ test('explicit V2 source-reference owner accepts no caller codec, plan, original
   const service=createCustomCohortContextCapture({pool:{connect(){assert.fail('must not connect');}},
     sourceMode:'combined-witness2-v1',authorizeMarketData:()=>assert.fail('must not authorize')});
   await assert.rejects(service[method](base),/invalid_input/);
-  for(const field of ['sourceRepresentation','generation_id','root','progress','source_rows','market_decision','source_acquisition'])
+  for(const field of ['stage','sourceRepresentation','generation_id','root','progress','source_rows','market_decision','source_acquisition'])
     await assert.rejects(service[method]({...base,[field]:{}},{captureJobClaim:claim}),/invalid_input/);
-  for(const field of ['sourceRepresentation','readOriginal','plan','root','progress','row_limit','stockMetricPage'])
+  for(const field of ['stage','sourceRepresentation','readOriginal','plan','root','progress','row_limit','stockMetricPage'])
     await assert.rejects(service[method](base,{captureJobClaim:claim,[field]:()=>assert.fail('untrusted callback')}),/invalid_options/);
   for(const options of [new Proxy({captureJobClaim:claim},{getPrototypeOf(){assert.fail('proxy executed');}}),
     {get captureJobClaim(){assert.fail('getter executed');}},

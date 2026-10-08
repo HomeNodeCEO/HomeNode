@@ -112,6 +112,22 @@ const freeze = value => {
   if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); }
   return value;
 };
+// Server-only discriminated stages. Flags and checkpoint admission travel
+// together; callers cannot create combinations by shifting positional booleans.
+const FROZEN_SOURCE_STAGES = freeze({
+  prefix_v1: { allowedPhases: ['frozen_stock_v1', 'frozen_source_v1'] },
+  prefix_refs_v2: { referencesV2: true, allowedPhases: ['frozen_stock_v1', 'frozen_source_refs_v2'] },
+  verify_v1: { verifying: true, allowedPhases: ['frozen_source_v1', 'frozen_verify_v1'] },
+  geographic_v1: { verifying: true, stockVerifying: true, allowedPhases: ['frozen_verify_v1', 'frozen_geo_verify_v1'] },
+  identity_v1: { verifying: true, stockVerifying: true, identityVerifying: true,
+    allowedPhases: ['frozen_geo_verify_v1', 'frozen_identity_v1'] },
+  typed_v1: { verifying: true, stockVerifying: true, identityVerifying: true, typing: true,
+    allowedPhases: ['frozen_identity_v1', 'frozen_typed_v1'] },
+  stock_metrics_v1: { verifying: true, stockVerifying: true, identityVerifying: true, typing: true,
+    readingStockMetrics: true, allowedPhases: ['frozen_typed_v1'] },
+  shared_stock_metrics_v1: { verifying: true, stockVerifying: true, identityVerifying: true,
+    readingSharedStockMetrics: true, allowedPhases: ['frozen_identity_v1', 'frozen_typed_v1'] },
+});
 function fail(reason, detail, captureCounts) {
   const error = Object.assign(new Error(`custom_cohort_capture_${reason}`), {
     code: 'CUSTOM_COHORT_CAPTURE_FAILED', reason, ...(detail ? { detail } : {}),
@@ -1533,14 +1549,14 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     }
     return response;
   }
-  async function frozenCaptureJobSourceStage(value, options = {}, verifying = false, stockVerifying = false, identityVerifying = false, typing = false, readingStockMetrics = false, readingSharedStockMetrics = false, sourceRepresentation = 'payload_v1') {
-    // Representation is selected ONLY by the private server entrypoint, never
-    // by an input/options flag. V2 prefix DATA cannot enter any legacy verifier,
-    // typed path or metric stage; explicit V2 root-edge verification comes next.
-    const referencesV2=sourceRepresentation==='references_v2';
-    if(!['payload_v1','references_v2'].includes(sourceRepresentation)
-      ||referencesV2&&(verifying||stockVerifying||identityVerifying||typing||readingStockMetrics||readingSharedStockMetrics))
+  /** One named internal stage owns its flags and phase admission. Every source
+   * read/write is fenced by current rights at both transaction ends. V2 prefix
+   * DATA has no verifier/typed/metric flags or legacy receipt conversion. */
+  async function frozenCaptureJobSourceStage(value, options = {}, stage = 'prefix_v1') {
+    if(typeof stage!=='string'||!Object.hasOwn(FROZEN_SOURCE_STAGES,stage))
       fail('frozen_source_representation_unsupported');
+    const {referencesV2=false,verifying=false,stockVerifying=false,identityVerifying=false,
+      typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     if(referencesV2){
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
       const descriptors=Object.getOwnPropertyDescriptors(options),keys=Reflect.ownKeys(descriptors);
@@ -1569,8 +1585,6 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       const requested={operation_id:input.operationId,observation_period:input.observationPeriod,discovery:input.discovery};
       if(!same(await jobs.readRequest(claim,jobOptions),requested)) fail('operation_conflict');
       const checkpoint=await jobs.readCheckpoint(claim,jobOptions);
-      const allowedPhases=referencesV2?['frozen_stock_v1','frozen_source_refs_v2']:readingSharedStockMetrics?['frozen_identity_v1','frozen_typed_v1']:readingStockMetrics?['frozen_typed_v1']:typing?['frozen_identity_v1','frozen_typed_v1']:identityVerifying?['frozen_geo_verify_v1','frozen_identity_v1']:stockVerifying?['frozen_verify_v1','frozen_geo_verify_v1']
-        :verifying?['frozen_source_v1','frozen_verify_v1']:['frozen_stock_v1','frozen_source_v1'];
       if(!checkpoint || !allowedPhases.includes(checkpoint.phase)
         ||checkpoint.evidence_refs.length!==({frozen_stock_v1:2,frozen_source_v1:3,frozen_source_refs_v2:3,frozen_verify_v1:4,frozen_geo_verify_v1:5,frozen_identity_v1:6,frozen_typed_v1:7}[checkpoint.phase]))
         fail('checkpoint_conflict');
@@ -1939,31 +1953,31 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       });
     },
     /** Internal source-prefix DATA stage; never dispatched by the legacy worker. */
-    prepareFrozenCaptureJobSourcePage: (value, options = {}) => frozenCaptureJobSourceStage(value, options),
+    prepareFrozenCaptureJobSourcePage: (value, options = {}) => frozenCaptureJobSourceStage(value, options, 'prefix_v1'),
     /** Explicit V2 prefix DATA owner. Retain exact fixed-plan metadata only,
      * not per-report originals. Both-end current rights and the live generation/
      * stock pin are identical to V1; no V1 checkpoint conversion, new source
      * grant, verification receipt, HTTP/worker activation or Apply is implied. */
     prepareFrozenCaptureJobSourceReferencesV2Page: (value, options = {}) =>
-      frozenCaptureJobSourceStage(value, options, false, false, false, false, false, false, 'references_v2'),
+      frozenCaptureJobSourceStage(value, options, 'prefix_refs_v2'),
     /** Independent current-authorized root-edge/original-representation validation.
      * Not typed identity closure, complete geographic stock, source acquisition,
      * report publication or Apply. Progress is loaded only from this job's fence. */
-    verifyFrozenCaptureJobSourcePage: (value, options = {}) => frozenCaptureJobSourceStage(value, options, true),
+    verifyFrozenCaptureJobSourcePage: (value, options = {}) => frozenCaptureJobSourceStage(value, options, 'verify_v1'),
     /** Independently reopen every geographic parcel original, including NULL
      * account geometry, after the actual owner verified the whole source graph.
      * Typed source identities/numerical coverage remain a subsequent stage. */
-    verifyFrozenCaptureJobStockOriginals: (value, options = {}) => frozenCaptureJobSourceStage(value, options, true, true),
+    verifyFrozenCaptureJobStockOriginals: (value, options = {}) => frozenCaptureJobSourceStage(value, options, 'geographic_v1'),
     /** Current-authorized exact identity/one-hop validation, not numerical facts,
      * historical/freshness coverage or a legacy acquisition capability. */
-    verifyFrozenCaptureJobSourceIdentityClosure: (value, options = {}) => frozenCaptureJobSourceStage(value, options, true, true, true),
-    prepareFrozenCaptureJobTypedOriginals: (value, options = {}) => frozenCaptureJobSourceStage(value, options, true, true, true, true),
+    verifyFrozenCaptureJobSourceIdentityClosure: (value, options = {}) => frozenCaptureJobSourceStage(value, options, 'identity_v1'),
+    prepareFrozenCaptureJobTypedOriginals: (value, options = {}) => frozenCaptureJobSourceStage(value, options, 'typed_v1'),
     // Internal numerical pages only. No API/browser exposure, checkpoint write,
     // acquisition receipt or accepted report is established by reading a page.
-    readFrozenCaptureJobStockMetrics: (value, options = {}) => frozenCaptureJobSourceStage(value, options, true, true, true, true, true),
+    readFrozenCaptureJobStockMetrics: (value, options = {}) => frozenCaptureJobSourceStage(value, options, 'stock_metrics_v1'),
     // Exact prepared-cache reuse is separate from the per-job V1 typed path.
     // Still internal/unmounted: no new job phase, builder, schedule or Apply.
-    readSharedFrozenCaptureJobStockMetrics: (value, options = {}) => frozenCaptureJobSourceStage(value, options, true, true, true, false, false, true),
+    readSharedFrozenCaptureJobStockMetrics: (value, options = {}) => frozenCaptureJobSourceStage(value, options, 'shared_stock_metrics_v1'),
     async capture(value, options = {}) {
     if (!options || Object.getPrototypeOf(options) !== Object.prototype)
       fail('invalid_options');

@@ -11,6 +11,9 @@ spatial hashes, request and approved combined source purpose. Existing V1
 source/verification/identity/typed/metric paths reject this phase; V2 refuses
 V1 source checkpoints and roots. The phase allowlist gains just this DATA phase,
 not a permissive version namespace or an unimplemented verification/Apply phase.
+An immutable internal named-stage table carries the behavior flags and allowed
+checkpoint phases together; no positional boolean combination or caller stage
+selection can accidentally enter a legacy verifier or change representation.
 
 Every bounded page transaction reloads the actual current database actor and
 checks assignment/draft/subject, exact request and live claim, CAD and combined

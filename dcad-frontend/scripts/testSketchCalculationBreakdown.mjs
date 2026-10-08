@@ -57,7 +57,7 @@ test('labels are escaped and the view introduces no additional network calls', (
   const breakdown = fixture();
   breakdown.areas[0].label = '<script>alert(1)</script>';
   const html = render(breakdown);
-  assert.doesNotMatch(html, /<script>/);
+  assert.equal(html.includes('<script>'), false);
   assert.match(html, /&lt;script&gt;/);
   assert.doesNotMatch(source, /fetch\(|setInterval\(|saveDraft\(/);
 });

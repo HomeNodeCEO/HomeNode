@@ -1631,3 +1631,69 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       frozenSpatialOptions({...options,claim})).page({kind:'source_records',cursor:''})),/claim_lost/);
   }finally{await pool.end();}
 });
+
+test('isolated PostgreSQL: prepares 60001 distinct source seeds once and reuses indexed keys without original scans',{
+  skip:!process.env.DATABASE_URL,timeout:360_000,
+},async()=>{
+  const target=await prepareNeighborhoodCiDatabase(),{default:pg}=await import('pg');
+  const pool=new pg.Pool({connectionString:target.connectionString,max:2,statement_timeout:120_000});
+  try{
+    await pool.query(NEIGHBORHOOD_CACHED_SOURCE_SCHEMA);
+    await pool.query('ALTER TABLE core.primary_improvements ADD COLUMN IF NOT EXISTS pool boolean');
+    await pool.query("INSERT INTO core.accounts(account_id,county,subdivision) VALUES('DENSE-SEED-A','Dallas','Synthetic Dense Seeds')");
+    await pool.query(`INSERT INTO gis.dcad_parcels(object_id,account_id,subdivision_name,geom)
+      VALUES(1,'DENSE-SEED-A','Synthetic Dense Seeds',ST_Multi(ST_MakeEnvelope(-96.7,32.9,-96.699,32.901,4326)))`);
+    await pool.query(`INSERT INTO core.sales_source_records(id,primary_account_id,current_price,close_date)
+      SELECT n,'DENSE-SEED-A',100000+n,'2010-01-01'::date FROM generate_series(1,60001) n`);
+    const frozen=await runNeighborhoodGroupIndex(pool,{batchSize:250,logger:{info(){}},retainOriginalSources:true});
+    const organization=randomUUID(),actor=randomUUID(),report=randomUUID(),operation=randomUUID();
+    await pool.query("INSERT INTO app_auth.organizations(id,legal_name,display_name) VALUES($1,'Dense seed synthetic','Dense seed synthetic')",[organization]);
+    await pool.query("INSERT INTO app_auth.users(id,email,display_name) VALUES($1,$2,'Dense seed actor')",[actor,`${actor}@example.test`]);
+    const assignment=(await pool.query(`INSERT INTO app.assignment_files(organization_id,account_id,file_number,created_by_user_id,assigned_appraiser_user_id)
+      VALUES($1,'DENSE-SEED-A',$2,$3,$3) RETURNING id::text`,[organization,`DENSE-${randomUUID()}`,actor])).rows[0].id;
+    await pool.query(`INSERT INTO app.report_files(id,organization_id,account_id,workflow_type,file_number,custom_assignment_file_id)
+      VALUES($1,$2,'DENSE-SEED-A','custom_appraisal',$3,$4)`,[report,organization,`DENSE-${randomUUID()}`,assignment]);
+    const scope={organization_id:organization,report_file_id:report,assignment_file_id:assignment,account_id:'DENSE-SEED-A'},options={scope,actorUserId:actor};
+    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).enqueue({scope,actorUserId:actor,
+      request:{operation_id:operation,observation_period:{start_date:'2025-01-01',end_date:'2026-10-07'}}}));
+    const claim=await withCustomCohortJobTransaction(pool,async client=>{
+      const [job]=await createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900});
+      return {operation_id:operation,claim_token:job.claim_token,attempts:job.attempts};});
+    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).pinPreparedGeneration(claim,options));
+    // DATA-level builder/load acceptance only: a synthetic subject-intent
+    // binding is not current licensed actual-owner acquisition or a report.
+    const seedOptions={...frozenSpatialOptions({...options,claim}),subjectIntent:{content_sha256:'f'.repeat(64),canonical_utf8_bytes:'100'},checkBudget(){}};
+    await withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenJobStock(client,seedOptions).prepare());
+    const seedCalls=[];const measured={async connect(){const client=await pool.connect();return {release:client.release.bind(client),async query(config){
+      seedCalls.push(config.text);const result=await client.query(config);
+      assert.ok(result.rows.length<=1,'dense seed preparation returns only metadata or a count, never an ID/payload array');return result;}};}};
+    const started=performance.now();
+    const seeded=await withCustomCohortJobTransaction(measured,client=>createNeighborhoodFrozenJobSourceSeeds(client,seedOptions).prepare());
+    const prepareMs=Math.round(performance.now()-started),reuseFrom=seedCalls.length,reuseStarted=performance.now();
+    const reused=await withCustomCohortJobTransaction(measured,client=>createNeighborhoodFrozenJobSourceSeeds(client,seedOptions).prepare());
+    const reuseMs=Math.round(performance.now()-reuseStarted);
+    assert.deepEqual(reused,seeded);assert.equal(seeded.seed_count,'60001');assert.equal(seeded.generation_id,frozen.generationId);
+    assert.equal(seeded.authority,'not_established');assert.equal(seeded.coverage,'seed_lookup_only');
+    assert.ok(Buffer.byteLength(JSON.stringify(seeded))<16_000);
+    assert.equal(seedCalls.filter(sql=>sql.includes('neighborhood-frozen-job-seeds:rows')).length,1);
+    assert.ok(!seedCalls.slice(reuseFrom).some(sql=>/INSERT|UPDATE|DELETE|ST_DWithin|SELECT DISTINCT original.source_record_id/.test(sql)));
+    const totals=(await pool.query(`SELECT count(*)::text AS n,min(source_record_id)::text AS first,max(source_record_id)::text AS last,
+      sum(source_record_id)::text AS total FROM app.neighborhood_custom_cohort_source_seeds WHERE operation_id=$1`,[operation])).rows[0];
+    assert.deepEqual(totals,{n:'60001',first:'1',last:'60001',total:'1800090001'});
+    const plans=(await pool.query(`EXPLAIN (FORMAT JSON) SELECT source_record_id FROM app.neighborhood_custom_cohort_source_seeds
+      WHERE operation_id=$1 AND generation_id=$2 AND source_record_id=$3`,[operation,frozen.generationId,'60000'])).rows;
+    assert.match(JSON.stringify(plans),/Index(?: Only)? Scan/,'exact seed-key lookups use the operation/source primary index');
+    const parityCalls=[];const pagePool={async connect(){const client=await pool.connect();return {release:client.release.bind(client),async query(config){
+      parityCalls.push(config.text);return client.query(config);}};}};
+    const pageStarted=performance.now(),pageInput={kind:'source_records',cursor:'59999',rowLimit:2};
+    const page=await withCustomCohortJobTransaction(pagePool,client=>createNeighborhoodPreparedJobSourcePages(client,seedOptions).page(pageInput));
+    const pageMs=Math.round(performance.now()-pageStarted);
+    const old=await withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenJobSourcePages(client,seedOptions).page(pageInput));
+    assert.deepEqual(page,old);assert.deepEqual(page.rows.map(row=>row.row_key),['60000','60001']);
+    assert.equal(JSON.parse(page.rows[1].payload_text).close_date,'2010-01-01');
+    assert.ok(!parityCalls.some(sql=>/INSERT|UPDATE|DELETE|SELECT DISTINCT original.source_record_id|ST_DWithin/.test(sql)));
+    console.info('[native-prepared-source-seeds-dense]',{stock_accounts:1,seed_count:60001,prepare_ms:prepareMs,
+      fresh_reuse_ms:reuseMs,late_page_ms:pageMs,descriptor_bytes:Buffer.byteLength(JSON.stringify(seeded)),
+      old_late_page_exact_parity:true,primary_index_used:true,source_acquisition:false,production_latency:false});
+  }finally{await pool.end();}
+});

@@ -40,6 +40,12 @@ lost-commit continuation, direct database guards and a same-count/wrong-set
 publication attempt. The 60,001-stock-account fixture has only one seeded
 transaction: its prepare/fresh-page measurements are not a complete large
 sales graph, production latency or whole authorized >50k acquisition claim.
+An additional dense DATA fixture prepares 60,001 distinct seed IDs for one
+stock account, independently checks the full key count/range/sum, verifies an
+indexed key lookup and a late page against the old reader, and measures fresh
+metadata-only reuse. It returns no dense ID/payload array to Node. That fixture
+does not establish six-million-key readiness or complete licensed acquisition;
+any larger build still has to finish within the fixed fail-closed query bounds.
 
 No route, worker, schedule, job phase, source grant, UI default, Apply behavior
 or production deployment is enabled. Job pin/terminal transfer and seed-cache

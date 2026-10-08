@@ -317,8 +317,10 @@ test('the V2 reference prefix is one exact fenced DATA phase, not a permissive v
     {content_sha256:'a'.repeat(64),canonical_utf8_bytes:'123'}]};
   assert.deepEqual(await repository.saveCheckpoint(claim,options,checkpoint),checkpoint);
   assert.deepEqual(await repository.readCheckpoint(claim,options),checkpoint);
+  assert.deepEqual(await repository.saveCheckpoint(claim,options,{...checkpoint,phase:'frozen_verify_refs_v2'}),
+    {...checkpoint,phase:'frozen_verify_refs_v2'});
   const before=calls;
-  for(const phase of ['frozen_source_refs_v3','frozen_verify_refs_v2','frozen_source_refs_v2_apply','source_reference_prefix_retained'])
+  for(const phase of ['frozen_source_refs_v3','frozen_verify_refs_v3','frozen_source_refs_v2_apply','source_reference_prefix_retained'])
     await assert.rejects(repository.saveCheckpoint(claim,options,{...checkpoint,phase}),/invalid_checkpoint/);
   assert.equal(calls,before,'unimplemented verification/Apply/version phases execute no SQL');
 });

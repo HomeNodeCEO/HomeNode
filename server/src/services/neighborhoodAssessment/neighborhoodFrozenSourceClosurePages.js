@@ -2,6 +2,7 @@ import { performance } from 'node:perf_hooks';
 import { types } from 'node:util';
 import { createNeighborhoodFrozenSpatialPages } from './neighborhoodFrozenSpatialPages.js';
 import { createNeighborhoodFrozenJobStock } from './neighborhoodFrozenJobStock.js';
+import { createNeighborhoodFrozenJobSourceSeeds } from './neighborhoodFrozenJobSourceSeeds.js';
 import { NEIGHBORHOOD_FROZEN_PAGE_LIMITS } from './neighborhoodFrozenSourcePages.js';
 
 export const NEIGHBORHOOD_FROZEN_CLOSURE_LIMITS = Object.freeze({
@@ -90,6 +91,15 @@ function plans(stock,indexed=false) { return Object.freeze(Object.fromEntries(Ob
 }))); }
 export const NEIGHBORHOOD_FROZEN_CLOSURE_SQL = plans(STOCK);
 export const NEIGHBORHOOD_FROZEN_JOB_CLOSURE_SQL = plans(INDEXED_STOCK,true);
+// Flat indexed relations let EXISTS predicates reach the account/seed PKs.
+// Do not materialize the complete seed/account sets again for every page.
+const PREPARED_STOCK = `selected_accounts AS NOT MATERIALIZED (
+  SELECT account_id FROM app.neighborhood_custom_cohort_stock_accounts WHERE operation_id=$2::uuid
+), seeds AS NOT MATERIALIZED (
+  SELECT source_record_id FROM app.neighborhood_custom_cohort_source_seeds
+  WHERE operation_id=$2::uuid AND generation_id=$1::uuid
+)`;
+export const NEIGHBORHOOD_PREPARED_JOB_CLOSURE_SQL = plans(PREPARED_STOCK,true);
 
 // Independent identity validation uses EXACTLY the same indexed one-hop scope.
 // SQL reads bounded originals, but returns only one constant-size aggregate.
@@ -188,6 +198,18 @@ export function createNeighborhoodFrozenJobSourcePages(client,rawOptions) {
   const {signal,...stockOptions}=options;
   const stock=createNeighborhoodFrozenJobStock(client,{...stockOptions,checkBudget:options.checkBudget??(()=>{})});
   return sourcePages(client,options,()=>stock.read(),NEIGHBORHOOD_FROZEN_JOB_CLOSURE_SQL,
+    start=>[start.generation_id,start.operation_id]);
+}
+
+/** Read the exact already prepared one-hop seed index. No preparation or
+ * fallback occurs here; the licensed owner prepares it once, atomically.
+ * Payload projection, key order, page admission and original scope remain
+ * byte-identical to the original indexed reader, which verifies independently.
+ */
+export function createNeighborhoodPreparedJobSourcePages(client,rawOptions) {
+  const options=data(rawOptions,['claim','scope','actorUserId','geometryInput','discovery','subjectIntent'],['signal','checkBudget']);
+  const seeds=createNeighborhoodFrozenJobSourceSeeds(client,{...options,checkBudget:options.checkBudget??(()=>{})});
+  return sourcePages(client,options,async()=>(await seeds.read()).stock,NEIGHBORHOOD_PREPARED_JOB_CLOSURE_SQL,
     start=>[start.generation_id,start.operation_id]);
 }
 

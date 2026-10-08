@@ -321,6 +321,8 @@ test('the V2 reference prefix is one exact fenced DATA phase, not a permissive v
     {...checkpoint,phase:'frozen_verify_refs_v2'});
   assert.deepEqual(await repository.saveCheckpoint(claim,options,{...checkpoint,phase:'frozen_geo_verify_refs_v2'}),
     {...checkpoint,phase:'frozen_geo_verify_refs_v2'});
+  assert.deepEqual(await repository.saveCheckpoint(claim,options,{...checkpoint,phase:'frozen_identity_refs_v2'}),
+    {...checkpoint,phase:'frozen_identity_refs_v2'});
   const before=calls;
   for(const phase of ['frozen_source_refs_v3','frozen_verify_refs_v3','frozen_source_refs_v2_apply','source_reference_prefix_retained'])
     await assert.rejects(repository.saveCheckpoint(claim,options,{...checkpoint,phase}),/invalid_checkpoint/);

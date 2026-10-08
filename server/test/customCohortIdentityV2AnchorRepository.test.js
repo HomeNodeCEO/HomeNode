@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import { createCustomCohortIdentityV2AnchorRepository as create } from '../src/services/neighborhoodAssessment/customCohortIdentityV2AnchorRepository.js';
 const claim={operation_id:'11111111-1111-4111-8111-111111111111',claim_token:'22222222-2222-4222-8222-222222222222',attempts:1};
 const scope={organization_id:'33333333-3333-4333-8333-333333333333',report_file_id:'44444444-4444-4444-8444-444444444444',assignment_file_id:'7',account_id:'S'};
@@ -43,4 +44,21 @@ test('identity head refuses autocommit, current claim loss, corrupt acknowledgem
     const f=fixture();f.current={...bound,[key]:ref('f'),receipt_reference:ref('a'),sequence:1};
     await assert.rejects(f.repository.read(),/binding_changed/);
   }
+});
+test('additive identity guard binds both issued DONE prerequisites and exact native next-prefix/terminal coverage',()=>{
+  const name='20261114_custom_cohort_identity_v2_anchors.sql';
+  const registry=readFileSync(new URL('../src/database/mobileMigrations.js',import.meta.url),'utf8');
+  assert.ok(registry.indexOf(name)>registry.indexOf('20261113_custom_cohort_geographic_v2_anchors.sql'));
+  const sql=readFileSync(new URL(`../migrations/${name}`,import.meta.url),'utf8');
+  for(const m of sql.matchAll(/CREATE (?:TABLE|FUNCTION|TRIGGER) (?:app\.)?([a-z0-9_]+)/g))assert.ok(Buffer.byteLength(m[1])<=63);
+  for(const s of ['graph_anchor.receipt_reference<>NEW.graph_reference','geo_anchor.receipt_reference<>NEW.geographic_reference',
+    "geo_receipt->'after'->>'done' IS DISTINCT FROM 'true'","receipt->'layer_counts' IS DISTINCT FROM counts",
+    "before_state IS DISTINCT FROM old_receipt->'after'",'NEW.sequence<>OLD.sequence+1','LIMIT $4+1',
+    'completed:=candidates_count=delta AND delta<250','original.source_record_id IS NULL AND EXISTS',
+    "WHEN %L='parcels' THEN original.payload->>'sync_run_id' IS NULL",'actual_unknown',
+    'missing_count>stock.account_count',"'frozen_identity_refs_v2'",'BEFORE TRUNCATE'])assert.ok(sql.includes(s),s);
+  assert.doesNotMatch(sql,/ST_DWithin|DISABLE TRIGGER|DROP TABLE|UPDATE app\.report_files|jsonb_agg\(original\.payload/);
+  const owner=readFileSync(new URL('../src/services/neighborhoodAssessment/customCohortContextCapture.js',import.meta.url),'utf8');
+  assert.ok(owner.includes("if(identityVerifying&&issued?.after.done!==true)fail('unfinished_geographic_verification')"));
+  assert.ok(owner.includes('createNeighborhoodFrozenJobSourceIdentity(client,stockOptions,graph).step(issued?.after??null)'));
 });

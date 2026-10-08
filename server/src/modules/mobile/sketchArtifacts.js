@@ -1,4 +1,5 @@
 import PDFDocument from "pdfkit";
+import { appendSketchCalculationPages } from "./sketchCalculationPdf.js";
 
 const PAGE = Object.freeze({ width: 792, height: 612 });
 const STYLES = Object.freeze({
@@ -215,7 +216,8 @@ export function renderSketchSvg(sketch, options = {}) {
 }
 
 function drawPdfArea(doc, area, rooms, index, count, metadata, document) {
-  const transform = plotTransform(area, { x: 38, y: 100, width: 535, height: 430 });
+  // Reserve space for exterior dimension text before the metadata sidebar.
+  const transform = plotTransform(area, { x: 58, y: 106, width: 498, height: 408 });
   const points = area.vertices.map((vertex) => transform.point(vertex));
   const style = styleFor(area.classification);
 
@@ -224,7 +226,7 @@ function drawPdfArea(doc, area, rooms, index, count, metadata, document) {
   doc.font("Helvetica").fontSize(9).fillColor("#475569")
     .text(metadata.propertyLabel, 36, 52, { width: 520 });
   doc.fontSize(8).text("Revision " + metadata.revision, 620, 30, { width: 135, align: "right" });
-  doc.text("Page " + (index + 1) + " of " + count, 620, 44, { width: 135, align: "right" });
+  doc.text("Outline " + (index + 1) + " of " + count, 620, 44, { width: 135, align: "right" });
   doc.moveTo(36, 72).lineTo(PAGE.width - 36, 72).strokeColor("#cbd5e1").lineWidth(1).stroke();
 
   doc.save().moveTo(points[0].x, points[0].y);
@@ -274,6 +276,7 @@ export async function renderSketchPdf(sketch, options = {}) {
   const timestamp = Number.isNaN(parsedTimestamp.getTime()) ? new Date("2000-01-01T00:00:00.000Z") : parsedTimestamp;
   const doc = new PDFDocument({
     autoFirstPage: false,
+    bufferPages: true,
     compress: true,
     info: {
       Title: metadata.fileNumber + " Measured Sketch",
@@ -301,6 +304,12 @@ export async function renderSketchPdf(sketch, options = {}) {
       document,
     );
   });
+  appendSketchCalculationPages(doc, document, metadata);
+  const pages = doc.bufferedPageRange();
+  for (let index = 0; index < pages.count; index++) {
+    doc.switchToPage(pages.start + index);
+    doc.font("Helvetica").fontSize(8).fillColor("#64748b").text(`Page ${index + 1} of ${pages.count}`, 36, doc.page.height - 20, { width: doc.page.width - 72, align: "right", lineBreak: false });
+  }
   doc.end();
   return complete;
 }

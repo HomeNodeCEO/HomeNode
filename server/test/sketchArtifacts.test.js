@@ -67,7 +67,7 @@ test("sketch PDF is a report-ready letter exhibit", async () => {
   });
   assert.equal(pdf.subarray(0, 5).toString("ascii"), "%PDF-");
   assert.ok(pdf.length > 2_000);
-  assert.equal((pdf.toString("latin1").match(/\/Type \/Page\b/g) || []).length, 1);
+  assert.equal((pdf.toString("latin1").match(/\/Type \/Page\b/g) || []).length, 3);
 });
 
 test("confirmed mobile sketch rendering produces a deterministic UAD-safe PNG", () => {

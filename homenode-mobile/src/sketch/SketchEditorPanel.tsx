@@ -46,6 +46,7 @@ import {
   type SketchPoint,
 } from "./model";
 import { SketchClassificationSelect } from "./SketchClassificationSelect";
+import { SketchCalculationsPanel } from "./SketchCalculationsPanel";
 import { SketchDirectionPad, SketchDrawingControls } from "./SketchDrawingControls";
 import { useSketchSync } from "./sync";
 
@@ -1155,6 +1156,7 @@ export function SketchEditorPanel({
             : `${calculation.closureGapFeet.toFixed(1)} ft closure gap · area pending`}
       </Text>
       {draft.areas.length > 1 ? <Action title={`Remove selected ${selectedArea.glaTreatment === "deduction" ? "cutout" : "area"}`} danger secondary onPress={removeArea} /> : null}
+      <SketchCalculationsPanel draft={draft} />
 
       <Modal
         animationType="slide"

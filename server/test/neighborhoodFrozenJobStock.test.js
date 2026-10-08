@@ -109,7 +109,9 @@ test('shared headers cannot substitute a different source snapshot/profile/date,
 
 test('shared metric SQL is a fixed exact-date/account-index projection with identical numerical resolution',()=>{
   assert.match(NEIGHBORHOOD_SHARED_STOCK_METRIC_PAGE_SQL,/FROM app\.neighborhood_frozen_typed_rows/);
-  assert.match(NEIGHBORHOOD_SHARED_STOCK_METRIC_PAGE_SQL,/generation_id=\$2::uuid AND profile_sha256=\$8 AND effective_date=\$5::date/);
+  // The parameter is used by the common year-bound text check as well. The
+  // first SQL reference must keep it text, not infer DATE and break left().
+  assert.match(NEIGHBORHOOD_SHARED_STOCK_METRIC_PAGE_SQL,/generation_id=\$2::uuid AND profile_sha256=\$8 AND effective_date=\$5::text::date/);
   assert.match(NEIGHBORHOOD_SHARED_STOCK_METRIC_PAGE_SQL,/kind='parcels' AND account_id=a.account_id/);
   assert.doesNotMatch(NEIGHBORHOOD_SHARED_STOCK_METRIC_PAGE_SQL,/FROM app\.neighborhood_custom_cohort_typed_original_rows|ST_DWithin|INSERT|UPDATE/);
   for(const fragment of ['CASE WHEN valid_numeric THEN literal::numeric END',"WHEN low<>high THEN 'conflicting'",'cumulative+1<=$6 AND bytes<=$7']) {

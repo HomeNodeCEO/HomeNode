@@ -132,9 +132,11 @@ SELECT coalesce('['||string_agg(encoded,',' ORDER BY account_id)||']','[]') AS p
 export const NEIGHBORHOOD_FROZEN_STOCK_METRIC_PAGE_SQL = stockMetricSql(`
       SELECT typed->'observations' AS observations FROM app.neighborhood_custom_cohort_typed_original_rows
       WHERE operation_id=$1::uuid AND generation_id=$2::uuid AND kind='parcels' AND account_id=a.account_id`);
+// Bind $5 as text at its first reference; the shared projection also uses
+// left($5,4). Only the cache key comparison converts that ISO text to DATE.
 export const NEIGHBORHOOD_SHARED_STOCK_METRIC_PAGE_SQL = stockMetricSql(`
       SELECT typed->'observations' AS observations FROM app.neighborhood_frozen_typed_rows
-      WHERE generation_id=$2::uuid AND profile_sha256=$8 AND effective_date=$5::date
+      WHERE generation_id=$2::uuid AND profile_sha256=$8 AND effective_date=$5::text::date
         AND kind='parcels' AND account_id=a.account_id`, true);
 
 function exactDecimal(value) {

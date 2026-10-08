@@ -6,6 +6,9 @@ import { createNeighborhoodFrozenJobStock } from '../src/services/neighborhoodAs
 import { createNeighborhoodFrozenJobStockOriginals, NEIGHBORHOOD_FROZEN_STOCK_ORIGINAL_PAGE_SQL,
   NEIGHBORHOOD_FROZEN_STOCK_ORIGINAL_TOTALS_SQL } from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStockOriginals.js';
 import { neighborhoodFrozenSpatialDefinition } from '../src/services/neighborhoodAssessment/neighborhoodFrozenSpatialPages.js';
+import { createNeighborhoodFrozenJobSourceIdentity } from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobSourceIdentity.js';
+import { NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL, NEIGHBORHOOD_FROZEN_JOB_IDENTITY_COVERAGE_SQL }
+  from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourceClosurePages.js';
 
 const id='70000000-0000-4000-8000-000000000001',date='2026-10-07T00:00:00.000000Z';
 const claim={operation_id:id,claim_token:'70000000-0000-4000-8000-000000000002',attempts:1};
@@ -210,4 +213,80 @@ test('fixed geographic verification plans preserve NULL originals and normalize 
   assert.match(NEIGHBORHOOD_FROZEN_STOCK_ORIGINAL_TOTALS_SQL,/FULL JOIN recorded USING\(account_id\)/);
   assert.doesNotMatch(NEIGHBORHOOD_FROZEN_STOCK_ORIGINAL_PAGE_SQL+NEIGHBORHOOD_FROZEN_STOCK_ORIGINAL_TOTALS_SQL,
     /ST_DWithin|FROM gis\.|FROM core\.|jsonb_agg|INSERT|UPDATE|DELETE/);
+});
+
+const identityGraph={root:{content_sha256:'d'.repeat(64),canonical_utf8_bytes:'100'},
+  layer_counts:{parcels:60001,accounts:60000,source_records:1,sales:2,sale_links:2,sync_state:1,sync_runs:1}};
+function identityFixture(hook=()=>{},graph=identityGraph){
+  const f=fixture(async call=>{
+    const supplied=await hook(call);if(supplied)return supplied;
+    if(call.text.includes('job-identity:coverage'))return result({missing_account_count:0});
+    const kind=Object.keys(NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL).find(k=>call.text===NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL[k]);
+    if(kind){const total=graph.layer_counts[kind],previous=call.values[2];
+      const seen=previous?(kind==='accounts'?Number(previous.slice(1)):Number(previous)):0;
+      const count=Math.min(250,total-seen),last=seen+count;
+      return result({page_count:count,candidate_count:count,invalid_count:0,
+        unknown_origin_count:kind==='parcels'?count:0,
+        last_row_key:count?kind==='accounts'?`A${String(last).padStart(6,'0')}`:kind==='sync_state'?'dcad_parcels'
+          :kind==='sync_runs'?id:String(last):null});}
+  },true);
+  return {...f,identity:()=>createNeighborhoodFrozenJobSourceIdentity(f.client,options,graph)};
+}
+
+test('identity DATA validation traverses >50k exact rows using fresh bounded aggregate steps, never dense identifiers',async()=>{
+  const f=identityFixture();let progress=null,done=false,steps=0;
+  while(!done){const step=await f.identity().step(progress);progress=step.progress;done=step.all_layers_verified;
+    assert.equal(step.authority,'not_established');assert.equal(step.coverage,'identity_and_one_hop_associations_only');
+    assert.ok(Buffer.byteLength(JSON.stringify(progress))<450);assert.ok(++steps<500);}
+  assert.equal(steps,487);assert.equal(progress.unknown_parcel_origins,60001);assert.equal(progress.missing_account_count,0);
+  const from=f.calls.length;assert.equal((await f.identity().step(progress)).advanced,false);
+  assert.ok(!f.calls.slice(from).some(c=>c.text.includes('job-identity:')));
+  assert.ok(!f.calls.some(c=>/ST_DWithin|job-stock:begin|frozen-spatial:counts/.test(c.text)));
+});
+
+test('identity steps preserve byte-limited prefixes, explicit absent-account coverage, and strict independent layer counts',async()=>{
+  const small={...identityGraph,layer_counts:{parcels:2,accounts:0,source_records:0,sales:0,sale_links:0,sync_state:0,sync_runs:0}};
+  let first=true;const f=identityFixture(({text})=>{
+    if(text===NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL.parcels&&first){first=false;return result({page_count:1,candidate_count:2,
+      invalid_count:0,unknown_origin_count:1,last_row_key:'1'});}
+    if(text.includes('job-identity:coverage'))return result({missing_account_count:7});
+  },small);
+  let p=(await f.identity().step(null)).progress;assert.equal(p.kind_index,0);assert.equal(p.layer_rows,1);
+  p=(await f.identity().step(p)).progress;assert.equal(p.kind_index,1);assert.equal(p.layer_rows,0);
+  for(let i=0;i<6;i++)p=(await f.identity().step(p)).progress;
+  assert.equal(p.kind_index,7);assert.equal(p.missing_account_count,7);assert.equal(p.unknown_parcel_origins,2);
+  const wrong=identityFixture(({text})=>text===NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL.parcels
+    ?result({page_count:1,candidate_count:1,invalid_count:0,unknown_origin_count:0,last_row_key:'1'}):null,small);
+  await assert.rejects(wrong.identity().step(null),/layer_count_mismatch/);
+});
+
+test('identity malformed/foreign continuations and aggregate mismatches refuse without pretending typed acquisition',async()=>{
+  const f=identityFixture(),first=await f.identity().step(null);
+  for(const patch of [{binding_sha256:'e'.repeat(64)},{layer_rows:60002},{after:'-1'},{kind_index:8},
+    {missing_account_count:0},{unknown_parcel_origins:60002},{extra:true}])
+    await assert.rejects(f.identity().step({...first.progress,...patch}),/invalid_input|invalid_progress|binding_changed/);
+  for(const patch of [{invalid_count:1},{candidate_count:0},{page_count:251},{last_row_key:null},
+    {unknown_origin_count:251},{page_count:0,last_row_key:null,candidate_count:1}]){
+    const bad=identityFixture(({text})=>text===NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL.parcels
+      ?result({page_count:250,candidate_count:250,invalid_count:0,unknown_origin_count:0,last_row_key:'250',...patch}):null);
+    await assert.rejects(bad.identity().step(null),/identity_mismatch/);
+  }
+  let invoked=false;const getter={...first.progress};Object.defineProperty(getter,'after',{enumerable:true,get(){invoked=true;return '250';}});
+  await assert.rejects(f.identity().step(getter),/invalid_input/);assert.equal(invoked,false);
+  await assert.rejects(f.identity().step(new Proxy(first.progress,{})),/invalid_input/);
+  const cancelled=createNeighborhoodFrozenJobSourceIdentity(f.client,{...options,checkBudget(){throw Error('cancelled');}},identityGraph);
+  const from=f.calls.length;await assert.rejects(cancelled.step(null),/cancelled/);assert.equal(f.calls.length,from);
+  const lost=identityFixture(({text})=>text.includes('generation-fence')?{rowCount:0,rows:[]}:null);
+  await assert.rejects(lost.identity().step(null),/claim_lost/);
+});
+
+test('fixed identity scope uses original stock and one-hop seeds, preserves NULL associations and refuses duplicate package positions',()=>{
+  for(const sql of Object.values(NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL)){
+    assert.match(sql,/neighborhood_custom_cohort_stock_accounts WHERE operation_id=\$2::uuid/);
+    assert.match(sql,/LIMIT 250/);assert.match(sql,/prefix_bytes<=8000000/);
+    assert.doesNotMatch(sql,/FROM core\.|FROM gis\.|ST_DWithin|jsonb_agg|INSERT|UPDATE|DELETE|sale_price.*::(?:float|double)/);
+  }
+  assert.match(NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL.sale_links,/other\.source_record_id=original\.source_record_id/);
+  assert.match(NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL.sales,/IS NOT DISTINCT FROM original\.source_record_id::text/);
+  assert.match(NEIGHBORHOOD_FROZEN_JOB_IDENTITY_COVERAGE_SQL,/NOT EXISTS/);
 });

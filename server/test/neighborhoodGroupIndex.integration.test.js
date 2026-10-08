@@ -1513,7 +1513,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         const page=await withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenJobSourcePages(client,refsGraphOptions)
           .page({kind,cursor,rowLimit:1}));
         assert.equal(page.spatial_definition_sha256,refsBinding.spatial_definition_sha256);
-        assert.equal(assessmentEvidenceDigest(page.original),refsBinding.source_original_sha256);
+        assert.equal(createHash('sha256').update(canonicalAssessmentJson(page.original)).digest('hex'),refsBinding.source_original_sha256);
         refsGraphRoot=(await withCustomCohortJobTransaction(pool,client=>refsGraphStore(client).append({root:refsGraphRoot,
           original_text:JSON.stringify({binding:refsBinding,page}),row_limit:1}))).root;
         cursor=page.next_cursor;done=page.end_of_layer;

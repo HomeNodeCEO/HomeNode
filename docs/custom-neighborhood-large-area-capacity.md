@@ -1,5 +1,61 @@
 # Complete larger-area Custom neighborhood studies
 
+## Shared-original page references V2 (2026-10-08, representation only)
+
+`cohortOriginalSourceReferencesV2` is an explicit new representation, not a cast
+of a V1 original chain or an acquisition grant. Each appended original page
+stores just two small metadata blobs: a reverse-chain query/digest descriptor
+and a seven-layer root. No original payload string or text chunk is copied into
+a report's blob graph. It retains the original generation/header/spatial hashes,
+organization/report/assignment/subject-account/job binding, fixed indexed
+one-hop query plan, native kind/cursor bounds, row limit, row/byte counts, exact
+original digest and previous node reference. The V1 codec remains unchanged.
+
+A fresh owner-supplied adapter reproduces one bounded original `{binding,page}`
+text from the same pinned immutable generation and completed geographic stock.
+The codec independently checks its complete wrapper digest/bytes, original
+header/definition binding, native key order, row count, end flag and query bounds.
+It never parses payload strings into new numerical facts, copies them on a cache
+miss, follows a current/latest generation or falls back to mutable CAD/MLS.
+Missing/changed originals or metadata refuse; a late failure is not a shortened
+completed layer. Only metadata is passed through the unchanged legacy blob and
+canonical-JSON ceilings. Large escaped page text uses the existing bounded
+original-reader envelope, not an enlarged JSON/scanner profile.
+
+The fixed seven-layer/page/row/logical-original limits remain 200,000 pages,
+two million rows per layer, fourteen million rows and eight GB of original text.
+Finite 60-second, 1,024-I/O and 32-MB shared operation bounds, cancellation and
+serial settlement apply. Original-read bytes are charged before the adapter
+is invoked. Metadata-only `describe` does not read originals or verify coverage.
+A caller-supplied continuation position is still DATA, not root reachability:
+the new owner must start at each actual head, follow every edge, reconcile all
+layer counts and independently establish original source/identity completeness.
+
+The actual authorized V2 owner/checkpoint phases are **not implemented here**.
+That owner must check current database actor/assignment/draft/subject, exact
+request/claim, live generation pin, CAD and combined source-purpose rights at
+both ends; stage the root/checkpoint in one transaction; and keep the exact
+generation AND stock reachable until terminal transfer/retirement is proven.
+An adapter callback, matching digest, end marker or retained root is not any
+of those rights. This stage does not permit pin release or automatic cleanup.
+
+Unit tests cover all seven layers, 60,001 synthetic rows over 241 pages, two
+small puts per page, exact >1.5-MB escaped/unsafe-decimal text without payload
+copies, lost acknowledgment replay, missing/changed late originals, plan/node/
+scope/limit corruption, V1/V2 separation, mutation during pending I/O, callback
+failure/cancellation and budgets. The native CI fixture must actually execute
+fresh-client fixed SQL reproduction byte-for-byte against existing V1 originals
+for all seven adversarial layers, real lost-COMMIT metadata reuse, small/no-payload
+blob inspection, unchanged V1 checkpoints and foreign-organization refusal.
+That small representation fixture and synthetic >50k traversal are not whole
+licensed >50k acquisition, source-rights activation or production map timing.
+
+No HTTP route, worker, job phase, UI default, schedule, source grant, Apply or
+production deployment is changed. Still remaining: the fresh-authorized V2
+owner/independent full verification, shared typed/date-neutral interpretation,
+amenities and transaction resolution, exact selected-union statistics, coherent
+publication, durable workers/retirement, physical load and large-area/live QA.
+
 ## Prepared exact job-stock source seeds (2026-10-08, not activated)
 
 The internal frozen-source acquisition owner prepares the exact all-date,

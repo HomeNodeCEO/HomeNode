@@ -27,6 +27,8 @@ import { createNeighborhoodCohortBlobRepository }
 import { canonicalAssessmentJson } from '../src/services/neighborhoodAssessment/contract.js';
 import { createCohortOriginalSourceChainV1Store }
   from '../src/services/neighborhoodAssessment/cohortOriginalSourceChainV1.js';
+import { createCohortOriginalSourceReferencesV2Store }
+  from '../src/services/neighborhoodAssessment/cohortOriginalSourceReferencesV2.js';
 import { createCustomCohortContextCapture }
   from '../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { createNeighborhoodFrozenJobStock }
@@ -1268,6 +1270,91 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       const ref=ownedCheckpoint.evidence_refs[2];return JSON.parse(await createNeighborhoodCohortBlobRepository(client,organization).get(ref.content_sha256,ref.canonical_utf8_bytes));});
     const ownedBinding={...scope,operation_id:sourceOperation,generation_id:frozen.generationId,
       spatial_definition_sha256:ownedHeader.selection.spatial_definition_sha256,source_original_sha256:ownedHeader.selection.source_original_sha256};
+    // V2 is a separate DATA representation, not an upgrade of the owner's V1
+    // checkpoint/grant. Retain only small fixed-plan descriptors, reproduce
+    // every page from the exact job-stock originals on fresh SQL clients, and
+    // leave the genuine V1 owner/checkpoint and independent verifier unchanged.
+    const referenceStock=await withCustomCohortJobTransaction(pool,async client=>{
+      const r=ownedCheckpoint.evidence_refs[1];return JSON.parse(await createNeighborhoodCohortBlobRepository(client,organization)
+        .get(r.content_sha256,r.canonical_utf8_bytes));});
+    const referenceOptions={...options,claim:sourceClaim,geometryInput:referenceStock.stock.definition.geometry_input,
+      discovery,subjectIntent:referenceStock.subject_intent,checkBudget(){}};
+    const referenceCalls=[];
+    const referenceStore=(client,blobOrganization=organization)=>{
+      const blobs=createNeighborhoodCohortBlobRepository(client,blobOrganization);
+      return createCohortOriginalSourceReferencesV2Store({put:text=>blobs.put(text),get:(hash,size)=>blobs.get(hash,size)},ownedBinding,{
+        async readOriginal(request){
+          assert.equal(request.plan,'neighborhood_frozen_job_closure_v1');
+          const jobs=createCustomCohortCaptureJobRepository(client);
+          assert.equal((await jobs.readPreparedGeneration(sourceClaim,options)).generation_id,frozen.generationId);
+          const page=await createNeighborhoodFrozenJobSourcePages(client,referenceOptions)
+            .page({kind:request.kind,cursor:request.after,rowLimit:request.row_limit});
+          assert.equal((await jobs.readPreparedGeneration(sourceClaim,options)).generation_id,frozen.generationId);
+          referenceCalls.push(request);return JSON.stringify({binding:ownedBinding,page});
+        },
+      });
+    };
+    let referenceRoot=(await withCustomCohortJobTransaction(pool,client=>referenceStore(client).create())).root;
+    let lostReferenceCommit=true;
+    const referencePool={async connect(){const client=await pool.connect();return {release:client.release.bind(client),async query(config){
+      const result=await client.query(config);
+      if(config.text==='COMMIT'&&lostReferenceCommit){lostReferenceCommit=false;throw Error('synthetic reference COMMIT acknowledgment lost');}
+      return result;}};}};
+    const countReferenceBlobs=async()=>(await pool.query(`SELECT count(*)::integer AS count FROM app.neighborhood_cohort_evidence_blobs
+      WHERE organization_id=$1 AND canonical_utf8::jsonb->>'format'='cohort_original_source_references_v2'`,[organization])).rows[0].count;
+    for(const kind of Object.keys(expected)){
+      let cursor='',ended=false;
+      while(!ended){
+        const page=await withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenJobSourcePages(client,referenceOptions)
+          .page({kind,cursor,rowLimit:250}));
+        const input={root:referenceRoot,original_text:JSON.stringify({binding:ownedBinding,page}),row_limit:250};
+        if(kind==='parcels'&&cursor===''){
+          await assert.rejects(withCustomCohortJobTransaction(referencePool,client=>referenceStore(client).append(input)),
+            error=>error.outcome_unknown===true);
+          const afterCommit=await countReferenceBlobs();
+          referenceRoot=(await withCustomCohortJobTransaction(pool,client=>referenceStore(client).append(input))).root;
+          assert.equal(await countReferenceBlobs(),afterCommit,'lost real COMMIT ACK reuses the exact metadata blobs');
+        }else referenceRoot=(await withCustomCohortJobTransaction(pool,client=>referenceStore(client).append(input))).root;
+        cursor=page.next_cursor;ended=page.end_of_layer;
+      }
+    }
+    assert.equal(referenceCalls.length,0,'append/describe metadata does not claim to verify a fixed original query');
+    const metadataRows=(await pool.query(`SELECT count(*)::integer AS count,max(canonical_utf8_bytes)::integer AS maximum,
+      bool_and(canonical_utf8 NOT LIKE '%payload_text%') AS no_payloads FROM app.neighborhood_cohort_evidence_blobs
+      WHERE organization_id=$1 AND canonical_utf8::jsonb->>'format'='cohort_original_source_references_v2'`,[organization])).rows[0];
+    assert.ok(metadataRows.count>=15);assert.ok(metadataRows.maximum<16_000);assert.equal(metadataRows.no_payloads,true);
+    const referenceStarted=performance.now();let referencePages=0;
+    for(const [kind,keys] of Object.entries(expected)){
+      let position=null,legacyPosition=null;const seen=[];let count=0,bytes=0;
+      do{
+        const step=await withCustomCohortJobTransaction(pool,async client=>{
+          const jobs=createCustomCohortCaptureJobRepository(client);
+          assert.deepEqual(await jobs.readCheckpoint(sourceClaim,options),ownedCheckpoint);
+          const result=await referenceStore(client).read({root:referenceRoot,kind,position});
+          const legacy=await createCohortOriginalSourceChainV1Store(createNeighborhoodCohortBlobRepository(client,organization),ownedBinding)
+            .read({root:ownedHeader.root,kind,position:legacyPosition});
+          assert.equal(result.original_text,legacy.original_text,'V2 fixed query reproduces the exact existing V1 original bytes');
+          legacyPosition=legacy.next_position;
+          assert.deepEqual(await jobs.readCheckpoint(sourceClaim,options),ownedCheckpoint);return result;});
+        const p=JSON.parse(step.original_text).page;seen.unshift(...p.rows.map(r=>r.row_key));count++;bytes+=Buffer.byteLength(step.original_text);
+        assert.equal(step.authority,'not_established');assert.equal(step.coverage,'referenced_pages_only');
+        if(kind==='accounts'&&p.after==='')assert.ok(Buffer.byteLength(step.original_text)>1_500_000);
+        if(kind==='source_records'&&p.after==='')assert.match(p.rows[0].payload_text,/9007199254740993/);
+        position=step.next_position;referencePages++;
+        if(position===null){assert.equal(step.layer.page_count,count);assert.equal(step.layer.row_count,keys.length);
+          assert.equal(step.layer.original_utf8_bytes,bytes);assert.equal(step.layer.ended,true);assert.equal(legacyPosition,null);}
+      }while(position!==null);
+      assert.deepEqual(seen,keys,`${kind} V2 references reproduce every original one-hop page, not copied payloads`);
+    }
+    const foreignReadCount=referenceCalls.length;
+    await assert.rejects(withCustomCohortJobTransaction(pool,client=>referenceStore(client,randomUUID())
+      .read({root:referenceRoot,kind:'parcels',position:null})),/missing_original/);
+    assert.equal(referenceCalls.length,foreignReadCount,'foreign organization metadata refuses before any source callback');
+    await assert.rejects(withCustomCohortJobTransaction(pool,client=>referenceStore(client).describe(ownedHeader.root)),/binding_changed/,
+      'no legacy V1 source root is cast into a reference-only root');
+    console.log('[native-original-source-references-v2]',{layers:7,pages:referencePages,
+      metadata_maximum_bytes:metadataRows.maximum,original_payload_copies:0,lost_commit_reuse:true,
+      reopen_ms:Math.ceil(performance.now()-referenceStarted),source_acquisition:false,production_latency:false});
     for(const [kind,keys] of Object.entries(expected)){
       let position=null;const seen=[];
       do{

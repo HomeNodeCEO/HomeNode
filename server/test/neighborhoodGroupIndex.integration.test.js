@@ -35,6 +35,8 @@ import { createNeighborhoodFrozenJobTypedOriginals }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobTypedOriginals.js';
 import { createNeighborhoodFrozenJobStockMetricPages }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStockMetricPages.js';
+import { createNeighborhoodSharedJobStockMetricPages }
+  from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStockMetricPages.js';
 import { createNeighborhoodSharedTypedGeneration }
   from '../src/services/neighborhoodAssessment/neighborhoodSharedTypedGeneration.js';
 import { NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL, NEIGHBORHOOD_FROZEN_JOB_IDENTITY_COVERAGE_SQL }
@@ -539,6 +541,8 @@ test('isolated PostgreSQL: prepares and reuses one indexed shared interpretation
       SELECT n,'SHARED-'||lpad(n::text,5,'0'),'Synthetic Shared Park',1000+n%100,1960+n%40,6000,200000
       FROM generate_series(1,60001) n`);
     await pool.query("INSERT INTO gis.dcad_parcels(object_id,account_id) VALUES(60002,NULL)");
+    await pool.query(`UPDATE gis.dcad_parcels SET geom=ST_Multi(ST_MakeEnvelope(-96.7,32.9,-96.699,32.901,4326))
+      WHERE account_id IS NOT NULL`);
     await pool.query(`INSERT INTO core.sales_source_records(id,primary_account_id,current_price,close_date,raw_payload)
       VALUES(501,'SHARED-00001',9007199254740993,'2010-01-01','{"ClosePrice":9007199254740993}'::jsonb)`);
     await pool.query(`INSERT INTO core.sales(id,source_record_id,account_id,closing_date,sale_price)
@@ -600,6 +604,52 @@ test('isolated PostgreSQL: prepares and reuses one indexed shared interpretation
       assert.equal((await sharedTypedStep(measured,frozen.generationId)).all_layers_typed,true,
         'a completed immutable cache can be reused while another client holds its header write lock');
     }finally{await held.query('ROLLBACK');held.release();}
+    // Large DATA-level page acceptance, with synthetic graph/count binding.
+    // The separate small owner fixture verifies current authorization. This
+    // cannot be described as a whole authorized 60k acquisition/report result.
+    const organization=randomUUID(),actor=randomUUID(),report=randomUUID(),operation=randomUUID();
+    await pool.query("INSERT INTO app_auth.organizations(id,legal_name,display_name) VALUES($1,'Shared metric synthetic','Shared metric synthetic')",[organization]);
+    await pool.query("INSERT INTO app_auth.users(id,email,display_name) VALUES($1,$2,'Shared metric actor')",[actor,`${actor}@example.test`]);
+    const assignment=(await pool.query(`INSERT INTO app.assignment_files(organization_id,account_id,file_number,created_by_user_id,assigned_appraiser_user_id)
+      VALUES($1,'SHARED-00001',$2,$3,$3) RETURNING id::text`,[organization,`SHARED-${randomUUID()}`,actor])).rows[0].id;
+    await pool.query(`INSERT INTO app.report_files(id,organization_id,account_id,workflow_type,file_number,custom_assignment_file_id)
+      VALUES($1,$2,'SHARED-00001','custom_appraisal',$3,$4)`,[report,organization,`SHARED-${randomUUID()}`,assignment]);
+    const scope={organization_id:organization,report_file_id:report,assignment_file_id:assignment,account_id:'SHARED-00001'},options={scope,actorUserId:actor};
+    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).enqueue({scope,actorUserId:actor,
+      request:{operation_id:operation,observation_period:{start_date:'2025-01-01',end_date:'2026-10-07'}}}));
+    const claim=await withCustomCohortJobTransaction(pool,async client=>{
+      const [job]=await createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900});
+      return {operation_id:operation,claim_token:job.claim_token,attempts:job.attempts};});
+    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).pinPreparedGeneration(claim,options));
+    const metricOptions={...frozenSpatialOptions({...options,claim}),subjectIntent:{content_sha256:'f'.repeat(64),canonical_utf8_bytes:'100'},checkBudget(){}};
+    await withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenJobStock(client,metricOptions).prepare());
+    const graph={root:{content_sha256:'e'.repeat(64),canonical_utf8_bytes:'100'},
+      layer_counts:Object.fromEntries(Object.entries(source.layer_counts).map(([kind,counts])=>[kind,Number(counts.row_count)]))};
+    graph.layer_counts.parcels=60001;
+    let cursor='',metricCount=0,metricPages=0,maxPageBytes=0;const metricCalls=[];
+    const metricPool={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){metricCalls.push(c.text);return raw.query(c);}};}};
+    const metricStarted=performance.now();
+    for(;;){
+      const page=await withCustomCohortJobTransaction(metricPool,client=>createNeighborhoodSharedJobStockMetricPages(client,metricOptions,graph,'2026-10-07')
+        .page({cursor,rowLimit:250}));
+      maxPageBytes=Math.max(maxPageBytes,Buffer.byteLength(JSON.stringify(page.rows)));metricPages++;
+      assert.ok(page.rows.length<=250);assert.equal(page.shared_typed_generation_reference.generation_id,frozen.generationId);
+      for(const row of page.rows){
+        const n=++metricCount;assert.equal(row.account_id,`SHARED-${String(n).padStart(5,'0')}`);
+        assert.equal(row.geographic_parcel_count,'1');assert.equal(row.source_part_count,'1');
+        assert.equal(row.observations.reported_residential_area.exact_value,String(1000+n%100));
+        assert.equal(row.observations.reported_year_built.exact_value,String(1960+n%40));
+        assert.equal(row.observations.reported_site_area.exact_value,'6000');
+        assert.equal(row.observations.reported_market_value.exact_value,'200000');
+        assert.equal(row.observations.reported_market_value.state,'unsupported');
+      }
+      cursor=page.next_cursor;if(page.end_of_population)break;
+    }
+    assert.equal(metricCount,60001);assert.equal(metricPages,241);assert.ok(maxPageBytes<=2_100_000);
+    assert.ok(!metricCalls.some(sql=>/INSERT|UPDATE|DELETE|ST_DWithin|shared-typed:page|job-closure:|job-typed:/.test(sql)));
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_custom_cohort_typed_original_rows WHERE operation_id=$1',[operation])).rows[0].n,0);
+    console.info('[native-shared-stock-metric-pages]',{accounts:metricCount,pages:metricPages,maximum_page_bytes:maxPageBytes,
+      duration_ms:Math.round(performance.now()-metricStarted),job_typed_copies:0,production_latency:false,source_acquisition:false});
     console.info('[native-shared-typed-generation]',{accounts:60001,original_rows:Number(source.row_count),steps:prepared.steps,
       maximum_page_originals:maximumOriginals,duration_ms:Math.round(performance.now()-started),reuse_ms:reuseMs,
       completion_ms:completionMs,completion_totals_rows:verifiedTotals.length,
@@ -1275,6 +1325,9 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     const committedIdentity=await readCheckpoint();assert.equal(committedIdentity.phase,'frozen_identity_v1');assert.equal(committedIdentity.evidence_refs.length,6);
     await assert.rejects(sourceOwner.prepareFrozenCaptureJobTypedOriginals(sourceInput,{captureJobClaim:sourceClaim}),/unfinished_identity_verification/,
       'a partial identity closure cannot materialize typed observations');
+    await assert.rejects(sourceOwner.readSharedFrozenCaptureJobStockMetrics(sourceInput,
+      {captureJobClaim:sourceClaim,stockMetricPage:{cursor:'',rowLimit:1}}),/unfinished_identity_verification/,
+      'a shared DATA cache cannot substitute for unfinished scoped identity proof');
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_custom_cohort_typed_originals WHERE operation_id=$1',[sourceOperation])).rows[0].n,0);
     const identityFrom=identityCalls.length;
     let identified=await identityOwner.verifyFrozenCaptureJobSourceIdentityClosure(sourceInput,{captureJobClaim:sourceClaim});
@@ -1296,6 +1349,77 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
     await assert.rejects(identityOwner.verifyFrozenCaptureJobSourceIdentityClosure(sourceInput,{captureJobClaim:sourceClaim}),/market_data_access_denied/);
     await setFixtureGrant(pool,organization,fixtureGrant(organization));
+    // The prepared shared cache is isolated fixture DATA, not a grant or a
+    // production builder activation. The real owner chooses its exact pinned
+    // generation/date and never prepares a missing cache during a report read.
+    const sharedCalls=[];let revokeShared=false,revokeSharedRole=false,changeSharedSubject=false,loseSharedClaim=false;
+    const sharedPool={async connect(){const client=await pool.connect();return {release:client.release.bind(client),async query(config){
+      sharedCalls.push(config.text);const result=await client.query(config);
+      if(config.text.includes('shared-stock-metrics:page')){
+        if(revokeShared){revokeShared=false;await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});}
+        if(revokeSharedRole){revokeSharedRole=false;await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);}
+        if(changeSharedSubject){changeSharedSubject=false;await client.query("UPDATE app.appraisal_subject_snapshots SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2000') WHERE id=$1",[sourceSnapshot]);}
+        if(loseSharedClaim){loseSharedClaim=false;await client.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET claim_token=$1 WHERE operation_id=$2',[randomUUID(),sourceOperation]);}
+      }
+      return result;}};}};
+    const sharedOwner=createCustomCohortContextCapture({pool:sharedPool,sourceMode:'combined-witness2-v1',authorizeMarketData:fixturePolicy()});
+    const sharedOptions={captureJobClaim:sourceClaim,stockMetricPage:{cursor:'',rowLimit:1}},beforeShared=await readCheckpoint();
+    const sharedRowCount=async()=>(await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_custom_cohort_typed_original_rows WHERE operation_id=$1',[sourceOperation])).rows[0].n;
+    await assert.rejects(sharedOwner.readSharedFrozenCaptureJobStockMetrics(sourceInput,sharedOptions),/invalid_result/);
+    assert.ok(!sharedCalls.some(sql=>/shared-typed:begin|shared-typed:rows|job-typed:|shared-stock-metrics:page/.test(sql)));
+    let sharedPrepared=await sharedTypedStep(pool,frozen.generationId);
+    await assert.rejects(sharedOwner.readSharedFrozenCaptureJobStockMetrics(sourceInput,sharedOptions),/unfinished_or_changed_typing/);
+    while(!sharedPrepared.all_layers_typed)sharedPrepared=await sharedTypedStep(pool,frozen.generationId,sharedPrepared.progress);
+    const sharedStart=sharedCalls.length,sharedStarted=performance.now();
+    const sharedA=await sharedOwner.readSharedFrozenCaptureJobStockMetrics(sourceInput,sharedOptions);
+    const sharedB=await sharedOwner.readSharedFrozenCaptureJobStockMetrics(sourceInput,
+      {...sharedOptions,stockMetricPage:{cursor:sharedA.next_cursor,rowLimit:250}});
+    assert.equal(sharedA.rows[0].account_id,'CLOSURE-A');assert.equal(sharedB.rows[0].account_id,'CLOSURE-B');
+    assert.deepEqual(sharedA.rows[0].observations.reported_residential_area.conflict_values,['1000.01','2000.02']);
+    assert.equal(sharedA.rows[0].observations.reported_site_area.exact_value,'8000');
+    assert.equal(sharedA.rows[0].observations.reported_market_value.exact_value,'9007199254740993');
+    assert.equal(sharedA.shared_typed_generation_reference.generation_id,frozen.generationId);
+    assert.equal(sharedA.shared_typed_generation_reference.effective_date,'2026-10-07');
+    assert.equal(sharedA.source_acquisition,'not_established');assert.equal(sharedA.report_update,'none');
+    assert.equal(sharedA.end_of_population,false);assert.equal(sharedB.end_of_population,true);
+    assert.equal(await sharedRowCount(),0,'actual shared reads need no per-job typed-row copies');
+    assert.deepEqual(await readCheckpoint(),beforeShared);
+    assert.ok(!sharedCalls.slice(sharedStart).some(sql=>/ST_DWithin|job-closure:|job-typed:|shared-typed:page|shared-typed:begin|shared-typed:rows|cohort-job:checkpoint-save/.test(sql)));
+    assert.ok(sharedCalls.includes('BEGIN ISOLATION LEVEL READ COMMITTED'),'current revocations are not hidden in an old repeatable-read snapshot');
+    console.info('[native-shared-stock-metrics]',{accounts:2,rows:sharedA.rows.length+sharedB.rows.length,
+      duration_ms:Math.round(performance.now()-sharedStarted),job_typed_copies:await sharedRowCount(),production_latency:false});
+    // A real completed cache remains DATA. Neither a foreign actor's forged
+    // organization claims nor its authorized workfile can borrow this job pin.
+    const foreignOrganization=randomUUID(),foreignActor=randomUUID(),foreignReport=randomUUID();
+    await pool.query("INSERT INTO app_auth.organizations(id,legal_name,display_name) VALUES($1,'Foreign shared fixture','Foreign shared fixture')",[foreignOrganization]);
+    await pool.query("INSERT INTO app_auth.users(id,email,display_name) VALUES($1,$2,'Foreign shared actor')",[foreignActor,`${foreignActor}@example.test`]);
+    await pool.query('INSERT INTO app_auth.organization_memberships(organization_id,user_id) VALUES($1,$2)',[foreignOrganization,foreignActor]);
+    await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[foreignOrganization,foreignActor]);
+    const foreignAssignment=(await pool.query(`INSERT INTO app.assignment_files(organization_id,account_id,file_number,created_by_user_id,assigned_appraiser_user_id)
+      VALUES($1,'CLOSURE-A',$2,$3,$3) RETURNING id::text`,[foreignOrganization,`FOREIGN-${randomUUID()}`,foreignActor])).rows[0].id;
+    await pool.query(`INSERT INTO app.report_files(id,organization_id,account_id,workflow_type,file_number,custom_assignment_file_id)
+      VALUES($1,$2,'CLOSURE-A','custom_appraisal',$3,$4)`,[foreignReport,foreignOrganization,`FOREIGN-${randomUUID()}`,foreignAssignment]);
+    await pool.query('INSERT INTO app.custom_appraisal_workfiles(assignment_file_id,canonical_file_name) VALUES($1,$2)',[foreignAssignment,`foreign-${randomUUID()}`]);
+    const foreignSharedFrom=sharedCalls.length;
+    await assert.rejects(sharedOwner.readSharedFrozenCaptureJobStockMetrics({...sourceInput,
+      auth:{userId:foreignActor,organizations:[{organizationId:organization,roles:['appraiser']}]}},sharedOptions),/job_actor_access_revoked/);
+    await assert.rejects(sharedOwner.readSharedFrozenCaptureJobStockMetrics({...sourceInput,assignmentFileId:foreignAssignment,
+      auth:{userId:foreignActor,organizations:[]}},sharedOptions),/claim_lost/);
+    assert.ok(!sharedCalls.slice(foreignSharedFrom).some(sql=>/shared-typed:read|shared-stock-metrics:page/.test(sql)),
+      'completed shared cache access is denied before reading its header or rows across organizations');
+    assert.deepEqual(await readCheckpoint(),beforeShared);assert.equal(await sharedRowCount(),0);
+    const deniedSharedFrom=sharedCalls.length;
+    await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+    await assert.rejects(sharedOwner.readSharedFrozenCaptureJobStockMetrics(sourceInput,sharedOptions),/market_data_access_denied/);
+    assert.ok(!sharedCalls.slice(deniedSharedFrom).some(sql=>/shared-typed:read|shared-stock-metrics:page/.test(sql)));
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));revokeShared=true;
+    await assert.rejects(sharedOwner.readSharedFrozenCaptureJobStockMetrics(sourceInput,sharedOptions),/market_data_access_denied/);
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));revokeSharedRole=true;
+    await assert.rejects(sharedOwner.readSharedFrozenCaptureJobStockMetrics(sourceInput,sharedOptions),/job_actor_access_revoked/);
+    await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    changeSharedSubject=true;await assert.rejects(sharedOwner.readSharedFrozenCaptureJobStockMetrics(sourceInput,sharedOptions),/subject_changed/);
+    loseSharedClaim=true;await assert.rejects(sharedOwner.readSharedFrozenCaptureJobStockMetrics(sourceInput,sharedOptions),/claim_lost/);
+    assert.deepEqual(await readCheckpoint(),beforeShared);assert.equal(await sharedRowCount(),0);
     const typedCalls=[];let revokeTyped=false,revokeTypedRole=false,changeTypedSubject=false,loseTypedCommit=false;
     const typedPool={async connect(){const client=await pool.connect();return {release:client.release.bind(client),async query(config){
       typedCalls.push(config.text);const result=await client.query(config);
@@ -1351,6 +1475,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       [organization,typedBody.profile_reference.content_sha256])).rows[0].n,1,'the exact interpretation definition is retained, not replaced by current defaults on reopen');
     const metricOptions={captureJobClaim:sourceClaim,stockMetricPage:{cursor:'',rowLimit:1}},beforeMetrics=await readCheckpoint(),metricFrom=typedCalls.length;
     const metricsA=await typedOwner.readFrozenCaptureJobStockMetrics(sourceInput,metricOptions);
+    assert.deepEqual(metricsA.rows,sharedA.rows,'shared cache reuse must preserve the exact per-job numerical meaning');
     assert.equal(metricsA.rows.length,1);assert.equal(metricsA.rows[0].account_id,'CLOSURE-A');assert.equal(metricsA.end_of_population,false);
     assert.equal(metricsA.rows[0].geographic_parcel_count,'1');assert.equal(metricsA.rows[0].source_part_count,'2');
     assert.equal(metricsA.rows[0].observations.reported_residential_area.state,'conflicting');
@@ -1364,6 +1489,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     assert.equal(metricsA.rows[0].observations.reported_market_value.exact_value,'9007199254740993');
     assert.equal(metricsA.population.unassociated_parcel_count,'1');assert.equal(metricsA.source_acquisition,'not_established');
     const metricsB=await typedOwner.readFrozenCaptureJobStockMetrics(sourceInput,{...metricOptions,stockMetricPage:{cursor:metricsA.next_cursor,rowLimit:250}});
+    assert.deepEqual(metricsB.rows,sharedB.rows);
     assert.equal(metricsB.rows.length,1);assert.equal(metricsB.rows[0].account_id,'CLOSURE-B');assert.equal(metricsB.end_of_population,true);
     assert.equal(metricsB.rows[0].observations.reported_year_built.state,'invalid');
     assert.equal(metricsB.rows[0].observations.reported_residential_area.state,'invalid');
@@ -1405,6 +1531,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await assert.rejects(identityOwner.verifyFrozenCaptureJobSourceIdentityClosure(sourceInput,{captureJobClaim:sourceClaim}),/claim_lost/);
     await assert.rejects(typedOwner.prepareFrozenCaptureJobTypedOriginals(sourceInput,{captureJobClaim:sourceClaim}),/claim_lost/);
     await assert.rejects(typedOwner.readFrozenCaptureJobStockMetrics(sourceInput,{captureJobClaim:sourceClaim,stockMetricPage:{cursor:'',rowLimit:1}}),/claim_lost/);
+    await assert.rejects(sharedOwner.readSharedFrozenCaptureJobStockMetrics(sourceInput,sharedOptions),/claim_lost/);
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,operation));
     await assert.rejects(withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSourceClosurePages(client,
       frozenSpatialOptions({...options,claim})).page({kind:'source_records',cursor:''})),/claim_lost/);

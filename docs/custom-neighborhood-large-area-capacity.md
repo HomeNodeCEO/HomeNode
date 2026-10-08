@@ -1,5 +1,43 @@
 # Complete larger-area Custom neighborhood studies
 
+## Current-authorized shared stock metric reuse (2026-10-08, not activated)
+
+`readSharedFrozenCaptureJobStockMetrics` reads the exact completed shared typed
+generation for the job's already pinned source generation, retained V1 profile
+and subject effective date. A report does not compile or copy typed rows, retain
+a second typed definition, write a typed checkpoint, rebuild a cache on a miss,
+or follow an active/latest generation. Its returned small shared DATA reference
+is bound to the exact original header and typed binding; it is not a grant.
+The existing per-job V1 typing/metric reader remains available unchanged.
+
+The actual owner still requires completed scoped original graph, geographic
+and source-identity verification. It derives the cache/date/profile internally,
+and checks current database actor, assignment/draft/subject, CAD permission,
+live claim/pin and combined source-purpose rights before and after the page.
+The owner uses READ COMMITTED so another client's current revocation is not
+hidden behind an older repeatable-read snapshot. A partial identity stage or
+missing/incomplete/changed cache refuses without advancing any checkpoint.
+No browser input can supply a cache generation, profile, date or authority.
+
+Both readers use the same fixed account-level numerical projection, exact
+decimal handling, conflicting/equal CAD-part rules and encoded page admission.
+Shared lookups join only the job's indexed geographic stock accounts to the
+exact generation/profile/date account index. Outside CAD parts of those accounts
+still participate in resolution, but outside accounts never become members.
+Local tests cover exact reuse/reference binding, changed/unfinished metadata,
+bounded admission and lack of writes. The native actual-owner fixture must
+execute before release: verify equality to the old per-job results, zero per-job
+typed copies, unchanged checkpoints, initial/ending current license denial,
+two-client role revocation, completed-cache cross-organization denial before
+header/row access, subject/claim changes and cancellation. A small
+fixture is not whole authorized >50k acquisition or production map latency.
+
+Still outstanding: referencing scoped original acquisition without per-report
+graph payload copies, prepared one-hop seeds, date-neutral explicit profile,
+amenities/sales/all selected-union statistics, coherent publication, durable
+workers/retirement and physical large-area/live acceptance. No HTTP/worker/job
+phase/default/schedule/Apply or production deployment is enabled by this stage.
+
 ## Shared exact typed generation (2026-10-08, not activated)
 
 `neighborhoodSharedTypedGeneration` prepares the fixed individual-original

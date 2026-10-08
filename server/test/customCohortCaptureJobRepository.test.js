@@ -306,6 +306,23 @@ test('checkpoint access refuses stale claims, corrupt readback and unadmitted op
   assert.equal(calls, before, 'unadmitted checkpoint input never reaches SQL');
 });
 
+test('the V2 reference prefix is one exact fenced DATA phase, not a permissive version namespace',async()=>{
+  const claim={operation_id:operation,claim_token:token,attempts:1},options={scope,actorUserId:actor};
+  let stored=null,calls=0;
+  const repository=createCustomCohortCaptureJobRepository({async query(sql,values){
+    calls++;if(sql.includes('checkpoint-save'))stored=JSON.parse(values[8]);
+    return {rowCount:1,rows:[{checkpoint:stored}]};
+  }});
+  const checkpoint={phase:'frozen_source_refs_v2',evidence_refs:[
+    {content_sha256:'a'.repeat(64),canonical_utf8_bytes:'123'}]};
+  assert.deepEqual(await repository.saveCheckpoint(claim,options,checkpoint),checkpoint);
+  assert.deepEqual(await repository.readCheckpoint(claim,options),checkpoint);
+  const before=calls;
+  for(const phase of ['frozen_source_refs_v3','frozen_verify_refs_v2','frozen_source_refs_v2_apply','source_reference_prefix_retained'])
+    await assert.rejects(repository.saveCheckpoint(claim,options,{...checkpoint,phase}),/invalid_checkpoint/);
+  assert.equal(calls,before,'unimplemented verification/Apply/version phases execute no SQL');
+});
+
 function generationFixture({ autocommit=false, endingLost=false, corrupt=false, active=true }={}) {
   const generation='66666666-6666-4666-8666-666666666666',calls=[];
   let pinned=null,transactions=0,fences=0;

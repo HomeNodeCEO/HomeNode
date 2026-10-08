@@ -49,6 +49,16 @@
           "photosPermission": "Allow HomeNode Appraiser to import appraisal evidence photos.",
           "microphonePermission": false
         }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow HomeNode Appraiser to import appraisal evidence photos.",
+          "savePhotosPermission": "Allow HomeNode Appraiser to save inspection photos to your photo library.",
+          "granularPermissions": ["photo"],
+          "isAccessMediaLocationEnabled": false,
+          "preventAutomaticLimitedAccessAlert": true
+        }
       ]
     ]
   }

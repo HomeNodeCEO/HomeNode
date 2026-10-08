@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { calculateManualSketch } from "./manualSketch.js";
+import { sketchCalculationBreakdown } from "./sketchCalculations.js";
 import { normalizeUuid, sessionResponse } from "./reportFiles.js";
 import { lockCustomAppraisalInspectionWorkfile } from "./signedCustomWorkfile.js";
 import { canonicalJson } from "./sync.js";
@@ -356,6 +357,7 @@ export function sketchResponse(row, rooms = []) {
     measurement_standard: row.measurement_standard,
     measurement_method: row.measurement_method,
     document: row.document,
+    calculation_breakdown: sketchCalculationBreakdown(row.document),
     summary: row.summary,
     review_status: row.review_status,
     ansi_review_required: row.review_status !== "appraiser_confirmed",

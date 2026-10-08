@@ -1,3 +1,5 @@
+import { sketchCalculationBreakdown } from "../modules/mobile/sketchCalculations.js";
+
 function assignmentId(row) {
   return Number(row.assignment_file_id);
 }
@@ -62,6 +64,7 @@ export function indexAssignmentFileDetails({
       id: sketch.id,
       revision: Number(sketch.revision),
       document: sketch.document,
+      calculation_breakdown: sketchCalculationBreakdown(sketch.document),
       summary: sketch.summary,
       measurement_standard: sketch.measurement_standard,
       measurement_method: sketch.measurement_method,

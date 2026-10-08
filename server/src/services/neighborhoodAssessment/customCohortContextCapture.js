@@ -26,6 +26,8 @@ import { createNeighborhoodFrozenJobStockOriginals } from './neighborhoodFrozenJ
 import { createNeighborhoodFrozenJobSourceIdentity } from './neighborhoodFrozenJobSourceIdentity.js';
 import { createNeighborhoodFrozenJobTypedOriginals } from './neighborhoodFrozenJobTypedOriginals.js';
 import { getNeighborhoodFrozenTypedOriginalV1Profile } from './neighborhoodFrozenTypedOriginalV1.js';
+import { createNeighborhoodFrozenJobStockMetricPages, prepareNeighborhoodFrozenStockMetricPage }
+  from './neighborhoodFrozenJobStockMetricPages.js';
 import { createNeighborhoodFrozenJobSourcePages } from './neighborhoodFrozenSourceClosurePages.js';
 import { createCohortOriginalSourceChainV1Store, COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS }
   from './cohortOriginalSourceChainV1.js';
@@ -1529,9 +1531,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     }
     return response;
   }
-  async function frozenCaptureJobSourceStage(value, options = {}, verifying = false, stockVerifying = false, identityVerifying = false, typing = false) {
+  async function frozenCaptureJobSourceStage(value, options = {}, verifying = false, stockVerifying = false, identityVerifying = false, typing = false, readingStockMetrics = false) {
     if (!options || Object.getPrototypeOf(options)!==Object.prototype) fail('invalid_options');
-    const {captureJobClaim:providedClaim,...budgetOptions}=options;
+    const {captureJobClaim:providedClaim,stockMetricPage,...budgetOptions}=options;
+    const metricPage=readingStockMetrics?prepareNeighborhoodFrozenStockMetricPage(stockMetricPage):null;
+    if(!readingStockMetrics&&stockMetricPage!==undefined) fail('invalid_options');
     const originalInput=inputOf(value),claim=prepareCustomCohortCaptureJobClaim(providedClaim);
     if(claim.operation_id!==originalInput.operationId.toLowerCase()) fail('operation_conflict');
     if(!reportedProfile) fail('frozen_source_profile_unsupported');
@@ -1549,7 +1553,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       const requested={operation_id:input.operationId,observation_period:input.observationPeriod,discovery:input.discovery};
       if(!same(await jobs.readRequest(claim,jobOptions),requested)) fail('operation_conflict');
       const checkpoint=await jobs.readCheckpoint(claim,jobOptions);
-      const allowedPhases=typing?['frozen_identity_v1','frozen_typed_v1']:identityVerifying?['frozen_geo_verify_v1','frozen_identity_v1']:stockVerifying?['frozen_verify_v1','frozen_geo_verify_v1']
+      const allowedPhases=readingStockMetrics?['frozen_typed_v1']:typing?['frozen_identity_v1','frozen_typed_v1']:identityVerifying?['frozen_geo_verify_v1','frozen_identity_v1']:stockVerifying?['frozen_verify_v1','frozen_geo_verify_v1']
         :verifying?['frozen_source_v1','frozen_verify_v1']:['frozen_stock_v1','frozen_source_v1'];
       if(!checkpoint || !allowedPhases.includes(checkpoint.phase)
         ||checkpoint.evidence_refs.length!==({frozen_stock_v1:2,frozen_source_v1:3,frozen_verify_v1:4,frozen_geo_verify_v1:5,frozen_identity_v1:6,frozen_typed_v1:7}[checkpoint.phase]))
@@ -1600,7 +1604,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       let verification=null,verificationReference=checkpoint.evidence_refs[3]??null,
         stockVerification=null,stockVerificationReference=checkpoint.evidence_refs[4]??null,
         identityVerification=null,identityVerificationReference=checkpoint.evidence_refs[5]??null,
-        typedOriginals=null,typedReference=checkpoint.evidence_refs[6]??null;
+        typedOriginals=null,typedReference=checkpoint.evidence_refs[6]??null,stockMetricResult=null;
       if(!verifying&&kind) {
         const page=await createNeighborhoodFrozenJobSourcePages(client,{...stockOptions,signal:budget.signal})
           .page({kind,cursor:prefix.layers[kind].cursor,rowLimit:250});
@@ -1705,6 +1709,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           progress=previous.progress;
         }
         const graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
+        if(readingStockMetrics&&progress?.kind_index!==COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.length) fail('unfinished_typed_interpretation');
         typedOriginals=await createNeighborhoodFrozenJobTypedOriginals(client,stockOptions,graph,context.effective_date).step(progress);
         if(typedOriginals.advanced) {
           const profileReference=await blobs.put(profile.definition_blob.canonical_json);
@@ -1717,6 +1722,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           await jobs.saveCheckpoint(claim,jobOptions,{phase:'frozen_typed_v1',
             evidence_refs:[retained.intent.reference,stockReference,reference,verificationReference,stockVerificationReference,identityVerificationReference,typedReference]});
         }
+        if(readingStockMetrics) stockMetricResult=await createNeighborhoodFrozenJobStockMetricPages(client,stockOptions,graph,context.effective_date).page(metricPage);
       }
       input=freeze({...input,auth:await loadCurrentCustomCohortJobActor(client,input.auth.userId,scope.organization_id)});
       assertTarget(await resolveTarget(client,input,true),target);
@@ -1728,6 +1734,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(!same(await jobs.readRequest(claim,jobOptions),requested)||!same(await stockStore.read(),stock)) fail('checkpoint_conflict');
       if(!same((await chain.describe(root)).layers,prefix.layers)) fail('checkpoint_conflict');
       budget.check();
+      if(readingStockMetrics) return freeze({...stockMetricResult,typed_original_reference:typedReference,
+        source_reference:reference,verification_reference:verificationReference,stock_verification_reference:stockVerificationReference,
+        identity_verification_reference:identityVerificationReference});
       if(typing) return freeze({status:'typed_original_progress_retained',operation_id:input.operationId,
         source_reference:reference,verification_reference:verificationReference,stock_verification_reference:stockVerificationReference,
         identity_verification_reference:identityVerificationReference,typed_original_reference:typedReference,generation_id:stock.generation_id,
@@ -1899,6 +1908,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * historical/freshness coverage or a legacy acquisition capability. */
     verifyFrozenCaptureJobSourceIdentityClosure: (value, options = {}) => frozenCaptureJobSourceStage(value, options, true, true, true),
     prepareFrozenCaptureJobTypedOriginals: (value, options = {}) => frozenCaptureJobSourceStage(value, options, true, true, true, true),
+    // Internal numerical pages only. No API/browser exposure, checkpoint write,
+    // acquisition receipt or accepted report is established by reading a page.
+    readFrozenCaptureJobStockMetrics: (value, options = {}) => frozenCaptureJobSourceStage(value, options, true, true, true, true, true),
     async capture(value, options = {}) {
     if (!options || Object.getPrototypeOf(options) !== Object.prototype)
       fail('invalid_options');

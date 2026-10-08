@@ -8,6 +8,9 @@ import { createNeighborhoodFrozenJobStockOriginals, NEIGHBORHOOD_FROZEN_STOCK_OR
 import { neighborhoodFrozenSpatialDefinition } from '../src/services/neighborhoodAssessment/neighborhoodFrozenSpatialPages.js';
 import { createNeighborhoodFrozenJobSourceIdentity } from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobSourceIdentity.js';
 import { createNeighborhoodFrozenJobTypedOriginals } from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobTypedOriginals.js';
+import { createNeighborhoodFrozenJobStockMetricPages, getNeighborhoodFrozenStockMetricProfile,
+  NEIGHBORHOOD_FROZEN_STOCK_METRIC_PAGE_SQL } from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStockMetricPages.js';
+import { getNeighborhoodFrozenTypedOriginalV1Profile } from '../src/services/neighborhoodAssessment/neighborhoodFrozenTypedOriginalV1.js';
 import { NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL, NEIGHBORHOOD_FROZEN_JOB_IDENTITY_COVERAGE_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourceClosurePages.js';
 
@@ -18,6 +21,115 @@ const options={claim,scope,actorUserId:'70000000-0000-4000-8000-000000000005',
   geometryInput:{geometry_version:1,type:'Point',crs:'EPSG:4326',axis_order:'longitude_latitude',coordinate_encoding:'decimal_string_v1',
     coordinates:['-96.7','32.9'],source_sha256:'a'.repeat(64)},discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'},
   subjectIntent:{content_sha256:'b'.repeat(64),canonical_utf8_bytes:'100'},checkBudget(){}};
+
+function metricMember(accountId='STOCK-A') {
+  const cell=(state,exact_value,unit)=>({state,exact_value,unit,observed_part_count:state==='observed'?'1':'0',
+    missing_part_count:state==='missing'?'1':'0',invalid_part_count:'0',unsupported_part_count:state==='unsupported'?'1':'0',conflict_values:[]});
+  return {account_id:accountId,geographic_parcel_count:'1',source_part_count:'1',observations:{
+    reported_year_built:cell('observed','1960','year'),reported_residential_area:cell('observed','1000.01','reported_sqft'),
+    reported_site_area:cell('observed','0','reported_sqft'),reported_market_value:cell('unsupported','9007199254740993',null)}};
+}
+async function metricFixture(hook=()=>{}) {
+  let typedHeader;const rows=[metricMember()];
+  const graph={root:{content_sha256:'c'.repeat(64),canonical_utf8_bytes:'100'},layer_counts:{parcels:60001,accounts:60000,
+    source_records:0,sales:0,sale_links:0,sync_state:0,sync_runs:0}};
+  const f=fixture(async call=>{
+    const supplied=await hook({...call,typedHeader,rows});if(supplied)return supplied;
+    if(call.text.includes('stock-metrics:header'))return result(structuredClone(typedHeader));
+    if(call.text.includes('stock-metrics:page'))return result({page_json:JSON.stringify(rows),page_count:rows.length,
+      candidate_count:rows.length,invalid_count:0,oversized_count:0,next_cursor:rows.at(-1)?.account_id??null});
+    return null;
+  },true);
+  const profile=getNeighborhoodFrozenTypedOriginalV1Profile().profile_ref;
+  const binding_sha256=assessmentEvidenceDigest({stock:await f.store.read(),graph,effective_date:'2026-10-07',profile_ref:profile});
+  typedHeader={binding_sha256,profile_sha256:profile.content_sha256,effective_date:'2026-10-07',expected_counts:graph.layer_counts,status:'complete',
+    progress:{format:'frozen_job_typed_original_progress_v1',binding_sha256,kind_index:7,after:'',layer_rows:0}};
+  return {...f,rows,graph,metrics:()=>createNeighborhoodFrozenJobStockMetricPages(f.client,options,graph,'2026-10-07')};
+}
+
+test('bounded stock metric pages preserve exact cells and original profile/provenance without rescanning geometry or acquiring',async()=>{
+  const f=await metricFixture();const from=f.calls.length;
+  const r=await f.metrics().page({cursor:'',rowLimit:250});
+  assert.equal(r.rows[0].observations.reported_market_value.exact_value,'9007199254740993');
+  assert.equal(r.rows[0].observations.reported_market_value.state,'unsupported');
+  assert.equal(r.rows[0].observations.reported_site_area.exact_value,'0');
+  assert.equal(r.rows[0].observations.reported_residential_area.unit,'reported_sqft');
+  assert.equal(r.population.unassociated_parcel_count,'1');assert.equal(r.source_part_population_count,'60001');
+  assert.equal(r.authority,'not_established');assert.equal(r.coverage,'one_account_page_only');
+  assert.equal(r.source_acquisition,'not_established');assert.equal(r.report_update,'none');
+  assert.equal(r.end_of_population,true);assert.equal(r.next_cursor,'STOCK-A');
+  assert.equal(r.profile.definition_blob.canonical_json,getNeighborhoodFrozenStockMetricProfile().definition_blob.canonical_json);
+  assert.ok(Object.isFrozen(r.rows[0].observations.reported_market_value));
+  assert.ok(!f.calls.slice(from).some(call=>/ST_DWithin|frozen-spatial:counts|job-stock:begin|INSERT|UPDATE|job-closure:/.test(call.text)));
+  assert.equal(f.calls.slice(from).filter(call=>call.text.includes('stock-metrics:header')).length,2);
+});
+
+test('stock metric pages never advance incomplete typing and repeat ending original/pin/profile fences',async()=>{
+  for(const change of [row=>row.status='building',row=>row.profile_sha256='d'.repeat(64),row=>row.effective_date='2025-10-07',
+    row=>row.expected_counts.parcels--,row=>row.progress.kind_index=6]) {
+    const f=await metricFixture(({text,typedHeader})=>{if(text.includes('stock-metrics:header')){const row=structuredClone(typedHeader);change(row);return result(row);}});
+    await assert.rejects(f.metrics().page({cursor:'',rowLimit:250}),/unfinished_or_changed_typing/);
+    assert.ok(!f.calls.some(call=>call.text.includes('stock-metrics:page')));
+  }
+  let reads=0;
+  const ending=await metricFixture(({text,typedHeader})=>{if(text.includes('stock-metrics:header')&&++reads===2)
+    return result({...typedHeader,status:'building'});});
+  await assert.rejects(ending.metrics().page({cursor:'',rowLimit:250}),/unfinished_or_changed_typing/);
+  let fenced=false;
+  const lost=await metricFixture(({text})=>text.includes('generation-fence')&&fenced?{rowCount:0,rows:[]}:null);
+  fenced=true;await assert.rejects(lost.metrics().page({cursor:'',rowLimit:250}),/claim_lost/);
+});
+
+test('metric transport refuses corrupt counts/order/units and malformed or oversized SQL payloads',async()=>{
+  for(const patch of [{invalid_count:1},{oversized_count:1},{page_count:2},{candidate_count:0},{next_cursor:'wrong'},
+    {page_json:'['},{page_json:' '.repeat(2100001)},{page_json:'[]',page_count:0,next_cursor:null}]) {
+    const f=await metricFixture(({text,rows})=>text.includes('stock-metrics:page')?result({page_json:JSON.stringify(rows),
+      page_count:1,candidate_count:1,invalid_count:0,oversized_count:0,next_cursor:'STOCK-A',...patch}):null);
+    await assert.rejects(f.metrics().page({cursor:'',rowLimit:250}),/invalid_result|byte_limit/);
+  }
+  for(const mutate of [row=>row.observations.reported_site_area.unit='acre',
+    row=>row.observations.reported_site_area.exact_value=0,row=>row.source_part_count='2',
+    row=>row.observations.reported_market_value.state='observed',row=>row.extra=true]) {
+    const f=await metricFixture();mutate(f.rows[0]);await assert.rejects(f.metrics().page({cursor:'',rowLimit:250}),/invalid_result|invalid_input/);
+  }
+  const duplicate=await metricFixture();duplicate.rows.push(metricMember());
+  await assert.rejects(duplicate.metrics().page({cursor:'',rowLimit:250}),/invalid_result/);
+});
+
+test('full pages require a later terminal read; account order follows UTF8 C collation and empty pages retain cursor',async()=>{
+  const f=await metricFixture();const reader=f.metrics();
+  const first=await reader.page({cursor:'',rowLimit:1});assert.equal(first.end_of_population,false);
+  f.rows.splice(0);const last=await reader.page({cursor:first.next_cursor,rowLimit:1});
+  assert.equal(last.end_of_population,true);assert.equal(last.next_cursor,'STOCK-A');assert.deepEqual(last.rows,[]);
+  f.rows.push(metricMember('\uE000'),metricMember('\u{10000}'));
+  assert.equal((await f.metrics().page({cursor:'',rowLimit:250})).rows.length,2,'C order is UTF8 bytes, not JS UTF16 string order');
+});
+
+test('metric arguments reject proxies/getters/arbitrary cells and detach before pending SQL; cancellation preserves settlement lane',async()=>{
+  const f=await metricFixture();const reader=f.metrics();
+  for(const page of [{cursor:'',rowLimit:251},{cursor:' A',rowLimit:1},{cursor:'',rowLimit:1,observations:[]},
+    new Proxy({cursor:'',rowLimit:1},{}),{get cursor(){assert.fail('getter');},rowLimit:1}])
+    await assert.rejects(reader.page(page),/invalid_input|invalid_page|invalid_account/);
+  let release;const pending=new Promise(resolve=>{release=resolve;});
+  const waiting=await metricFixture(async({text})=>{if(text.includes('stock-metrics:page'))await pending;});
+  const lane=waiting.metrics(),page={cursor:'',rowLimit:1},first=lane.page(page);page.cursor='FOREIGN';
+  await new Promise(resolve=>setImmediate(resolve));await assert.rejects(lane.page({cursor:'',rowLimit:1}),/concurrent_operation/);
+  release();assert.equal((await first).cursor,'');
+  const before=f.calls.length;
+  await assert.rejects(createNeighborhoodFrozenJobStockMetricPages(f.client,{...options,checkBudget(){throw Error('cancelled');}},f.graph,'2026-10-07')
+    .page({cursor:'',rowLimit:1}),/cancelled/);assert.equal(f.calls.length,before);
+});
+
+test('fixed metric SQL uses stock and typed account indexes, exact numeric guarded casts and encoded admission, not mean medians or part sums',()=>{
+  const sql=NEIGHBORHOOD_FROZEN_STOCK_METRIC_PAGE_SQL;
+  assert.match(sql,/FROM app\.neighborhood_custom_cohort_stock_accounts/);
+  assert.match(sql,/kind='parcels' AND account_id=a\.account_id/);
+  assert.match(sql,/CASE WHEN valid_numeric THEN literal::numeric END/);
+  assert.match(sql,/WHEN low<>high THEN 'conflicting'/);assert.match(sql,/octet_length\(encoded\)/);
+  assert.doesNotMatch(sql,/ST_DWithin|FROM (?:core|gis)\.|AVG\(|sum\(.*literal|INSERT|UPDATE|DELETE/);
+  const definition=JSON.parse(getNeighborhoodFrozenStockMetricProfile().definition_blob.canonical_json);
+  assert.deepEqual(definition.typed_original_profile,getNeighborhoodFrozenTypedOriginalV1Profile());
+});
 const result=row=>({rowCount:1,rows:[row]});
 function fixture(hook=()=>{},initial=false) {
   const calls=[];let stored=initial;

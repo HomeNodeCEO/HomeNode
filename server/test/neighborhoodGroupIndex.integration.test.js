@@ -33,6 +33,8 @@ import { createNeighborhoodFrozenJobSourceIdentity }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobSourceIdentity.js';
 import { createNeighborhoodFrozenJobTypedOriginals }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobTypedOriginals.js';
+import { createNeighborhoodFrozenJobStockMetricPages }
+  from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStockMetricPages.js';
 import { NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL, NEIGHBORHOOD_FROZEN_JOB_IDENTITY_COVERAGE_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourceClosurePages.js';
 import { createCustomNeighborhoodWitness2SourcePolicy, CUSTOM_NEIGHBORHOOD_WITNESS2_SOURCE_RIGHTS_KEY,
@@ -596,6 +598,25 @@ test('isolated PostgreSQL: freezes a complete 60001-account original source popu
     console.info('[native-typed-originals]',{parcels:60001,accounts:60001,rows:120009,steps:typedSteps,
       duration_ms:Math.round(performance.now()-typedStarted),maximum_page_originals:250,relation_bytes:typedSize,
       production_latency:false,typed_acquisition:false});
+    let metricCursor='',metricDone=false,metricAccounts=0,metricParts=0,metricSteps=0,maximumMetricRows=0;
+    const metricStarted=performance.now(),metricsFrom=stockCalls.length;
+    while(!metricDone){const page=await withCustomCohortJobTransaction(stockPool,client=>createNeighborhoodFrozenJobStockMetricPages(client,
+      {claim,scope,actorUserId:actor,geometryInput:retainedDefinition.geometry_input,discovery,
+        subjectIntent:retainedCheckpoint.evidence_refs[0],checkBudget(){}},identityGraph,'2026-10-07')
+      .page({cursor:metricCursor,rowLimit:250}));
+      for(const row of page.rows){const n=Number(row.account_id.slice(7));
+        assert.equal(row.source_part_count,'1');assert.equal(row.geographic_parcel_count,'1');
+        assert.equal(row.observations.reported_residential_area.exact_value,String(1000+n%100));
+        assert.equal(row.observations.reported_year_built.exact_value,String(1960+n%40));
+        assert.equal(row.observations.reported_market_value.state,'unsupported');
+        assert.equal(row.observations.reported_market_value.exact_value,'200000');
+        metricAccounts++;metricParts+=Number(row.source_part_count);}
+      maximumMetricRows=Math.max(maximumMetricRows,page.rows.length);metricCursor=page.next_cursor;metricDone=page.end_of_population;
+      assert.ok(++metricSteps<=242);assert.equal(page.coverage,'one_account_page_only');assert.equal(page.source_acquisition,'not_established');}
+    assert.equal(metricAccounts,60001);assert.equal(metricParts,60001);assert.equal(metricSteps,241);assert.equal(maximumMetricRows,250);
+    assert.ok(!stockCalls.slice(metricsFrom).some(sql=>/ST_DWithin|job-closure:|job-typed:rows|job-stock:begin/.test(sql)));
+    console.info('[native-stock-metric-pages]',{accounts:metricAccounts,parts:metricParts,pages:metricSteps,maximum_page_accounts:maximumMetricRows,
+      duration_ms:Math.round(performance.now()-metricStarted),production_latency:false,typed_acquisition:false});
     await pool.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);
     const previousClaim=claim;
     claim=await withCustomCohortJobTransaction(pool,async client=>{const [job]=await createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900});
@@ -735,6 +756,11 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       (3,'CLOSURE-OUTSIDE','Outside Stock','c',ST_Multi(ST_MakeEnvelope(-97.7,32.9,-97.699,32.901,4326))),
       (4,'CLOSURE-A','Original Stock','d',ST_Multi(ST_MakeEnvelope(-97.71,32.9,-97.709,32.901,4326))),
       (5,NULL,NULL,'e',ST_MakeEnvelope(-96.7,32.901,-96.699,32.902,4326))`);
+    await pool.query(`UPDATE gis.dcad_parcels SET residential_year_built=1960,parcel_area_sqft=8000,
+      current_market_value=9007199254740993,residential_area_sqft=CASE WHEN object_id=1 THEN 1000.01 ELSE 2000.02 END
+      WHERE object_id IN (1,4)`);
+    await pool.query('UPDATE gis.dcad_parcels SET residential_year_built=NULL WHERE object_id=4');
+    await pool.query(`UPDATE gis.dcad_parcels SET residential_year_built=2050,parcel_area_sqft=0,residential_area_sqft=0 WHERE object_id=2`);
     await pool.query(`INSERT INTO core.sales_source_records(id,primary_account_id,current_price,close_date,raw_payload) VALUES
       (501,'CLOSURE-A',9007199254740993,'2010-01-01','{"ClosePrice":9007199254740993}'::jsonb),
       (502,'CLOSURE-OUTSIDE',777777,'2026-01-01',NULL),
@@ -1094,7 +1120,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     const typedCalls=[];let revokeTyped=false,revokeTypedRole=false,changeTypedSubject=false,loseTypedCommit=false;
     const typedPool={async connect(){const client=await pool.connect();return {release:client.release.bind(client),async query(config){
       typedCalls.push(config.text);const result=await client.query(config);
-      if(config.text.includes('job-typed:rows')){
+      if(/job-typed:rows|stock-metrics:page/.test(config.text)){
         if(revokeTyped){revokeTyped=false;await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});}
         if(revokeTypedRole){revokeTypedRole=false;await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);}
         if(changeTypedSubject){changeTypedSubject=false;await client.query("UPDATE app.appraisal_subject_snapshots SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2000') WHERE id=$1",[sourceSnapshot]);}
@@ -1120,6 +1146,9 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await assert.rejects(typedOwner.prepareFrozenCaptureJobTypedOriginals(sourceInput,{captureJobClaim:sourceClaim}),error=>error.outcome_unknown===true);
     const committedTyped=await readCheckpoint();assert.equal(committedTyped.phase,'frozen_typed_v1');assert.equal(committedTyped.evidence_refs.length,7);
     assert.equal(await typedRows(),3);
+    await assert.rejects(typedOwner.readFrozenCaptureJobStockMetrics(sourceInput,{captureJobClaim:sourceClaim,stockMetricPage:{cursor:'',rowLimit:1}}),
+      /unfinished_typed_interpretation/,'reading metrics cannot advance or silently complete a partial typed layer');
+    assert.deepEqual(await readCheckpoint(),committedTyped);
     const typedFrom=typedCalls.length;let typed=await typedOwner.prepareFrozenCaptureJobTypedOriginals(sourceInput,{captureJobClaim:sourceClaim});
     assert.equal(typed.typed_layer_count,2);assert.equal(await typedRows(),5);
     assert.ok(typedCalls.slice(typedFrom).some(sql=>sql.includes('job-closure:accounts')));
@@ -1141,6 +1170,40 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       [organization,committedTyped.evidence_refs[6].content_sha256])).rows[0].canonical_utf8);
     assert.equal((await pool.query(`SELECT count(*)::int AS n FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1 AND content_sha256=$2`,
       [organization,typedBody.profile_reference.content_sha256])).rows[0].n,1,'the exact interpretation definition is retained, not replaced by current defaults on reopen');
+    const metricOptions={captureJobClaim:sourceClaim,stockMetricPage:{cursor:'',rowLimit:1}},beforeMetrics=await readCheckpoint(),metricFrom=typedCalls.length;
+    const metricsA=await typedOwner.readFrozenCaptureJobStockMetrics(sourceInput,metricOptions);
+    assert.equal(metricsA.rows.length,1);assert.equal(metricsA.rows[0].account_id,'CLOSURE-A');assert.equal(metricsA.end_of_population,false);
+    assert.equal(metricsA.rows[0].geographic_parcel_count,'1');assert.equal(metricsA.rows[0].source_part_count,'2');
+    assert.equal(metricsA.rows[0].observations.reported_residential_area.state,'conflicting');
+    assert.equal(metricsA.rows[0].observations.reported_residential_area.exact_value,null);
+    assert.deepEqual(metricsA.rows[0].observations.reported_residential_area.conflict_values,['1000.01','2000.02']);
+    assert.equal(metricsA.rows[0].observations.reported_year_built.exact_value,'1960');
+    assert.equal(metricsA.rows[0].observations.reported_year_built.observed_part_count,'1');
+    assert.equal(metricsA.rows[0].observations.reported_year_built.missing_part_count,'1');
+    assert.equal(metricsA.rows[0].observations.reported_site_area.exact_value,'8000','equal repeated account values are not summed across CAD parcel parts');
+    assert.equal(metricsA.rows[0].observations.reported_market_value.state,'unsupported');
+    assert.equal(metricsA.rows[0].observations.reported_market_value.exact_value,'9007199254740993');
+    assert.equal(metricsA.population.unassociated_parcel_count,'1');assert.equal(metricsA.source_acquisition,'not_established');
+    const metricsB=await typedOwner.readFrozenCaptureJobStockMetrics(sourceInput,{...metricOptions,stockMetricPage:{cursor:metricsA.next_cursor,rowLimit:250}});
+    assert.equal(metricsB.rows.length,1);assert.equal(metricsB.rows[0].account_id,'CLOSURE-B');assert.equal(metricsB.end_of_population,true);
+    assert.equal(metricsB.rows[0].observations.reported_year_built.state,'invalid');
+    assert.equal(metricsB.rows[0].observations.reported_residential_area.state,'invalid');
+    assert.equal(metricsB.rows[0].observations.reported_site_area.exact_value,'0');
+    assert.equal(metricsB.rows[0].observations.reported_market_value.state,'missing');
+    assert.deepEqual(await readCheckpoint(),beforeMetrics);assert.equal(await typedRows(),17);
+    assert.ok(!typedCalls.slice(metricFrom).some(sql=>/ST_DWithin|job-closure:|job-typed:rows|job-typed:progress|cohort-job:checkpoint/.test(sql)),
+      'metric reads use the existing immutable read model, never recapture or checkpoint writes');
+    const deniedFrom=typedCalls.length;
+    await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+    await assert.rejects(typedOwner.readFrozenCaptureJobStockMetrics(sourceInput,metricOptions),/market_data_access_denied/);
+    assert.ok(!typedCalls.slice(deniedFrom).some(sql=>sql.includes('stock-metrics:')));
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));revokeTyped=true;
+    await assert.rejects(typedOwner.readFrozenCaptureJobStockMetrics(sourceInput,metricOptions),/market_data_access_denied/);
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));revokeTypedRole=true;
+    await assert.rejects(typedOwner.readFrozenCaptureJobStockMetrics(sourceInput,metricOptions),/job_actor_access_revoked/);
+    await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    changeTypedSubject=true;await assert.rejects(typedOwner.readFrozenCaptureJobStockMetrics(sourceInput,metricOptions),/subject_changed/);
+    assert.deepEqual(await readCheckpoint(),beforeMetrics);assert.equal(await typedRows(),17);
     for(const sql of ["UPDATE app.neighborhood_custom_cohort_typed_original_rows SET typed=typed WHERE operation_id=$1",
       "DELETE FROM app.neighborhood_custom_cohort_typed_original_rows WHERE operation_id=$1",
       "UPDATE app.neighborhood_custom_cohort_typed_originals SET progress=progress WHERE operation_id=$1"])
@@ -1162,6 +1225,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await assert.rejects(geographicOwner.verifyFrozenCaptureJobStockOriginals(sourceInput,{captureJobClaim:sourceClaim}),/claim_lost/);
     await assert.rejects(identityOwner.verifyFrozenCaptureJobSourceIdentityClosure(sourceInput,{captureJobClaim:sourceClaim}),/claim_lost/);
     await assert.rejects(typedOwner.prepareFrozenCaptureJobTypedOriginals(sourceInput,{captureJobClaim:sourceClaim}),/claim_lost/);
+    await assert.rejects(typedOwner.readFrozenCaptureJobStockMetrics(sourceInput,{captureJobClaim:sourceClaim,stockMetricPage:{cursor:'',rowLimit:1}}),/claim_lost/);
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,operation));
     await assert.rejects(withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSourceClosurePages(client,
       frozenSpatialOptions({...options,claim})).page({kind:'source_records',cursor:''})),/claim_lost/);

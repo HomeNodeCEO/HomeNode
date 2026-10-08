@@ -31,6 +31,8 @@ import { createNeighborhoodFrozenJobStockOriginals }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStockOriginals.js';
 import { createNeighborhoodFrozenJobSourceIdentity }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobSourceIdentity.js';
+import { createNeighborhoodFrozenJobTypedOriginals }
+  from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobTypedOriginals.js';
 import { NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL, NEIGHBORHOOD_FROZEN_JOB_IDENTITY_COVERAGE_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourceClosurePages.js';
 import { createCustomNeighborhoodWitness2SourcePolicy, CUSTOM_NEIGHBORHOOD_WITNESS2_SOURCE_RIGHTS_KEY,
@@ -574,6 +576,26 @@ test('isolated PostgreSQL: freezes a complete 60001-account original source popu
     assert.equal(identitySteps,487);assert.equal(identityProgress.unknown_parcel_origins,60001);assert.equal(identityProgress.missing_account_count,0);
     console.info('[native-source-identities]',{parcels:60001,accounts:60001,steps:identitySteps,
       duration_ms:Math.round(performance.now()-identityStarted),maximum_transferred_rows:1,production_latency:false,typed_acquisition:false});
+    // DATA-only typed read-model over independently known native fixture counts.
+    // This does NOT claim an authorized complete >50k original graph/acquisition.
+    // The separate small actual-owner fixture below proves admission/checkpoints.
+    let typedProgress=null,typedDone=false,typedSteps=0;const typedStarted=performance.now();
+    while(!typedDone){const step=await withCustomCohortJobTransaction(stockPool,client=>createNeighborhoodFrozenJobTypedOriginals(client,
+      {claim,scope,actorUserId:actor,geometryInput:retainedDefinition.geometry_input,discovery,
+        subjectIntent:retainedCheckpoint.evidence_refs[0],checkBudget(){}},identityGraph,'2026-10-07').step(typedProgress));
+      typedProgress=step.progress;typedDone=step.all_layers_typed;assert.ok(++typedSteps<=488);
+      assert.equal(step.authority,'not_established');assert.ok(Buffer.byteLength(JSON.stringify(typedProgress))<400);}
+    assert.equal(typedSteps,487);
+    assert.deepEqual((await pool.query(`SELECT kind,count(*)::int AS n FROM app.neighborhood_custom_cohort_typed_original_rows
+      WHERE operation_id=$1 GROUP BY kind ORDER BY kind`,[operation])).rows,
+    Object.entries(identityGraph.layer_counts).map(([kind,n])=>({kind,n})).sort((a,b)=>a.kind.localeCompare(b.kind)));
+    assert.equal((await pool.query(`SELECT typed->'observations'->'normalized_current_price'->>'exact_value' AS value
+      FROM app.neighborhood_custom_cohort_typed_original_rows WHERE operation_id=$1 AND kind='source_records' AND row_key='501'`,[operation])).rows[0].value,
+    '9007199254740993','large exact decimal text is not rounded in the indexed read-model');
+    const typedSize=(await pool.query(`SELECT pg_total_relation_size('app.neighborhood_custom_cohort_typed_original_rows')::text AS bytes`)).rows[0].bytes;
+    console.info('[native-typed-originals]',{parcels:60001,accounts:60001,rows:120009,steps:typedSteps,
+      duration_ms:Math.round(performance.now()-typedStarted),maximum_page_originals:250,relation_bytes:typedSize,
+      production_latency:false,typed_acquisition:false});
     await pool.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);
     const previousClaim=claim;
     claim=await withCustomCohortJobTransaction(pool,async client=>{const [job]=await createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900});
@@ -1028,6 +1050,8 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       return result;}};}};
     const identityOwner=createCustomCohortContextCapture({pool:identityPool,sourceMode:'combined-witness2-v1',authorizeMarketData:fixturePolicy()});
     const beforeIdentity=await readCheckpoint();
+    await assert.rejects(sourceOwner.prepareFrozenCaptureJobTypedOriginals(sourceInput,{captureJobClaim:sourceClaim}),/checkpoint_conflict/,
+      'a geographic-only checkpoint cannot begin numerical typing');
     await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
     await assert.rejects(identityOwner.verifyFrozenCaptureJobSourceIdentityClosure(sourceInput,{captureJobClaim:sourceClaim}),/market_data_access_denied/);
     assert.ok(!identityCalls.some(sql=>sql.includes('neighborhood-frozen-job-identity:')),'initial current denial reads no identity payload');
@@ -1044,6 +1068,9 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     loseIdentityCommit=true;
     await assert.rejects(identityOwner.verifyFrozenCaptureJobSourceIdentityClosure(sourceInput,{captureJobClaim:sourceClaim}),error=>error.outcome_unknown===true);
     const committedIdentity=await readCheckpoint();assert.equal(committedIdentity.phase,'frozen_identity_v1');assert.equal(committedIdentity.evidence_refs.length,6);
+    await assert.rejects(sourceOwner.prepareFrozenCaptureJobTypedOriginals(sourceInput,{captureJobClaim:sourceClaim}),/unfinished_identity_verification/,
+      'a partial identity closure cannot materialize typed observations');
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_custom_cohort_typed_originals WHERE operation_id=$1',[sourceOperation])).rows[0].n,0);
     const identityFrom=identityCalls.length;
     let identified=await identityOwner.verifyFrozenCaptureJobSourceIdentityClosure(sourceInput,{captureJobClaim:sourceClaim});
     assert.equal(identified.verified_layer_count,2);
@@ -1064,11 +1091,77 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
     await assert.rejects(identityOwner.verifyFrozenCaptureJobSourceIdentityClosure(sourceInput,{captureJobClaim:sourceClaim}),/market_data_access_denied/);
     await setFixtureGrant(pool,organization,fixtureGrant(organization));
+    const typedCalls=[];let revokeTyped=false,revokeTypedRole=false,changeTypedSubject=false,loseTypedCommit=false;
+    const typedPool={async connect(){const client=await pool.connect();return {release:client.release.bind(client),async query(config){
+      typedCalls.push(config.text);const result=await client.query(config);
+      if(config.text.includes('job-typed:rows')){
+        if(revokeTyped){revokeTyped=false;await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});}
+        if(revokeTypedRole){revokeTypedRole=false;await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);}
+        if(changeTypedSubject){changeTypedSubject=false;await client.query("UPDATE app.appraisal_subject_snapshots SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2000') WHERE id=$1",[sourceSnapshot]);}
+      }
+      if(config.text==='COMMIT'&&loseTypedCommit){loseTypedCommit=false;throw Error('synthetic typed COMMIT acknowledgement lost');}
+      return result;}};}};
+    const typedOwner=createCustomCohortContextCapture({pool:typedPool,sourceMode:'combined-witness2-v1',authorizeMarketData:fixturePolicy()});
+    const beforeTyped=await readCheckpoint(),typedRows=async()=>(await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_custom_cohort_typed_original_rows WHERE operation_id=$1',[sourceOperation])).rows[0].n;
+    await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+    await assert.rejects(typedOwner.prepareFrozenCaptureJobTypedOriginals(sourceInput,{captureJobClaim:sourceClaim}),/market_data_access_denied/);
+    assert.ok(!typedCalls.some(sql=>sql.includes('job-typed:')||sql.includes('job-closure:')),'initial denial reads/materializes no typed original');
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));revokeTyped=true;
+    await assert.rejects(typedOwner.prepareFrozenCaptureJobTypedOriginals(sourceInput,{captureJobClaim:sourceClaim}),/market_data_access_denied/);
+    assert.deepEqual(await readCheckpoint(),beforeTyped);assert.equal(await typedRows(),0,'ending license denial rolls back typed rows, header, blob and checkpoint');
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));revokeTypedRole=true;
+    await assert.rejects(typedOwner.prepareFrozenCaptureJobTypedOriginals(sourceInput,{captureJobClaim:sourceClaim}),/job_actor_access_revoked/);
+    assert.deepEqual(await readCheckpoint(),beforeTyped);assert.equal(await typedRows(),0);
+    await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    changeTypedSubject=true;
+    await assert.rejects(typedOwner.prepareFrozenCaptureJobTypedOriginals(sourceInput,{captureJobClaim:sourceClaim}),/subject_changed/);
+    assert.deepEqual(await readCheckpoint(),beforeTyped);assert.equal(await typedRows(),0);
+    loseTypedCommit=true;
+    await assert.rejects(typedOwner.prepareFrozenCaptureJobTypedOriginals(sourceInput,{captureJobClaim:sourceClaim}),error=>error.outcome_unknown===true);
+    const committedTyped=await readCheckpoint();assert.equal(committedTyped.phase,'frozen_typed_v1');assert.equal(committedTyped.evidence_refs.length,7);
+    assert.equal(await typedRows(),3);
+    const typedFrom=typedCalls.length;let typed=await typedOwner.prepareFrozenCaptureJobTypedOriginals(sourceInput,{captureJobClaim:sourceClaim});
+    assert.equal(typed.typed_layer_count,2);assert.equal(await typedRows(),5);
+    assert.ok(typedCalls.slice(typedFrom).some(sql=>sql.includes('job-closure:accounts')));
+    assert.ok(!typedCalls.slice(typedFrom).some(sql=>sql.includes('job-closure:parcels')),'fresh-client lost ACK resumes after the committed original layer');
+    for(let i=0;i<10&&!typed.all_layers_typed;i++)typed=await typedOwner.prepareFrozenCaptureJobTypedOriginals(sourceInput,{captureJobClaim:sourceClaim});
+    assert.equal(typed.all_layers_typed,true);assert.equal(typed.individual_original_interpretation,'complete');assert.equal(await typedRows(),17);
+    assert.equal(typed.property_transaction_observations,'not_established');assert.equal(typed.source_freshness,'not_established');
+    assert.equal(typed.source_acquisition,'not_established');assert.equal(typed.report_update,'none');
+    const typedReplayFrom=typedCalls.length;assert.equal((await typedOwner.prepareFrozenCaptureJobTypedOriginals(sourceInput,{captureJobClaim:sourceClaim})).advanced,false);
+    assert.ok(!typedCalls.slice(typedReplayFrom).some(sql=>/job-closure:|job-typed:rows|job-typed:progress/.test(sql)));
+    assert.ok(!typedCalls.some(sql=>/ST_DWithin|frozen-spatial:counts|job-stock:begin/.test(sql)));
+    const savedTyped=(await pool.query(`SELECT kind,row_key,account_id,source_record_id::text,typed
+      FROM app.neighborhood_custom_cohort_typed_original_rows WHERE operation_id=$1 ORDER BY kind,row_key`,[sourceOperation])).rows;
+    for(const [kind,keys] of Object.entries(expected))assert.deepEqual(savedTyped.filter(row=>row.kind===kind).map(row=>row.row_key),keys);
+    assert.ok(!savedTyped.some(row=>row.kind==='parcels'&&row.row_key==='5'),'NULL-account geographic stock is retained separately, never invented as an account source observation');
+    assert.ok(savedTyped.some(row=>row.kind==='parcels'&&row.row_key==='4'),'outside account-associated CAD parts remain distinguishable originals, not geographic members');
+    assert.ok(savedTyped.some(row=>row.kind==='sale_links'&&row.account_id===null));
+    const typedBody=JSON.parse((await pool.query(`SELECT canonical_utf8 FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1 AND content_sha256=$2`,
+      [organization,committedTyped.evidence_refs[6].content_sha256])).rows[0].canonical_utf8);
+    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1 AND content_sha256=$2`,
+      [organization,typedBody.profile_reference.content_sha256])).rows[0].n,1,'the exact interpretation definition is retained, not replaced by current defaults on reopen');
+    for(const sql of ["UPDATE app.neighborhood_custom_cohort_typed_original_rows SET typed=typed WHERE operation_id=$1",
+      "DELETE FROM app.neighborhood_custom_cohort_typed_original_rows WHERE operation_id=$1",
+      "UPDATE app.neighborhood_custom_cohort_typed_originals SET progress=progress WHERE operation_id=$1"])
+      await assert.rejects(pool.query(sql,[sourceOperation]),error=>error.code==='55000');
+    await assert.rejects(pool.query(`INSERT INTO app.neighborhood_custom_cohort_typed_original_rows
+      (operation_id,generation_id,kind,row_key,account_id,source_record_id,original_payload_sha256,typed)
+      SELECT operation_id,generation_id,kind,'5',NULL,NULL,original_payload_sha256,
+        jsonb_set(jsonb_set(typed,'{account_id}','null'::jsonb),'{original,row_key}','"5"'::jsonb)
+      FROM app.neighborhood_custom_cohort_typed_original_rows WHERE operation_id=$1 AND kind='parcels' AND row_key='1'`,[sourceOperation]),
+    error=>error.code==='55000','even a new original FK key cannot be appended after typed publication');
+    await assert.rejects(identityOwner.verifyFrozenCaptureJobSourceIdentityClosure(sourceInput,{captureJobClaim:sourceClaim}),/checkpoint_conflict/);
+    await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+    await assert.rejects(typedOwner.prepareFrozenCaptureJobTypedOriginals(sourceInput,{captureJobClaim:sourceClaim}),/market_data_access_denied/,
+      'a complete typed header/progress/profile does not grant source authority');
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1',[assignment])).rows[0].n,0);
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,sourceOperation));
     await assert.rejects(verificationOwner.verifyFrozenCaptureJobSourcePage(sourceInput,{captureJobClaim:sourceClaim}),/claim_lost/);
     await assert.rejects(geographicOwner.verifyFrozenCaptureJobStockOriginals(sourceInput,{captureJobClaim:sourceClaim}),/claim_lost/);
     await assert.rejects(identityOwner.verifyFrozenCaptureJobSourceIdentityClosure(sourceInput,{captureJobClaim:sourceClaim}),/claim_lost/);
+    await assert.rejects(typedOwner.prepareFrozenCaptureJobTypedOriginals(sourceInput,{captureJobClaim:sourceClaim}),/claim_lost/);
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,operation));
     await assert.rejects(withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSourceClosurePages(client,
       frozenSpatialOptions({...options,claim})).page({kind:'source_records',cursor:''})),/claim_lost/);

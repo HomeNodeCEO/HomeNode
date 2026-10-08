@@ -7,6 +7,7 @@ import { createNeighborhoodFrozenJobStockOriginals, NEIGHBORHOOD_FROZEN_STOCK_OR
   NEIGHBORHOOD_FROZEN_STOCK_ORIGINAL_TOTALS_SQL } from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStockOriginals.js';
 import { neighborhoodFrozenSpatialDefinition } from '../src/services/neighborhoodAssessment/neighborhoodFrozenSpatialPages.js';
 import { createNeighborhoodFrozenJobSourceIdentity } from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobSourceIdentity.js';
+import { createNeighborhoodFrozenJobTypedOriginals } from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobTypedOriginals.js';
 import { NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL, NEIGHBORHOOD_FROZEN_JOB_IDENTITY_COVERAGE_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourceClosurePages.js';
 
@@ -300,4 +301,70 @@ test('additive original link identity index keeps duplicate-position probes boun
   assert.match(migration,/generation_id, source_record_id, \(payload->>'source_position'\), \(payload->>'parcel_sequence'\), row_key/);
   assert.match(migration,/WHERE kind='sale_links'/);
   assert.doesNotMatch(migration,/DROP|DELETE|UPDATE|TRUNCATE|DISABLE|CONCURRENTLY/);
+});
+
+const typedGraph={root:identityGraph.root,layer_counts:{parcels:2,accounts:0,source_records:0,sales:0,sale_links:0,sync_state:0,sync_runs:0}};
+function typedFixture(hook=()=>{}) {
+  let header=null;const counts={};
+  const f=fixture(async call=>{
+    const supplied=await hook(call,()=>header);if(supplied)return supplied;
+    const {text,values}=call;
+    if(text.includes('job-typed:read'))return header?result(structuredClone(header)):{rowCount:0,rows:[]};
+    if(text.includes('job-typed:begin')){header={binding_sha256:values[2],profile_sha256:values[3],effective_date:values[4],
+      expected_counts:JSON.parse(values[5]),progress:JSON.parse(values[6]),status:'building'};return result({});}
+    if(text.includes('job-closure:')){
+      const kind=Object.keys(typedGraph.layer_counts).find(k=>text.includes(`job-closure:${k}`));
+      const rows=kind==='parcels'&&values[2]===''?[1,2].map(n=>({row_key:String(n),payload_text:JSON.stringify({object_id:String(n),
+        account_id:'STOCK-A',residential_year_built:1960,residential_area_sqft:'1000.000',parcel_area_sqft:'8000',current_market_value:'9007199254740993'})})):[];
+      const page_json=JSON.stringify(rows);
+      return result({page_json,page_count:rows.length,candidate_count:rows.length,next_cursor:rows.at(-1)?.row_key??values[2],page_utf8_bytes:Buffer.byteLength(page_json)});
+    }
+    if(text.includes('job-typed:rows')){const rows=JSON.parse(values[3]);counts[values[2]]=(counts[values[2]]??0)+rows.length;return result({inserted_count:rows.length});}
+    if(text.includes('job-typed:counts')){const rows=Object.entries(counts).map(([kind,n])=>({kind,row_count:String(n)}));return {rowCount:rows.length,rows};}
+    if(text.includes('job-typed:progress')){header.progress=JSON.parse(values[2]);header.status=values[3];return result({});}
+  },true);
+  return {...f,typed:(date='2026-08-31')=>createNeighborhoodFrozenJobTypedOriginals(f.client,options,typedGraph,date),header:()=>header};
+}
+test('typed indexed pages retain individual exact originals and independently reconcile all seven layer counts',async()=>{
+  const f=typedFixture();let p=null,done=false,steps=0;
+  while(!done){const step=await f.typed().step(p);p=step.progress;done=step.all_layers_typed;assert.ok(++steps<=7);
+    assert.equal(step.authority,'not_established');assert.equal(step.coverage,'individual_original_interpretations_only');}
+  assert.equal(steps,7);assert.equal(f.header().status,'complete');assert.ok(Buffer.byteLength(JSON.stringify(p))<400);
+  const inserted=JSON.parse(f.calls.find(c=>c.text.includes('job-typed:rows')).values[3]);
+  assert.equal(inserted[0].typed.observations.reported_market_value.exact_value,'9007199254740993');
+  const from=f.calls.length;assert.equal((await f.typed().step(p)).advanced,false);
+  assert.ok(!f.calls.slice(from).some(c=>/job-closure:|job-typed:rows|job-typed:progress/.test(c.text)));
+  assert.ok(!f.calls.some(c=>/ST_DWithin|FROM core\.|FROM gis\.|job-stock:begin|^COMMIT$/.test(c.text)));
+});
+test('typed checkpoints bind original graph/profile/effective date and immutable database progress',async()=>{
+  const f=typedFixture(),first=await f.typed().step(null);
+  for(const patch of [{binding_sha256:'e'.repeat(64)},{kind_index:8},{after:'1',layer_rows:0},{extra:true}])
+    await assert.rejects(f.typed().step({...first.progress,...patch}),/invalid_input|invalid_progress|binding_changed/);
+  await assert.rejects(f.typed('2025-08-31').step(first.progress),/binding_changed/);
+  await assert.rejects(f.typed().step(null),/checkpoint_mismatch/);
+  f.header().profile_sha256='e'.repeat(64);await assert.rejects(f.typed().step(first.progress),/checkpoint_mismatch/);
+});
+test('typed row acknowledgement, independent total and progress-CAS failures refuse for owner rollback',async()=>{
+  const missing=typedFixture(({text})=>text.includes('job-typed:rows')?result({inserted_count:1}):null);
+  await assert.rejects(missing.typed().step(null),/original_mismatch/);
+  const lost=typedFixture(({text})=>text.includes('job-typed:progress')?{rowCount:0,rows:[]}:null);
+  await assert.rejects(lost.typed().step(null),/write_lost/);
+  const counts=typedFixture(({text})=>text.includes('job-typed:counts')?{rowCount:0,rows:[]}:null);
+  let p=null;for(let i=0;i<6;i++)p=(await counts.typed().step(p)).progress;
+  await assert.rejects(counts.typed().step(p),/population_incomplete/);
+});
+test('typed continuation detaches primitives and refuses getters, proxies, cancelled/lost claim and overlap',async()=>{
+  let release;const pending=new Promise(resolve=>{release=resolve;});let waiting=false;
+  const f=typedFixture(async({text})=>{if(waiting&&text.includes('job-stock:read'))await pending;});
+  const first=await f.typed().step(null),mutable={...first.progress};let invoked=false;
+  const getter={...mutable};Object.defineProperty(getter,'after',{enumerable:true,get(){invoked=true;return '';}});
+  await assert.rejects(f.typed().step(getter),/invalid_input/);assert.equal(invoked,false);
+  await assert.rejects(f.typed().step(new Proxy(mutable,{})),/invalid_input/);
+  waiting=true;const lane=f.typed(),running=lane.step(mutable);mutable.kind_index=7;
+  await new Promise(resolve=>setImmediate(resolve));await assert.rejects(lane.step(null),/concurrent_operation/);release();
+  assert.equal((await running).progress.kind_index,2);
+  const cancelled=createNeighborhoodFrozenJobTypedOriginals(f.client,{...options,checkBudget(){throw Error('cancelled');}},typedGraph,'2026-08-31');
+  const from=f.calls.length;await assert.rejects(cancelled.step(null),/cancelled/);assert.equal(f.calls.length,from);
+  const lost=typedFixture(({text})=>text.includes('generation-fence')?{rowCount:0,rows:[]}:null);
+  await assert.rejects(lost.typed().step(null),/claim_lost/);
 });

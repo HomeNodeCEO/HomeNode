@@ -2046,6 +2046,75 @@ acquisition, bounded exact numerical/geometry consumers, coherent report
 publication and real >50k/5-mile/10-mile/retrospective/live QA acceptance remain
 outstanding. No genuine appraisal choices or accepted reports are changed.
 
+### Indexed typed-original interpretation stage (2026-10-08)
+
+`prepareFrozenCaptureJobTypedOriginals` adds a dormant, internal stage after the
+actual owner has finished the independent original graph, geographic-original
+and source-identity/one-hop checks. It cannot advance or overwrite an unfinished
+prerequisite. The `frozen_typed_v1` checkpoint retains all six prerequisite
+references and a seventh typed-progress reference in the same transaction as
+the new indexed rows. Current DB actor/role, assignment/draft/subject, source
+purpose/license, CAD permission, request/claim and generation pin are rechecked
+at both transaction ends. No HTTP/default/dispatcher/scheduler is enabled.
+
+The fixed `neighborhood-frozen-typed-original-v1` profile interprets one exact
+original at a time. Numeric SQL-text fields remain exact decimal strings;
+integer JSON fields use original token slices, not a rounded parsed value.
+Missing, invalid, oversize/unsupported and unspecified-unit observations remain
+distinct. Years are bounded by the retained effective date. Original normalized
+dates retain valid future dates for subsequent explicit period filtering; no
+load timestamp or sweep date substitutes for a closing date. Diagnostics retain
+bounded literal/type/length/hash values and the complete original-row hash/key.
+The original rows themselves stay retained. No arbitrary extra MLS fields,
+private payloads or documents are added to this projection.
+
+The profile includes the exact single-witness V2 definition and hash, not just
+its current name. Reusing that pure one-witness interpreter does not mint an
+old dense-reader/selection capability or widen its caller limits. Same-payload
+prices, unit/currency conflicts, status and close-date dispositions stay
+separate from normalized database fields; neither overwrites the other. A
+missing/NULL raw-witness envelope is rejected, not treated as absent fields.
+CAD area field labels are explicitly **reported square feet**, not verified GLA
+at sale; normalized source areas/prices without established units/currency are
+unsupported with the exact numerical value retained. No unit conversion or
+cross-row price allocation occurs.
+
+`20261109_custom_cohort_frozen_typed_originals.sql` stores operation/generation,
+graph/profile/effective-date binding and immutable individual row projections,
+with operation/kind/account and operation/kind/source indexes. Generation-leading
+original FKs preserve provenance and avoid retirement-wide table scans. Fixed
+250-row, byte-bounded original pages feed parameterized row writes; original
+text and account/source identity must still match the pinned SQL original.
+Bounded original parcel payloads include retained EWKB text for hashing, but no
+new spatial/geometry query, geometry interpretation or rendering is performed.
+Each layer count and the independent final indexed row counts must match the
+verified graph. Completed typed headers/rows refuse mutation or late inserts.
+Progress lives in both the fenced checkpoint and the SQL header; neither a
+caller-supplied cursor nor a changed profile/effective date can replace it.
+
+Focused tests cover exact decimals above IEEE-754 integer precision, original
+numeric tokens, nulls/bad syntax/future dates, incompatible units/currencies,
+malformed witnesses, closed inputs, serial settlement, ACK/count/CAS failures,
+current claim loss and cancellation. The isolated native fixture extends the
+small **actual-owner** test through all seven typed layers, initial/ending license
+denial, ending role/subject rollback, real successful COMMIT followed by lost
+acknowledgment/fresh-client resume, definition retention, complete replay,
+immutability and cancellation. A separate **DATA-only** native fixture exercises
+the indexed primitive over 60,001 parcel and 60,001 account originals. Its known
+fixture graph binding is not an actual completed >50k authorized acquisition;
+the native timings/storage are not production map latency/SLA. These database
+tests must execute on the exact protected CI head before merge; mocks are not
+native acceptance.
+
+This completes only individual-original interpretation. Full account/member
+and transaction resolution (including replicated CAD parts and conflicting
+facts), CAD improvement/amenity lineage, freshness/historical coverage, exact
+whole-selection statistics/medians/COD/quarter checks, coherent publication,
+worker orchestration/terminal cleanup and full live acceptance remain ahead.
+No source-acquisition receipt, verified economic property, report/workspace
+update or Apply result is produced. Genuine Hardy/accepted reports, old 50k
+limits, schedules, Render deployment and live source rights remain unchanged.
+
 ### Independent source-identity / one-hop association stage (2026-10-07)
 
 The internal `verifyFrozenCaptureJobSourceIdentityClosure` method follows the

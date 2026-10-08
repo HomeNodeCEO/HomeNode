@@ -36,6 +36,8 @@ import { verifyCohortOriginalSourceGraphStep } from './cohortOriginalSourceGraph
 import { createCohortOriginalSourceReferencesV2Store } from './cohortOriginalSourceReferencesV2.js';
 import { verifyCohortOriginalSourceGraphV2Step } from './cohortOriginalSourceGraphV2.js';
 import { createCustomCohortGraphV2AnchorRepository } from './customCohortGraphV2AnchorRepository.js';
+import { createCustomCohortGeographicV2AnchorRepository } from './customCohortGeographicV2AnchorRepository.js';
+import { prepareCohortGeographicOriginalReceiptV2 } from './cohortGeographicOriginalReceiptV2.js';
 import { createCustomCohortRecordedGroupSelectionOwner,
   reopenCustomCohortRecordedGroupSelectionOriginal } from './customCohortRecordedGroupSelectionOwner.js';
 import { createCustomCohortPreparedCatalogOwner } from './customCohortPreparedCatalogOwner.js';
@@ -120,6 +122,8 @@ const FROZEN_SOURCE_STAGES = freeze({
   prefix_v1: { allowedPhases: ['frozen_stock_v1', 'frozen_source_v1'] },
   prefix_refs_v2: { referencesV2: true, allowedPhases: ['frozen_stock_v1', 'frozen_source_refs_v2'] },
   verify_refs_v2: { referencesV2: true, verifying: true, allowedPhases: ['frozen_source_refs_v2', 'frozen_verify_refs_v2'] },
+  geographic_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true,
+    allowedPhases: ['frozen_verify_refs_v2', 'frozen_geo_verify_refs_v2'] },
   verify_v1: { verifying: true, allowedPhases: ['frozen_source_v1', 'frozen_verify_v1'] },
   geographic_v1: { verifying: true, stockVerifying: true, allowedPhases: ['frozen_verify_v1', 'frozen_geo_verify_v1'] },
   identity_v1: { verifying: true, stockVerifying: true, identityVerifying: true,
@@ -1589,7 +1593,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(!same(await jobs.readRequest(claim,jobOptions),requested)) fail('operation_conflict');
       const checkpoint=await jobs.readCheckpoint(claim,jobOptions);
       if(!checkpoint || !allowedPhases.includes(checkpoint.phase)
-        ||checkpoint.evidence_refs.length!==({frozen_stock_v1:2,frozen_source_v1:3,frozen_source_refs_v2:3,frozen_verify_refs_v2:4,frozen_verify_v1:4,frozen_geo_verify_v1:5,frozen_identity_v1:6,frozen_typed_v1:7}[checkpoint.phase]))
+        ||checkpoint.evidence_refs.length!==({frozen_stock_v1:2,frozen_source_v1:3,frozen_source_refs_v2:3,frozen_verify_refs_v2:4,frozen_geo_verify_refs_v2:5,frozen_verify_v1:4,frozen_geo_verify_v1:5,frozen_identity_v1:6,frozen_typed_v1:7}[checkpoint.phase]))
         fail('checkpoint_conflict');
       const subjects=createCustomCohortSubjectRepository(client,canonicalAssessmentJson(scope));
       const blobs=createNeighborhoodCohortBlobRepository(client,scope.organization_id);
@@ -1684,6 +1688,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           try{issued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
           if(issued.sequence!==graphAnchor.sequence)fail('checkpoint_conflict');
         }
+        // Geographic verification may only reopen the ACTUAL completed issued
+        // graph, not advance an unfinished graph or accept a forged done blob.
+        if(stockVerifying&&issued?.after?.kind_index!==COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.length)
+          fail('unfinished_graph_verification');
         verification=await verifyCohortOriginalSourceGraphV2Step({chain,binding,source_reference:reference,
           root,issued_receipt:issued,issued_reference:graphAnchor?.receipt_reference??null,checkBudget:budget.check});
         if(verification.advanced){
@@ -1719,7 +1727,38 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             evidence_refs:[retained.intent.reference,stockReference,reference,verificationReference]});
         }
       }
-      if(stockVerifying) {
+      let geographicAnchorStore=null,geographicAnchor=null;
+      if(stockVerifying&&referencesV2){
+        const expected={binding,source_reference:reference,root,graph_verification_reference:verificationReference,stock_reference:stockReference};
+        geographicAnchorStore=createCustomCohortGeographicV2AnchorRepository({client,claim,scope,actorUserId:input.auth.userId,
+          source_reference:reference,root_reference:root,graph_reference:verificationReference,stock_reference:stockReference});
+        geographicAnchor=await geographicAnchorStore.read();
+        if(checkpoint.phase==='frozen_verify_refs_v2'?geographicAnchor!==null
+          :geographicAnchor===null||!same(geographicAnchor.receipt_reference,stockVerificationReference))fail('checkpoint_conflict');
+        let issued=null;
+        if(geographicAnchor){
+          const text=await blobs.get(geographicAnchor.receipt_reference.content_sha256,geographicAnchor.receipt_reference.canonical_utf8_bytes);
+          if(text===null||Buffer.byteLength(text)>16000)fail('checkpoint_conflict');
+          try{issued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
+          issued=prepareCohortGeographicOriginalReceiptV2(issued,expected);
+          if(issued.sequence!==geographicAnchor.sequence)fail('checkpoint_conflict');
+        }
+        // The original stock FK/key/account/EWKB SQL and its independent final
+        // per-account totals are unchanged. Only the provenance of continuation
+        // is new: derive it exclusively from the independent issued geo head.
+        stockVerification=await createNeighborhoodFrozenJobStockOriginals(client,stockOptions).step(issued?.after??null);
+        if(stockVerification.advanced){
+          const after=stockVerification.progress,before=issued?.after??{...after,after_object_id:null,
+            verified_parcels:0,verified_unassociated:0,done:false};
+          const receipt=prepareCohortGeographicOriginalReceiptV2({format:'cohort_geographic_original_receipt_v2',...expected,
+            sequence:(geographicAnchor?.sequence??0)+1,previous:geographicAnchor?.receipt_reference??null,before,after},expected);
+          stockVerificationReference=await blobs.put(canonicalAssessmentJson(receipt));
+          geographicAnchor=await geographicAnchorStore.advance(geographicAnchor,stockVerificationReference);
+          await jobs.saveCheckpoint(claim,jobOptions,{phase:'frozen_geo_verify_refs_v2',
+            evidence_refs:[retained.intent.reference,stockReference,reference,verificationReference,stockVerificationReference]});
+        }
+      }
+      if(stockVerifying&&!referencesV2) {
         let progress=null;
         if(stockVerificationReference) {
           const text=await blobs.get(stockVerificationReference.content_sha256,stockVerificationReference.canonical_utf8_bytes);
@@ -1821,6 +1860,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(!same(await jobs.readRequest(claim,jobOptions),requested)||!same(await stockStore.read(),stock)) fail('checkpoint_conflict');
       if(!same((await chain.describe(root)).layers,prefix.layers)) fail('checkpoint_conflict');
       if(graphAnchorStore&&!same(await graphAnchorStore.read(),graphAnchor))fail('checkpoint_conflict');
+      if(geographicAnchorStore&&!same(await geographicAnchorStore.read(),geographicAnchor))fail('checkpoint_conflict');
       budget.check();
       if(readingStockMetrics||readingSharedStockMetrics) return freeze({...stockMetricResult,...(readingStockMetrics?{typed_original_reference:typedReference}:{}),
         source_reference:reference,verification_reference:verificationReference,stock_verification_reference:stockVerificationReference,
@@ -1995,6 +2035,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * checkpoint progress. No legacy cast, source grant, worker dispatch or Apply. */
     verifyFrozenCaptureJobSourceReferencesV2Page: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'verify_refs_v2'),
+    /** Explicit V2 geographic original owner. Requires the completed issued
+     * graph and advances only its own independent geographic issuance head;
+     * never casts V1 progress, grants source rights, releases a pin or Applies. */
+    verifyFrozenCaptureJobStockOriginalReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'geographic_refs_v2'),
     /** Independent current-authorized root-edge/original-representation validation.
      * Not typed identity closure, complete geographic stock, source acquisition,
      * report publication or Apply. Progress is loaded only from this job's fence. */

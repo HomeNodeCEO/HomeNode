@@ -1,5 +1,57 @@
 # Complete larger-area Custom neighborhood studies
 
+## Issued-head V2 geographic-original verification (2026-10-08, not activated)
+
+`verifyFrozenCaptureJobStockOriginalReferencesV2` is a separate internal owner
+stage. It accepts only the actual completed `frozen_verify_refs_v2` issued graph
+or its own `frozen_geo_verify_refs_v2` checkpoint. It freshly reads the independent
+graph anchor, verifies that the exact issued receipt completed all seven layers,
+and freezes that source/root/graph receipt plus exact stock into its geographic
+issuance head. It never advances an unfinished graph or casts a V1 checkpoint.
+
+The existing geographic-original SQL remains unchanged: each retained stock PK
+reopens its immutable original FK, validates native key/account/normalized EWKB,
+includes NULL-account geometry and excludes out-of-circle parts of associated
+accounts. The eight-MB/250-candidate admission and independent final per-account
+totals still apply. Only a small aggregate crosses into Node. No new spatial
+discovery, original geometry array, source payload copy or mutable fallback.
+
+A free cursor/count/`done` blob is not proof. Each page derives before-progress
+only from the independent last-issued geographic receipt. Receipt retention,
+monotonic anchor CAS and fenced checkpoint commit atomically with current actor,
+assignment/draft/subject/request/claim/pin/CAD/combined-rights checks at both ends.
+The additive guard verifies the actual completed graph binding, initial zero
+state, last issued after-state, next ordered stock-key prefix, exact parcel and
+NULL-account deltas, terminal existence and stock totals. It reads only indexed
+stock keys, not original geometry/payloads. The trusted owner still must validate
+originals and current rights; anchor/owner DML integrity is the trust boundary.
+
+Short nonterminal pages are legitimate under byte admission. A full 250-row tail
+is deliberately not complete until a separate empty terminal query; the guard
+preserves that existing rule. Ending refusal rolls back receipt/anchor/checkpoint;
+lost successful-COMMIT acknowledgment resumes the actual issued continuation.
+Ended replay rechecks current rights/binding but reads no original or new proof.
+
+Focused tests cover closed metadata, native zero keys, short/full-tail/empty
+terminal receipts, 60,001 synthetic rows, stale CAS, autocommit/current claim
+refusal and source/root/graph/stock substitutions. Protected native CI ran
+the small real-owner fixture successfully: unfinished graph refusal before
+geometry SQL, unissued done checkpoint, exact next-key/NULL-count guard, rolled-back short
+prefix guard-only DATA test, both-end license/role/subject/claim/cancel rollback,
+real lost-COMMIT/ended replay, small no-payload receipt, V1 separation and pin.
+That fixture is not a completed licensed >50k capture or production latency test;
+the 250-row full-tail rule is currently unit/source-guard coverage, not native
+large-area acceptance. Job `113200263268` on code head `3a604600` emitted the
+`native-reference-geographic-owner-v2` receipt: three stock parcels, one
+NULL-account parcel, one small metadata put and zero original payload copies.
+The prepared-index suite passed 7/7 with no failures or skips; the migration
+suite passed 417/417. Any later code change requires fresh protected verification.
+
+No HTTP route, worker dispatch, UI/default, schedule, source grant, Apply, pin
+release or production deployment. Still remaining: explicit V2 source identity,
+shared date-neutral typing, amenities and transaction resolution, exact complete
+selected-union statistics, coherent publication, workers/retirement and live QA.
+
 ## Issued-head V2 original graph verification (2026-10-08, not activated)
 
 `verifyFrozenCaptureJobSourceReferencesV2Page` is a distinct internal stage that
@@ -21,7 +73,9 @@ consumed node, exact returned edge and after-state. An independent indexed
 database anchor identifies the **last owner-issued receipt**, not a checkpoint
 pointer that can be redirected to an arbitrary inserted blob. Resume derives
 all counters and the next position from that issued receipt. No backward scan
-to the head is needed on each page; the work is bounded and linear overall.
+to the head is needed on each page; metadata traversal is bounded and linear
+overall. The fixed original SQL still executes for each page; whole-query/load
+performance remains a separate acceptance requirement, not this protocol claim.
 
 Receipt, monotonic anchor CAS and scoped fenced checkpoint share one transaction
 with ending authorization. The additive database guard independently anchors

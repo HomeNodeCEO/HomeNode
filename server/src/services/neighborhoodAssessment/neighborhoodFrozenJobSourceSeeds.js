@@ -87,14 +87,20 @@ export function createNeighborhoodFrozenJobSourceSeeds(client,rawOptions){
       };
       let header=await query(NEIGHBORHOOD_FROZEN_JOB_SEED_SQL.read,parameters);
       if(header?.rowCount===0&&header.rows?.length===0&&preparing){
-        const begun=data(one(await query(NEIGHBORHOOD_FROZEN_JOB_SEED_SQL.begin,
-          [...parameters,bindingHash,definitionHash,definitionText])),['operation_id']);
-        if(begun.operation_id!==stock.operation_id)fail('invalid_result');
-        const inserted=data(one(await query(NEIGHBORHOOD_FROZEN_JOB_SEED_SQL.rows,parameters)),['inserted_count']);
-        if(!count(inserted.inserted_count)||Number(inserted.inserted_count)>maximum)fail('population_limit');
-        const completed=data(one(await query(NEIGHBORHOOD_FROZEN_JOB_SEED_SQL.complete,
-          [...parameters,inserted.inserted_count])),['seed_count']);
-        if(completed.seed_count!==inserted.inserted_count)fail('invalid_result');
+        const begunResult=await query(NEIGHBORHOOD_FROZEN_JOB_SEED_SQL.begin,
+          [...parameters,bindingHash,definitionHash,definitionText]);
+        // Another same-stock builder may commit between the miss and INSERT.
+        // Reopen its exact header, never insert/complete its rows or repair it.
+        // The ordinary decode and ending stock/claim fences still must pass.
+        if(!(begunResult?.rowCount===0&&begunResult.rows?.length===0)){
+          const begun=data(one(begunResult),['operation_id']);
+          if(begun.operation_id!==stock.operation_id)fail('invalid_result');
+          const inserted=data(one(await query(NEIGHBORHOOD_FROZEN_JOB_SEED_SQL.rows,parameters)),['inserted_count']);
+          if(!count(inserted.inserted_count)||Number(inserted.inserted_count)>maximum)fail('population_limit');
+          const completed=data(one(await query(NEIGHBORHOOD_FROZEN_JOB_SEED_SQL.complete,
+            [...parameters,inserted.inserted_count])),['seed_count']);
+          if(completed.seed_count!==inserted.inserted_count)fail('invalid_result');
+        }
         header=await query(NEIGHBORHOOD_FROZEN_JOB_SEED_SQL.read,parameters);
       }
       const decoded=decode(one(header));

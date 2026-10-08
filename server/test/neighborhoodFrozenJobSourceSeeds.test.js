@@ -75,6 +75,30 @@ test('prepared page reader preserves exact originals and never builds a missing 
   }
 });
 
+test('zero-row concurrent begin reopens only an exact completed index and still checks the ending claim',async()=>{
+  for(const mode of ['valid','missing','unfinished','binding','claim']){
+    let racing=false,conflicted=false;
+    const f=fixture(({call,header})=>{
+      if(!racing)return null;
+      if(call.text===NEIGHBORHOOD_FROZEN_JOB_SEED_SQL.read&&!conflicted)return {rowCount:0,rows:[]};
+      if(call.text===NEIGHBORHOOD_FROZEN_JOB_SEED_SQL.begin){conflicted=true;return {rowCount:0,rows:[]};}
+      if(!conflicted)return null;
+      if(call.text===NEIGHBORHOOD_FROZEN_JOB_SEED_SQL.read){
+        if(mode==='missing')return {rowCount:0,rows:[]};
+        if(mode==='unfinished')return result({...header,status:'building'});
+        if(mode==='binding')return result({...header,binding_sha256:'c'.repeat(64)});
+      }
+      if(mode==='claim'&&call.text.includes('generation-fence'))return {rowCount:0,rows:[]};
+      return null;
+    });
+    const prepared=await f.store().prepare(),from=f.calls.length;racing=true;
+    if(mode==='valid')assert.deepEqual(await f.store().prepare(),prepared);
+    else await assert.rejects(f.store().prepare(),/invalid_result|unfinished_or_changed_index|claim_lost/);
+    assert.ok(conflicted);assert.ok(!f.calls.slice(from).some(c=>/seeds:rows|seeds:complete/.test(c.text)),
+      'a losing builder cannot append to or complete the other header, even on refusal');
+  }
+});
+
 test('unfinished or changed cache definition, generation, stock binding and counts refuse without repair',async()=>{
   for(const [key,value] of Object.entries({status:'building',generation_id:'70000000-0000-4000-8000-000000000009',
     binding_sha256:'c'.repeat(64),definition_sha256:'d'.repeat(64),definition_json:'{}',seed_count:'6',completed_at:null})){

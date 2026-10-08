@@ -18,6 +18,9 @@ remain before preparation/use and before commit. First preparation, original
 page append and checkpoint commit in the same owner transaction. Ending
 revocation or claim loss rolls them all back. A lost commit acknowledgment
 reopens the saved index and page continuation, without another seed insert.
+If a concurrent same-stock builder wins the initial insert, the losing builder
+reopens that exact completed header and rechecks its stock/claim/pin instead of
+appending rows or treating a zero-row insert acknowledgment as success.
 Missing/incomplete/changed caches refuse on the read-only path; there is no
 mutable-source, active/latest generation, spatial or dense-array fallback.
 

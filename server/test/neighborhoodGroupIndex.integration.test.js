@@ -1696,5 +1696,45 @@ test('isolated PostgreSQL: prepares 60001 distinct source seeds once and reuses 
     console.info('[native-prepared-source-seeds-dense]',{stock_accounts:1,seed_count:60001,prepare_ms:prepareMs,
       fresh_reuse_ms:reuseMs,late_page_ms:pageMs,descriptor_bytes:Buffer.byteLength(JSON.stringify(seeded)),
       old_late_page_exact_parity:true,primary_index_used:true,source_acquisition:false,production_latency:false});
+    // Two genuine stable SQL clients with the same scoped live claim. The
+    // actual capture owner's parent locks normally serialize this work; this
+    // DATA race still proves the zero-row INSERT conflict/reopen path itself.
+    const raceOperation=randomUUID();
+    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).enqueue({scope,actorUserId:actor,
+      request:{operation_id:raceOperation,observation_period:{start_date:'2025-01-01',end_date:'2026-10-07'}}}));
+    const raceClaim=await withCustomCohortJobTransaction(pool,async client=>{
+      const [job]=await createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900});assert.equal(job.operation_id,raceOperation);
+      return {operation_id:raceOperation,claim_token:job.claim_token,attempts:job.attempts};});
+    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).pinPreparedGeneration(raceClaim,options));
+    const raceOptions={...seedOptions,claim:raceClaim};
+    await withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenJobStock(client,raceOptions).prepare());
+    let secondReadReached,firstBegan;
+    const secondReadReady=new Promise(resolve=>{secondReadReached=resolve;}),firstBeginReady=new Promise(resolve=>{firstBegan=resolve;});
+    const waitFor=promise=>new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>reject(Error('synthetic seed race did not rendezvous')),3000);
+      promise.then(value=>{clearTimeout(timer);resolve(value);},error=>{clearTimeout(timer);reject(error);});
+    });
+    const raceCalls=[];let conflicts=0;
+    const racingPool=label=>({async connect(){const client=await pool.connect();let firstMissingRead=true;
+      return {release:client.release.bind(client),async query(config){
+        raceCalls.push({label,text:config.text});const result=await client.query(config);
+        if(config.text.includes('neighborhood-frozen-job-seeds:read')&&result.rowCount===0&&firstMissingRead){firstMissingRead=false;
+          if(label==='first')await waitFor(secondReadReady);
+          else{secondReadReached();await waitFor(firstBeginReady);}}
+        if(config.text.includes('neighborhood-frozen-job-seeds:begin')){
+          if(label==='first'){assert.equal(result.rowCount,1);firstBegan();}
+          else{assert.equal(result.rowCount,0);conflicts++;}}
+        return result;
+      }};
+    }});
+    const raced=await Promise.all(['first','second'].map(label=>withCustomCohortJobTransaction(racingPool(label),
+      client=>createNeighborhoodFrozenJobSourceSeeds(client,raceOptions).prepare())));
+    assert.deepEqual(raced[1],raced[0]);assert.equal(raced[0].seed_count,'60001');assert.equal(conflicts,1);
+    assert.equal(raceCalls.filter(call=>call.text.includes('neighborhood-frozen-job-seeds:rows')).length,1);
+    assert.equal(raceCalls.filter(call=>call.text.includes('neighborhood-frozen-job-seeds:complete')).length,1);
+    assert.ok(!raceCalls.some(call=>call.label==='second'&&/seeds:rows|seeds:complete/.test(call.text)));
+    assert.equal((await pool.query('SELECT count(*)::text AS n FROM app.neighborhood_custom_cohort_source_seeds WHERE operation_id=$1',[raceOperation])).rows[0].n,'60001');
+    console.info('[native-prepared-source-seeds-concurrent]',{seed_count:60001,clients:2,zero_row_conflicts:conflicts,
+      seed_builds:1,exact_completed_reuse:true,source_acquisition:false,production_latency:false});
   }finally{await pool.end();}
 });

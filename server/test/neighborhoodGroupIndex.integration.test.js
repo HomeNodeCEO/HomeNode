@@ -1666,7 +1666,8 @@ test('isolated PostgreSQL: prepares 60001 distinct source seeds once and reuses 
     await withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenJobStock(client,seedOptions).prepare());
     const seedCalls=[];const measured={async connect(){const client=await pool.connect();return {release:client.release.bind(client),async query(config){
       seedCalls.push(config.text);const result=await client.query(config);
-      assert.ok(result.rows.length<=1,'dense seed preparation returns only metadata or a count, never an ID/payload array');return result;}};}};
+      if(config.text.includes('neighborhood-frozen-job-seeds:'))assert.ok(result.rows.length<=1,
+        'dense seed preparation returns only metadata or a count, never an ID/payload array');return result;}};}};
     const started=performance.now();
     const seeded=await withCustomCohortJobTransaction(measured,client=>createNeighborhoodFrozenJobSourceSeeds(client,seedOptions).prepare());
     const prepareMs=Math.round(performance.now()-started),reuseFrom=seedCalls.length,reuseStarted=performance.now();

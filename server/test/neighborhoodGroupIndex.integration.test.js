@@ -67,6 +67,8 @@ import { createCustomNeighborhoodWitness2SourcePolicy, CUSTOM_NEIGHBORHOOD_WITNE
 import { CUSTOM_NEIGHBORHOOD_SOURCE_DATASET } from '../src/security/customNeighborhoodSourcePolicy.js';
 import { runCustomNeighborhoodCadImprovementPolicyDatabaseChecks }
   from './helpers/customNeighborhoodCadImprovementPolicyDatabaseChecks.js';
+import { createNeighborhoodSharedJobCadImprovementPages,NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_SQL }
+  from '../src/services/neighborhoodAssessment/neighborhoodSharedJobCadImprovementPages.js';
 
 // Disposable native fixture only, never production rights provisioning. The
 // real evaluator reads current organization metadata/time on every admission.
@@ -577,6 +579,29 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     assert.deepEqual(spatialPage.population,{parcel_count:'1',account_count:'1',unassociated_parcel_count:'0',
       subject_included:true,unlocatable_global_parcels:'4',invalid_geometries:'0'});
     assert.equal(spatialPage.authority,'not_established');assert.equal(spatialPage.coverage,'page_only');
+    // Bounded SQL DATA protocol only: this artificial graph reference is NOT
+    // an issued current-authorized owner head or licensed acquisition proof.
+    const cadPageOptions={...frozenSpatialOptions({...options,claim}),subjectIntent:{content_sha256:'f'.repeat(64),canonical_utf8_bytes:'100'},checkBudget(){}};
+    const cadStock=await withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenJobStock(client,cadPageOptions).prepare());
+    const cadGraphData={root:{content_sha256:'d'.repeat(64),canonical_utf8_bytes:'100'},
+      layer_counts:Object.fromEntries(Object.entries(cadStock.original.layer_counts).map(([kind,count])=>[kind,Number(count.row_count)]))};
+    const cadQueries=[];
+    const cadPage=(kind,cursor={account_id:'',row_key:''},rowLimit=1,endingFault=false)=>withCustomCohortJobTransaction(pool,client=>{
+      let reads=0;const port={async query(config){cadQueries.push(config.text);const r=await client.query(config);
+        if(endingFault&&config.text===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read&&++reads===2)return {...r,rows:[{...r.rows[0],status:'building'}]};return r;}};
+      return createNeighborhoodSharedJobCadImprovementPages(port,cadPageOptions,cadGraphData).page({kind,cursor,rowLimit});});
+    const primaryCad=await cadPage('primary');assert.deepEqual(primaryCad.rows.map(r=>r.account_id),['INDEX-A']);
+    assert.equal(primaryCad.end_of_kind,false);assert.equal(primaryCad.rows[0].typed.observations.reported_pool_flag.state,'observed');
+    assert.equal(primaryCad.rows[0].typed.observations.reported_pool_flag.exact_value,true);
+    const primaryEnd=await cadPage('primary',primaryCad.next_cursor);assert.equal(primaryEnd.rows.length,0);assert.equal(primaryEnd.end_of_kind,true);
+    const secondaryCad=await cadPage('secondary',undefined,250);assert.deepEqual(secondaryCad.rows.map(r=>r.row_key),['1','3']);
+    assert.equal(secondaryCad.end_of_kind,true);assert.ok(secondaryCad.rows.every(r=>r.account_id==='INDEX-A'));
+    await assert.rejects(cadPage('primary',undefined,250,true),/cache_unavailable/);
+    assert.ok(cadQueries.includes(NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_SQL));
+    assert.ok(!cadQueries.some(sql=>/INSERT|UPDATE|DELETE|ST_DWithin|FROM core\.|FROM gis\.|shared-typed-CAD:page|payload::text/.test(sql)));
+    console.log('[native-shared-CAD-stock-pages]',{stock_accounts:cadStock.population.account_count,primary_rows:1,secondary_rows:2,
+      outside_accounts:0,duplicate_numbers_retained:true,full_tail_empty_probe:true,ending_metadata_refusal:true,
+      original_payload_queries:0,writes:0,graph_issuance:false,current_actor_owner:false,source_acquisition:false,production_latency:false});
     for(const sql of [
       'UPDATE app.neighborhood_group_generations SET parcel_count=0 WHERE generation_id=$1',
       'UPDATE app.neighborhood_group_parcel_facts SET living_area_sqft=1 WHERE generation_id=$1',

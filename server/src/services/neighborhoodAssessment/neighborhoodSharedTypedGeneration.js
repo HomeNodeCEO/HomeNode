@@ -206,6 +206,12 @@ export function createNeighborhoodSharedTypedCadGenerationV1(client,rawOptions){
   return sharedTypedGeneration(client,rawOptions,'cad');
 }
 
+/** Fixed companion metadata DATA validation shared with read-only consumers.
+ * Does not authorize a job, issue a head or open any original payload. */
+export function prepareNeighborhoodSharedTypedCadSource(result,generationId){
+  return sourceOf(result,generationId,true);
+}
+
 /** Build one bounded caller-transaction step for a fixed V1, neutral V2 or separate CAD cache. */
 function sharedTypedGeneration(client, rawOptions, neutral) {
   const cad=neutral==='cad',kinds=cad?CAD_KINDS:KINDS;

@@ -2468,11 +2468,15 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     assert.equal(temporalRows.sale_links.find(r=>r.row_key==='4').account_id,null);
     assert.equal(temporalRows.sale_links.find(r=>r.row_key==='4').normalized.period_disposition.state,'unsupported');
     assert.equal(temporalRows.sale_links.find(r=>r.row_key==='4').markers.is_resolved.value_text,'false');
-    for(const [fault,reason] of [['license',/market_data_access_denied/],['role',/permission_denied/],
+    // Role removal is caught by the database actor reload, before downstream
+    // application permission checks. Require that precise fail-closed reason.
+    for(const [fault,reason] of [['license',/market_data_access_denied/],
+      ['role',{name:'TypeError',message:'custom_cohort_job_actor_access_revoked'}],
       ['subject',/subject_changed/],['claim',/claim_lost/],['cancel',/cancelled/],['transaction_header',/cache_unavailable/]]){
-      refsAbort=new AbortController();refsFault=fault;
+      refsAbort=new AbortController();refsFault=fault;const from=refsCalls.length;
       await assert.rejects(freshRefsOwner()[temporalMethod](refsInput,{...transactionOptions,signal:refsAbort.signal}),reason,`temporal ending ${fault}`);
-      assert.equal(refsFault,null);await assertTransactionUnchanged();
+      assert.equal(refsFault,null);assert.ok(refsCalls.slice(from).includes(NEIGHBORHOOD_SHARED_JOB_TRANSACTION_V2_PAGE_SQL),
+        `temporal page was reached before ending ${fault} refusal`);await assertTransactionUnchanged();
       if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
       if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
     }

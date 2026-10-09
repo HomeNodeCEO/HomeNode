@@ -36,8 +36,15 @@ The new temporal fixture extends the actual issued-owner native cloud test with
 three source/sale/link page kinds, retained dates/period, older evidence refusal
 for in-period use, no normalized/reported fallback, initial prerequisite failures,
 ending authorization/cache refusal, lost-COMMIT reopen and unchanged original
-cache/checkpoint/heads/blobs. **New temporal native execution is pending cloud CI**;
-authoring and focused DATA tests are not native or licensed/live acceptance.
+cache/checkpoint/heads/blobs. The initial native run at `016489e7` passed all 417
+migration tests, then failed one of eight index tests because the new temporal
+assertion expected a downstream permission error instead of the actual earlier
+`custom_cohort_job_actor_access_revoked` refusal. The current actor reload correctly
+refused delivery after real role removal. Only the test expectation is corrected,
+and it now also requires the actual page query before ending refusal; no production
+authorization guard is changed or relaxed. **Corrected temporal native execution
+is pending fresh cloud CI**. Authoring and focused DATA tests are not native or
+licensed/live acceptance.
 Source/amenity meaning, complete transaction/association resolution, server-owned
 selection, exact selected-union statistics, coherent publication, durable workers/
 terminal pin transfer and licensed large-area/retrospective/live acceptance remain.

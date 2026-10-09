@@ -24,6 +24,9 @@ import { loadCurrentCustomCohortJobActor } from './customCohortJobActor.js';
 import { createNeighborhoodFrozenJobStock } from './neighborhoodFrozenJobStock.js';
 import { createNeighborhoodFrozenJobStockOriginals } from './neighborhoodFrozenJobStockOriginals.js';
 import { createNeighborhoodFrozenJobSourceIdentity } from './neighborhoodFrozenJobSourceIdentity.js';
+import { createNeighborhoodSharedJobCadImprovementPages,prepareNeighborhoodSharedJobCadPage }
+  from './neighborhoodSharedJobCadImprovementPages.js';
+import { describeNeighborhoodCadImprovementPurpose } from '../../security/customNeighborhoodCadImprovementSourcePolicy.js';
 import { createNeighborhoodFrozenJobTypedOriginals } from './neighborhoodFrozenJobTypedOriginals.js';
 import { getNeighborhoodFrozenTypedOriginalV1Profile } from './neighborhoodFrozenTypedOriginalV1.js';
 import { createNeighborhoodFrozenJobStockMetricPages, createNeighborhoodSharedJobStockMetricPages,
@@ -141,6 +144,8 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingSharedStockMetrics: true, allowedPhases: ['frozen_identity_v1', 'frozen_typed_v1'] },
   shared_stock_metrics_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingSharedStockMetrics: true, neutralSharedMetrics: true, allowedPhases: ['frozen_identity_refs_v2'] },
+  shared_CAD_pages_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    readingCadPages: true, allowedPhases: ['frozen_identity_refs_v2'] },
 });
 function fail(reason, detail, captureCounts) {
   const error = Object.assign(new Error(`custom_cohort_capture_${reason}`), {
@@ -712,13 +717,16 @@ async function authorizedRetainedInputs(client, { scopeJson, reference, input, a
  * receives only this bounded client; it may not read a pool or a remote provider.
  * No default grant is inferred from assignment access, hashes or professional
  * licensing. Source completeness and historical support remain unknown.
+ * The optional server-owned CAD policy defaults to absent; CAD pages require
+ * its separate current decision in addition to the legacy source decision.
  */
 export function createCustomCohortContextCapture({ pool, authorizeMarketData,
   authorizePrivateSales = async () => ({ allowed: false }),
-  authorizeReportedObservations = async () => ({ allowed: false }), sourceMode = 'cad4' } = {}) {
+  authorizeReportedObservations = async () => ({ allowed: false }), authorizeCadImprovementData = null, sourceMode = 'cad4' } = {}) {
   if (!['cad4', 'combined-witness2-v1'].includes(sourceMode)) throw new TypeError('custom_cohort_capture_source_mode_invalid');
   if (typeof pool?.connect !== 'function' || typeof authorizeMarketData !== 'function'
-    || typeof authorizeReportedObservations !== 'function') {
+    || typeof authorizeReportedObservations !== 'function'
+    || authorizeCadImprovementData!==null&&typeof authorizeCadImprovementData!=='function') {
     throw new TypeError('custom_cohort_capture_dependencies_required');
   }
   // Trusted constructor setting applies only to NEW attempts. Replays always
@@ -1565,28 +1573,35 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
   }
   /** One named internal stage owns its flags and phase admission. Every source
    * read/write is fenced by current rights at both transaction ends. V2 prefix
-   * DATA has no verifier/typed/metric flags or legacy receipt conversion. */
+   * DATA has no verifier/typed/metric flags or legacy receipt conversion. CAD
+   * reads require completed issued V2 prerequisites and a separate exact CAD
+   * purpose/decision, without preparing a cache or advancing a checkpoint. */
   async function frozenCaptureJobSourceStage(value, options = {}, stage = 'prefix_v1') {
     if(typeof stage!=='string'||!Object.hasOwn(FROZEN_SOURCE_STAGES,stage))
       fail('frozen_source_representation_unsupported');
     const {referencesV2=false,verifying=false,stockVerifying=false,identityVerifying=false,
-      typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
+      typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,
+      readingCadPages=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     if(referencesV2){
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
       const descriptors=Object.getOwnPropertyDescriptors(options),keys=Reflect.ownKeys(descriptors);
-      const admittedKeys=['captureJobClaim','signal','deadline',...(readingSharedStockMetrics?['stockMetricPage']:[])];
+      const admittedKeys=['captureJobClaim','signal','deadline',...(readingSharedStockMetrics?['stockMetricPage']:[]),
+        ...(readingCadPages?['cadImprovementPage']:[])];
       if(keys.some(key=>!admittedKeys.includes(key)
         ||!descriptors[key].enumerable||!Object.hasOwn(descriptors[key],'value')))fail('invalid_options');
       options=Object.fromEntries(keys.map(key=>[key,descriptors[key].value]));
     }
     if (!options || Object.getPrototypeOf(options)!==Object.prototype) fail('invalid_options');
-    const {captureJobClaim:providedClaim,stockMetricPage,...budgetOptions}=options;
+    const {captureJobClaim:providedClaim,stockMetricPage,cadImprovementPage,...budgetOptions}=options;
     const metricPage=readingStockMetrics||readingSharedStockMetrics?prepareNeighborhoodFrozenStockMetricPage(stockMetricPage):null;
+    const cadPage=readingCadPages?prepareNeighborhoodSharedJobCadPage(cadImprovementPage):null;
     if(!readingStockMetrics&&!readingSharedStockMetrics&&stockMetricPage!==undefined) fail('invalid_options');
+    if(!readingCadPages&&cadImprovementPage!==undefined)fail('invalid_options');
     const originalInput=inputOf(value),claim=prepareCustomCohortCaptureJobClaim(providedClaim);
     if(claim.operation_id!==originalInput.operationId.toLowerCase()) fail('operation_conflict');
     if(!reportedProfile) fail('frozen_source_profile_unsupported');
     if(originalInput.privateSalesImport || originalInput.discovery?.profile_id!=='custom-suburban-radius-v2') fail('frozen_discovery_unsupported');
+    if(readingCadPages&&typeof authorizeCadImprovementData!=='function')fail('CAD_source_policy_required');
     const budget=operationBudget(budgetOptions,LIMITS.capture_duration_ms);
     return transaction(pool,'READ COMMITTED',budget,async client=>{
       const locator=one(await client.query(`/* custom-cohort-capture:job-organization */
@@ -1631,6 +1646,14 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       // retention and all-date one-hop fields. Retained grant metadata is not
       // authority: current policy must allow before any licensed original.
       const decision=await boundedPolicy(authorizeMarketData,client,input.auth,context,purpose,budget);
+      // The old seven-layer grant cannot authorize the companion projection.
+      // This exact additional purpose is derived only from the actual reopened
+      // stock/subject/selection, never a caller grant, date, field list or head.
+      const cadPurpose=readingCadPages?describeNeighborhoodCadImprovementPurpose({
+        selection_sha256:assessmentEvidenceDigest(selection),generation_id:stock.generation_id}):null;
+      const cadDecision=readingCadPages?await boundedPolicy(authorizeCadImprovementData,client,input.auth,context,cadPurpose,budget):null;
+      if(readingCadPages&&!/^custom-neighborhood-cad-improvement-source-rights-v1:sha256:[a-f0-9]{64}$/.test(cadDecision.policy_revision))
+        fail('CAD_source_policy_required');
       const binding={...scope,operation_id:input.operationId,generation_id:stock.generation_id,
         spatial_definition_sha256:stock.definition_sha256,source_original_sha256:stock.source_original_sha256};
       const sourceVersion=referencesV2?2:1,sourceUsage=referencesV2?'frozen_source_reference_prefix_only':'frozen_source_prefix_only';
@@ -1812,7 +1835,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           issued=prepareCohortSourceIdentityReceiptV2(issued,expected);
           if(issued.sequence!==identityAnchor.sequence)fail('checkpoint_conflict');
         }
-        if(readingSharedStockMetrics&&issued?.after.kind_index!==COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.length)
+        if((readingSharedStockMetrics||readingCadPages)&&issued?.after.kind_index!==COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.length)
           fail('unfinished_identity_verification');
         // Keep the original exact all-date one-hop identity SQL unchanged.
         // Its real stock/graph digest, native identities and coverage are not
@@ -1897,6 +1920,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const reader=neutralSharedMetrics?createNeighborhoodSharedJobStockMetricPagesV2:createNeighborhoodSharedJobStockMetricPages;
         stockMetricResult=await reader(client,stockOptions,graph,context.effective_date).page(metricPage);
       }
+      if(readingCadPages){
+        const graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
+        stockMetricResult=await createNeighborhoodSharedJobCadImprovementPages(client,stockOptions,graph).page(cadPage);
+      }
       input=freeze({...input,auth:await loadCurrentCustomCohortJobActor(client,input.auth.userId,scope.organization_id)});
       assertTarget(await resolveTarget(client,input,true),target);
       privateDraft(await privateCaptureWorkfile(client,input));
@@ -1904,13 +1931,18 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       authorizePublicCadastralCatalogRead(input.auth,input.accountId,{workflows:['custom_appraisal'],
         permissionChecker:(auth,workflow,permission)=>hasApplicationPermission(auth,workflow,permission,scope.organization_id)});
       if(!same(await boundedPolicy(authorizeMarketData,client,input.auth,context,purpose,budget),decision)) fail('market_policy_changed');
+      if(readingCadPages&&!same(await boundedPolicy(authorizeCadImprovementData,client,input.auth,context,cadPurpose,budget),cadDecision))
+        fail('CAD_source_policy_changed');
       if(!same(await jobs.readRequest(claim,jobOptions),requested)||!same(await stockStore.read(),stock)) fail('checkpoint_conflict');
       if(!same((await chain.describe(root)).layers,prefix.layers)) fail('checkpoint_conflict');
       if(graphAnchorStore&&!same(await graphAnchorStore.read(),graphAnchor))fail('checkpoint_conflict');
       if(geographicAnchorStore&&!same(await geographicAnchorStore.read(),geographicAnchor))fail('checkpoint_conflict');
       if(identityAnchorStore&&!same(await identityAnchorStore.read(),identityAnchor))fail('checkpoint_conflict');
       budget.check();
-      if(readingStockMetrics||readingSharedStockMetrics) return freeze({...stockMetricResult,...(readingStockMetrics?{typed_original_reference:typedReference}:{}),
+      if(readingStockMetrics||readingSharedStockMetrics||readingCadPages) return freeze({...stockMetricResult,
+        ...(readingStockMetrics?{typed_original_reference:typedReference}:{}),
+        ...(readingCadPages?{CAD_source_authorization:{purpose:cadPurpose,decision:cadDecision},stock_reference:stockReference,
+          current_authorized_owner:'V2_issued_graph_geography_identity_and_separate_CAD_rights'}:{}),
         source_reference:reference,verification_reference:verificationReference,stock_verification_reference:stockVerificationReference,
         identity_verification_reference:identityVerificationReference});
       if(typing) return freeze({status:'typed_original_progress_retained',operation_id:input.operationId,
@@ -2112,6 +2144,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     // Still internal/unmounted: no new job phase, builder, schedule or Apply.
     readSharedFrozenCaptureJobStockMetrics: (value, options = {}) => frozenCaptureJobSourceStage(value, options, 'shared_stock_metrics_v1'),
     readSharedFrozenCaptureJobStockMetricsReferencesV2: (value, options = {}) => frozenCaptureJobSourceStage(value, options, 'shared_stock_metrics_refs_v2'),
+    /** Read one bounded internal CAD syntax page after actual issued DONE V2
+     * prerequisites and both current source decisions. Default composition has
+     * no CAD grant; this method cannot prepare a cache, advance a checkpoint,
+     * convert legacy receipts, publish reports or infer amenity meaning. */
+    readSharedFrozenCaptureJobCadImprovementsReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'shared_CAD_pages_refs_v2'),
     async capture(value, options = {}) {
     if (!options || Object.getPrototypeOf(options) !== Object.prototype)
       fail('invalid_options');

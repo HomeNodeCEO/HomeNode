@@ -184,6 +184,29 @@ test('V2 shared stock owner is explicit, admits only claim/page/budget, and neve
   await assert.rejects(service[method](base,{captureJobClaim:claim,get stockMetricPage(){assert.fail('getter');}}),/invalid_options/);
   await assert.rejects(service[method]({...base,operationId:claim.claim_token},opts),/operation_conflict/);
 });
+test('V2 CAD owner has no default extra-field grant and admits only an exact bounded syntax page/current job',async()=>{
+  const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}};
+  const claim={operation_id:base.operationId,claim_token:'33333333-3333-4333-8333-333333333333',attempts:1};
+  const opts={captureJobClaim:claim,cadImprovementPage:{kind:'primary',cursor:{account_id:'',row_key:''},rowLimit:250}};
+  const method='readSharedFrozenCaptureJobCadImprovementsReferencesV2';
+  await assert.rejects(setup()[method](base,opts),/frozen_source_profile_unsupported/);
+  const dependencies={pool:{connect(){assert.fail('must not connect');}},sourceMode:'combined-witness2-v1',
+    authorizeMarketData:()=>assert.fail('must not authorize')};
+  await assert.rejects(createCustomCohortContextCapture(dependencies)[method](base,opts),/CAD_source_policy_required/);
+  assert.throws(()=>createCustomCohortContextCapture({...dependencies,authorizeCadImprovementData:{allowed:true}}),/dependencies_required/);
+  const service=createCustomCohortContextCapture({...dependencies,authorizeCadImprovementData:()=>assert.fail('must not authorize')});
+  for(const page of [undefined,{...opts.cadImprovementPage,rowLimit:251},{...opts.cadImprovementPage,kind:'parcels'},
+    new Proxy(opts.cadImprovementPage,{}),{...opts.cadImprovementPage,get cursor(){assert.fail('getter');}}])
+    await assert.rejects(service[method](base,{...opts,cadImprovementPage:page}),/invalid_data|invalid_page/);
+  for(const key of ['stockMetricPage','generation_id','root','sourceRepresentation','profile','purpose','market_decision','exposure','progress','effectiveDate'])
+    await assert.rejects(service[method](base,{...opts,[key]:{}}),/invalid_options/);
+  for(const key of ['root','source_acquisition','CAD_source_authorization','effective_date','account_ids'])
+    await assert.rejects(service[method]({...base,[key]:{}},opts),/invalid_input/);
+  await assert.rejects(service[method](base,new Proxy(opts,{})),/invalid_options/);
+  await assert.rejects(service[method](base,{captureJobClaim:claim,get cadImprovementPage(){assert.fail('getter');}}),/invalid_options/);
+  await assert.rejects(service[method]({...base,operationId:claim.claim_token},opts),/operation_conflict/);
+  await assert.rejects(service[method](input(),opts),/frozen_discovery_unsupported/);
+});
 
 test('recorded-group selection refreshes current roles before retained facts or head reads/writes', async () => {
   const base = input(), organization = '11111111-1111-4111-8111-111111111111';

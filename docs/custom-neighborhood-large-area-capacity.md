@@ -1,5 +1,76 @@
 # Complete larger-area Custom neighborhood studies
 
+## Current-authorized CAD syntax page owner (2026-10-08, not activated)
+
+`readSharedFrozenCaptureJobCadImprovementsReferencesV2` is an explicit internal
+owner path, not an HTTP endpoint or worker dispatch. Existing composition has no
+additional CAD policy by default. Its only request extension is a closed bounded
+kind/account/key page; callers cannot supply a generation, issued head, source
+rows, extra fields, report date, purpose, policy decision or continuation proof.
+Old V1 checkpoints are not converted and no new job phase is introduced.
+
+The owner reloads the current database actor, assignment/draft, retained subject,
+exact request and live claim/pinned stock. It requires independently issued DONE
+V2 source-graph, geographic and identity heads, with actual immutable receipt
+validation. Partial/unissued/corrupt heads refuse before companion metadata or
+page SQL; reading cannot advance a prerequisite or overwrite its checkpoint.
+Only then is the exact installed companion cache read for the owner-derived
+generation, subject and stock. Both source projections refer to the same original
+snapshot; the separate CAD cache retains its own source/interpretation profiles.
+
+The existing seven-layer decision and the separately installed exact CAD purpose
+must both allow immutable internal retention. The CAD purpose binds the real
+owner selection digest and generation; the returned decision must be from its
+separate namespace. Legacy grants/policies cannot silently widen their fields.
+Before delivery/commit, current roles, assignment/draft, original subject, both
+decisions, live request/stock and all three independent issued heads are reloaded
+and compared. Additional revocation, expiry or decision revision changes refuse;
+no successful cached decision substitutes for a fresh database wall-clock check.
+
+The response carries actual prerequisite references and the separately current
+CAD purpose/decision, but remains one-kind syntax DATA: absent rows are not zero
+or no amenity, current CAD is not retrospective or at-sale, and no provider/type
+or transaction meaning, full licensed acquisition, statistics, report or Apply
+is certified. No source grant, cache preparation, original payload copy, issued
+head/checkpoint write, accepted report or activation default is changed.
+
+Focused tests cover default denial and closed hostile input admission. A small
+native fixture is authored for actual issued V2 prerequisites, separate current
+organization grants, stock-account exclusion, duplicate secondary IDs and NULL,
+both-end CAD/legacy revocation/expiry/revision, roles/subject/claim/cancellation,
+ending cache refusal, unissued/partial/corrupt receipt refusal, unchanged durable
+heads/checkpoint and lost-COMMIT-acknowledgement reopen. Historical pre-integration
+head `0155194363100b2b3540f6614f7d5e302d74b3ba` passed foundation `37885832103`
+and native job `113675512593`: 417 migration, seven index, one subject, one edge
+and two bootstrap tests, zero failures/skips. The actual
+`native-shared-CAD-page-owner-v1` marker confirmed two stock accounts, two primary
+and three secondary rows, no outside rows, both current rights and issued V2
+prerequisites, ending authorization/cache refusal and lost-COMMIT reopen,
+without original reads, payload copies or durable checkpoint/head writes.
+Server passed 10,533 tests with 61 separately database-gated skips; frontend
+passed 3,959 with no skips. These are historical execution receipts, not a claim
+that a later integrated head is verified. The branch incorporates protected
+#1229 merge `12217cbf1415243055f002a8b8815d3c4d1a70fd`; current exact-head CI
+and actual review are verified separately before normal protected merge.
+Neither small native execution nor synthetic DATA is licensed scale or
+production speed acceptance. Explicit provider/type/transaction resolution, complete selected
+union calculations, coherent publication, workers/pin transfer and live
+large-area/retrospective acceptance remain unfinished.
+
+Integrated head `b56a9064e5113cedc61b90a421c6cf64e494a0e1` passed all 14 checks.
+Foundation `37925194494` / native `113802328075` actually passed all
+417/seven/one/one/two tests without failures/skips, repeating the actual issued
+owner and both-end authorization/cache refusal markers above. Server
+`113802328180` passed 10,533 tests with 61 separately database-gated skips;
+frontend `113802327929` passed 3,959 without skips. Included review
+`a4a7f74f-6690-4d41-bbc0-def5b1f95578` covered all four changed files without
+actionable implementation findings. Its 66.67% docstring warning is addressed
+by documenting the new internal reader and its enclosing owner/stage contracts;
+this is a comment/documentation-only correction, not a claimed recalculated
+coverage score or a new review. Every later head still requires fresh exact-head
+protected checks before normal merge. These small fixtures do not establish
+licensed acquisition, housing/amenity meaning or live acceptance.
+
 ## Bounded pinned-stock CAD syntax pages (2026-10-08, not activated)
 
 `createNeighborhoodSharedJobCadImprovementPages` reads only a complete, exact
@@ -36,11 +107,18 @@ two bootstrap tests, zero failures/skips. Its actual page marker confirmed one
 stock account, one primary and two secondary rows, outside-account exclusion,
 full-tail probing and ending-cache refusal without original reads or writes.
 Server passed 10,532 tests with 61 separately database-gated skips; frontend
-passed 3,959 without skips. This is historical evidence, not current integrated
-readiness. The branch incorporates the exact protected #1228 merge below;
-current exact-head CI and actual review are verified separately before normal
-protected merge. Its artificial graph reference is explicitly DATA, not an
-issued owner receipt.
+passed 3,959 without skips. The later integrated exact head
+`84076fbc0f8d5f1d07943726f253f8ce249a000a` passed all 14 checks. Foundation
+`37918811478` / native `113781480416` repeated all 417/seven/one/one/two tests
+without failures/skips, including the actual bounded CAD page and retirement
+markers. Server `113781480469` passed 10,532 tests with 61 separately
+database-gated skips; frontend `113781480677` passed 3,959 with no skips.
+Actual included review `35bd403f-f373-46d6-9f91-1d75cb383b4a` covered all five
+changed files without actionable findings; its pre-merge checks passed,
+including 92.31% docstring coverage. After current protected-check and review
+revalidation, #1229 normally merged as
+`12217cbf1415243055f002a8b8815d3c4d1a70fd`. Its artificial graph reference
+remains explicitly DATA, not an issued owner receipt.
 The future owner still must reload current actor/assignment/subject and actual
 issued V2 graph/geographic/identity heads, plus the separate exact additional
 CAD purpose and current source decision at both ends. No endpoint, worker,

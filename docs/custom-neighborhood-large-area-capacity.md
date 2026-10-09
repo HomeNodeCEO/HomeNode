@@ -1,5 +1,54 @@
 # Complete larger-area Custom neighborhood studies
 
+## Bounded shared transaction originals (2026-10-09, not activated)
+
+`readSharedFrozenCaptureJobTransactionsReferencesV2` is an explicit internal
+consumer admitted only from the actual completed V2 identity phase. It reopens
+the independently issued graph, geographic and identity heads, exact retained
+subject, current DB actor/assignment/draft, source purpose/decision and live
+request/claim/pin/stock at both ends. Closed `transactionPage` input admits only
+one fixed kind, native-text cursor and row limit. No caller source facts, profile,
+date, selection, issued head or authorization decision is accepted. The response
+identifies the actual retained date/period without declaring transaction eligibility.
+
+Fixed generation/profile/kind/key SQL reads only the prepared original-stock
+one-hop seed index. All-date source records, sales and links include outside and
+unresolved package members; those outside accounts never become new discovery
+seeds or CAD lookup accounts. Source-less legacy sales are included only when
+their exact original account belongs to stock. No sale price is allocated across
+links, no normalized price/unit fallback occurs, and no date filter silently
+changes closure coverage. Installed cache order is C-text, not numeric ID order.
+
+Each cached V2 row independently reconciles exact native kind/key/account/source,
+original hash, profile and date-neutral version. Numeric/calendar cells are
+recomputed from bounded raw diagnostics; the pinned same-payload reported-sale
+interpreter is replayed from its exact consumed diagnostic fields. This is local
+reported syntax, not a provider dictionary or verified completion/consideration.
+Unused private replay placeholders are never emitted as source observations.
+Retained effective-year and observation-period rules must run before the future
+resolution/aggregation stage, not alter the shared syntax cache.
+
+One single-use step is bounded to 250 rows, 66,560 bytes per envelope (the unchanged
+65,536-byte typed-row ceiling plus identity envelope), 2.1 MB per page, 32 MB of
+all query results, 128 queries including every nested stock/seed fence, 60 seconds
+and five seconds per query. Both ends verify complete seed/source/cache metadata;
+missing or unfinished caches refuse without preparation. A full or byte-cut page
+is not a terminal receipt; full tails require a fresh empty probe. A page end
+does not prove all preceding pages were consumed or complete transaction coverage.
+
+Focused tests exercise exact >2^53 decimals, unknown currency, neutral future
+dates/years, outside/unresolved links, source-less sales, hostile nested inputs,
+forged cells/headers/order, and full-250/short/empty tails. The authored small
+native actual-issued owner fixture checks SQL one-hop scope (including exclusion
+of second-hop source 502), missing-cache/partial-head refusal, ending current
+rights/actor/subject/claim/cancel/cache denial, corrupt prerequisites and
+lost-COMMIT replay, with no original reads or durable mutations. **New native
+transaction-page execution is pending cloud CI.** No source grant, activation,
+worker, HTTP default, genuine Hardy choice, report or Apply mutation occurs.
+Transaction resolution, server-owned selection, exact complete-population
+selected-union medians/COD/quarters, coherent publication, durable workers/pin
+transfer and licensed large-area/retrospective/live acceptance remain mandatory.
+
 ## Current CAD account projection (2026-10-08, not activated)
 
 `readSharedFrozenCaptureJobCadAccountsReferencesV2` is an explicit internal
@@ -39,7 +88,16 @@ cloud fixtures are authored: a small actual-issued owner test with both-end
 rights/auth/subject/claim/cancellation/cache refusal and lost-COMMIT replay;
 and a separate SQL DATA fixture with an actual missing primary account, future
 year, native false, duplicated secondary numbers and full-tail empty probe.
-**New native account execution is pending cloud CI.** Neither fixture is a
+PR #1231 exact head `2e008744c5c6715ba9e7ce66fad50b7e57367f36` passed foundation
+`37886170941`, native job `113676551197`: 417 migration, eight native index,
+one subject, one edge and two bootstrap tests, zero failures/skips. The actual
+issued-owner marker confirmed two stock accounts, three secondary originals,
+retained date/issued prerequisites, ending separate rights and cache refusal,
+lost-COMMIT replay and zero original reads/copies/checkpoint/head writes. The
+separate missing-primary DATA marker confirmed one missing primary among two
+accounts, native false, two duplicate secondary rows, future-year rejection,
+one neutral header and full-tail empty probing. Server passed 10,537 with 62
+separately DB-gated skips; frontend passed 3,959 without skips. Neither fixture is a
 production source license, full licensed acquisition, housing/type dictionary,
 selected-union statistics, retrospective accuracy or live speed acceptance.
 Transaction resolution, server-owned selection, exact full medians/COD/quarters,
@@ -85,9 +143,18 @@ native fixture is authored for actual issued V2 prerequisites, separate current
 organization grants, stock-account exclusion, duplicate secondary IDs and NULL,
 both-end CAD/legacy revocation/expiry/revision, roles/subject/claim/cancellation,
 ending cache refusal, unissued/partial/corrupt receipt refusal, unchanged durable
-heads/checkpoint and lost-COMMIT-acknowledgement reopen. **New native owner
-execution is pending cloud CI**, not licensed scale or production speed
-acceptance. Explicit provider/type/transaction resolution, complete selected
+heads/checkpoint and lost-COMMIT-acknowledgement reopen. Corrected PR #1230 head
+`0155194363100b2b3540f6614f7d5e302d74b3ba` passed foundation `37885832103`,
+native job `113675512593`: 417 migration, seven native index, one subject, one
+edge and two bootstrap tests without failures/skips. Its actual owner marker
+confirmed two stock accounts, two primary/three secondary rows, no outside
+accounts, duplicate numbers, actual issued prerequisites, separate current
+purpose, ending authorization/cache refusal, corrupt-head rejection, lost-COMMIT
+reopen and zero original reads/copies/durable writes. Server passed 10,533 with
+61 separately DB-gated skips; frontend passed 3,959 without skips. The initial
+run failed because the fixture cleared its ending-header fault too early;
+the harness correction leaves production guards unchanged. This is not licensed
+scale or production speed acceptance. Explicit provider/type/transaction resolution, complete selected
 union calculations, coherent publication, workers/pin transfer and live
 large-area/retrospective acceptance remain unfinished.
 

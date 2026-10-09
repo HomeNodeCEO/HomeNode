@@ -1,5 +1,70 @@
 # Complete larger-area Custom neighborhood studies
 
+## Whole native transaction association packages (2026-10-09, not activated)
+
+`readSharedFrozenCaptureJobTransactionPackagesReferencesV2` is a separate dormant
+internal consumer. It requires the actual independently issued DONE V2 graph,
+geography and identity prerequisites and reloads current DB actor/assignment/
+draft/subject/original source rights, live request/claim/pin/stock and issued
+heads at both ends. The only request extension is a closed package kind/cursor;
+no caller rows, counts, completion claim, profile, date, selection or grant is
+accepted. Reading cannot finish a prerequisite, prepare a cache miss, advance a
+checkpoint or issue a head.
+
+Fixed indexed SQL takes one next original-stock source seed in exact native
+BIGINT order and independently counts every native source, sale and link row
+before materializing its complete package. A separate C-text keyset reads each
+source-less legacy sale whose exact original account belongs to stock. Each
+count must equal all independently reconciled delivered rows. A package is never
+split into a silently accepted prefix. The installed generation/profile/kind/
+source and native-key indexes are reused without a migration or original payload
+read. Outside/unresolved links remain present; outside accounts do not become
+new source seeds or CAD lookup accounts. The last delivered package still needs
+a fresh empty probe, and a terminal kind probe does not prove that earlier
+packages were consumed.
+
+Every neutral original is independently reconciled and projected under the
+owner's actual retained effective year and inclusive closing period before link
+disposition. All older/outside/missing/invalid/unsupported observations remain.
+Distinct native sale IDs stay distinct; multiple native sales for one source
+are explicitly unresolved, never collapsed, summed or price-allocated. Native
+link positions must be unique. A literal native resolved flag is not verified
+provider parcel membership, economic equivalence or sale eligibility. No
+normalized/reported/date/currency/GLA fallback or housing dictionary is invented.
+
+One step permits at most 250 complete-package rows, 66,752 bytes per SQL envelope,
+2.1 MB each of packet and package projection, 32 MB of all query results, 128
+queries including every nested stock/seed fence, 60 seconds and five seconds
+per query. An over-limit package refuses as a whole; there is no large-package
+segmentation or hidden truncation in this version. Missing/unfinished/changed
+cache metadata refuses without repair. This version establishes complete native
+row coverage for **one** package only, not provider completeness or complete
+population traversal/statistics.
+
+121 expanded focused owner/stock/shared-typing/temporal/package tests passed
+without failures/skips (1588.6794ms),
+including exact >2^53 identities/decimals, multiple native sales, old and
+source-less sales, outside/unresolved members, 250 and one-over bounds, missing
+rows, changed counts, foreign associations, duplicate positions, hostile inputs,
+unanchored/contradictory membership, cancellation and ending-cache refusal.
+The authored small native actual-owner fixture traverses all three seeded
+packages and one source-less sale, independently matches all source/sale/link
+identities to the issued graph, and exercises initial/ending authority,
+partial/unissued/corrupt prerequisites, cache refusal and lost-COMMIT reopen.
+**New package SQL/native execution is pending cloud CI.** Focused DATA tests and
+authored fixtures are not executed native or licensed/live acceptance.
+
+This work is stacked on retained-temporal #1233 at historical `d47486af`, not a
+protected release. Real parent integration, main retargeting, fresh exact-head
+native/full-suite required checks and actual included review remain necessary
+before a normal protected merge. No production grant/deploy/activation, worker,
+HTTP default, accepted report, genuine Hardy choice or Apply changes. Provider/
+amenity meaning and economic transaction resolution, server-owned selection,
+exact complete-population selected-union medians/COD/quarters, coherent
+publication, durable workers/terminal pin transfer-retirement and licensed
+>50k/5-mile/10-mile/city/retrospective/live acceptance remain mandatory. QA
+assignment 7 remains the sole Apply-test target.
+
 ## Retained transaction temporal projection (2026-10-09, not activated)
 
 `readSharedFrozenCaptureJobTransactionTemporalReferencesV2` is a separate dormant
@@ -42,9 +107,18 @@ assertion expected a downstream permission error instead of the actual earlier
 `custom_cohort_job_actor_access_revoked` refusal. The current actor reload correctly
 refused delivery after real role removal. Only the test expectation is corrected,
 and it now also requires the actual page query before ending refusal; no production
-authorization guard is changed or relaxed. **Corrected temporal native execution
-is pending fresh cloud CI**. Authoring and focused DATA tests are not native or
-licensed/live acceptance.
+authorization guard is changed or relaxed. Historical corrected pre-integration
+head `d47486af4bc06171aa08588acc7da269e6b0c85b` passed foundation `37890613643` /
+native `113690469943`: 417 migration, eight index, one subject, one edge and
+two bootstrap tests without failures/skips. Its actual owner marker confirmed
+three source, three sale and four link rows, actual retained dates/period, old/
+outside evidence, no fallback or invented link date, ending authorization/cache
+refusal and lost-COMMIT reopen with zero original/copy/cache/checkpoint/head
+writes. Server passed 10,550 tests with 62 separately database-gated skips;
+frontend passed 3,959 without skips. These historical small-fixture receipts
+do not verify a later integrated head, full licensed acquisition or live speed.
+Actual protected-parent integration, fresh exact-head required checks and actual
+review remain necessary before normal merge.
 Source/amenity meaning, complete transaction/association resolution, server-owned
 selection, exact selected-union statistics, coherent publication, durable workers/
 terminal pin transfer and licensed large-area/retrospective/live acceptance remain.

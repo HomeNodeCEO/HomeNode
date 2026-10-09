@@ -40,6 +40,8 @@ import { createNeighborhoodSharedJobTransactionPagesV2,prepareNeighborhoodShared
 import { projectNeighborhoodTransactionTemporalV1, prepareNeighborhoodTransactionRetainedPeriodV1,
   getNeighborhoodTransactionTemporalV1Profile, NEIGHBORHOOD_TRANSACTION_TEMPORAL_V1_LIMITS }
   from './neighborhoodTransactionTemporalV1.js';
+import { createNeighborhoodSharedTransactionPackagesV1, prepareNeighborhoodTransactionPackagePageV1 }
+  from './neighborhoodSharedTransactionPackagesV1.js';
 import { createCohortOriginalSourceChainV1Store, COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS }
   from './cohortOriginalSourceChainV1.js';
 import { verifyCohortOriginalSourceGraphStep } from './cohortOriginalSourceGraphV1.js';
@@ -158,6 +160,8 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingTransactionPages: true, allowedPhases: ['frozen_identity_refs_v2'] },
   shared_transaction_temporal_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingTransactionPages: true, projectingTransactionTemporal: true, allowedPhases: ['frozen_identity_refs_v2'] },
+  shared_transaction_packages_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    readingTransactionPackages: true, allowedPhases: ['frozen_identity_refs_v2'] },
 });
 function fail(reason, detail, captureCounts) {
   const error = Object.assign(new Error(`custom_cohort_capture_${reason}`), {
@@ -1590,26 +1594,28 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     const {referencesV2=false,verifying=false,stockVerifying=false,identityVerifying=false,
       typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,
       readingCadPages=false,projectingCadAccounts=false,readingTransactionPages=false,projectingTransactionTemporal=false,
-      allowedPhases}=FROZEN_SOURCE_STAGES[stage];
+      readingTransactionPackages=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     if(referencesV2){
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
       const descriptors=Object.getOwnPropertyDescriptors(options),keys=Reflect.ownKeys(descriptors);
       const admittedKeys=['captureJobClaim','signal','deadline',...(readingSharedStockMetrics?['stockMetricPage']:[]),
         ...(readingCadPages?[projectingCadAccounts?'cadAccountPage':'cadImprovementPage']:[]),
-        ...(readingTransactionPages?['transactionPage']:[])];
+        ...(readingTransactionPages?['transactionPage']:[]),...(readingTransactionPackages?['transactionPackagePage']:[])];
       if(keys.some(key=>!admittedKeys.includes(key)
         ||!descriptors[key].enumerable||!Object.hasOwn(descriptors[key],'value')))fail('invalid_options');
       options=Object.fromEntries(keys.map(key=>[key,descriptors[key].value]));
     }
     if (!options || Object.getPrototypeOf(options)!==Object.prototype) fail('invalid_options');
-    const {captureJobClaim:providedClaim,stockMetricPage,cadImprovementPage,cadAccountPage,transactionPage,...budgetOptions}=options;
+    const {captureJobClaim:providedClaim,stockMetricPage,cadImprovementPage,cadAccountPage,transactionPage,transactionPackagePage,...budgetOptions}=options;
     const metricPage=readingStockMetrics||readingSharedStockMetrics?prepareNeighborhoodFrozenStockMetricPage(stockMetricPage):null;
     const cadPage=readingCadPages?projectingCadAccounts?prepareNeighborhoodSharedJobCadAccountPage(cadAccountPage)
       :prepareNeighborhoodSharedJobCadPage(cadImprovementPage):null;
     const transactionInput=readingTransactionPages?prepareNeighborhoodSharedTransactionPageV2(transactionPage):null;
+    const packageInput=readingTransactionPackages?prepareNeighborhoodTransactionPackagePageV1(transactionPackagePage):null;
     if(!readingStockMetrics&&!readingSharedStockMetrics&&stockMetricPage!==undefined) fail('invalid_options');
     if(!readingCadPages&&cadImprovementPage!==undefined)fail('invalid_options');
     if(!readingTransactionPages&&transactionPage!==undefined)fail('invalid_options');
+    if(!readingTransactionPackages&&transactionPackagePage!==undefined)fail('invalid_options');
     const originalInput=inputOf(value),claim=prepareCustomCohortCaptureJobClaim(providedClaim);
     if(claim.operation_id!==originalInput.operationId.toLowerCase()) fail('operation_conflict');
     if(!reportedProfile) fail('frozen_source_profile_unsupported');
@@ -1848,7 +1854,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           issued=prepareCohortSourceIdentityReceiptV2(issued,expected);
           if(issued.sequence!==identityAnchor.sequence)fail('checkpoint_conflict');
         }
-        if((readingSharedStockMetrics||readingCadPages||readingTransactionPages)&&issued?.after.kind_index!==COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.length)
+        if((readingSharedStockMetrics||readingCadPages||readingTransactionPages||readingTransactionPackages)
+          &&issued?.after.kind_index!==COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.length)
           fail('unfinished_identity_verification');
         // Keep the original exact all-date one-hop identity SQL unchanged.
         // Its real stock/graph digest, native identities and coverage are not
@@ -1952,6 +1959,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             temporal_basis:'retained_effective_year_and_closing_period_applied_before_resolution'};
         }
       }
+      if(readingTransactionPackages){
+        const graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
+        stockMetricResult=await createNeighborhoodSharedTransactionPackagesV1(client,stockOptions,graph,
+          context.effective_date,input.observationPeriod).page(packageInput);
+      }
       input=freeze({...input,auth:await loadCurrentCustomCohortJobActor(client,input.auth.userId,scope.organization_id)});
       assertTarget(await resolveTarget(client,input,true),target);
       privateDraft(await privateCaptureWorkfile(client,input));
@@ -1967,11 +1979,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(geographicAnchorStore&&!same(await geographicAnchorStore.read(),geographicAnchor))fail('checkpoint_conflict');
       if(identityAnchorStore&&!same(await identityAnchorStore.read(),identityAnchor))fail('checkpoint_conflict');
       budget.check();
-      if(readingStockMetrics||readingSharedStockMetrics||readingCadPages||readingTransactionPages) return freeze({...stockMetricResult,
+      if(readingStockMetrics||readingSharedStockMetrics||readingCadPages||readingTransactionPages||readingTransactionPackages) return freeze({...stockMetricResult,
         ...(readingStockMetrics?{typed_original_reference:typedReference}:{}),
         ...(readingCadPages?{CAD_source_authorization:{purpose:cadPurpose,decision:cadDecision},stock_reference:stockReference,
           current_authorized_owner:'V2_issued_graph_geography_identity_and_separate_CAD_rights'}:{}),
-        ...(readingTransactionPages?{stock_reference:stockReference,retained_effective_date:context.effective_date,
+        ...(readingTransactionPages||readingTransactionPackages?{stock_reference:stockReference,retained_effective_date:context.effective_date,
           retained_observation_period:input.observationPeriod,
           current_authorized_owner:'V2_issued_graph_geography_identity_and_current_original_source_rights'}:{}),
         source_reference:reference,verification_reference:verificationReference,stock_verification_reference:stockVerificationReference,
@@ -2186,6 +2198,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       frozenCaptureJobSourceStage(value, options, 'shared_transaction_pages_refs_v2'),
     readSharedFrozenCaptureJobTransactionTemporalReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'shared_transaction_temporal_refs_v2'),
+    /** Read one whole bounded native association package with owner-retained dates
+     * and actual issued/current-rights fences. Native completeness is not provider
+     * parcel completeness, economic equivalence, eligibility or publication. */
+    readSharedFrozenCaptureJobTransactionPackagesReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'shared_transaction_packages_refs_v2'),
     async capture(value, options = {}) {
     if (!options || Object.getPrototypeOf(options) !== Object.prototype)
       fail('invalid_options');

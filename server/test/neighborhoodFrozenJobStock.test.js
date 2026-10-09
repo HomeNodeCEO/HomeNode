@@ -20,6 +20,8 @@ import { prepareNeighborhoodTypedTransactionV2 } from '../src/services/neighborh
 import { createNeighborhoodSharedJobTransactionPagesV2,prepareNeighborhoodSharedTransactionPageV2,
   getNeighborhoodSharedTransactionPageV2Profile,NEIGHBORHOOD_SHARED_JOB_TRANSACTION_V2_PAGE_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSharedJobTransactionPagesV2.js';
+import { createNeighborhoodSharedTransactionPackagesV1, NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL }
+  from '../src/services/neighborhoodAssessment/neighborhoodSharedTransactionPackagesV1.js';
 import { NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL, NEIGHBORHOOD_FROZEN_JOB_IDENTITY_COVERAGE_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourceClosurePages.js';
 import { createNeighborhoodSharedJobCadImprovementPages,prepareNeighborhoodSharedJobCadPage,NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_SQL,
@@ -314,6 +316,18 @@ async function transactionFixture(hook=()=>{},counts={source_records:4,sales:1,s
       definition_sha256:values[3],definition_json:values[4],status:'building',seed_count:'0',completed_at:null};return result({operation_id:id});}
     if(text===NEIGHBORHOOD_FROZEN_JOB_SEED_SQL.rows)return result({inserted_count:'1'});
     if(text===NEIGHBORHOOD_FROZEN_JOB_SEED_SQL.complete){Object.assign(seedHeader,{status:'complete',seed_count:values[2],completed_at:date});return result({seed_count:values[2]});}
+    if(Object.values(NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL).includes(text)){
+      const legacy=text===NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL.legacy_sale;
+      const chosen=legacy?rows.sales.filter(r=>r.source_record_id===null&&r.account_id==='STOCK-A'
+        &&Buffer.compare(Buffer.from(r.row_key),Buffer.from(values[3]))>0)[0]?.row_key
+        :(!values[3]||BigInt(values[3])<10n?'10':null);
+      const selected=chosen?Object.values(rows).flat().filter(r=>legacy?r.kind==='sales'&&r.row_key===chosen&&r.source_record_id===null
+        :r.source_record_id===chosen):[];
+      selected.sort((a,b)=>Buffer.compare(Buffer.from(`${a.kind}:${a.row_key}`),Buffer.from(`${b.kind}:${b.row_key}`)));
+      return result({package_key:chosen??null,counts:Object.fromEntries(['source_records','sales','sale_links'].map(k=>[k,
+        String(selected.filter(r=>r.kind===k).length)])),row_count:selected.length,packet_oversize:false,
+      packet_json:JSON.stringify(selected.map(row=>({row,stock_member:row.account_id===null?null:row.account_id==='STOCK-A'})))});
+    }
     if(text===NEIGHBORHOOD_SHARED_JOB_TRANSACTION_V2_PAGE_SQL){
       const selected=rows[values[3]].filter(r=>Buffer.compare(Buffer.from(r.row_key),Buffer.from(values[4]))>0).slice(0,values[5]);
       return result({page_json:JSON.stringify(selected),page_count:selected.length,candidate_count:selected.length,
@@ -329,8 +343,47 @@ async function transactionFixture(hook=()=>{},counts={source_records:4,sales:1,s
   await createNeighborhoodFrozenJobSourceSeeds(f.client,options).prepare();
   const graph={root:{content_sha256:'c'.repeat(64),canonical_utf8_bytes:'100'},
     layer_counts:{parcels:60001,accounts:0,source_records:counts.source_records??0,sales:counts.sales??0,sale_links:counts.sale_links??0,sync_state:0,sync_runs:0}};
-  return {...f,rows,source,sharedHeader,seedHeader,graph,pages:()=>createNeighborhoodSharedJobTransactionPagesV2(f.client,options,graph)};
+  return {...f,rows,source,sharedHeader,seedHeader,graph,pages:()=>createNeighborhoodSharedJobTransactionPagesV2(f.client,options,graph),
+    packages:()=>createNeighborhoodSharedTransactionPackagesV1(f.client,options,graph,'2026-10-07',{start_date:'2025-01-01',end_date:'2026-10-07'})};
 }
+
+test('whole native package DATA reader reopens all current fences, projects retained dates and requires a fresh empty probe without writes',async()=>{
+  const f=await transactionFixture();f.rows.sale_links=[transactionRow('sale_links','1',{account_id:'STOCK-A'})];
+  const from=f.calls.length,reader=f.packages(),first=await reader.page({kind:'source_record',cursor:''});
+  assert.deepEqual(first.package.counts,{source_records:'1',sales:'0',sale_links:'1'});
+  assert.equal(first.end_of_kind,false);assert.equal(first.package.associations.unresolved_link_count,1);
+  assert.equal(first.package.rows.find(e=>e.projection.kind==='source_records').projection.normalized.observations.normalized_year_built.state,'invalid');
+  assert.equal(first.package.associations.outside_account_count,1);assert.equal(first.transaction_eligibility,'not_established');
+  assert.equal((await f.packages().page({kind:'source_record',cursor:'10'})).end_of_kind,true);
+  assert.equal((await f.packages().page({kind:'legacy_sale',cursor:''})).package.rows[0].projection.source_record_id,null);
+  await assert.rejects(reader.page({kind:'source_record',cursor:''}),/single_use/);
+  const calls=f.calls.slice(from);assert.ok(calls.length<=128*3);assert.ok(calls.every(c=>c.query_timeout===5000));
+  assert.equal(calls.filter(c=>c.text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read).length,6);
+  assert.equal(calls.filter(c=>c.text===NEIGHBORHOOD_FROZEN_JOB_SEED_SQL.read).length,12);
+  assert.ok(!calls.some(c=>/INSERT|UPDATE|DELETE|ST_DWithin|FROM core\.|payload::text|shared-typed-v2:(?:page|rows|lock)/.test(c.text)));
+});
+
+test('whole native package reader refuses missing or changed cache/seed/source/claim and cancellation before delivery',async()=>{
+  for(const change of [h=>h.status='building',h=>h.progress.kind_index=6,h=>h.binding_sha256='e'.repeat(64)]){
+    const f=await transactionFixture(({text,sharedHeader})=>{if(text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read){
+      const h=structuredClone(sharedHeader);change(h);return result(h);}});
+    await assert.rejects(f.packages().page({kind:'source_record',cursor:''}),/cache_unavailable/);
+    assert.ok(!f.calls.some(c=>Object.values(NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL).includes(c.text)));
+  }
+  let reads=0;const ending=await transactionFixture(({text,sharedHeader})=>text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read&&++reads===2
+    ?result({...sharedHeader,status:'building'}):null);
+  ending.rows.sale_links=[transactionRow('sale_links','1',{account_id:'STOCK-A'})];
+  await assert.rejects(ending.packages().page({kind:'source_record',cursor:''}),/cache_unavailable/);
+  const seeds=await transactionFixture();seeds.seedHeader.status='building';
+  await assert.rejects(seeds.packages().page({kind:'source_record',cursor:''}),/unfinished_or_changed_index/);
+  let loseClaim=false;const lost=await transactionFixture(({text})=>loseClaim&&text.includes('generation-fence')?{rowCount:0,rows:[]}:null);
+  loseClaim=true;
+  await assert.rejects(lost.packages().page({kind:'source_record',cursor:''}),/claim_lost/);
+  const f=await transactionFixture(),from=f.calls.length;
+  const cancelled=createNeighborhoodSharedTransactionPackagesV1(f.client,{...options,checkBudget(){throw Error('cancelled');}},f.graph,
+    '2026-10-07',{start_date:'2025-01-01',end_date:'2026-10-07'});
+  await assert.rejects(cancelled.page({kind:'source_record',cursor:''}),/cancelled/);assert.equal(f.calls.length,from);
+});
 
 test('neutral transaction cells reconcile exact bounded raw diagnostics without currency or normalized fallback',()=>{
   const row=transactionRow(),r=prepareNeighborhoodTypedTransactionV2(row);

@@ -212,6 +212,12 @@ export function prepareNeighborhoodSharedTypedCadSource(result,generationId){
   return sourceOf(result,generationId,true);
 }
 
+/** Fixed seven-layer metadata DATA validation for shared read-only consumers.
+ * This establishes neither issued job heads nor current source authority. */
+export function prepareNeighborhoodSharedTypedSource(result,generationId){
+  return sourceOf(result,generationId);
+}
+
 /** Build one bounded caller-transaction step for a fixed V1, neutral V2 or separate CAD cache. */
 function sharedTypedGeneration(client, rawOptions, neutral) {
   const cad=neutral==='cad',kinds=cad?CAD_KINDS:KINDS;

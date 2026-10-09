@@ -13,7 +13,13 @@ import { createNeighborhoodFrozenJobStockMetricPages, createNeighborhoodSharedJo
   NEIGHBORHOOD_SHARED_STOCK_METRIC_V2_PAGE_SQL, NEIGHBORHOOD_FROZEN_STOCK_METRIC_PAGE_SQL,
   NEIGHBORHOOD_SHARED_STOCK_METRIC_PAGE_SQL } from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStockMetricPages.js';
 import { NEIGHBORHOOD_SHARED_TYPED_SQL, NEIGHBORHOOD_SHARED_TYPED_V2_SQL } from '../src/services/neighborhoodAssessment/neighborhoodSharedTypedGeneration.js';
-import { getNeighborhoodFrozenTypedOriginalV1Profile, getNeighborhoodFrozenTypedOriginalV2Profile } from '../src/services/neighborhoodAssessment/neighborhoodFrozenTypedOriginalV1.js';
+import { compileNeighborhoodFrozenTypedOriginalV2,getNeighborhoodFrozenTypedOriginalV1Profile, getNeighborhoodFrozenTypedOriginalV2Profile } from '../src/services/neighborhoodAssessment/neighborhoodFrozenTypedOriginalV1.js';
+import { createNeighborhoodFrozenJobSourceSeeds,NEIGHBORHOOD_FROZEN_JOB_SEED_SQL } from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobSourceSeeds.js';
+import { CACHED_SALE_WITNESS_V2_FIELDS } from '../src/services/neighborhoodAssessment/cachedSaleWitnessV2.js';
+import { prepareNeighborhoodTypedTransactionV2 } from '../src/services/neighborhoodAssessment/neighborhoodFrozenTypedTransactionV2.js';
+import { createNeighborhoodSharedJobTransactionPagesV2,prepareNeighborhoodSharedTransactionPageV2,
+  getNeighborhoodSharedTransactionPageV2Profile,NEIGHBORHOOD_SHARED_JOB_TRANSACTION_V2_PAGE_SQL }
+  from '../src/services/neighborhoodAssessment/neighborhoodSharedJobTransactionPagesV2.js';
 import { NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL, NEIGHBORHOOD_FROZEN_JOB_IDENTITY_COVERAGE_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourceClosurePages.js';
 import { createNeighborhoodSharedJobCadImprovementPages,prepareNeighborhoodSharedJobCadPage,NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_SQL,
@@ -280,13 +286,159 @@ test('fixed metric SQL uses stock and typed account indexes, exact numeric guard
   assert.deepEqual(definition.typed_original_profile,getNeighborhoodFrozenTypedOriginalV1Profile());
 });
 const result=row=>({rowCount:1,rows:[row]});
-function fixture(hook=()=>{},initial=false) {
+
+function transactionRow(kind='source_records',row_key='10',overrides={}){
+  const fields=Object.fromEntries(CACHED_SALE_WITNESS_V2_FIELDS.map(k=>[k,{state:'absent',json_type:null,value_text:null,utf8_bytes:null}]));
+  for(const [k,text] of Object.entries({MlsStatus:'closed',CloseDate:'2027-01-01',ClosePrice:'9007199254740993.01',
+    ClosePriceCurrency:'USD',LivingArea:'1000.001',LivingAreaUnits:'sqft',YearBuilt:'2050'}))
+    fields[k]={state:'scalar',json_type:'string',value_text:text,utf8_bytes:Buffer.byteLength(text)};
+  const payload={id:row_key,...(kind==='source_records'?{primary_account_id:'OUTSIDE',source_raw_witness:{witness_version:2,
+    root_state:'object',root_json_type:'object',fields},current_price:'9007199254740993',year_built:2050,close_date:'2027-01-01'}
+    :{account_id:kind==='sale_links'?'OUTSIDE':'STOCK-A',source_record_id:kind==='sales'?null:'10',
+      ...(kind==='sales'?{sale_price:'0.01',closing_date:'2027-01-01'}:{source_position:1,parcel_sequence:1,is_resolved:false})}),...overrides};
+  const typed=compileNeighborhoodFrozenTypedOriginalV2({kind,row_key,payload_text:JSON.stringify(payload)});
+  return {kind,row_key,account_id:typed.account_id,source_record_id:typed.source_record_id,
+    original_payload_sha256:typed.original.payload_sha256,typed};
+}
+async function transactionFixture(hook=()=>{},counts={source_records:4,sales:1,sale_links:1}){
+  let source,sharedHeader,seedHeader;
+  const rows={source_records:['10','2','3','4'].slice(0,counts.source_records??0).map(k=>transactionRow('source_records',k)),
+    sales:counts.sales?[transactionRow('sales')]:[],sale_links:counts.sale_links?[transactionRow('sale_links')]:[]};
+  const f=fixture(async call=>{
+    const supplied=await hook({...call,source,sharedHeader,seedHeader,rows});if(supplied)return supplied;
+    const {text,values}=call;
+    if(text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.source)return result(structuredClone(source));
+    if(text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read)return result(structuredClone(sharedHeader));
+    if(text===NEIGHBORHOOD_FROZEN_JOB_SEED_SQL.read)return seedHeader?result(structuredClone(seedHeader)):{rowCount:0,rows:[]};
+    if(text===NEIGHBORHOOD_FROZEN_JOB_SEED_SQL.begin){seedHeader={generation_id:values[1],binding_sha256:values[2],
+      definition_sha256:values[3],definition_json:values[4],status:'building',seed_count:'0',completed_at:null};return result({operation_id:id});}
+    if(text===NEIGHBORHOOD_FROZEN_JOB_SEED_SQL.rows)return result({inserted_count:'1'});
+    if(text===NEIGHBORHOOD_FROZEN_JOB_SEED_SQL.complete){Object.assign(seedHeader,{status:'complete',seed_count:values[2],completed_at:date});return result({seed_count:values[2]});}
+    if(text===NEIGHBORHOOD_SHARED_JOB_TRANSACTION_V2_PAGE_SQL){
+      const selected=rows[values[3]].filter(r=>Buffer.compare(Buffer.from(r.row_key),Buffer.from(values[4]))>0).slice(0,values[5]);
+      return result({page_json:JSON.stringify(selected),page_count:selected.length,candidate_count:selected.length,
+        oversized_count:0,next_cursor:selected.at(-1)?.row_key??null});
+    }
+  },true,counts);
+  const stock=await f.store.read(),o=stock.original,profile=getNeighborhoodFrozenTypedOriginalV2Profile();
+  source={generation_id:id,format_version:1,status:'complete',source_snapshot:o.source_snapshot,started_at:o.source_transaction_started_at,
+    completed_at:o.completed_at,layer_counts:o.layer_counts,row_count:o.row_count,payload_utf8_bytes:o.payload_utf8_bytes};
+  const binding=assessmentEvidenceDigest({source,profile});
+  sharedHeader={binding_sha256:binding,source_metadata:source,definition_json:profile.definition_blob.canonical_json,status:'complete',completed_at:date,
+    progress:{format:'shared_frozen_typed_progress_v2',binding_sha256:binding,kind_index:7,after:'',layer_rows:0,typed_rows:source.row_count,typed_utf8_bytes:'12002000'}};
+  await createNeighborhoodFrozenJobSourceSeeds(f.client,options).prepare();
+  const graph={root:{content_sha256:'c'.repeat(64),canonical_utf8_bytes:'100'},
+    layer_counts:{parcels:60001,accounts:0,source_records:counts.source_records??0,sales:counts.sales??0,sale_links:counts.sale_links??0,sync_state:0,sync_runs:0}};
+  return {...f,rows,source,sharedHeader,seedHeader,graph,pages:()=>createNeighborhoodSharedJobTransactionPagesV2(f.client,options,graph)};
+}
+
+test('neutral transaction cells reconcile exact bounded raw diagnostics without currency or normalized fallback',()=>{
+  const row=transactionRow(),r=prepareNeighborhoodTypedTransactionV2(row);
+  assert.equal(r.typed.same_payload_reported_sale.observations.reported_close_price.exact_value,'9007199254740993.01');
+  assert.equal(r.typed.same_payload_reported_sale.observations.reported_close_price.unit,'USD');
+  assert.equal(r.typed.observations.normalized_current_price.state,'unsupported');
+  assert.equal(r.typed.observations.normalized_current_price.exact_value,'9007199254740993');
+  assert.equal(r.typed.observations.normalized_year_built.exact_value,'2050','neutral syntax does not claim report eligibility');
+  assert.equal(r.account_id,'OUTSIDE');assert.equal(r.typed.authority,'not_established');assert.ok(Object.isFrozen(r.typed));
+  assert.equal(prepareNeighborhoodTypedTransactionV2(transactionRow('sales')).source_record_id,null);
+  assert.equal(prepareNeighborhoodTypedTransactionV2(transactionRow('sale_links')).typed.markers.is_resolved.value_text,'false');
+  for(const change of [r=>r.original_payload_sha256='e'.repeat(64),r=>r.typed.account_id='WRONG',
+    r=>r.typed.observations.normalized_year_built.exact_value='2000',r=>r.typed.observations.normalized_current_price.unit='USD',
+    r=>r.typed.same_payload_reported_sale.observations.reported_close_price.exact_value='1',
+    r=>r.typed.same_payload_reported_sale.record_type.state='nonclosed',r=>r.typed.dates.close_date.exact_value='2020-01-01',
+    r=>r.typed.markers.record_type.value_sha256='e'.repeat(64),r=>r.typed.effective_date='2020-01-01']){
+    const bad=structuredClone(row);change(bad);assert.throws(()=>prepareNeighborhoodTypedTransactionV2(bad),/invalid_/);
+  }
+  const hostile=structuredClone(row);Object.defineProperty(hostile.typed.same_payload_reported_sale.observations,'reported_close_price',
+    {enumerable:true,get(){assert.fail('nested getter must not execute');}});
+  assert.throws(()=>prepareNeighborhoodTypedTransactionV2(hostile),/invalid_data/);
+  assert.throws(()=>prepareNeighborhoodTypedTransactionV2(new Proxy(row,{})),/invalid_data/);
+  assert.throws(()=>prepareNeighborhoodTypedTransactionV2(transactionRow('sale_links','10',{source_record_id:null})),/invalid_identity/);
+});
+
+test('shared transaction pages are one-hop all-date neutral DATA including outside links and source-less stock sales',async()=>{
+  const f=await transactionFixture(),from=f.calls.length;
+  for(const kind of ['source_records','sales','sale_links']){
+    const p=await f.pages().page({kind,cursor:'',rowLimit:250});
+    assert.equal(p.kind,kind);assert.equal(p.end_of_kind,true);assert.equal(p.coverage,'one_kind_page_only');
+    assert.equal(p.transaction_eligibility,'not_established');assert.equal(p.source_acquisition,'not_established');assert.equal(p.report_update,'none');
+    assert.deepEqual(p.typed_profile,getNeighborhoodFrozenTypedOriginalV2Profile());assert.deepEqual(p.page_profile,getNeighborhoodSharedTransactionPageV2Profile());
+    if(kind==='source_records'){assert.equal(p.rows[0].row_key,'10');assert.equal(p.rows[1].row_key,'2');
+      assert.equal(p.rows[0].typed.same_payload_reported_sale.close_date.exact_value,'2027-01-01');}
+    if(kind==='sale_links')assert.equal(p.rows[0].account_id,'OUTSIDE');
+    if(kind==='sales')assert.equal(p.rows[0].source_record_id,null);
+  }
+  const calls=f.calls.slice(from);assert.ok(!calls.some(c=>/INSERT|UPDATE|DELETE|ST_DWithin|FROM core\.|payload::text|shared-typed-v2:(?:page|rows|lock)/.test(c.text)));
+  assert.equal(calls.filter(c=>c.text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read).length,6);
+  assert.equal(calls.filter(c=>c.text===NEIGHBORHOOD_FROZEN_JOB_SEED_SQL.read).length,12);
+  assert.ok(calls.every(c=>c.query_timeout===5000));assert.ok(calls.length<=128*3);
+  const sql=NEIGHBORHOOD_SHARED_JOB_TRANSACTION_V2_PAGE_SQL;
+  assert.match(sql,/s\.operation_id=\$1::uuid AND s\.generation_id=\$2::uuid AND s\.source_record_id=t\.source_record_id/);
+  assert.match(sql,/t\.kind='sales' AND t\.source_record_id IS NULL/);
+  assert.doesNotMatch(sql,/effective_date|closing_date|ST_DWithin|JOIN app\.neighborhood_frozen_source_rows|array_agg|sum\(.*price/i);
+});
+
+test('transaction kind keysets preserve full/short/empty boundaries and count every nested fence query',async()=>{
+  const f=await transactionFixture(),p=await f.pages().page({kind:'source_records',cursor:'',rowLimit:4});
+  assert.equal(p.end_of_kind,false);assert.equal(p.next_cursor,'4');
+  const reader=f.pages(),end=await reader.page({kind:'source_records',cursor:p.next_cursor,rowLimit:4});
+  assert.deepEqual(end.rows,[]);assert.equal(end.next_cursor,'4');assert.equal(end.end_of_kind,true);
+  await assert.rejects(reader.page({kind:'source_records',cursor:'',rowLimit:1}),/single_use/);
+  const large=await transactionFixture(()=>null,{source_records:250});
+  large.rows.source_records=Array.from({length:250},(_,i)=>transactionRow('source_records',String(i+1))).sort((a,b)=>Buffer.compare(Buffer.from(a.row_key),Buffer.from(b.row_key)));
+  const from=large.calls.length,full=await large.pages().page({kind:'source_records',cursor:'',rowLimit:250});
+  assert.equal(full.rows.length,250);assert.equal(full.end_of_kind,false);assert.ok(large.calls.length-from<=128);
+  assert.equal((await large.pages().page({kind:'source_records',cursor:full.next_cursor,rowLimit:250})).end_of_kind,true);
+});
+
+test('transaction pages refuse unfinished caches/seeds, forged cells/order and all ending metadata changes',async()=>{
+  for(const mutation of [h=>h.status='building',h=>h.progress.kind_index=6,h=>h.progress.format='shared_frozen_typed_progress_v1',
+    h=>h.source_metadata.source_snapshot='2:3:',h=>h.binding_sha256='e'.repeat(64)]){
+    const f=await transactionFixture(({text,sharedHeader})=>{if(text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read){const h=structuredClone(sharedHeader);mutation(h);return result(h);}});
+    await assert.rejects(f.pages().page({kind:'source_records',cursor:'',rowLimit:1}),/cache_unavailable/);
+    assert.ok(!f.calls.some(c=>c.text===NEIGHBORHOOD_SHARED_JOB_TRANSACTION_V2_PAGE_SQL));
+  }
+  for(const mutation of [f=>f.seedHeader.status='building',f=>{f.rows.source_records[0]=structuredClone(f.rows.source_records[0]);
+    f.rows.source_records[0].typed.observations.normalized_year_built.exact_value='1';},
+    f=>f.rows.source_records.reverse(),f=>f.graph.layer_counts.source_records=0]){
+    const f=await transactionFixture();mutation(f);await assert.rejects(f.pages().page({kind:'source_records',cursor:'',rowLimit:250}),/unfinished|invalid_|source_mismatch/);
+  }
+  let headers=0;const f=await transactionFixture(({text,sharedHeader})=>text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read&&++headers===2
+    ?result({...sharedHeader,status:'building'}):null);
+  await assert.rejects(f.pages().page({kind:'source_records',cursor:'',rowLimit:1}),/cache_unavailable/);
+  for(const bad of [{kind:'parcels',cursor:'',rowLimit:1},{kind:'source_records',cursor:'0',rowLimit:1},
+    {kind:'source_records',cursor:'9223372036854775808',rowLimit:1},{kind:'sales',cursor:'',rowLimit:251},
+    {kind:'sales',cursor:'',rowLimit:1,date:'2020-01-01'},new Proxy({kind:'sales',cursor:'',rowLimit:1},{}),
+    {kind:'sales',get cursor(){assert.fail('getter');},rowLimit:1}])assert.throws(()=>prepareNeighborhoodSharedTransactionPageV2(bad),/invalid_/);
+  for(const o of [{...options,effectiveDate:'2020-01-01'},{...options,sourceGrant:{allowed:true}},new Proxy(options,{})])
+    assert.throws(()=>createNeighborhoodSharedJobTransactionPagesV2(f.client,o,f.graph),/invalid_input/);
+});
+
+test('transaction byte-prefix admission cannot hide oversized rows or turn a partial page into an end receipt',async()=>{
+  const partial=await transactionFixture(({text,rows})=>text===NEIGHBORHOOD_SHARED_JOB_TRANSACTION_V2_PAGE_SQL
+    ?result({page_json:JSON.stringify(rows.source_records.slice(0,1)),page_count:1,candidate_count:4,oversized_count:0,next_cursor:'10'}):null);
+  const p=await partial.pages().page({kind:'source_records',cursor:'',rowLimit:4});assert.equal(p.rows.length,1);assert.equal(p.end_of_kind,false);
+  for(const response of [{page_json:'[]',page_count:0,candidate_count:1,oversized_count:0,next_cursor:null},
+    {page_json:'[]',page_count:0,candidate_count:1,oversized_count:1,next_cursor:null}]){
+    const f=await transactionFixture(({text})=>text===NEIGHBORHOOD_SHARED_JOB_TRANSACTION_V2_PAGE_SQL?result(response):null);
+    await assert.rejects(f.pages().page({kind:'source_records',cursor:'',rowLimit:1}),/invalid_result/);
+  }
+  const f=await transactionFixture(),from=f.calls.length;
+  const reader=createNeighborhoodSharedJobTransactionPagesV2(f.client,{...options,checkBudget(){throw Error('synthetic cancellation');}},f.graph);
+  await assert.rejects(reader.page({kind:'source_records',cursor:'',rowLimit:1}),/synthetic cancellation/);
+  assert.equal(f.calls.length,from,'cancelled budget refuses before any nested SQL');
+  assert.match(NEIGHBORHOOD_SHARED_JOB_TRANSACTION_V2_PAGE_SQL,/bytes<=\$8::integer AND cumulative\+1<=\$7::integer/);
+});
+
+function fixture(hook=()=>{},initial=false,transactionCounts=null) {
   const calls=[];let stored=initial;
   const pin={generation_id:id,status:'complete',retirement_started_at:null,source_observed_at:date,completed_at:date,parcel_count:'60002',sale_count:'0',group_count:'1'};
   const header={generation_id:id,format_version:1,status:'complete',source_snapshot:'1:2:',started_at:date,completed_at:date,
-    row_count:'60002',payload_utf8_bytes:'6000200',layer_counts:Object.fromEntries(
+    row_count:String(60002+(transactionCounts?Object.values(transactionCounts).reduce((n,v)=>n+v,0):0)),
+    payload_utf8_bytes:String(6000200+(transactionCounts?Object.values(transactionCounts).reduce((n,v)=>n+v*100,0):0)),layer_counts:Object.fromEntries(
       ['parcels','accounts','source_records','sales','sale_links','sync_state','sync_runs'].map(kind=>[kind,
-        {row_count:kind==='parcels'?'60002':'0',payload_utf8_bytes:kind==='parcels'?'6000200':'0'}]))};
+        {row_count:kind==='parcels'?'60002':String(transactionCounts?.[kind]??0),
+          payload_utf8_bytes:kind==='parcels'?'6000200':String((transactionCounts?.[kind]??0)*100)}]))};
   const original={generation_id:id,source_format_version:1,source_snapshot:'1:2:',source_transaction_started_at:date,completed_at:date,
     row_count:header.row_count,payload_utf8_bytes:header.payload_utf8_bytes,layer_counts:header.layer_counts};
   const definition=neighborhoodFrozenSpatialDefinition(claim,id,options.geometryInput,options.discovery);

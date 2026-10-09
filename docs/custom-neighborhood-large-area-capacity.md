@@ -1,5 +1,66 @@
 # Complete larger-area Custom neighborhood studies
 
+## Bounded shared transaction originals (2026-10-09, not activated)
+
+`readSharedFrozenCaptureJobTransactionsReferencesV2` is an explicit internal
+consumer admitted only from the actual completed V2 identity phase. It reopens
+the independently issued graph, geographic and identity heads, exact retained
+subject, current DB actor/assignment/draft, source purpose/decision and live
+request/claim/pin/stock at both ends. Closed `transactionPage` input admits only
+one fixed kind, native-text cursor and row limit. No caller source facts, profile,
+date, selection, issued head or authorization decision is accepted. The response
+identifies the actual retained date/period without declaring transaction eligibility.
+
+Fixed generation/profile/kind/key SQL reads only the prepared original-stock
+one-hop seed index. All-date source records, sales and links include outside and
+unresolved package members; those outside accounts never become new discovery
+seeds or CAD lookup accounts. Source-less legacy sales are included only when
+their exact original account belongs to stock. No sale price is allocated across
+links, no normalized price/unit fallback occurs, and no date filter silently
+changes closure coverage. Installed cache order is C-text, not numeric ID order.
+
+Each cached V2 row independently reconciles exact native kind/key/account/source,
+original hash, profile and date-neutral version. Numeric/calendar cells are
+recomputed from bounded raw diagnostics; the pinned same-payload reported-sale
+interpreter is replayed from its exact consumed diagnostic fields. This is local
+reported syntax, not a provider dictionary or verified completion/consideration.
+Unused private replay placeholders are never emitted as source observations.
+Retained effective-year and observation-period rules must run before the future
+resolution/aggregation stage, not alter the shared syntax cache.
+
+One single-use step is bounded to 250 rows, 66,560 bytes per envelope (the unchanged
+65,536-byte typed-row ceiling plus identity envelope), 2.1 MB per page, 32 MB of
+all query results, 128 queries including every nested stock/seed fence, 60 seconds
+and five seconds per query. Both ends verify complete seed/source/cache metadata;
+missing or unfinished caches refuse without preparation. A full or byte-cut page
+is not a terminal receipt; full tails require a fresh empty probe. A page end
+does not prove all preceding pages were consumed or complete transaction coverage.
+
+Focused tests exercise exact >2^53 decimals, unknown currency, neutral future
+dates/years, outside/unresolved links, source-less sales, hostile nested inputs,
+forged cells/headers/order, and full-250/short/empty tails. The authored small
+native actual-issued owner fixture checks SQL one-hop scope (including exclusion
+of second-hop source 502), missing-cache/partial-head refusal, ending current
+rights/actor/subject/claim/cancel/cache denial, corrupt prerequisites and
+lost-COMMIT replay, with no original reads or durable mutations. Historical
+pre-integration head `663dbe0ff6013c5ae22819ebe61f7e50fb8d86c6` passed foundation
+`37887917411` / native `113681975953`: 417 migration, eight index, one subject,
+one edge and two bootstrap tests without failures/skips. The actual issued-owner
+marker confirmed three source, three sale and four link rows, all-date retention,
+outside/unresolved and source-less evidence, second-hop exclusion, ending
+authorization/cache refusal and lost-COMMIT reopen without original reads,
+copies or durable writes. Server passed 10,543 tests with 62 separately
+database-gated skips; frontend passed 3,959 with no skips. These are historical
+small-fixture receipts, not later integrated-head readiness or licensed/live
+acceptance. This branch incorporates protected #1231 merge
+`3b69696e16709f6c0408ab969dcb62b78f6b5819`; fresh exact-head checks and actual
+review are verified separately before normal protected merge.
+No source grant, activation,
+worker, HTTP default, genuine Hardy choice, report or Apply mutation occurs.
+Transaction resolution, server-owned selection, exact complete-population
+selected-union medians/COD/quarters, coherent publication, durable workers/pin
+transfer and licensed large-area/retrospective/live acceptance remain mandatory.
+
 ## Current CAD account projection (2026-10-08, not activated)
 
 `readSharedFrozenCaptureJobCadAccountsReferencesV2` is an explicit internal
@@ -58,6 +119,21 @@ selected-union statistics, retrospective accuracy or live speed acceptance.
 Transaction resolution, server-owned selection, exact full medians/COD/quarters,
 coherent publication, durable workers/pin transfer and licensed/live acceptance
 remain mandatory.
+
+Integrated #1231 head `0cc81988678403465723a27634cefaef36925e79` passed all
+14 exact-head checks. Foundation `37934705468` / native `113833737470` actually
+passed all 417/eight/one/one/two tests without failures/skips. Its actual-issued
+current CAD account owner and distinct missing-primary SQL DATA markers repeated
+the guards above; the DATA fixture explicitly did not issue a graph or current
+actor-owner receipt. Server `113833737922` passed 10,537 tests with 62 separately
+database-gated skips; frontend `113833738338` passed 3,959 without skips.
+Included review `04c398c4-5137-44e2-be9e-1c671ce21eeb` covered all six changed
+files without actionable findings; all five pre-merge checks passed, including
+91.67% docstring coverage. Current protected checks, head, main rules and lack
+of unresolved findings were revalidated before normal expected-head merge as
+`3b69696e16709f6c0408ab969dcb62b78f6b5819`. No activation or production change
+occurred. These small native/synthetic receipts are not licensed acquisition,
+complete-population statistics, retrospective truth or live speed acceptance.
 
 ## Current-authorized CAD syntax page owner (2026-10-08, not activated)
 

@@ -1,5 +1,62 @@
 # Complete larger-area Custom neighborhood studies
 
+## Issued-head V2 source-identity verification (2026-10-08, not activated)
+
+`verifyFrozenCaptureJobSourceIdentityReferencesV2` is a separate internal owner
+stage, admitted only from `frozen_geo_verify_refs_v2` or its own
+`frozen_identity_refs_v2` phase. It requires the independently issued completed
+seven-layer graph **and** completed geographic-original head before identity
+I/O. It cannot advance an unfinished prerequisite, cast a V1 checkpoint or
+accept caller progress, SQL, roots, rows, codec choices or rights grants.
+
+The existing identity SQL is unchanged. Each bounded step validates the native
+keys, original account/source/run identities and exact all-date one-hop scope.
+It includes associated-account parcel parts outside the geographic stock but
+does not turn those accounts into new transaction seeds; NULL-account stock
+geometry is handled by the geographic stage, not invented as an account. The
+unknown parcel-origin count is explicitly for source-graph account parcel parts.
+Missing core-account rows are reported separately at the final layer, not
+silently treated as complete numerical observations.
+
+Only small transition metadata is retained. An independent indexed head binds
+the actual source/root/graph/geography/stock, seven layer counts, stock account
+count, previous issued receipt and sequence. Resume derives progress from that
+head alone. The real original primitive checks its stock/graph digest; closed
+receipt DATA does not prove that digest or original validation. Receipt, anchor
+CAS and checkpoint share the same transaction and current actor/assignment/
+draft/subject/claim/pin/CAD/combined-source checks at both ends. Lost successful
+COMMIT acknowledgment resumes the issued next layer; DONE replay rechecks
+current rights but reads no originals or additional proof.
+
+The additive database guard independently verifies both actual DONE prerequisite
+heads, exact root counts, initial zero state, prior issued after-state and next
+native-key prefix in the same one-hop scopes. It checks exact NULL-origin deltas
+and terminal missing-account coverage. Seven fixed internal native-order plans
+avoid a generic CASE ordering that could force a full sort on each large-area
+page. The guard inspects at most 251 next keys plus scope/coverage queries, not
+full geometry or numerical payloads. This is not a whole-load linear-performance
+claim; whole licensed population acquisition and query-plan timing are still
+required. Short byte-admitted prefixes and full-250 tails with a separate empty
+terminal query remain valid. Trusted owner/anchor DML integrity remains the
+issuance boundary: guards do not replace original validation or current rights.
+
+Focused unit tests cover closed metadata, synthetic 60,001-row progression,
+seven exact counts, short/full-tail/empty transitions, fenced CAS, caller
+transaction refusal and scope/reference substitutions. The new native owner
+fixture is **pending protected cloud execution**, not yet an acceptance result:
+real independent heads, unissued DONE refusal, short-prefix guard-only rollback,
+exact origin and missing-account guards, both-end license/role/subject/claim/
+cancel rollback, actual successful-COMMIT/lost-ACK next-layer resume, seven small
+no-payload receipts, ended replay, V1 separation and retained generation pin.
+This small native protocol fixture is not licensed >50k/5-mile/10-mile/city/
+retrospective or production saved-map-speed acceptance; full-250-tail behavior
+is currently unit/source-guard coverage, not native large-area acceptance.
+
+No route, worker, UI/default, schedule, source grant, Apply, pin release or
+production deployment. Next: shared date-neutral typing, amenities/transaction
+resolution, server-owned selection, exact complete selected-union statistics,
+coherent publication, durable workers/terminal retirement and licensed/live QA.
+
 ## Issued-head V2 geographic-original verification (2026-10-08, not activated)
 
 `verifyFrozenCaptureJobStockOriginalReferencesV2` is a separate internal owner

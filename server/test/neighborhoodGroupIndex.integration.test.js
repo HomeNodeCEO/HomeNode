@@ -33,6 +33,8 @@ import { createCustomCohortGraphV2AnchorRepository }
   from '../src/services/neighborhoodAssessment/customCohortGraphV2AnchorRepository.js';
 import { createCustomCohortGeographicV2AnchorRepository }
   from '../src/services/neighborhoodAssessment/customCohortGeographicV2AnchorRepository.js';
+import { createCustomCohortIdentityV2AnchorRepository }
+  from '../src/services/neighborhoodAssessment/customCohortIdentityV2AnchorRepository.js';
 import { createCustomCohortContextCapture }
   from '../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { createNeighborhoodFrozenJobStock }
@@ -1383,7 +1385,13 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         const fault=refsFault;refsFault=null;
         return fault==='missing_geo_receipt'?{rowCount:0,rows:[]}:{...result,rows:result.rows.map(row=>({...row,canonical_utf8:'{}'}))};
       }
-      if(config.text.includes('neighborhood-frozen-job-closure:parcels')||config.text.includes('neighborhood-frozen-stock-originals:page')){
+      if(['missing_identity_receipt','corrupt_identity_receipt'].includes(refsFault)&&config.text.includes('neighborhood-cohort-blob:read */')
+        &&config.values[1]===(await client.query('SELECT receipt_reference->>\'content_sha256\' AS hash FROM app.neighborhood_custom_cohort_identity_v2_anchors WHERE operation_id=$1',[refsOperation])).rows[0]?.hash){
+        const fault=refsFault;refsFault=null;
+        return fault==='missing_identity_receipt'?{rowCount:0,rows:[]}:{...result,rows:result.rows.map(row=>({...row,canonical_utf8:'{}'}))};
+      }
+      if(config.text.includes('neighborhood-frozen-job-closure:parcels')||config.text.includes('neighborhood-frozen-stock-originals:page')
+        ||config.text.includes('neighborhood-frozen-job-identity:parcels')){
         const fault=refsFault;if(fault!=='commit')refsFault=null;
         if(fault==='license')await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
         if(fault==='role')await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);
@@ -1724,6 +1732,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).saveCheckpoint(refsClaim,options,unissuedGeoCheckpoint));
     const unissuedGeoFrom=refsCalls.length;
     await assert.rejects(freshRefsOwner()[geoV2Method](refsInput,refsOptions),/checkpoint_conflict/);
+    await assert.rejects(freshRefsOwner().verifyFrozenCaptureJobSourceIdentityReferencesV2(refsInput,refsOptions),/checkpoint_conflict/);
     assert.ok(!refsCalls.slice(unissuedGeoFrom).some(sql=>/stock-originals:|neighborhood-frozen-job-closure:/.test(sql)));
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).saveCheckpoint(refsClaim,options,finalCheckpoint));
     const initialGeoDenied=refsCalls.length;
@@ -1804,6 +1813,147 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       next_prefix_and_null_counts_guarded:true,short_prefix_guard_only_rollback:true,both_end_rights_rollback:true,
       lost_commit_resumes_issued_done:true,ended_replay_no_original:true,legacy_cast_refused:true,generation_pin_retained:true,
       source_acquisition:false,production_latency:false});
+    // Distinct actual identity owner, with independent graph AND geographic
+    // prerequisites. Small real-native protocol fixture, not licensed scale QA.
+    {
+    const identityV2Method='verifyFrozenCaptureJobSourceIdentityReferencesV2';
+    const readIdentityAnchor=async()=>((await pool.query('SELECT source_reference,root_reference,graph_reference,geographic_reference,stock_reference,receipt_reference,sequence FROM app.neighborhood_custom_cohort_identity_v2_anchors WHERE operation_id=$1',[refsOperation])).rows[0]??null);
+    const identityRepository=client=>createCustomCohortIdentityV2AnchorRepository({client,claim:refsClaim,scope,actorUserId:actor,
+      source_reference:geoCommitted.evidence_refs[2],root_reference:refsGraphRoot,
+      graph_reference:geoCommitted.evidence_refs[3],geographic_reference:geoCommitted.evidence_refs[4],stock_reference:geoCommitted.evidence_refs[1]});
+    const identityCounts=Object.fromEntries(Object.entries(expected).map(([kind,keys])=>[kind,keys.length]));
+    const identityGraphDigest=createHash('sha256').update(canonicalAssessmentJson({root:refsGraphRoot,layer_counts:identityCounts})).digest('hex');
+    const identityZero={format:'frozen_job_source_identity_progress_v1',
+      binding_sha256:createHash('sha256').update(canonicalAssessmentJson({stock:refsGraphStock.stock,graph_sha256:identityGraphDigest})).digest('hex'),
+      kind_index:0,after:'',layer_rows:0,unknown_parcel_origins:0,missing_account_count:null};
+    const identityTemplate={format:'cohort_source_identity_receipt_v2',binding:refsBinding,
+      source_reference:geoCommitted.evidence_refs[2],root:refsGraphRoot,graph_verification_reference:geoCommitted.evidence_refs[3],
+      stock_verification_reference:geoCommitted.evidence_refs[4],stock_reference:geoCommitted.evidence_refs[1],
+      layer_counts:identityCounts,stock_account_count:'2',sequence:1,previous:null,before:identityZero,
+      after:{...identityZero,kind_index:1,unknown_parcel_origins:3}};
+    for(const after of [{...identityZero,after:'2',layer_rows:1,unknown_parcel_origins:1},
+      {...identityTemplate.after,unknown_parcel_origins:2},{...identityTemplate.after,kind_index:7,missing_account_count:0}]){
+      const wrong=await retainGeo({...identityTemplate,after});
+      await assert.rejects(withCustomCohortJobTransaction(pool,client=>identityRepository(client).advance(null,wrong)),
+        error=>error.code==='55000'&&/identity_v2_anchor_(prefix|count|transition)_conflict/.test(error.message));
+      assert.equal(await readIdentityAnchor(),null);
+    }
+    // A short next native-key prefix is valid DATA under byte admission, but
+    // this rolled-back guard-only experiment makes no original-read claim.
+    await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
+      const r=await createNeighborhoodCohortBlobRepository(client,organization).put(canonicalAssessmentJson({...identityTemplate,
+        after:{...identityZero,after:'1',layer_rows:1,unknown_parcel_origins:1}}));
+      assert.equal((await identityRepository(client).advance(null,r)).sequence,1);
+      throw Error('synthetic identity short-prefix guard rollback');
+    }),/synthetic identity short-prefix guard rollback/);
+    assert.equal(await readIdentityAnchor(),null);assert.deepEqual(await readRefsCheckpoint(),geoCommitted);
+    const forgedIdentity=await retainGeo({...identityTemplate,after:{...identityZero,kind_index:7,unknown_parcel_origins:3,missing_account_count:0}});
+    const unissuedIdentity={phase:'frozen_identity_refs_v2',evidence_refs:[...geoCommitted.evidence_refs,forgedIdentity]};
+    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).saveCheckpoint(refsClaim,options,unissuedIdentity));
+    let identityFrom=refsCalls.length;
+    await assert.rejects(freshRefsOwner()[identityV2Method](refsInput,refsOptions),/checkpoint_conflict/);
+    assert.ok(!refsCalls.slice(identityFrom).some(sql=>/neighborhood-frozen-job-identity:|stock-originals:|neighborhood-frozen-job-closure:/.test(sql)));
+    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).saveCheckpoint(refsClaim,options,geoCommitted));
+    identityFrom=refsCalls.length;
+    await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+    await assert.rejects(freshRefsOwner()[identityV2Method](refsInput,refsOptions),/market_data_access_denied/);
+    assert.ok(!refsCalls.slice(identityFrom).some(sql=>/neighborhood-frozen-job-identity:|custom-cohort-identity-v2:/.test(sql)));
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));
+    identityFrom=refsCalls.length;
+    await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);
+    await assert.rejects(freshRefsOwner()[identityV2Method](refsInput,refsOptions),/job_actor_access_revoked/);
+    assert.ok(!refsCalls.slice(identityFrom).some(sql=>/neighborhood-frozen-job-identity:|neighborhood-cohort-blob:|custom-cohort-identity-v2:/.test(sql)));
+    await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    const identityBeforeBlobs=await refsBlobCount();
+    for(const [fault,reason] of [['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],
+      ['subject',/subject_changed/],['claim',/claim_lost/],['cancel',/cancelled/]]){
+      refsFault=fault;refsAbort=new AbortController();
+      await assert.rejects(freshRefsOwner()[identityV2Method](refsInput,{...refsOptions,signal:refsAbort.signal}),reason);
+      assert.equal(refsFault,null,'actual identity SQL ran before ending refusal');
+      assert.equal(await readIdentityAnchor(),null);assert.deepEqual(await readRefsCheckpoint(),geoCommitted);
+      assert.deepEqual(await readRefsAnchor(),finalAnchor);assert.deepEqual(await readGeoAnchor(),geoIssued);
+      assert.equal(await refsBlobCount(),identityBeforeBlobs);
+      if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+      if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    }
+    refsBlobPuts.length=0;identityFrom=refsCalls.length;refsFault='commit';
+    await assert.rejects(freshRefsOwner()[identityV2Method](refsInput,refsOptions),error=>error.outcome_unknown===true);
+    const identityFirst=await readRefsCheckpoint(),identityFirstAnchor=await readIdentityAnchor();
+    assert.equal(identityFirst.phase,'frozen_identity_refs_v2');assert.equal(identityFirstAnchor.sequence,1);
+    assert.deepEqual(identityFirst.evidence_refs[5],identityFirstAnchor.receipt_reference);
+    const identityFirstBody=JSON.parse((await pool.query('SELECT canonical_utf8 FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1 AND content_sha256=$2',
+      [organization,identityFirstAnchor.receipt_reference.content_sha256])).rows[0].canonical_utf8);
+    assert.deepEqual(identityFirstBody,identityTemplate,'first actual page checks source parts 1,2,4, not NULL geometric parcel 5');
+    const identityNext=await freshRefsOwner()[identityV2Method](refsInput,refsOptions);
+    assert.equal(identityNext.advanced,true);assert.equal(identityNext.verified_layer_count,2);
+    assert.equal((await readIdentityAnchor()).sequence,2);
+    assert.equal(refsCalls.slice(identityFrom).filter(sql=>sql.includes('neighborhood-frozen-job-identity:parcels')).length,1);
+    assert.equal(refsCalls.slice(identityFrom).filter(sql=>sql.includes('neighborhood-frozen-job-identity:accounts')).length,1);
+    let identityDone=identityNext,identitySteps=2;
+    while(!identityDone.all_layers_verified){
+      if(identitySteps===6){
+        const head=await readIdentityAnchor();
+        const body=JSON.parse((await pool.query('SELECT canonical_utf8 FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1 AND content_sha256=$2',
+          [organization,head.receipt_reference.content_sha256])).rows[0].canonical_utf8);
+        const wrongCoverage=await retainGeo({...identityTemplate,sequence:7,previous:head.receipt_reference,before:body.after,
+          after:{...body.after,kind_index:7,missing_account_count:1}});
+        await assert.rejects(withCustomCohortJobTransaction(pool,client=>identityRepository(client).advance(head,wrongCoverage)),
+          error=>error.code==='55000'&&/identity_v2_anchor_count_conflict/.test(error.message));
+        assert.deepEqual(await readIdentityAnchor(),head);
+      }
+      identityDone=await freshRefsOwner()[identityV2Method](refsInput,refsOptions);
+      assert.equal(identityDone.advanced,true);assert.ok(++identitySteps<=7);}
+    assert.equal(identitySteps,7);assert.equal(identityDone.verified_layer_count,7);
+    assert.equal(identityDone.unknown_parcel_origins,3);assert.equal(identityDone.missing_account_count,0);
+    assert.equal(identityDone.origin_count_scope,'source_graph_account_parcel_parts_not_geographic_stock');
+    assert.equal(identityDone.source_acquisition,'not_established');assert.equal(identityDone.typed_numerical_observations,'not_established');
+    assert.equal(identityDone.report_update,'none');assert.equal(refsBlobPuts.length,7);
+    for(const text of refsBlobPuts)assert.ok(Buffer.byteLength(text)<4000&&!/payload_text|stored_geometry_ewkb|legal_description/.test(text));
+    const identityCommitted=await readRefsCheckpoint(),identityIssued=await readIdentityAnchor();
+    assert.equal(identityIssued.sequence,7);assert.deepEqual(identityCommitted.evidence_refs[5],identityIssued.receipt_reference);
+    identityFrom=refsCalls.length;const identityReplay=await freshRefsOwner()[identityV2Method](refsInput,refsOptions);
+    assert.equal(identityReplay.advanced,false);assert.equal(identityReplay.all_layers_verified,true);
+    assert.deepEqual(await readIdentityAnchor(),identityIssued);assert.deepEqual(await readRefsCheckpoint(),identityCommitted);
+    assert.ok(!refsCalls.slice(identityFrom).some(sql=>/neighborhood-frozen-job-identity:|stock-originals:|neighborhood-frozen-job-closure:|anchor-insert|anchor-advance|checkpoint-save/.test(sql)));
+    for(const fault of ['missing_identity_receipt','corrupt_identity_receipt']){
+      refsFault=fault;identityFrom=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[identityV2Method](refsInput,refsOptions),/checkpoint_conflict|storage_conflict|invalid_receipt/);
+      assert.equal(refsFault,null);assert.deepEqual(await readRefsCheckpoint(),identityCommitted);assert.deepEqual(await readIdentityAnchor(),identityIssued);
+      assert.ok(!refsCalls.slice(identityFrom).some(sql=>/neighborhood-frozen-job-identity:|stock-originals:|neighborhood-frozen-job-closure:/.test(sql)));
+    }
+    for(const [index,replacement] of [[1,ownedCheckpoint.evidence_refs[1]],[2,refsEndedCheckpoint.evidence_refs[2]],
+      [3,graphFirstCheckpoint.evidence_refs[3]],[4,forgedGeo],[5,forgedIdentity],[5,{content_sha256:'0'.repeat(64),canonical_utf8_bytes:'123'}]]){
+      const swapped={...identityCommitted,evidence_refs:[...identityCommitted.evidence_refs]};swapped.evidence_refs[index]=replacement;
+      await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).saveCheckpoint(refsClaim,options,swapped));
+      identityFrom=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[identityV2Method](refsInput,refsOptions),/checkpoint_conflict|anchor_binding_changed/);
+      assert.ok(!refsCalls.slice(identityFrom).some(sql=>/neighborhood-frozen-job-identity:|stock-originals:|neighborhood-frozen-job-closure:/.test(sql)));
+      assert.deepEqual(await readIdentityAnchor(),identityIssued);
+    }
+    await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).saveCheckpoint(refsClaim,options,identityCommitted));
+    identityFrom=refsCalls.length;
+    await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+    await assert.rejects(freshRefsOwner()[identityV2Method](refsInput,refsOptions),/market_data_access_denied/);
+    assert.deepEqual(await readRefsCheckpoint(),identityCommitted);assert.deepEqual(await readIdentityAnchor(),identityIssued);
+    assert.ok(!refsCalls.slice(identityFrom).some(sql=>/neighborhood-frozen-job-identity:|stock-originals:|neighborhood-frozen-job-closure:/.test(sql)));
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));
+    for(const sql of ['UPDATE app.neighborhood_custom_cohort_identity_v2_anchors SET sequence=sequence-1 WHERE operation_id=$1',
+      'DELETE FROM app.neighborhood_custom_cohort_identity_v2_anchors WHERE operation_id=$1'])
+      await assert.rejects(pool.query(sql,[refsOperation]),error=>error.code==='55000');
+    await assert.rejects(pool.query('TRUNCATE app.neighborhood_custom_cohort_identity_v2_anchors'),error=>error.code==='55000');
+    for(const method of ['verifyFrozenCaptureJobSourceReferencesV2Page',geoV2Method,'verifyFrozenCaptureJobSourceIdentityClosure',
+      'prepareFrozenCaptureJobTypedOriginals','readSharedFrozenCaptureJobStockMetrics'])
+      await assert.rejects(freshRefsOwner()[method](refsInput,refsOptions),/checkpoint_conflict|invalid_input/);
+    await assert.rejects(freshRefsOwner()[identityV2Method](sourceInput,{captureJobClaim:sourceClaim}),/checkpoint_conflict/);
+    assert.deepEqual((await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[sourceOperation])).rows[0].checkpoint,ownedCheckpoint);
+    await withCustomCohortJobTransaction(pool,async client=>assert.equal((await createCustomCohortCaptureJobRepository(client)
+      .readPreparedGeneration(refsClaim,options)).generation_id,frozen.generationId));
+    console.log('[native-reference-identity-owner-v2]',{layers:7,source_account_parcel_parts:3,unknown_parcel_origins:3,
+      missing_account_count:0,metadata_puts:7,original_payload_copies:0,completed_issued_graph_and_geography_required:true,
+      independent_identity_head:true,unissued_done_refused_before_original:true,next_prefix_and_origin_counts_guarded:true,
+      short_prefix_guard_only_rollback:true,both_end_rights_rollback:true,lost_commit_resumes_next_layer:true,
+      ended_replay_no_original:true,legacy_cast_refused:true,generation_pin_retained:true,source_acquisition:false,production_latency:false});
+    }
     for(const [kind,keys] of Object.entries(expected)){
       let position=null;const seen=[];
       do{

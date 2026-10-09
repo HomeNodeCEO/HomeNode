@@ -36,6 +36,9 @@ function progressOf(raw){
     ||p.kind_index<KINDS.length&&p.missing_account_count!==null)fail('invalid_progress');
   return Object.freeze(p);
 }
+// Closed DATA validation only; an independently issued V2 head must establish
+// continuation provenance. Exporting this shape does not make DONE a grant.
+export const prepareNeighborhoodFrozenSourceIdentityProgress=progressOf;
 function one(result){if(result?.rowCount!==1||result.rows?.length!==1)fail('invalid_result');return result.rows[0];}
 
 /** ONE bounded identity/one-hop-association step, not a numerical acquisition

@@ -38,6 +38,8 @@ import { verifyCohortOriginalSourceGraphV2Step } from './cohortOriginalSourceGra
 import { createCustomCohortGraphV2AnchorRepository } from './customCohortGraphV2AnchorRepository.js';
 import { createCustomCohortGeographicV2AnchorRepository } from './customCohortGeographicV2AnchorRepository.js';
 import { prepareCohortGeographicOriginalReceiptV2 } from './cohortGeographicOriginalReceiptV2.js';
+import { createCustomCohortIdentityV2AnchorRepository } from './customCohortIdentityV2AnchorRepository.js';
+import { prepareCohortSourceIdentityReceiptV2 } from './cohortSourceIdentityReceiptV2.js';
 import { createCustomCohortRecordedGroupSelectionOwner,
   reopenCustomCohortRecordedGroupSelectionOriginal } from './customCohortRecordedGroupSelectionOwner.js';
 import { createCustomCohortPreparedCatalogOwner } from './customCohortPreparedCatalogOwner.js';
@@ -124,6 +126,8 @@ const FROZEN_SOURCE_STAGES = freeze({
   verify_refs_v2: { referencesV2: true, verifying: true, allowedPhases: ['frozen_source_refs_v2', 'frozen_verify_refs_v2'] },
   geographic_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true,
     allowedPhases: ['frozen_verify_refs_v2', 'frozen_geo_verify_refs_v2'] },
+  identity_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    allowedPhases: ['frozen_geo_verify_refs_v2', 'frozen_identity_refs_v2'] },
   verify_v1: { verifying: true, allowedPhases: ['frozen_source_v1', 'frozen_verify_v1'] },
   geographic_v1: { verifying: true, stockVerifying: true, allowedPhases: ['frozen_verify_v1', 'frozen_geo_verify_v1'] },
   identity_v1: { verifying: true, stockVerifying: true, identityVerifying: true,
@@ -1593,7 +1597,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(!same(await jobs.readRequest(claim,jobOptions),requested)) fail('operation_conflict');
       const checkpoint=await jobs.readCheckpoint(claim,jobOptions);
       if(!checkpoint || !allowedPhases.includes(checkpoint.phase)
-        ||checkpoint.evidence_refs.length!==({frozen_stock_v1:2,frozen_source_v1:3,frozen_source_refs_v2:3,frozen_verify_refs_v2:4,frozen_geo_verify_refs_v2:5,frozen_verify_v1:4,frozen_geo_verify_v1:5,frozen_identity_v1:6,frozen_typed_v1:7}[checkpoint.phase]))
+        ||checkpoint.evidence_refs.length!==({frozen_stock_v1:2,frozen_source_v1:3,frozen_source_refs_v2:3,frozen_verify_refs_v2:4,frozen_geo_verify_refs_v2:5,frozen_identity_refs_v2:6,frozen_verify_v1:4,frozen_geo_verify_v1:5,frozen_identity_v1:6,frozen_typed_v1:7}[checkpoint.phase]))
         fail('checkpoint_conflict');
       const subjects=createCustomCohortSubjectRepository(client,canonicalAssessmentJson(scope));
       const blobs=createNeighborhoodCohortBlobRepository(client,scope.organization_id);
@@ -1743,6 +1747,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           issued=prepareCohortGeographicOriginalReceiptV2(issued,expected);
           if(issued.sequence!==geographicAnchor.sequence)fail('checkpoint_conflict');
         }
+        if(identityVerifying&&issued?.after.done!==true)fail('unfinished_geographic_verification');
         // The original stock FK/key/account/EWKB SQL and its independent final
         // per-account totals are unchanged. Only the provenance of continuation
         // is new: derive it exclusively from the independent issued geo head.
@@ -1783,7 +1788,42 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             evidence_refs:[retained.intent.reference,stockReference,reference,verificationReference,stockVerificationReference]});
         }
       }
-      if(identityVerifying) {
+      let identityAnchorStore=null,identityAnchor=null;
+      if(identityVerifying&&referencesV2){
+        const graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
+        const expected={binding,source_reference:reference,root,graph_verification_reference:verificationReference,
+          stock_verification_reference:stockVerificationReference,stock_reference:stockReference,
+          layer_counts:graph.layer_counts,stock_account_count:stock.population.account_count};
+        identityAnchorStore=createCustomCohortIdentityV2AnchorRepository({client,claim,scope,actorUserId:input.auth.userId,
+          source_reference:reference,root_reference:root,graph_reference:verificationReference,
+          geographic_reference:stockVerificationReference,stock_reference:stockReference});
+        identityAnchor=await identityAnchorStore.read();
+        if(checkpoint.phase==='frozen_geo_verify_refs_v2'?identityAnchor!==null
+          :identityAnchor===null||!same(identityAnchor.receipt_reference,identityVerificationReference))fail('checkpoint_conflict');
+        let issued=null;
+        if(identityAnchor){
+          const text=await blobs.get(identityAnchor.receipt_reference.content_sha256,identityAnchor.receipt_reference.canonical_utf8_bytes);
+          if(text===null||Buffer.byteLength(text)>16000)fail('checkpoint_conflict');
+          try{issued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
+          issued=prepareCohortSourceIdentityReceiptV2(issued,expected);
+          if(issued.sequence!==identityAnchor.sequence)fail('checkpoint_conflict');
+        }
+        // Keep the original exact all-date one-hop identity SQL unchanged.
+        // Its real stock/graph digest, native identities and coverage are not
+        // established by DATA validation, a hash or a free DONE checkpoint.
+        identityVerification=await createNeighborhoodFrozenJobSourceIdentity(client,stockOptions,graph).step(issued?.after??null);
+        if(identityVerification.advanced){
+          const after=identityVerification.progress,before=issued?.after??{...after,kind_index:0,after:'',layer_rows:0,
+            unknown_parcel_origins:0,missing_account_count:null};
+          const receipt=prepareCohortSourceIdentityReceiptV2({format:'cohort_source_identity_receipt_v2',...expected,
+            sequence:(identityAnchor?.sequence??0)+1,previous:identityAnchor?.receipt_reference??null,before,after},expected);
+          identityVerificationReference=await blobs.put(canonicalAssessmentJson(receipt));
+          identityAnchor=await identityAnchorStore.advance(identityAnchor,identityVerificationReference);
+          await jobs.saveCheckpoint(claim,jobOptions,{phase:'frozen_identity_refs_v2',
+            evidence_refs:[retained.intent.reference,stockReference,reference,verificationReference,stockVerificationReference,identityVerificationReference]});
+        }
+      }
+      if(identityVerifying&&!referencesV2) {
         let progress=null;
         if(identityVerificationReference) {
           const text=await blobs.get(identityVerificationReference.content_sha256,identityVerificationReference.canonical_utf8_bytes);
@@ -1861,6 +1901,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(!same((await chain.describe(root)).layers,prefix.layers)) fail('checkpoint_conflict');
       if(graphAnchorStore&&!same(await graphAnchorStore.read(),graphAnchor))fail('checkpoint_conflict');
       if(geographicAnchorStore&&!same(await geographicAnchorStore.read(),geographicAnchor))fail('checkpoint_conflict');
+      if(identityAnchorStore&&!same(await identityAnchorStore.read(),identityAnchor))fail('checkpoint_conflict');
       budget.check();
       if(readingStockMetrics||readingSharedStockMetrics) return freeze({...stockMetricResult,...(readingStockMetrics?{typed_original_reference:typedReference}:{}),
         source_reference:reference,verification_reference:verificationReference,stock_verification_reference:stockVerificationReference,
@@ -2040,6 +2081,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * never casts V1 progress, grants source rights, releases a pin or Applies. */
     verifyFrozenCaptureJobStockOriginalReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'geographic_refs_v2'),
+    /** Explicit V2 identity owner. Requires independently issued DONE graph and
+     * geography; continuation comes only from its own issued identity head.
+     * No typed observations, source acquisition, publication, Apply or pin release. */
+    verifyFrozenCaptureJobSourceIdentityReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'identity_refs_v2'),
     /** Independent current-authorized root-edge/original-representation validation.
      * Not typed identity closure, complete geographic stock, source acquisition,
      * report publication or Apply. Progress is loaded only from this job's fence. */

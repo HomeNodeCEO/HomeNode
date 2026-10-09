@@ -69,7 +69,7 @@ test('original graph verifier admits no caller root, progress, source rows, perm
 });
 
 for(const method of ['prepareFrozenCaptureJobSourceReferencesV2Page','verifyFrozenCaptureJobSourceReferencesV2Page',
-  'verifyFrozenCaptureJobStockOriginalReferencesV2'])
+  'verifyFrozenCaptureJobStockOriginalReferencesV2','verifyFrozenCaptureJobSourceIdentityReferencesV2'])
 test(`${method} accepts no caller codec, plan, originals, root, progress or authority`,async()=>{
   const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}};
   const claim={operation_id:base.operationId,claim_token:'33333333-3333-4333-8333-333333333333',attempts:1};

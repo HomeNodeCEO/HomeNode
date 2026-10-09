@@ -46,8 +46,19 @@ The small native companion fixture retained three primary/four secondary origina
 with zero hash mismatches and passed rollback, lost-COMMIT reopen, forged payload/
 prefix refusal, immutability and pinned/unpinned retirement. Server passed 10,487
 with 61 separately database-gated skips; frontend passed 3,959 without skips.
-Fresh exact-head protected checks and actual review remain required after parent
-integration. This is original retention groundwork, not amenity resolution,
+After integration of the protected #1224 merge, exact head
+`b47abacd84b2d6ab61cce665185869407326b32e` passed all 16 check runs. Native
+job `113685643265` in foundation run `37889072247` passed the same complete
+417/seven/one/one/two suites with zero failures/skips. Actual companion/retirement
+markers passed; server passed 10,487 with 61 separately database-gated skips,
+and frontend passed 3,959 without skips. Included CodeRabbit review
+`e19f59a9-e653-4151-aee5-3d1a5ad6e5b2` completed on that exact head at
+2026-10-09T06:25Z, processed all ten changed files and generated no actionable
+code findings or review threads. Its documentation-coverage warning is addressed
+by documenting helper contracts without changing implementation tokens. These
+comment/receipt-only edits still require fresh exact-head protected checks before
+normal merge; a later skipped review status is not an additional actual review.
+This is original retention groundwork, not amenity resolution,
 licensed acquisition, selected-union statistics, report publication or live
 speed acceptance. The offline owner still needs whole-source authority and
 activation prerequisites; this module does not establish a source grant.

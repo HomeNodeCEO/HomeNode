@@ -57,7 +57,8 @@ import { createNeighborhoodFrozenJobStockMetricPages }
 import { createNeighborhoodSharedJobStockMetricPages, createNeighborhoodSharedJobStockMetricPagesV2,
   NEIGHBORHOOD_SHARED_STOCK_METRIC_V2_PAGE_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStockMetricPages.js';
-import { createNeighborhoodSharedTypedGeneration, createNeighborhoodSharedTypedGenerationV2, NEIGHBORHOOD_SHARED_TYPED_V2_SQL }
+import { createNeighborhoodSharedTypedGeneration, createNeighborhoodSharedTypedGenerationV2, NEIGHBORHOOD_SHARED_TYPED_V2_SQL,
+  createNeighborhoodSharedTypedCadGenerationV1,NEIGHBORHOOD_SHARED_TYPED_CAD_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSharedTypedGeneration.js';
 import { NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL, NEIGHBORHOOD_FROZEN_JOB_IDENTITY_COVERAGE_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourceClosurePages.js';
@@ -113,6 +114,10 @@ async function sharedTypedV2Complete(pool,generationId,progress=null) {
     if(r.all_layers_typed)return r;}
   assert.fail('small V2 fixture exceeded bounded steps');
 }
+const sharedTypedCadStep=(pool,generationId,progress=null)=>withCustomCohortJobTransaction(pool,async client=>{
+  await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');await client.query("SET LOCAL TIME ZONE 'UTC'");
+  return createNeighborhoodSharedTypedCadGenerationV1(client,{generationId}).step(progress);
+});
 
 test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserves exact sale dates',{
   skip:!process.env.DATABASE_URL,timeout:360_000,
@@ -222,6 +227,46 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
       exact_profile:getNeighborhoodFrozenTypedCadImprovementV1Profile().profile_ref.content_sha256,
       missing_boolean_not_false:true,duplicate_numbers_not_deduped:true,job_cache_writes:0,
       amenity_resolution:false,source_acquisition:false,report_update:false,production_latency:false});
+    await assert.rejects(createNeighborhoodSharedTypedCadGenerationV1(pool,{generationId:first.generationId}).step(),/caller_transaction_required/);
+    let cadSourceProbes=0;
+    const cadEndingFault={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
+      if(c.text===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.source&&++cadSourceProbes===2)throw Error('synthetic CAD cache ending failure');
+      return raw.query(c);
+    }};}};
+    await assert.rejects(sharedTypedCadStep(cadEndingFault,first.generationId),/synthetic CAD cache ending failure/);
+    for(const table of ['neighborhood_frozen_typed_cad_generations','neighborhood_frozen_typed_cad_rows','neighborhood_frozen_typed_cad_totals'])
+      assert.equal((await pool.query(`SELECT count(*)::int AS n FROM app.${table} WHERE generation_id=$1`,[first.generationId])).rows[0].n,0);
+    let cadLoseAck=true;
+    const cadLostAck={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
+      const r=await raw.query(c);if(c.text==='COMMIT'&&cadLoseAck){cadLoseAck=false;throw Error('synthetic CAD committed ACK loss');}return r;
+    }};}};
+    await assert.rejects(sharedTypedCadStep(cadLostAck,first.generationId),e=>e.outcome_unknown===true);
+    const cadOpened=await sharedTypedCadStep(pool,first.generationId);assert.equal(cadOpened.advanced,false);
+    assert.equal(cadOpened.progress.kind_index,1);assert.equal(cadOpened.progress.typed_rows,'3');
+    const cadChangedText={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
+      const r=await raw.query(c);if(c.text===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.page&&r.rows[0].page_count){
+        const page=JSON.parse(r.rows[0].page_json),value=JSON.parse(page[0].payload_text);value.sec_imp_type='FORGED';
+        page[0].payload_text=JSON.stringify(value);r.rows[0].page_json=JSON.stringify(page);
+      }return r;
+    }};}};
+    await assert.rejects(sharedTypedCadStep(cadChangedText,first.generationId,cadOpened.progress),/original_mismatch/);
+    assert.deepEqual((await sharedTypedCadStep(pool,first.generationId)).progress,cadOpened.progress);
+    await assert.rejects(pool.query("UPDATE app.neighborhood_frozen_typed_cad_generations SET status='complete',completed_at=now() WHERE generation_id=$1",[first.generationId]),
+      e=>e.code==='55000'&&/population_incomplete/.test(e.message));
+    const cadComplete=await sharedTypedCadStep(pool,first.generationId,cadOpened.progress);
+    assert.equal(cadComplete.all_layers_typed,true);assert.equal(cadComplete.progress.kind_index,2);assert.equal(cadComplete.progress.typed_rows,'7');
+    assert.deepEqual((await pool.query(`SELECT count(*)::int AS n,count(*) FILTER(WHERE typed.original_payload_sha256<>original.payload_sha256)::int AS bad
+      FROM app.neighborhood_frozen_typed_cad_rows typed JOIN app.neighborhood_frozen_cad_improvement_rows original USING(generation_id,kind,row_key)
+      WHERE generation_id=$1`,[first.generationId])).rows[0],{n:7,bad:0});
+    const cadReuseCalls=[],cadReuse={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){cadReuseCalls.push(c.text);return raw.query(c);}};}};
+    assert.deepEqual((await sharedTypedCadStep(cadReuse,first.generationId)).progress,cadComplete.progress);
+    assert.ok(!cadReuseCalls.some(sql=>/shared-typed-CAD:(?:page|rows|begin|progress)|FOR UPDATE/.test(sql)));
+    for(const table of ['neighborhood_frozen_typed_cad_rows','neighborhood_frozen_typed_cad_totals'])
+      await assert.rejects(pool.query(`UPDATE app.${table} SET ${table.endsWith('_rows')?'typed=typed':'row_count=row_count+1'} WHERE generation_id=$1`,[first.generationId]),e=>e.code==='55000');
+    console.info('[native-shared-typed-CAD-generation]',{original_rows:7,typed_rows:7,original_hash_mismatches:0,
+      ending_rollback:true,lost_commit_reopen:true,exact_payload_refusal:true,incomplete_prefix_refusal:true,
+      reuse_original_queries:0,reuse_writes:0,immutable_complete:true,source_acquisition:false,amenity_resolution:false,
+      report_update:false,production_latency:false});
     for(const sql of ['UPDATE app.neighborhood_frozen_cad_improvement_rows SET payload=payload WHERE generation_id=$1',
       'DELETE FROM app.neighborhood_frozen_cad_improvement_rows WHERE generation_id=$1',
       'UPDATE app.neighborhood_frozen_cad_improvement_generations SET row_count=0 WHERE generation_id=$1'])
@@ -535,6 +580,7 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     assert.equal(secondCache.all_layers_typed,false,'bounded partial shared generation is not complete');
     const secondNeutralCache=await sharedTypedV2Step(pool,second.generationId);
     assert.equal(secondNeutralCache.all_layers_typed,false);
+    assert.equal((await sharedTypedCadStep(pool,second.generationId)).all_layers_typed,false);
     assert.equal((await getPreparedNeighborhoodGroupSummary(pool,{county:'Dallas',city:'Garland',subdivision:'Monica Park 4'})).median_living_area_sqft,2500);
     assert.notEqual(first.generationId,second.generationId);
     const third=await runNeighborhoodGroupIndex(pool,{batchSize:2,logger:{info(){}}});
@@ -554,6 +600,10 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     for(const table of ['neighborhood_frozen_cad_improvement_rows','neighborhood_frozen_cad_improvement_totals','neighborhood_frozen_cad_improvement_generations'])
       assert.equal((await pool.query(`SELECT count(*)::int AS n FROM app.${table} WHERE generation_id=$1`,[second.generationId])).rows[0].n,0,
         'unpinned CAD companion retires in bounded FK order before its original account rows');
+    for(const table of ['neighborhood_frozen_typed_cad_rows','neighborhood_frozen_typed_cad_totals','neighborhood_frozen_typed_cad_generations'])
+      assert.equal((await pool.query(`SELECT count(*)::int AS n FROM app.${table} WHERE generation_id=$1`,[second.generationId])).rows[0].n,0,
+        'partial CAD cache retires before its companion originals without disabling FKs');
+    assert.deepEqual((await sharedTypedCadStep(pool,first.generationId)).progress,cadComplete.progress);
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_cad_improvement_rows WHERE generation_id=$1',[first.generationId])).rows[0].n,7);
     console.info('[native-frozen-CAD-retirement]',{unpinned_companion_retired:true,pinned_originals_preserved:true,
       source_acquisition:false,production_latency:false});

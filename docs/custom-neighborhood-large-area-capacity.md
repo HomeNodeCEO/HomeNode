@@ -1,5 +1,47 @@
 # Complete larger-area Custom neighborhood studies
 
+## Shared bounded CAD syntax companion (2026-10-08, not activated)
+
+`createNeighborhoodSharedTypedCadGenerationV1` is an explicit separate offline
+generation/profile-keyed cache over complete immutable CAD companion originals.
+Its two kinds and progress format cannot reinterpret an existing seven-layer
+V1/V2 graph or cache. Source profile/definition, source snapshot, exact counts
+and complete unretired generation must agree. It accepts no report date or
+caller-selected relation/policy. The existing seven-layer definitions, SQL
+relations, progress formats and retained cache behavior remain unchanged.
+
+Shared mechanics require a stable caller-owned writable REPEATABLE READ/UTC
+transaction, one bounded step per builder, two pre-write transaction probes,
+ending source/transaction/budget checks, persisted progress CAS, and exact
+original text/hash/account acknowledgement. Pages admit at most 250 originals
+and 2.1 MB, steps at most 16 queries/32 MB/60 seconds. A full 250-row tail requires
+an empty terminal probe. Finished reuse reads small metadata only and never
+retypes or counts the complete population. Lost acknowledgements reopen the
+actual persisted prefix instead of guessing a caller cursor.
+
+The additive `20261117_neighborhood_shared_typed_cad_generations.sql` provides
+separate immutable headers/rows, native companion-original FKs, exact original
+hash/byte/account/profile acknowledgement and two statement-derived totals.
+Completion reconciles both original-layer counts and exact typed bytes from
+at most two indexed rows. Caller counters cannot publish an incomplete prefix.
+Pinned data cannot retire; bounded cleanup deletes this cache before companion
+originals and the seven-layer account originals, with restrictive FKs intact.
+Cleanup wiring does not activate the builder.
+
+Focused tests exercise old/new separation, missing/foreign profiles, neutral
+reuse, full/short/empty tails, hostile options, source/transaction changes,
+acknowledgement/count/CAS failure and two-layer completion. The authored small
+native fixture tests actual 7-original cache storage, ending rollback,
+lost-successful-COMMIT reopen, altered original refusal, incomplete-prefix
+refusal, immutable completion, zero-original/zero-write metadata reuse and
+partial-cache/pinned retirement. **New native execution is pending cloud CI**.
+The offline owner must authorize the whole original projection at both ends.
+This builder does not grant extra-field rights, extend issued job graphs,
+resolve amenities, prove licensed acquisition or publish report/statistics.
+Current-authorized provenance composition, type dictionaries/resolution,
+complete selected-union numerics, coherent publication, workers/pin transfer
+and licensed/live acceptance remain unfinished.
+
 ## Separate date-neutral CAD improvement syntax (2026-10-08, not activated)
 
 `compileNeighborhoodFrozenTypedCadImprovementV1` interprets **one exact** companion

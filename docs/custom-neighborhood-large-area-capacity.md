@@ -1,5 +1,51 @@
 # Complete larger-area Custom neighborhood studies
 
+## Current CAD account projection (2026-10-08, not activated)
+
+`readSharedFrozenCaptureJobCadAccountsReferencesV2` is an explicit internal
+account-page consumer of the same separately authorized companion. It uses
+all actual issued V2 graph/geographic/identity prerequisites, current DB
+actor/assignment/draft/subject, live request/claim/pin/stock, and both current
+source decisions at both ends. Its closed request adds only `cadAccountPage`
+with a bounded account cursor/row limit. The effective date comes from the
+retained subject context, not the caller. No phase, endpoint, worker, default
+composition, grant or cache-miss preparation changes.
+
+The fixed indexed SQL starts from every exact stock account, including members
+with no primary improvement original. It joins at most one native primary row
+and returns a constant-size count of all that account's secondary native rows.
+Duplicate improvement numbers remain separate; unknown type labels never become
+garage/pool/outbuilding facts, summed area or a housing eligibility decision.
+Missing primary produces explicit missing cells, never zero or no amenity.
+Native false, NULL, invalid and unsupported literals remain distinct. Each
+primary cell is independently reconciled against its retained literal, with
+exact decimal strings and no economic Number conversion. CAD bath count is
+labelled `CAD_reported_baths`, not reinterpreted as full/half bathroom equivalence.
+The retained effective-year rule makes a future primary year invalid before
+projection; other current CAD fields do not establish historical or at-sale facts.
+
+The new hash-bound account projection profile is separate from the unchanged
+source and syntax profiles. Existing 250-row/32-KB-row/2.1-MB-page/32-MB-all-result,
+48-query/60-second-step/five-second-query bounds still apply. Each reader is
+single-use; a full account tail needs a fresh empty probe. A page end does not
+prove that preceding pages were traversed or certify complete-population metrics.
+No original payload array, dense roster, secondary row array, current core read,
+spatial recomputation, source grant, checkpoint/head copy or report write occurs.
+
+Focused tests cover absent-primary denominators, native false versus missing,
+exact decimals, duplicate-row counts, date-neutral cache reuse with DATA-only
+date variants, closed hostile inputs and ending-cache refusal. Two native
+cloud fixtures are authored: a small actual-issued owner test with both-end
+rights/auth/subject/claim/cancellation/cache refusal and lost-COMMIT replay;
+and a separate SQL DATA fixture with an actual missing primary account, future
+year, native false, duplicated secondary numbers and full-tail empty probe.
+**New native account execution is pending cloud CI.** Neither fixture is a
+production source license, full licensed acquisition, housing/type dictionary,
+selected-union statistics, retrospective accuracy or live speed acceptance.
+Transaction resolution, server-owned selection, exact full medians/COD/quarters,
+coherent publication, durable workers/pin transfer and licensed/live acceptance
+remain mandatory.
+
 ## Current-authorized CAD syntax page owner (2026-10-08, not activated)
 
 `readSharedFrozenCaptureJobCadImprovementsReferencesV2` is an explicit internal
@@ -74,7 +120,14 @@ missing-not-no-amenity, installed boolean/numeric interpretation, bounds,
 full-tail probing, malformed cache/cells, cancellation and both ending fences.
 The authored small native fixture verifies one pinned stock account, its primary
 and duplicate-number secondary rows, outside-account exclusion, the empty tail
-and ending-cache refusal. **New native page execution is pending cloud CI.** Its
+and ending-cache refusal. PR #1229 exact integrated head
+`9dd993d9e6eeeca159c26d62d6757b7ddfd54df4` passed foundation `37884485761`,
+native job `113671294979`: 417 migration, seven index, one subject, one edge and
+two bootstrap tests, zero failures/skips. Actual page marker confirmed one
+stock account, one primary/two secondary rows, no outside accounts, duplicate
+numbers, full-tail probe and ending-cache refusal, zero original reads/writes.
+Server passed 10,532 with 61 separately DB-gated skips; frontend passed 3,959
+without skips. Its
 artificial graph reference is explicitly DATA, not an issued owner receipt.
 The future owner still must reload current actor/assignment/subject and actual
 issued V2 graph/geographic/identity heads, plus the separate exact additional
@@ -114,8 +167,14 @@ cross-denials, re-read/revocation/expiry, separately granted exposures, stable
 legacy hashes and sanitized errors. A small disposable PostgreSQL helper is
 wired into cloud native CI to verify actual bounded namespace SQL, unrelated
 metadata exclusion, no policy writes, revoked/expired/mismatched/oversized
-refusal and rollback of its synthetic owner metadata. **New native policy
-execution is pending cloud CI**; it is not a production license or source
+refusal and rollback of its synthetic owner metadata. PR #1228 exact head
+`99a7e1d333f31e2ce7d05223614cfb51da821c7b` passed foundation `37884486668`,
+native job `113671298030`: 417 migration, seven index, one subject, one edge and
+two bootstrap tests, zero failures/skips. Actual policy marker confirmed eight
+bounded namespace reads, no unrelated metadata transfer/policy writes, and
+wall-clock expiry/revocation/exact-projection refusal. Server passed 10,526
+with 61 separately DB-gated skips; frontend passed 3,959 without skips.
+This is not a production license or source
 acquisition receipt. The future consumer still must independently reload the
 current database actor/assignment/subject, actual issued graph/geographic/
 identity heads, exact live claim/pin/stock, and this additional decision at both
@@ -156,7 +215,18 @@ acknowledgement/count/CAS failure and two-layer completion. The authored small
 native fixture tests actual 7-original cache storage, ending rollback,
 lost-successful-COMMIT reopen, altered original refusal, incomplete-prefix
 refusal, immutable completion, zero-original/zero-write metadata reuse and
-partial-cache/pinned retirement. **New native execution is pending cloud CI**.
+partial-cache/pinned retirement. PR #1227 exact corrected head
+`8035062aac1af93797212a891f1f30a9ed072b56` passed foundation `37884454741`,
+native job `113671200374`: 417 migration, seven index, one subject, one edge and
+two bootstrap tests, zero failures/skips. Actual shared-CAD marker confirmed
+seven originals/seven typed rows, zero hash mismatches, rollback, lost actual
+COMMIT acknowledgement reopen, altered-payload/incomplete-prefix refusal,
+immutable completion and zero-original/zero-write reuse. Actual retirement
+removed the unpinned companion and preserved pinned originals. Server passed
+10,503 with 61 separately DB-gated skips; frontend passed 3,959 without skips.
+Initial native tests guessed FK diagnostics incorrectly; the corrected test
+reads the actual validated FK and RESTRICT actions from `pg_constraint`, checks
+all originals remain, and verifies TRUNCATE refusals without disabling guards.
 The offline owner must authorize the whole original projection at both ends.
 This builder does not grant extra-field rights, extend issued job graphs,
 resolve amenities, prove licensed acquisition or publish report/statistics.

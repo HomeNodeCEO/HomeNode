@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { isProxy } from 'node:util/types';
-import { assessmentEvidenceDigest,canonicalAssessmentJson } from './contract.js';
-import { prepareNeighborhoodCohortBlobReference } from './cohortEvidenceBlobRepository.js';
+import { assessmentDate,assessmentEvidenceDigest,canonicalAssessmentJson } from './contract.js';
+import { prepareNeighborhoodCohortBlob,prepareNeighborhoodCohortBlobReference } from './cohortEvidenceBlobRepository.js';
 import { createNeighborhoodFrozenJobStock } from './neighborhoodFrozenJobStock.js';
 import { NEIGHBORHOOD_SHARED_TYPED_CAD_SQL,prepareNeighborhoodSharedTypedCadSource } from './neighborhoodSharedTypedGeneration.js';
 import { getNeighborhoodFrozenCadImprovementProfile } from './neighborhoodFrozenCadImprovements.js';
@@ -29,6 +29,26 @@ export function prepareNeighborhoodSharedJobCadPage(value){
   if((c.account_id==='')!==(c.row_key===''))fail('invalid_page');
   return freeze({kind:v.kind,cursor:{...c},rowLimit:v.rowLimit});
 }
+export function prepareNeighborhoodSharedJobCadAccountPage(value){
+  const v=data(value,['cursor','rowLimit']);account(v.cursor,true);
+  if(!Number.isInteger(v.rowLimit)||v.rowLimit<1||v.rowLimit>L.rows)fail('invalid_page');
+  return freeze({cursor:v.cursor,rowLimit:v.rowLimit});
+}
+const ACCOUNT_DEFINITION=freeze({id:'neighborhood-current-CAD-stock-account-projection-v1',revision:'1',
+  syntax_profile:PROFILE.profile_ref,source_profile:SOURCE.profile_ref,limits:L,
+  population:'every_exact_pinned_stock_account_including_absent_primary',
+  primary:'one_native_account_row_no_cross_source_coalescing_summing_or_housing_inference',
+  secondary:'exact_native_row_count_only_no_type_dictionary_area_sum_or_garage_inference',
+  temporal:'retained_effective_year_before_projection_future_year_invalid_other_current_fields_not_historical',
+  numeric:'exact_decimal_strings_native_boolean_NULL_missing_not_zero_or_false',
+  coverage:'one_account_page_not_complete_population',authority:'not_established',
+  limitations:['not_verified_GLA_or_bathroom_equivalence','not_historical_stock_or_at_sale_amenities',
+    'no_housing_eligibility_or_secondary_type_resolution','no_source_license_or_acquisition_receipt',
+    'no_selected_union_statistics_or_report_update']});
+const accountText=canonicalAssessmentJson(ACCOUNT_DEFINITION),accountBlob=prepareNeighborhoodCohortBlob(accountText);
+const ACCOUNT_PROFILE=freeze({profile_ref:{id:ACCOUNT_DEFINITION.id,revision:'1',content_sha256:accountBlob.content_sha256},
+  definition_blob:{ref:accountBlob,canonical_json:accountText}});
+export function getNeighborhoodSharedJobCadAccountProfile(){return ACCOUNT_PROFILE;}
 // Exact stock-account PK probes and the generation/profile/kind/account/key
 // cache index; no geometry clipping, array of the stock, current core read or
 // count of the whole population. C-text cache order is not native bigint order.
@@ -49,6 +69,28 @@ SELECT coalesce('['||string_agg(encoded,',' ORDER BY account_id,row_key)||']','[
   (SELECT count(*)::integer FROM sized WHERE bytes>$9::integer) AS oversized_count,
   (SELECT account_id FROM admitted ORDER BY account_id DESC,row_key DESC LIMIT 1) AS next_account,
   (SELECT row_key FROM admitted ORDER BY account_id DESC,row_key DESC LIMIT 1) AS next_key FROM admitted`;
+
+// Account keysets retain missing-primary members. Only one native primary and
+// one constant-size secondary count cross into Node, never secondary row arrays.
+export const NEIGHBORHOOD_SHARED_JOB_CAD_ACCOUNT_PAGE_SQL=`/* neighborhood-shared-job-CAD:account-page */
+WITH accounts AS MATERIALIZED (
+  SELECT account_id,parcel_count FROM app.neighborhood_custom_cohort_stock_accounts
+  WHERE operation_id=$1::uuid AND account_id>$4::text COLLATE "C" ORDER BY account_id LIMIT $5::integer
+), candidates AS MATERIALIZED (
+  SELECT a.account_id,jsonb_build_object('account_id',a.account_id,'geographic_parcel_count',a.parcel_count::text,
+    'primary',CASE WHEN p.row_key IS NULL THEN NULL ELSE jsonb_build_object('kind',p.kind,'account_id',p.account_id,
+      'row_key',p.row_key,'original_payload_sha256',p.original_payload_sha256,'typed',p.typed) END,
+    'secondary_original_count',(SELECT count(*)::text FROM app.neighborhood_frozen_typed_cad_rows s
+      WHERE s.generation_id=$2::uuid AND s.profile_sha256=$3 AND s.kind='secondary' AND s.account_id=a.account_id))::text AS encoded
+  FROM accounts a LEFT JOIN app.neighborhood_frozen_typed_cad_rows p ON p.generation_id=$2::uuid
+    AND p.profile_sha256=$3 AND p.kind='primary' AND p.account_id=a.account_id AND p.row_key=a.account_id
+), sized AS (
+  SELECT *,octet_length(encoded) AS bytes,sum(octet_length(encoded)+1) OVER(ORDER BY account_id) AS cumulative FROM candidates
+), admitted AS (SELECT * FROM sized WHERE bytes<=$7::integer AND cumulative+1<=$6::integer)
+SELECT coalesce('['||string_agg(encoded,',' ORDER BY account_id)||']','[]') AS page_json,count(*)::integer AS page_count,
+  (SELECT count(*)::integer FROM candidates) AS candidate_count,
+  (SELECT count(*)::integer FROM sized WHERE bytes>$7::integer) AS oversized_count,
+  max(account_id) AS next_account FROM admitted`;
 
 const FIELDS={primary:{reported_year_built:'year',reported_living_area:'reported_sqft',reported_bedrooms:'reported_bedrooms',
   reported_baths:'CAD_reported_baths',reported_units:'reported_units',reported_pool_flag:'reported_pool_flag'},
@@ -97,12 +139,41 @@ function decodeRow(value,kind){const r=data(value,['kind','account_id','row_key'
   const markers=data(t.markers,kind==='primary'?[]:['sec_imp_type']);if(kind==='secondary')rawOf(markers.sec_imp_type);
   if(Buffer.byteLength(canonicalAssessmentJson(r))>L.row_utf8_bytes)fail('row_limit');return freeze(r);
 }
+function decodeAccountRow(value,effective,source){
+  const r=data(value,['account_id','geographic_parcel_count','primary','secondary_original_count']);account(r.account_id);
+  if(!count(r.geographic_parcel_count,2000000)||r.geographic_parcel_count==='0'
+    ||!count(r.secondary_original_count,Number(source.layer_counts.secondary.row_count))
+    ||Buffer.byteLength(canonicalAssessmentJson(r))>L.row_utf8_bytes)fail('invalid_result');
+  const primary=r.primary===null?null:decodeRow(r.primary,'primary');
+  if(primary&&primary.account_id!==r.account_id)fail('invalid_result');
+  const observations=Object.fromEntries(Object.keys(FIELDS.primary).map(name=>{
+    if(!primary)return [name,{state:'missing',exact_value:null,unit:null,reason:'primary_original_absent'}];
+    const {state,exact_value,unit,reason}=primary.typed.observations[name];
+    if(name==='reported_year_built'&&state==='observed'&&exact_value>effective.slice(0,4))
+      return [name,{state:'invalid',exact_value:null,unit:null,reason:'year_after_retained_effective_year'}];
+    return [name,{state,exact_value,unit,reason}];
+  }));
+  return freeze({account_id:r.account_id,geographic_parcel_count:r.geographic_parcel_count,
+    primary_original_count:primary?'1':'0',secondary_original_count:r.secondary_original_count,
+    primary_original:primary?.typed.original??null,observations,
+    secondary_type_resolution:'not_established',housing_eligibility:'not_established',
+    temporal_basis:'current_retained_CAD_not_historical_or_at_sale',source_freshness:'not_established'});
+}
 /** One bounded read-only DATA step. Only the future current-authorized owner
  * may compose this: actual issued V2 graph/geo/identity, actor/assignment/subject,
  * extra CAD source rights and live claim/pin at BOTH ends remain mandatory.
  * No cache-miss preparation, original payload, current core, source grant,
  * date policy, amenities resolution, complete acquisition or report receipt. */
 export function createNeighborhoodSharedJobCadImprovementPages(client,rawOptions,rawGraph){
+  return cadPages(client,rawOptions,rawGraph,null);
+}
+/** Fixed account projection. The actual owner supplies its retained date; this
+ * DATA entry point cannot authorize source access or certify historical facts. */
+export function createNeighborhoodSharedJobCadAccountPages(client,rawOptions,rawGraph,effectiveDate){
+  return cadPages(client,rawOptions,rawGraph,assessmentDate(effectiveDate));
+}
+function cadPages(client,rawOptions,rawGraph,effective){
+  const projectingAccounts=effective!==null;
   const o={...data(rawOptions,['claim','scope','actorUserId','geometryInput','discovery','subjectIntent','checkBudget'])};
   if(typeof client?.query!=='function'||typeof o.checkBudget!=='function')fail('invalid_input');
   const g=data(rawGraph,['root','layer_counts']),ref=data(g.root,['content_sha256','canonical_utf8_bytes']);
@@ -119,7 +190,7 @@ export function createNeighborhoodSharedJobCadImprovementPages(client,rawOptions
     let encoded;try{encoded=JSON.stringify(r.rows);}catch{fail('invalid_result');}
     readBytes+=Buffer.byteLength(encoded);if(readBytes>L.read_utf8_bytes)fail('byte_limit');check();return r;};
   const store=createNeighborhoodFrozenJobStock({query:execute},o);
-  return Object.freeze({async page(rawPage){const page=prepareNeighborhoodSharedJobCadPage(rawPage);if(used)fail('single_use');used=true;started=performance.now();
+  return Object.freeze({async page(rawPage){const page=projectingAccounts?prepareNeighborhoodSharedJobCadAccountPage(rawPage):prepareNeighborhoodSharedJobCadPage(rawPage);if(used)fail('single_use');used=true;started=performance.now();
     const stock=await store.read(),source=prepareNeighborhoodSharedTypedCadSource(await execute(NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.source,[stock.generation_id]),stock.generation_id);
     if(source.source_snapshot!==stock.original.source_snapshot||source.started_at!==stock.original.source_transaction_started_at
       ||Object.entries(graph.layer_counts).some(([k,n])=>n>Number(stock.original.layer_counts[k].row_count)))fail('source_mismatch');
@@ -130,20 +201,25 @@ export function createNeighborhoodSharedJobCadImprovementPages(client,rawOptions
         ||!TIME.test(h.completed_at??'')||p.format!=='shared_frozen_typed_CAD_progress_v1'||p.binding_sha256!==binding||p.kind_index!==2
         ||p.after!==''||p.layer_rows!==0||p.typed_rows!==source.row_count||!count(p.typed_utf8_bytes,8000000000)||BigInt(p.typed_utf8_bytes)<BigInt(p.typed_rows))fail('cache_unavailable');};
     const header=one(await execute(NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read,headerValues));validate(header);
-    const r=one(await execute(NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_SQL,[stock.operation_id,stock.generation_id,PROFILE.profile_ref.content_sha256,
-      page.kind,page.cursor.account_id,page.cursor.row_key,page.rowLimit,L.page_utf8_bytes,L.row_utf8_bytes]));
+    const r=one(await execute(projectingAccounts?NEIGHBORHOOD_SHARED_JOB_CAD_ACCOUNT_PAGE_SQL:NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_SQL,
+      projectingAccounts?[stock.operation_id,stock.generation_id,PROFILE.profile_ref.content_sha256,page.cursor,page.rowLimit,L.page_utf8_bytes,L.row_utf8_bytes]
+        :[stock.operation_id,stock.generation_id,PROFILE.profile_ref.content_sha256,page.kind,page.cursor.account_id,page.cursor.row_key,page.rowLimit,L.page_utf8_bytes,L.row_utf8_bytes]));
     if(!Number.isInteger(r.page_count)||!Number.isInteger(r.candidate_count)||r.page_count<0||r.candidate_count<r.page_count
       ||r.candidate_count>page.rowLimit||r.oversized_count!==0||typeof r.page_json!=='string')fail('invalid_result');
     if(Buffer.byteLength(r.page_json)>L.page_utf8_bytes||Buffer.byteLength(r.page_json)>L.read_utf8_bytes)fail('byte_limit');
     let rows;try{rows=JSON.parse(r.page_json);}catch{fail('invalid_result');}
     if(!Array.isArray(rows)||rows.length!==r.page_count||rows.length===0&&r.candidate_count!==0)fail('invalid_result');
-    let previous=page.cursor;rows=rows.map(value=>{const row=decodeRow(value,page.kind);
+    let previous=projectingAccounts?{account_id:page.cursor,row_key:''}:page.cursor;rows=rows.map(value=>{const row=projectingAccounts?decodeAccountRow(value,effective,source):decodeRow(value,page.kind);
       const order=Buffer.compare(Buffer.from(row.account_id),Buffer.from(previous.account_id));
-      if(order<0||order===0&&Buffer.compare(Buffer.from(row.row_key),Buffer.from(previous.row_key))<=0)fail('invalid_order');
-      previous={account_id:row.account_id,row_key:row.row_key};return row;});
-    if(r.next_account!==(rows.length?previous.account_id:null)||r.next_key!==(rows.length?previous.row_key:null))fail('invalid_result');
+      if(order<0||order===0&&(projectingAccounts||Buffer.compare(Buffer.from(row.row_key),Buffer.from(previous.row_key))<=0))fail('invalid_order');
+      previous={account_id:row.account_id,row_key:projectingAccounts?'':row.row_key};return row;});
+    if(r.next_account!==(rows.length?previous.account_id:null)||!projectingAccounts&&r.next_key!==(rows.length?previous.row_key:null))fail('invalid_result');
     if(!same(await store.read(),stock)||!same(prepareNeighborhoodSharedTypedCadSource(await execute(NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.source,[stock.generation_id]),stock.generation_id),source))fail('source_changed');
     const ending=one(await execute(NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read,headerValues));validate(ending);if(!same(ending,header))fail('source_changed');check();
+    if(projectingAccounts)return freeze({page_version:1,status:'current_CAD_account_projection_page',authority:'not_established',coverage:'one_account_page_only',
+      graph,stock,source_metadata:source,typed_profile:PROFILE,projection_profile:ACCOUNT_PROFILE,effective_date:effective,
+      cursor:page.cursor,rows,next_cursor:previous.account_id,end_of_accounts:r.candidate_count<page.rowLimit&&r.page_count===r.candidate_count,
+      absent_primary:'missing_not_zero_or_no_amenity',source_acquisition:'not_established',report_update:'none'});
     return freeze({page_version:1,status:'shared_CAD_original_syntax_page',authority:'not_established',coverage:'one_kind_page_only',
       graph,stock,source_metadata:source,typed_profile:PROFILE,kind:page.kind,cursor:page.cursor,rows,next_cursor:previous,
       end_of_kind:r.candidate_count<page.rowLimit&&r.page_count===r.candidate_count,

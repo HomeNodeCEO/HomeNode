@@ -40,10 +40,23 @@ wall-clock expiry/revocation refusal and exact projection requirements. Server
 passed 10,526 with 61 separately database-gated skips; frontend passed 3,959
 without skips. This branch now incorporates the exact protected #1227 merge
 below. Documentation conflicts retained the newer protected receipts; added helper
-contract comments do not alter implementation. **Fresh integrated-head native
-and main-required CI, and actual included review, remain pending**. The historical
-receipt is not current integrated readiness, a production license or source
-acquisition receipt. The future consumer still must independently reload the
+contract comments do not alter implementation. The reviewed integrated head
+`b32aa04ec1d59e0c69da17536ddb7e4943e60f5b` passed all 14 exact-head checks.
+Foundation `37909487537`, native `113750924087` actually executed 417 migration,
+seven index, one subject, one edge and two bootstrap tests with zero failures or
+skips (native index 433704.169322 ms). Its policy marker confirms eight namespace
+reads, no unrelated metadata transfer or policy grant writes, wall-clock expiry/
+revocation refusal and exact projection requirements. Server `113750924025`
+passed 10,526 tests with zero failures and 61 separately database-gated skips;
+frontend `113750923623` passed 3,959 with zero failures/skips plus typecheck,
+lint, source-quality and build. Actual included review
+`d9a51015-6839-43f8-bdf9-8d6d9a0083c5` covered all five changed files through
+that exact head at 10:07Z on 2026-10-09. Its sole minor finding concerned the
+ambiguous pending-status sentence, corrected here; docstring coverage was 100%.
+Any later documentation-only head still requires fresh protected exact-head CI
+before merge. Neither the historical nor integrated receipt is a production
+license, complete licensed acquisition or production-speed acceptance. The
+future consumer still must independently reload the
 current database actor/assignment/subject, actual issued graph/geographic/
 identity heads, exact live claim/pin/stock, and this additional decision at both
 transaction ends. Issued companion provenance, explicit provider/type resolution

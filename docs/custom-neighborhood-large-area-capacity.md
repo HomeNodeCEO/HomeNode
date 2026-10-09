@@ -1,5 +1,50 @@
 # Complete larger-area Custom neighborhood studies
 
+## Current-authorized CAD syntax page owner (2026-10-08, not activated)
+
+`readSharedFrozenCaptureJobCadImprovementsReferencesV2` is an explicit internal
+owner path, not an HTTP endpoint or worker dispatch. Existing composition has no
+additional CAD policy by default. Its only request extension is a closed bounded
+kind/account/key page; callers cannot supply a generation, issued head, source
+rows, extra fields, report date, purpose, policy decision or continuation proof.
+Old V1 checkpoints are not converted and no new job phase is introduced.
+
+The owner reloads the current database actor, assignment/draft, retained subject,
+exact request and live claim/pinned stock. It requires independently issued DONE
+V2 source-graph, geographic and identity heads, with actual immutable receipt
+validation. Partial/unissued/corrupt heads refuse before companion metadata or
+page SQL; reading cannot advance a prerequisite or overwrite its checkpoint.
+Only then is the exact installed companion cache read for the owner-derived
+generation, subject and stock. Both source projections refer to the same original
+snapshot; the separate CAD cache retains its own source/interpretation profiles.
+
+The existing seven-layer decision and the separately installed exact CAD purpose
+must both allow immutable internal retention. The CAD purpose binds the real
+owner selection digest and generation; the returned decision must be from its
+separate namespace. Legacy grants/policies cannot silently widen their fields.
+Before delivery/commit, current roles, assignment/draft, original subject, both
+decisions, live request/stock and all three independent issued heads are reloaded
+and compared. Additional revocation, expiry or decision revision changes refuse;
+no successful cached decision substitutes for a fresh database wall-clock check.
+
+The response carries actual prerequisite references and the separately current
+CAD purpose/decision, but remains one-kind syntax DATA: absent rows are not zero
+or no amenity, current CAD is not retrospective or at-sale, and no provider/type
+or transaction meaning, full licensed acquisition, statistics, report or Apply
+is certified. No source grant, cache preparation, original payload copy, issued
+head/checkpoint write, accepted report or activation default is changed.
+
+Focused tests cover default denial and closed hostile input admission. A small
+native fixture is authored for actual issued V2 prerequisites, separate current
+organization grants, stock-account exclusion, duplicate secondary IDs and NULL,
+both-end CAD/legacy revocation/expiry/revision, roles/subject/claim/cancellation,
+ending cache refusal, unissued/partial/corrupt receipt refusal, unchanged durable
+heads/checkpoint and lost-COMMIT-acknowledgement reopen. **New native owner
+execution is pending cloud CI**, not licensed scale or production speed
+acceptance. Explicit provider/type/transaction resolution, complete selected
+union calculations, coherent publication, workers/pin transfer and live
+large-area/retrospective acceptance remain unfinished.
+
 ## Bounded pinned-stock CAD syntax pages (2026-10-08, not activated)
 
 `createNeighborhoodSharedJobCadImprovementPages` reads only a complete, exact

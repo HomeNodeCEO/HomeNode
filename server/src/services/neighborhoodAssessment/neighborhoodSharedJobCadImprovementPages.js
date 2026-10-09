@@ -38,6 +38,7 @@ export function prepareNeighborhoodSharedJobCadPage(value){
   if((c.account_id==='')!==(c.row_key===''))fail('invalid_page');
   return freeze({kind:v.kind,cursor:{...c},rowLimit:v.rowLimit});
 }
+/** Admit only an exact bounded account cursor/limit, never caller dates, facts or authority. */
 export function prepareNeighborhoodSharedJobCadAccountPage(value){
   const v=data(value,['cursor','rowLimit']);account(v.cursor,true);
   if(!Number.isInteger(v.rowLimit)||v.rowLimit<1||v.rowLimit>L.rows)fail('invalid_page');
@@ -57,6 +58,7 @@ const ACCOUNT_DEFINITION=freeze({id:'neighborhood-current-CAD-stock-account-proj
 const accountText=canonicalAssessmentJson(ACCOUNT_DEFINITION),accountBlob=prepareNeighborhoodCohortBlob(accountText);
 const ACCOUNT_PROFILE=freeze({profile_ref:{id:ACCOUNT_DEFINITION.id,revision:'1',content_sha256:accountBlob.content_sha256},
   definition_blob:{ref:accountBlob,canonical_json:accountText}});
+/** Return the immutable installed current-CAD projection definition, not a grant or historical proof. */
 export function getNeighborhoodSharedJobCadAccountProfile(){return ACCOUNT_PROFILE;}
 // Exact stock-account PK probes and the generation/profile/kind/account/key
 // cache index; no geometry clipping, array of the stock, current core read or
@@ -152,6 +154,7 @@ function decodeRow(value,kind){const r=data(value,['kind','account_id','row_key'
   const markers=data(t.markers,kind==='primary'?[]:['sec_imp_type']);if(kind==='secondary')rawOf(markers.sec_imp_type);
   if(Buffer.byteLength(canonicalAssessmentJson(r))>L.row_utf8_bytes)fail('row_limit');return freeze(r);
 }
+/** Reconcile a bounded account row and retain missing literals; only the owner's effective year constrains syntax. */
 function decodeAccountRow(value,effective,source){
   const r=data(value,['account_id','geographic_parcel_count','primary','secondary_original_count']);account(r.account_id);
   if(!count(r.geographic_parcel_count,2000000)||r.geographic_parcel_count==='0'
@@ -185,6 +188,7 @@ export function createNeighborhoodSharedJobCadImprovementPages(client,rawOptions
 export function createNeighborhoodSharedJobCadAccountPages(client,rawOptions,rawGraph,effectiveDate){
   return cadPages(client,rawOptions,rawGraph,assessmentDate(effectiveDate));
 }
+/** Share fixed stock/cache fences and budgets for one syntax or current-account DATA page; never build on a miss. */
 function cadPages(client,rawOptions,rawGraph,effective){
   const projectingAccounts=effective!==null;
   const o={...data(rawOptions,['claim','scope','actorUserId','geometryInput','discovery','subjectIntent','checkBudget'])};

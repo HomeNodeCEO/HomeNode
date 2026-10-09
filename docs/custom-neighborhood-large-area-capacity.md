@@ -39,7 +39,20 @@ cloud fixtures are authored: a small actual-issued owner test with both-end
 rights/auth/subject/claim/cancellation/cache refusal and lost-COMMIT replay;
 and a separate SQL DATA fixture with an actual missing primary account, future
 year, native false, duplicated secondary numbers and full-tail empty probe.
-**New native account execution is pending cloud CI.** Neither fixture is a
+Historical pre-integration head
+`2e008744c5c6715ba9e7ce66fad50b7e57367f36` passed foundation `37886170941` /
+native `113676551197`: 417 migration, eight index, one subject, one edge and
+two bootstrap tests without failures/skips. The actual-issued owner marker
+confirmed both-end current rights and prerequisites, retained-date provenance,
+ending refusal and lost-COMMIT reopen without original reads or durable writes.
+The separate SQL DATA marker confirmed two stock accounts, one missing primary,
+native false, duplicate secondary rows, invalid future year and an empty tail;
+it explicitly did not issue a graph or current-actor owner receipt. Server
+passed 10,537 tests with 62 separately database-gated skips; frontend passed
+3,959 without skips. These historical receipts do not verify a later integrated
+head. This branch incorporates protected #1230 merge
+`6200a01714c30efe68193b28d3b40045e67fa684`; current exact-head CI and actual
+review are verified separately before normal protected merge. Neither fixture is a
 production source license, full licensed acquisition, housing/type dictionary,
 selected-union statistics, retrospective accuracy or live speed acceptance.
 Transaction resolution, server-owned selection, exact full medians/COD/quarters,
@@ -116,6 +129,20 @@ this is a comment/documentation-only correction, not a claimed recalculated
 coverage score or a new review. Every later head still requires fresh exact-head
 protected checks before normal merge. These small fixtures do not establish
 licensed acquisition, housing/amenity meaning or live acceptance.
+
+Comment/documentation-only correction
+`96e23fa3e6f77447b7bf400b54fddf904f346c52` passed all 14 fresh exact-head checks.
+Foundation `37932773100` / native `113827315754` actually repeated all
+417/seven/one/one/two tests without failures/skips (index 437181.547822ms),
+including actual issued owner prerequisites, separate current CAD and legacy
+decisions at both ends, ending-cache refusal and zero original/copy/head writes.
+Full server/frontend protected statuses also passed; the earlier numerical
+receipts remain explicitly tied to b56a9064. With current main/checks/review
+threads/ruleset revalidated, #1230 normally protected-merged as
+`6200a01714c30efe68193b28d3b40045e67fa684` at 2026-10-09T13:05Z. No new review
+or recalculated docstring score is inferred from a later skipped status; the
+reviewed implementation is unchanged, and no quota or required-check bypass
+occurred. This remains small native protocol evidence, not licensed/live acceptance.
 
 ## Bounded pinned-stock CAD syntax pages (2026-10-08, not activated)
 

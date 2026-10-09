@@ -2156,6 +2156,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * convert legacy receipts, publish reports or infer amenity meaning. */
     readSharedFrozenCaptureJobCadImprovementsReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'shared_CAD_pages_refs_v2'),
+    /** Read current CAD account syntax using only the retained context date and
+     * both current rights decisions; missing primary remains missing, and no
+     * housing, amenity, historical or complete-population meaning is inferred. */
     readSharedFrozenCaptureJobCadAccountsReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'shared_CAD_accounts_refs_v2'),
     async capture(value, options = {}) {

@@ -2902,6 +2902,7 @@ test('isolated PostgreSQL: current CAD account pages preserve missing primary me
     assert.equal(stock.population.account_count,'2');
     const graph={root:{content_sha256:'d'.repeat(64),canonical_utf8_bytes:'100'},
       layer_counts:Object.fromEntries(Object.entries(stock.original.layer_counts).map(([k,v])=>[k,Number(v.row_count)]))};
+    /** Reopen one bounded disposable SQL DATA page; date variants do not authorize an actual owner. */
     const queries=[],read=(cursor='',rowLimit=250,date='2026-10-07')=>withCustomCohortJobTransaction(pool,client=>
       createNeighborhoodSharedJobCadAccountPages({async query(config){queries.push(config.text);return client.query(config);}},pageOptions,graph,date).page({cursor,rowLimit}));
     const first=await read('',1);assert.equal(first.end_of_accounts,false);assert.equal(first.rows[0].account_id,'CAD-A');

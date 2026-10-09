@@ -1,5 +1,59 @@
 # Complete larger-area Custom neighborhood studies
 
+## Separate date-neutral CAD improvement syntax (2026-10-08, not activated)
+
+`compileNeighborhoodFrozenTypedCadImprovementV1` interprets **one exact** companion
+original under a new hash-bound profile. It binds the exact native primary
+account/secondary bigint key, source profile, original text hash and byte count.
+Closed inputs cannot supply an appraisal date, provider mapping, rights, context
+or alternate policy. Fixed original keys are required; a caller cannot remove
+the pool field and present an incomplete original as the stored format.
+
+Decimal/integer text is canonicalized without Number conversion. Missing,
+invalid, oversized and observed values remain different. Year syntax accepts
+1600..9999 independently of an appraisal date; later consumers must apply the
+retained effective-year policy **before** resolution. Pool evidence accepts only
+native JSON booleans: NULL remains missing, false is an observed literal, and
+text/numeric substitutes are invalid. Secondary type labels are bounded exact
+diagnostics, not a garage/pool/outbuilding dictionary. Duplicate improvement
+numbers retain their native row identities. There is no cross-row summation,
+housing inference, retrospective assertion or measured/at-sale GLA claim.
+
+Both existing seven-kind V1/V2 profile hashes stay unchanged. Focused tests check
+exact decimals, unsafe wrong-type numeric tokens, year/count rules, NULL/false,
+duplicate identities, bounded labels, hostile inputs and frozen profiles.
+The seven-original native fixture checks the actual stored JSONB text hashes
+and literal observations. Historical exact head
+`caf1eba04f3c95e4fc4d0771a08192d21a13bec3` passed foundation `37881428131`,
+native job `113661760318`: 417 migration, seven native index, one subject, one
+edge and two bootstrap tests, zero failures/skips. Its actual
+`native-typed-CAD-improvement-syntax` marker confirms seven originals, zero hash
+mismatches, missing boolean not false, duplicate identities and no job-cache
+writes. Server passed 10,496 with 61 separately database-gated skips; frontend
+passed 3,959 without skips. The branch now incorporates the exact protected
+#1225 merge below. Twenty-two focused compiler/profile tests passed again with
+zero failures/skips (167.3825ms). Integrated head
+`228238dba6d59b2106af5bb6a3e4f573c65dbd58` passed all fourteen exact-head check
+runs. Foundation `37895808933`, native job `113706774910`, passed 417 migration,
+seven index, one subject, one edge and two bootstrap tests with zero failures/
+skips; the actual syntax marker again confirmed seven originals and zero hash
+mismatches. Native index duration was 291,789.463589ms. Server job `113706775035`
+passed 10,496 with 61 separately database-gated skips; frontend job `113706774717`
+passed 3,959 without skips, plus typecheck/lint/source-quality/build.
+Included CodeRabbit review `1f6c285e-bd9e-404f-aa2f-2eede0998a8f` completed on that
+exact head at 2026-10-09T07:37Z, processing all four changed files with no actionable
+code findings or review threads. Its sole documentation-coverage warning is
+addressed by helper contract comments and this receipt update, with no implementation
+token, profile, SQL, behavior or test change. Fresh protected checks for this
+comments/documentation-only correction remain pending; the coverage percentage
+has not been independently recalculated, and no extra paid/forced review is requested.
+This pure DATA compiler does not extend the previously issued
+seven-layer job graph, authorize the extra projection, materialize an amenities
+cache or establish acquisition/statistics/report publication. Shared bounded
+typing, current-authorized provenance verification and explicit provider/type
+resolution still need composition before activation. Existing source grants
+must not be silently widened to cover additional fields.
+
 ## Same-snapshot local CAD improvement originals (2026-10-08, not activated)
 
 The seven frozen source kinds did not include the primary/secondary improvement
@@ -55,9 +109,15 @@ and frontend passed 3,959 without skips. Included CodeRabbit review
 `e19f59a9-e653-4151-aee5-3d1a5ad6e5b2` completed on that exact head at
 2026-10-09T06:25Z, processed all ten changed files and generated no actionable
 code findings or review threads. Its documentation-coverage warning is addressed
-by documenting helper contracts without changing implementation tokens. These
-comment/receipt-only edits still require fresh exact-head protected checks before
-normal merge; a later skipped review status is not an additional actual review.
+by documenting helper contracts without changing implementation tokens.
+Comments/receipt-only head `72a35ffd15828b76840dc81d4a79569a73e42c18` then passed
+all 16 fresh exact-head checks. Native job `113702454955` in foundation
+`37894442484` passed the same complete zero-skip suites, with the actual
+companion and retirement markers; native index duration was 429,737.540182ms.
+With no unresolved threads, #1225 normally protected-merged as
+`cacb539a630e7f5d268422c3a19818b12dc2e50e` at 2026-10-09T06:50Z. The actual
+included review covered the unchanged implementation; later skipped review
+status is not an additional actual review. No required checks or quota bypass.
 This is original retention groundwork, not amenity resolution,
 licensed acquisition, selected-union statistics, report publication or live
 speed acceptance. The offline owner still needs whole-source authority and

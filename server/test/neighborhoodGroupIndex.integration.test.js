@@ -11,6 +11,8 @@ import { materializeNeighborhoodFrozenSourceGeneration }
 import { materializeNeighborhoodFrozenCadImprovements,getNeighborhoodFrozenCadImprovementProfile,
   NEIGHBORHOOD_FROZEN_CAD_IMPROVEMENT_SQL as CAD_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenCadImprovements.js';
+import { compileNeighborhoodFrozenTypedCadImprovementV1,getNeighborhoodFrozenTypedCadImprovementV1Profile }
+  from '../src/services/neighborhoodAssessment/neighborhoodFrozenTypedCadImprovementV1.js';
 import { createCustomCohortCaptureJobRepository }
   from '../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
 import { withCustomCohortJobTransaction }
@@ -201,6 +203,25 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     assert.equal((await pool.query(`SELECT count(*)::int AS n FROM app.neighborhood_frozen_cad_improvement_rows
       WHERE generation_id=$1 AND (payload_sha256<>encode(sha256(convert_to(payload::text,'UTF8')),'hex')
         OR payload_utf8_bytes<>octet_length(payload::text))`,[first.generationId])).rows[0].n,0);
+    // Small native original-text bridge only, not a job-authorized reader or
+    // a complete shared cache. Actual JSONB text/hash is retained unchanged.
+    const cadTexts=(await pool.query(`SELECT kind,row_key,payload::text AS payload_text,payload_sha256
+      FROM app.neighborhood_frozen_cad_improvement_rows WHERE generation_id=$1 ORDER BY kind,row_key`,[first.generationId])).rows;
+    const typedCad=cadTexts.map(row=>{
+      const r=compileNeighborhoodFrozenTypedCadImprovementV1({kind:row.kind,row_key:row.row_key,payload_text:row.payload_text});
+      assert.equal(r.original.payload_sha256,row.payload_sha256);assert.equal(r.authority,'not_established');
+      assert.equal(Object.hasOwn(r,'effective_date'),false);return r;
+    });
+    assert.equal(typedCad.find(r=>r.original.row_key==='INDEX-A').observations.reported_baths.exact_value,'2');
+    assert.equal(typedCad.find(r=>r.original.row_key==='INDEX-B').observations.reported_pool_flag.state,'missing');
+    assert.equal(typedCad.find(r=>r.original.row_key==='INDEX-C').observations.reported_pool_flag.exact_value,false);
+    assert.equal(typedCad.find(r=>r.original.row_key==='1').markers.sec_imp_type.value_text,'ATTACHED GARAGE');
+    assert.equal(typedCad.find(r=>r.original.row_key==='3').markers.sec_imp_type.value_text,'STORAGE BUILDING');
+    assert.ok(typedCad.every(r=>!Object.hasOwn(r,'garage_area')));
+    console.info('[native-typed-CAD-improvement-syntax]',{original_rows:7,original_hash_mismatches:0,
+      exact_profile:getNeighborhoodFrozenTypedCadImprovementV1Profile().profile_ref.content_sha256,
+      missing_boolean_not_false:true,duplicate_numbers_not_deduped:true,job_cache_writes:0,
+      amenity_resolution:false,source_acquisition:false,report_update:false,production_latency:false});
     for(const sql of ['UPDATE app.neighborhood_frozen_cad_improvement_rows SET payload=payload WHERE generation_id=$1',
       'DELETE FROM app.neighborhood_frozen_cad_improvement_rows WHERE generation_id=$1',
       'UPDATE app.neighborhood_frozen_cad_improvement_generations SET row_count=0 WHERE generation_id=$1'])

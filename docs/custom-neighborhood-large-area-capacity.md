@@ -1,5 +1,55 @@
 # Complete larger-area Custom neighborhood studies
 
+## Exact-decimal bounded distribution primitive (2026-10-09, not activated)
+
+`exactDecimalDistributionFromSortedPagesV1` is a new numerical DATA primitive,
+separate from the unchanged legacy Number kernel and accepted-report semantics.
+New date-neutral source observations preserve exact decimal strings; converting
+them to Number would silently lose values such as `9007199254740993.01`. This
+helper instead admits only canonical nonnegative decimals with the existing
+30-digit/12-fractional-place syntax and performs all value arithmetic in BigInt.
+It reads two fresh, globally numerically sorted passes in detached pages of at
+most 1,000 observations. Both streams must exhaust their independently declared
+counts and have identical complete ordered digests, including empty streams.
+No full observation array or average of page statistics is built.
+
+Whole-observed-population Type-7 Q1/median/Q3 are exact finite decimals, including
+14-place quartile interpolation. Mean, mean absolute deviation, coverage and
+descriptive COD percent are reduced exact rationals, not arbitrarily rounded
+display numbers. A zero median yields null COD; no observations and an explicit
+empty population retain distinct denominators. Observed, missing, invalid,
+conflicting and unsupported counts must sum to every member. The unchanged
+250,000-member numerical ceiling remains a whole-result refusal, not a new
+capture-capacity grant. Quartiles here are numerical order statistics, **not**
+the remaining calendar-quarter sales checks.
+
+The actual future owner still must derive every count from the complete verified
+selected set union, admit one homogeneous metric/unit and source lineage, create
+and reopen bounded exact sorted runs, enforce its aggregate budget/current
+rights/retained dates, and publish all results coherently. The two-pass digest
+is repeatability evidence, not source authenticity, member verification,
+transaction eligibility, source acquisition or a selected-union traversal
+receipt. No currency/measurement/GLA/historical/property equivalence, reliability
+or predominant-value claim is inferred. Ratios require an explicit future
+publication/display contract; legacy numeric consumers are not silently rewired.
+
+Nine focused tests actually passed without failures/skips (658.3061ms), including
+>2^53 values, 14-place interpolation, repeating rational means/COD, zero/empty and
+all five states, independent dense odd/even/page-boundary quantile/COD checks,
+changed/missing/extra/unordered passes, hostile DATA, cancellation/deadline
+cleanup and mutable-page detachment. Lazy synthetic DATA streams exercised
+60,001 and the unchanged 250,000 numerical cap with at most 1,000 values per
+page. Those tests took less than a second locally; no database/full-server/
+frontend suite ran locally. This is not an actual licensed >50k acquisition,
+whole selected-union owner, native sort/run integration or production SLA.
+Cloud full-suite verification is pending for this new head.
+
+This work is stacked on whole-native-package #1234 at historical `0e7afb4e`.
+Actual protected parent integration/main retargeting/fresh exact-head checks and
+included review remain required. No route/default/deploy, source grant, worker,
+pin, report, genuine Hardy choice or Apply change. Full roadmap/live acceptance
+remains incomplete; QA assignment 7 only for future Apply tests.
+
 ## Whole native transaction association packages (2026-10-09, not activated)
 
 `readSharedFrozenCaptureJobTransactionPackagesReferencesV2` is a separate dormant

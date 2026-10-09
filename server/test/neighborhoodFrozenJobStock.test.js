@@ -9,9 +9,11 @@ import { neighborhoodFrozenSpatialDefinition } from '../src/services/neighborhoo
 import { createNeighborhoodFrozenJobSourceIdentity } from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobSourceIdentity.js';
 import { createNeighborhoodFrozenJobTypedOriginals } from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobTypedOriginals.js';
 import { createNeighborhoodFrozenJobStockMetricPages, createNeighborhoodSharedJobStockMetricPages, getNeighborhoodFrozenStockMetricProfile,
-  NEIGHBORHOOD_FROZEN_STOCK_METRIC_PAGE_SQL, NEIGHBORHOOD_SHARED_STOCK_METRIC_PAGE_SQL } from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStockMetricPages.js';
-import { NEIGHBORHOOD_SHARED_TYPED_SQL } from '../src/services/neighborhoodAssessment/neighborhoodSharedTypedGeneration.js';
-import { getNeighborhoodFrozenTypedOriginalV1Profile } from '../src/services/neighborhoodAssessment/neighborhoodFrozenTypedOriginalV1.js';
+  createNeighborhoodSharedJobStockMetricPagesV2, getNeighborhoodFrozenStockMetricV2Profile,
+  NEIGHBORHOOD_SHARED_STOCK_METRIC_V2_PAGE_SQL, NEIGHBORHOOD_FROZEN_STOCK_METRIC_PAGE_SQL,
+  NEIGHBORHOOD_SHARED_STOCK_METRIC_PAGE_SQL } from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStockMetricPages.js';
+import { NEIGHBORHOOD_SHARED_TYPED_SQL, NEIGHBORHOOD_SHARED_TYPED_V2_SQL } from '../src/services/neighborhoodAssessment/neighborhoodSharedTypedGeneration.js';
+import { getNeighborhoodFrozenTypedOriginalV1Profile, getNeighborhoodFrozenTypedOriginalV2Profile } from '../src/services/neighborhoodAssessment/neighborhoodFrozenTypedOriginalV1.js';
 import { NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL, NEIGHBORHOOD_FROZEN_JOB_IDENTITY_COVERAGE_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourceClosurePages.js';
 
@@ -48,26 +50,83 @@ async function metricFixture(hook=()=>{}) {
   return {...f,rows,graph,metrics:()=>createNeighborhoodFrozenJobStockMetricPages(f.client,options,graph,'2026-10-07')};
 }
 
-async function sharedMetricFixture(hook=()=>{}) {
+async function sharedMetricFixture(hook=()=>{},neutral=false) {
   let sharedHeader;
   const rows=[metricMember()],graph={root:{content_sha256:'c'.repeat(64),canonical_utf8_bytes:'100'},
     layer_counts:{parcels:60001,accounts:0,source_records:0,sales:0,sale_links:0,sync_state:0,sync_runs:0}};
   const f=fixture(async call=>{
     const supplied=await hook({...call,sharedHeader,rows});if(supplied)return supplied;
-    if(call.text===NEIGHBORHOOD_SHARED_TYPED_SQL.read)return result(structuredClone(sharedHeader));
-    if(call.text===NEIGHBORHOOD_SHARED_STOCK_METRIC_PAGE_SQL)return result({page_json:JSON.stringify(rows),page_count:rows.length,
+    if(call.text===(neutral?NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read:NEIGHBORHOOD_SHARED_TYPED_SQL.read))return result(structuredClone(sharedHeader));
+    if(call.text===(neutral?NEIGHBORHOOD_SHARED_STOCK_METRIC_V2_PAGE_SQL:NEIGHBORHOOD_SHARED_STOCK_METRIC_PAGE_SQL))return result({page_json:JSON.stringify(rows),page_count:rows.length,
       candidate_count:rows.length,invalid_count:0,oversized_count:0,next_cursor:rows.at(-1)?.account_id??null});
   },true);
-  const stock=await f.store.read(),original=stock.original,profile=getNeighborhoodFrozenTypedOriginalV1Profile();
+  const stock=await f.store.read(),original=stock.original,profile=neutral?getNeighborhoodFrozenTypedOriginalV2Profile():getNeighborhoodFrozenTypedOriginalV1Profile();
   const source={generation_id:original.generation_id,format_version:original.source_format_version,status:'complete',
     source_snapshot:original.source_snapshot,started_at:original.source_transaction_started_at,completed_at:original.completed_at,
     layer_counts:original.layer_counts,row_count:original.row_count,payload_utf8_bytes:original.payload_utf8_bytes};
-  const binding=assessmentEvidenceDigest({source,profile,effective_date:'2026-10-07'});
+  const binding=assessmentEvidenceDigest({source,profile,...(neutral?{}:{effective_date:'2026-10-07'})});
   sharedHeader={binding_sha256:binding,source_metadata:source,definition_json:profile.definition_blob.canonical_json,
-    progress:{format:'shared_frozen_typed_progress_v1',binding_sha256:binding,kind_index:7,after:'',layer_rows:0,
+    progress:{format:neutral?'shared_frozen_typed_progress_v2':'shared_frozen_typed_progress_v1',binding_sha256:binding,kind_index:7,after:'',layer_rows:0,
       typed_rows:source.row_count,typed_utf8_bytes:'12000400'},status:'complete',completed_at:date};
-  return {...f,rows,graph,sharedHeader,metrics:()=>createNeighborhoodSharedJobStockMetricPages(f.client,options,graph,'2026-10-07')};
+  return {...f,rows,graph,sharedHeader,metrics:(effective='2026-10-07')=>(neutral?createNeighborhoodSharedJobStockMetricPagesV2:createNeighborhoodSharedJobStockMetricPages)(f.client,options,graph,effective)};
 }
+
+test('explicit V2 shared projection reuses one neutral cache across retained dates without changing V1 profiles',async()=>{
+  const f=await sharedMetricFixture(()=>null,true),from=f.calls.length;
+  const a=await f.metrics().page({cursor:'',rowLimit:1}),b=await f.metrics('2020-01-01').page({cursor:'',rowLimit:250});
+  assert.deepEqual(a.shared_typed_generation_reference,b.shared_typed_generation_reference);
+  assert.equal(a.shared_typed_generation_reference.shared_typed_reference_version,2);
+  assert.equal(Object.hasOwn(a.shared_typed_generation_reference,'effective_date'),false);
+  assert.equal(a.effective_date,'2026-10-07');assert.equal(b.effective_date,'2020-01-01');
+  assert.deepEqual(a.profile,getNeighborhoodFrozenStockMetricV2Profile());
+  assert.deepEqual(a.typed_original_profile_ref,getNeighborhoodFrozenTypedOriginalV2Profile().profile_ref);
+  assert.notEqual(a.profile.profile_ref.content_sha256,getNeighborhoodFrozenStockMetricProfile().profile_ref.content_sha256);
+  assert.equal(a.source_acquisition,'not_established');assert.equal(a.coverage,'one_account_page_only');
+  assert.ok(f.calls.slice(from).filter(c=>c.text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read).every(c=>c.values.length===2));
+  assert.deepEqual(f.calls.filter(c=>c.text===NEIGHBORHOOD_SHARED_STOCK_METRIC_V2_PAGE_SQL).map(c=>c.values[4]),['2026-10-07','2020-01-01']);
+  assert.ok(!f.calls.slice(from).some(c=>/INSERT|UPDATE|DELETE|ST_DWithin|job-typed:|job-closure:|shared-typed-v2:page/.test(c.text)));
+  await assert.rejects(createNeighborhoodSharedJobStockMetricPages(f.client,options,f.graph,'2026-10-07')
+    .page({cursor:'',rowLimit:1}),/unexpected|invalid_result/,'no V2 cache is cast into the legacy reader');
+});
+
+test('V2 metric headers require the exact neutral profile/source/complete progress and ending immutability',async()=>{
+  for(const mutate of [h=>h.status='building',h=>h.definition_json=getNeighborhoodFrozenTypedOriginalV1Profile().definition_blob.canonical_json,
+    h=>h.progress.format='shared_frozen_typed_progress_v1',h=>h.progress.kind_index=6,
+    h=>h.binding_sha256='e'.repeat(64),h=>h.source_metadata.source_snapshot='2:3:',h=>h.progress.typed_rows='60001']){
+    const f=await sharedMetricFixture(({text,sharedHeader})=>{if(text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read){
+      const h=structuredClone(sharedHeader);mutate(h);return result(h);}},true);
+    await assert.rejects(f.metrics().page({cursor:'',rowLimit:1}),/unfinished_or_changed_typing/);
+    assert.ok(!f.calls.some(c=>c.text===NEIGHBORHOOD_SHARED_STOCK_METRIC_V2_PAGE_SQL));
+  }
+  let headers=0;const f=await sharedMetricFixture(({text,sharedHeader})=>text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read&&++headers===2
+    ?result({...sharedHeader,status:'building'}):null,true);
+  await assert.rejects(f.metrics().page({cursor:'',rowLimit:1}),/unfinished_or_changed_typing/);
+});
+
+test('V2 date projection is before account grouping, not future-year conflicts or malformed-cell laundering',()=>{
+  const sql=NEIGHBORHOOD_SHARED_STOCK_METRIC_V2_PAGE_SQL;
+  assert.match(sql,/FROM app\.neighborhood_frozen_typed_v2_rows/);assert.doesNotMatch(sql,/effective_date=|ST_DWithin|INSERT|UPDATE|DELETE/);
+  assert.match(sql,/literal<='9999'/);assert.match(sql,/valid_shape AND valid_numeric AND state='observed' AND key='reported_year_built'/);
+  assert.match(sql,/literal>left\(\$5::text,4\) THEN 'invalid'/);assert.match(sql,/literal>left\(\$5::text,4\) THEN NULL/);
+  assert.ok(sql.indexOf('projected AS')<sql.indexOf('grouped AS'));assert.match(sql,/FROM projected GROUP BY key/);
+  assert.match(sql,/WHERE NOT valid_shape OR state='observed' AND NOT valid_numeric/);
+  assert.match(sql,/CASE WHEN valid_numeric THEN literal::numeric END/);
+  const d=JSON.parse(getNeighborhoodFrozenStockMetricV2Profile().definition_blob.canonical_json);
+  assert.deepEqual(d.typed_original_profile,getNeighborhoodFrozenTypedOriginalV2Profile());
+  assert.match(d.temporal_projection,/before_account_resolution/);
+});
+
+test('V2 decoded projections retain invalid part counts and reject unprojected future values or caller date policies',async()=>{
+  const f=await sharedMetricFixture(()=>null,true),year=f.rows[0].observations.reported_year_built;
+  Object.assign(year,{state:'invalid',exact_value:null,unit:null,observed_part_count:'0',invalid_part_count:'1'});
+  const r=await f.metrics('1900-01-01').page({cursor:'',rowLimit:1});
+  assert.equal(r.rows[0].observations.reported_year_built.invalid_part_count,'1');assert.equal(r.rows[0].observations.reported_year_built.exact_value,null);
+  assert.equal(r.report_update,'none');
+  Object.assign(year,{state:'observed',exact_value:'2030',unit:'year',observed_part_count:'1',invalid_part_count:'0'});
+  await assert.rejects(f.metrics().page({cursor:'',rowLimit:1}),/invalid_result/);
+  for(const v of [{...options,effectiveDate:'2030-01-01'},{...options,profile:getNeighborhoodFrozenTypedOriginalV2Profile()},new Proxy(options,{})])
+    assert.throws(()=>createNeighborhoodSharedJobStockMetricPagesV2(f.client,v,f.graph,'2026-10-07'),/invalid_input/);
+});
 
 test('shared stock metrics reuse exact immutable prepared data without per-job typing or cache-miss preparation',async()=>{
   const f=await sharedMetricFixture(),from=f.calls.length,r=await f.metrics().page({cursor:'',rowLimit:250});

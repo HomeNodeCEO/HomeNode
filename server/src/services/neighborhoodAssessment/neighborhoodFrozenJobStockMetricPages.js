@@ -2,8 +2,8 @@ import { types } from 'node:util';
 import { assessmentDate, assessmentEvidenceDigest, canonicalAssessmentJson } from './contract.js';
 import { prepareNeighborhoodCohortBlob, prepareNeighborhoodCohortBlobReference } from './cohortEvidenceBlobRepository.js';
 import { createNeighborhoodFrozenJobStock } from './neighborhoodFrozenJobStock.js';
-import { getNeighborhoodFrozenTypedOriginalV1Profile } from './neighborhoodFrozenTypedOriginalV1.js';
-import { NEIGHBORHOOD_SHARED_TYPED_SQL } from './neighborhoodSharedTypedGeneration.js';
+import { getNeighborhoodFrozenTypedOriginalV1Profile, getNeighborhoodFrozenTypedOriginalV2Profile } from './neighborhoodFrozenTypedOriginalV1.js';
+import { NEIGHBORHOOD_SHARED_TYPED_SQL, NEIGHBORHOOD_SHARED_TYPED_V2_SQL } from './neighborhoodSharedTypedGeneration.js';
 
 const METRICS = Object.freeze({ reported_year_built: 'year', reported_residential_area: 'reported_sqft',
   reported_site_area: 'reported_sqft', reported_market_value: null });
@@ -33,6 +33,15 @@ const definitionText = canonicalAssessmentJson(DEFINITION), definitionRef = prep
 const PROFILE = freeze({ profile_ref: { id: DEFINITION.id, revision: DEFINITION.revision, content_sha256: definitionRef.content_sha256 },
   definition_blob: { ref: definitionRef, canonical_json: definitionText } });
 export function getNeighborhoodFrozenStockMetricProfile() { return PROFILE; }
+const V2_DEFINITION = freeze({ ...DEFINITION, id: 'neighborhood-frozen-stock-account-metrics-v2', revision: '2',
+  typed_original_profile: getNeighborhoodFrozenTypedOriginalV2Profile(),
+  temporal_projection: 'retained_effective_year_applied_before_account_resolution_future_year_parts_invalid_not_conflicting',
+  cache_basis: 'generation_and_date_neutral_profile_only_no_effective_date_cache_key',
+});
+const v2DefinitionText = canonicalAssessmentJson(V2_DEFINITION), v2DefinitionRef = prepareNeighborhoodCohortBlob(v2DefinitionText);
+const V2_PROFILE = freeze({ profile_ref: { id: V2_DEFINITION.id, revision: V2_DEFINITION.revision,
+  content_sha256: v2DefinitionRef.content_sha256 }, definition_blob: { ref: v2DefinitionRef, canonical_json: v2DefinitionText } });
+export function getNeighborhoodFrozenStockMetricV2Profile() { return V2_PROFILE; }
 function fail(reason) { throw new TypeError(`neighborhood_frozen_stock_metrics_${reason}`); }
 function data(value, keys) {
   if (!value || types.isProxy(value) || Object.getPrototypeOf(value) !== Object.prototype) fail('invalid_input');
@@ -61,10 +70,11 @@ const READ = `/* neighborhood-frozen-stock-metrics:header */ SELECT binding_sha2
 // association work in SQL. A large account's parts never become a Node array.
 // CASE protects numeric casts even if stored cells are malformed. Such cells
 // refuse the entire page, rather than being silently dropped from statistics.
-// Both projections share the same account resolution and transport contract.
-// Only these two fixed internal relations/predicates can supply parts; callers
+// Fixed projections share account resolution and bounded transport. V2 applies
+// retained effective-year policy to each valid neutral cell before resolution.
+// Only these fixed internal relations/predicates can supply parts; callers
 // cannot choose a SQL source, effective date, profile, or account population.
-const stockMetricSql = (partsSql, shared = false) => `/* neighborhood-frozen-${shared ? 'shared-' : ''}stock-metrics:page */
+const stockMetricSql = (partsSql, shared = false, neutral = false) => `/* neighborhood-frozen-${neutral ? 'shared-v2-' : shared ? 'shared-' : ''}stock-metrics:page */
 WITH accounts AS MATERIALIZED (
   SELECT account_id,parcel_count FROM app.neighborhood_custom_cohort_stock_accounts
   WHERE operation_id=$1::uuid AND account_id>$3 COLLATE "C" ORDER BY account_id LIMIT $4
@@ -93,9 +103,16 @@ WITH accounts AS MATERIALIZED (
         AND length(replace(literal,'.',''))<=30
         AND (position('.' in literal)=0 OR right(literal,1)<>'0')
         AND (key<>'reported_residential_area' OR literal<>'0')
-        AND (key<>'reported_year_built' OR literal ~ '^[0-9]{4}$' AND literal>='1600' AND literal<=left($5,4)),false) AS valid_numeric
+        AND (key<>'reported_year_built' OR literal ~ '^[0-9]{4}$' AND literal>='1600' AND literal<=${neutral ? "'9999'" : 'left($5,4)'}),false) AS valid_numeric
       FROM literals
-    ), grouped AS (
+    )${neutral ? `, projected AS (
+      SELECT key,unit,valid_shape,valid_numeric,
+        CASE WHEN valid_shape AND valid_numeric AND state='observed' AND key='reported_year_built'
+          AND literal>left($5::text,4) THEN 'invalid' ELSE state END AS state,
+        CASE WHEN valid_shape AND valid_numeric AND state='observed' AND key='reported_year_built'
+          AND literal>left($5::text,4) THEN NULL ELSE literal END AS literal
+      FROM checked
+    )` : ''}, grouped AS (
       SELECT key,max(unit) AS unit,count(*) AS parts,
         count(*) FILTER(WHERE state='observed') AS observed,
         count(*) FILTER(WHERE state='missing') AS missing,count(*) FILTER(WHERE state='invalid') AS invalid,
@@ -104,7 +121,7 @@ WITH accounts AS MATERIALIZED (
           OR literal IS NOT NULL AND NOT valid_numeric) AS bad,
         min(CASE WHEN valid_numeric THEN literal::numeric END) AS low,
         max(CASE WHEN valid_numeric THEN literal::numeric END) AS high
-      FROM checked GROUP BY key
+      FROM ${neutral ? 'projected' : 'checked'} GROUP BY key
     ), resolved AS (
       SELECT *,CASE WHEN low<>high THEN 'conflicting' WHEN observed>0 THEN 'observed'
         WHEN unsupported>0 THEN 'unsupported' WHEN invalid>0 THEN 'invalid' ELSE 'missing' END AS state
@@ -138,6 +155,9 @@ export const NEIGHBORHOOD_SHARED_STOCK_METRIC_PAGE_SQL = stockMetricSql(`
       SELECT typed->'observations' AS observations FROM app.neighborhood_frozen_typed_rows
       WHERE generation_id=$2::uuid AND profile_sha256=$8 AND effective_date=$5::text::date
         AND kind='parcels' AND account_id=a.account_id`, true);
+export const NEIGHBORHOOD_SHARED_STOCK_METRIC_V2_PAGE_SQL = stockMetricSql(`
+      SELECT typed->'observations' AS observations FROM app.neighborhood_frozen_typed_v2_rows
+      WHERE generation_id=$2::uuid AND profile_sha256=$8 AND kind='parcels' AND account_id=a.account_id`, true, true);
 
 function exactDecimal(value) {
   return typeof value === 'string' && /^(?:0|[1-9][0-9]{0,29})(?:\.[0-9]{1,12})?$/.test(value)
@@ -195,14 +215,23 @@ export function createNeighborhoodSharedJobStockMetricPages(client, rawOptions, 
   return stockMetricPages(client, rawOptions, rawGraph, effectiveDate, true);
 }
 
+/** Explicit V2 DATA projection. The owning transaction supplies its retained
+ * effective date after verifying actual issued V2 graph/geography/identity
+ * heads and current rights. Shared syntax alone never authorizes a report. */
+export function createNeighborhoodSharedJobStockMetricPagesV2(client, rawOptions, rawGraph, effectiveDate) {
+  return stockMetricPages(client, rawOptions, rawGraph, effectiveDate, 'v2');
+}
+
 function stockMetricPages(client, rawOptions, rawGraph, effectiveDate, shared) {
+  const neutral = shared === 'v2';
   const options = data(rawOptions, ['claim','scope','actorUserId','geometryInput','discovery','subjectIntent','checkBudget']);
   if (typeof options.checkBudget !== 'function') fail('invalid_input');
   const graph = data(rawGraph, ['root','layer_counts']), ref = data(graph.root, ['content_sha256','canonical_utf8_bytes']);
   const root = prepareNeighborhoodCohortBlobReference(ref.content_sha256,ref.canonical_utf8_bytes);
   const kinds = ['parcels','accounts','source_records','sales','sale_links','sync_state','sync_runs'];
   const counts = data(graph.layer_counts, kinds); if (!kinds.every(k => integer(counts[k]))) fail('invalid_input');
-  const effective = assessmentDate(effectiveDate), completeProfile = getNeighborhoodFrozenTypedOriginalV1Profile(), typedProfile = completeProfile.profile_ref;
+  const effective = assessmentDate(effectiveDate), completeProfile = neutral
+    ? getNeighborhoodFrozenTypedOriginalV2Profile() : getNeighborhoodFrozenTypedOriginalV1Profile(), typedProfile = completeProfile.profile_ref;
   const stockStore = createNeighborhoodFrozenJobStock(client, options), check = options.checkBudget;
   let busy = false, queries = 0, bytes = 0;
   const query = async (text, values) => {
@@ -220,9 +249,10 @@ function stockMetricPages(client, rawOptions, rawGraph, effectiveDate, shared) {
         status: 'complete', source_snapshot: original.source_snapshot, started_at: original.source_transaction_started_at,
         completed_at: original.completed_at, layer_counts: original.layer_counts,
         row_count: original.row_count, payload_utf8_bytes: original.payload_utf8_bytes };
-      const sharedBinding = assessmentEvidenceDigest({ source: sharedSource, profile: completeProfile, effective_date: effective });
-      const headerSql = shared ? NEIGHBORHOOD_SHARED_TYPED_SQL.read : READ;
-      const headerValues = shared ? [stock.generation_id, typedProfile.content_sha256, effective] : parameters;
+      const sharedBinding = assessmentEvidenceDigest({ source: sharedSource, profile: completeProfile,
+        ...(neutral ? {} : { effective_date: effective }) });
+      const headerSql = neutral ? NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read : shared ? NEIGHBORHOOD_SHARED_TYPED_SQL.read : READ;
+      const headerValues = shared ? [stock.generation_id, typedProfile.content_sha256, ...(neutral ? [] : [effective])] : parameters;
       const validateHeader = row => {
         if (shared) {
           const h = data(row, ['binding_sha256','source_metadata','definition_json','progress','status','completed_at']);
@@ -231,7 +261,7 @@ function stockMetricPages(client, rawOptions, rawGraph, effectiveDate, shared) {
           if (h.status !== 'complete' || h.binding_sha256 !== sharedBinding || !same(h.source_metadata, sharedSource)
             || h.definition_json !== completeProfile.definition_blob.canonical_json
             || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(h.completed_at ?? '')
-            || p.format !== 'shared_frozen_typed_progress_v1' || p.binding_sha256 !== sharedBinding
+            || p.format !== (neutral ? 'shared_frozen_typed_progress_v2' : 'shared_frozen_typed_progress_v1') || p.binding_sha256 !== sharedBinding
             || p.kind_index !== 7 || p.after !== '' || p.layer_rows !== 0 || p.typed_rows !== original.row_count
             || typeof bytes !== 'string' || !/^(?:0|[1-9][0-9]{0,18})$/.test(bytes)
             || BigInt(bytes) > 8_000_000_000n || BigInt(bytes) < BigInt(p.typed_rows)
@@ -246,7 +276,8 @@ function stockMetricPages(client, rawOptions, rawGraph, effectiveDate, shared) {
       validateHeader(await query(headerSql, headerValues));
       const values = [...parameters, page.cursor, page.rowLimit, effective, L.encoded_bytes, L.account_bytes];
       if (shared) values.push(typedProfile.content_sha256);
-      const result = await query(shared ? NEIGHBORHOOD_SHARED_STOCK_METRIC_PAGE_SQL : NEIGHBORHOOD_FROZEN_STOCK_METRIC_PAGE_SQL, values);
+      const result = await query(neutral ? NEIGHBORHOOD_SHARED_STOCK_METRIC_V2_PAGE_SQL
+        : shared ? NEIGHBORHOOD_SHARED_STOCK_METRIC_PAGE_SQL : NEIGHBORHOOD_FROZEN_STOCK_METRIC_PAGE_SQL, values);
       if (!Number.isInteger(result.page_count) || !Number.isInteger(result.candidate_count)
         || result.page_count < 0 || result.candidate_count < result.page_count || result.candidate_count > page.rowLimit
         || result.invalid_count !== 0 || result.oversized_count !== 0 || typeof result.page_json !== 'string') fail('invalid_result');
@@ -261,14 +292,14 @@ function stockMetricPages(client, rawOptions, rawGraph, effectiveDate, shared) {
       if (result.next_cursor !== (rows.length ? previous : null) || rows.length === 0 && result.candidate_count !== 0) fail('invalid_result');
       if (!same(await stockStore.read(), stock)) fail('binding_changed'); check(); validateHeader(await query(headerSql, headerValues));
       return freeze({ status: 'stock_account_metric_page', authority: 'not_established', coverage: 'one_account_page_only',
-        profile: PROFILE, typed_original_profile_ref: typedProfile, source_graph_root: root,
+        profile: neutral ? V2_PROFILE : PROFILE, typed_original_profile_ref: typedProfile, source_graph_root: root,
         operation_id: stock.operation_id, generation_id: stock.generation_id, spatial_definition_sha256: stock.definition_sha256,
         source_original_sha256: stock.source_original_sha256, effective_date: effective,
         population: stock.population, source_part_population_count: String(counts.parcels),
         cursor: page.cursor, row_limit: page.rowLimit, rows, next_cursor: rows.length ? previous : page.cursor,
         end_of_population: result.candidate_count < page.rowLimit && result.page_count === result.candidate_count,
-        ...(shared ? { shared_typed_generation_reference: { shared_typed_reference_version: 1,
-          generation_id: stock.generation_id, profile_ref: typedProfile, effective_date: effective,
+        ...(shared ? { shared_typed_generation_reference: { shared_typed_reference_version: neutral ? 2 : 1,
+          generation_id: stock.generation_id, profile_ref: typedProfile, ...(neutral ? {} : { effective_date: effective }),
           binding_sha256: sharedBinding, source_original_sha256: stock.source_original_sha256 } } : {}),
         source_freshness: 'not_established', source_acquisition: 'not_established', report_update: 'none' });
     } finally { busy = false; }

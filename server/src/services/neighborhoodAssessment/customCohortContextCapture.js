@@ -26,7 +26,8 @@ import { createNeighborhoodFrozenJobStockOriginals } from './neighborhoodFrozenJ
 import { createNeighborhoodFrozenJobSourceIdentity } from './neighborhoodFrozenJobSourceIdentity.js';
 import { createNeighborhoodFrozenJobTypedOriginals } from './neighborhoodFrozenJobTypedOriginals.js';
 import { getNeighborhoodFrozenTypedOriginalV1Profile } from './neighborhoodFrozenTypedOriginalV1.js';
-import { createNeighborhoodFrozenJobStockMetricPages, createNeighborhoodSharedJobStockMetricPages, prepareNeighborhoodFrozenStockMetricPage }
+import { createNeighborhoodFrozenJobStockMetricPages, createNeighborhoodSharedJobStockMetricPages,
+  createNeighborhoodSharedJobStockMetricPagesV2, prepareNeighborhoodFrozenStockMetricPage }
   from './neighborhoodFrozenJobStockMetricPages.js';
 import { createNeighborhoodFrozenJobSourcePages,createNeighborhoodPreparedJobSourcePages } from './neighborhoodFrozenSourceClosurePages.js';
 import { createNeighborhoodFrozenJobSourceSeeds } from './neighborhoodFrozenJobSourceSeeds.js';
@@ -138,6 +139,8 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingStockMetrics: true, allowedPhases: ['frozen_typed_v1'] },
   shared_stock_metrics_v1: { verifying: true, stockVerifying: true, identityVerifying: true,
     readingSharedStockMetrics: true, allowedPhases: ['frozen_identity_v1', 'frozen_typed_v1'] },
+  shared_stock_metrics_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    readingSharedStockMetrics: true, neutralSharedMetrics: true, allowedPhases: ['frozen_identity_refs_v2'] },
 });
 function fail(reason, detail, captureCounts) {
   const error = Object.assign(new Error(`custom_cohort_capture_${reason}`), {
@@ -1567,11 +1570,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     if(typeof stage!=='string'||!Object.hasOwn(FROZEN_SOURCE_STAGES,stage))
       fail('frozen_source_representation_unsupported');
     const {referencesV2=false,verifying=false,stockVerifying=false,identityVerifying=false,
-      typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
+      typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     if(referencesV2){
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
       const descriptors=Object.getOwnPropertyDescriptors(options),keys=Reflect.ownKeys(descriptors);
-      if(keys.some(key=>!['captureJobClaim','signal','deadline'].includes(key)
+      const admittedKeys=['captureJobClaim','signal','deadline',...(readingSharedStockMetrics?['stockMetricPage']:[])];
+      if(keys.some(key=>!admittedKeys.includes(key)
         ||!descriptors[key].enumerable||!Object.hasOwn(descriptors[key],'value')))fail('invalid_options');
       options=Object.fromEntries(keys.map(key=>[key,descriptors[key].value]));
     }
@@ -1808,6 +1812,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           issued=prepareCohortSourceIdentityReceiptV2(issued,expected);
           if(issued.sequence!==identityAnchor.sequence)fail('checkpoint_conflict');
         }
+        if(readingSharedStockMetrics&&issued?.after.kind_index!==COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.length)
+          fail('unfinished_identity_verification');
         // Keep the original exact all-date one-hop identity SQL unchanged.
         // Its real stock/graph digest, native identities and coverage are not
         // established by DATA validation, a hash or a free DONE checkpoint.
@@ -1888,7 +1894,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         // checks remain mandatory. Never materialize on a cache miss or copy
         // typed payloads/profile blobs/checkpoints into this report's job.
         const graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
-        stockMetricResult=await createNeighborhoodSharedJobStockMetricPages(client,stockOptions,graph,context.effective_date).page(metricPage);
+        const reader=neutralSharedMetrics?createNeighborhoodSharedJobStockMetricPagesV2:createNeighborhoodSharedJobStockMetricPages;
+        stockMetricResult=await reader(client,stockOptions,graph,context.effective_date).page(metricPage);
       }
       input=freeze({...input,auth:await loadCurrentCustomCohortJobActor(client,input.auth.userId,scope.organization_id)});
       assertTarget(await resolveTarget(client,input,true),target);
@@ -2104,6 +2111,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     // Exact prepared-cache reuse is separate from the per-job V1 typed path.
     // Still internal/unmounted: no new job phase, builder, schedule or Apply.
     readSharedFrozenCaptureJobStockMetrics: (value, options = {}) => frozenCaptureJobSourceStage(value, options, 'shared_stock_metrics_v1'),
+    readSharedFrozenCaptureJobStockMetricsReferencesV2: (value, options = {}) => frozenCaptureJobSourceStage(value, options, 'shared_stock_metrics_refs_v2'),
     async capture(value, options = {}) {
     if (!options || Object.getPrototypeOf(options) !== Object.prototype)
       fail('invalid_options');

@@ -6,6 +6,11 @@ import { prepareNeighborhoodCiDatabase } from './helpers/neighborhoodCiDatabase.
 import { NEIGHBORHOOD_CACHED_SOURCE_SCHEMA } from './fixtures/neighborhoodCachedSourceSchemaFixture.js';
 import { runNeighborhoodGroupIndex,getPreparedNeighborhoodGroupSummary }
   from '../src/services/neighborhoodAssessment/neighborhoodGroupIndex.js';
+import { materializeNeighborhoodFrozenSourceGeneration }
+  from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourceGeneration.js';
+import { materializeNeighborhoodFrozenCadImprovements,getNeighborhoodFrozenCadImprovementProfile,
+  NEIGHBORHOOD_FROZEN_CAD_IMPROVEMENT_SQL as CAD_SQL }
+  from '../src/services/neighborhoodAssessment/neighborhoodFrozenCadImprovements.js';
 import { createCustomCohortCaptureJobRepository }
   from '../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
 import { withCustomCohortJobTransaction }
@@ -118,6 +123,8 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     // The isolated UAD fixture has bedroom/bath and secondary rows but omits
     // the DCAD pool column. Add it only inside this throwaway child database.
     await pool.query('ALTER TABLE core.primary_improvements ADD COLUMN IF NOT EXISTS pool boolean');
+    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM pg_indexes WHERE schemaname='core'
+      AND tablename='primary_improvements' AND indexname='neighborhood_cad_primary_original_key_idx'`)).rows[0].n,1);
     assert.equal((await pool.query(`SELECT count(*)::int AS count FROM pg_indexes
       WHERE schemaname='app' AND tablename='neighborhood_custom_cohort_prepared_generation_pins'
         AND indexname='neighborhood_cohort_prepared_pins_generation_idx'`)).rows[0].count,1,
@@ -155,13 +162,15 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
              (12,'INDEX-C','2025-01-01',500000,10),
              (13,'INDEX-D','2025-02-01',150000,20)`);
     await pool.query(`INSERT INTO core.primary_improvements(account_id,bedroom_count,bath_count,pool)
-      VALUES ('INDEX-A',3,2,true),('INDEX-B',4,NULL,NULL),('INDEX-C',NULL,NULL,false)`);
+      VALUES ('INDEX-A',3,2.00,true),('INDEX-B',4,NULL,NULL),('INDEX-C',NULL,NULL,false)`);
     await pool.query(`INSERT INTO core.secondary_improvements(id,account_id,sec_imp_type,sec_imp_sqft)
       VALUES (1,'INDEX-A','ATTACHED GARAGE',400),(2,'INDEX-B','DETACHED GARAGE',500),
              (3,'INDEX-A','STORAGE BUILDING',100),(4,'INDEX-C','POOL',250)`);
+    await pool.query('UPDATE core.secondary_improvements SET sec_imp_number=1 WHERE id IN (1,3)');
     await pool.query(`UPDATE gis.dcad_parcels SET geom=ST_Multi(ST_MakeEnvelope(-96.7,32.9,-96.699,32.901,4326)) WHERE object_id=1`);
     const originalGeometry=(await pool.query("SELECT encode(ST_AsEWKB(geom),'hex') AS geometry FROM gis.dcad_parcels WHERE object_id=1")).rows[0].geometry;
-    const first=await runNeighborhoodGroupIndex(pool,{batchSize:1,logger:{info(){}},retainOriginalSources:true});
+    const first=await runNeighborhoodGroupIndex(pool,{batchSize:1,logger:{info(){}},retainOriginalSources:true,
+      retainCadImprovementOriginals:true});
     assert.equal(first.status,'complete');
     assert.equal(first.parcels,5);
     assert.equal(first.sales,4);
@@ -171,6 +180,77 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     const original=(await pool.query("SELECT payload FROM app.neighborhood_frozen_source_rows WHERE generation_id=$1 AND kind='parcels' AND row_key='1'",[first.generationId])).rows[0].payload;
     assert.equal(original.stored_geometry_ewkb,originalGeometry,'nightly materialization preserves exact original EWKB');
     assert.equal(original.residential_area_sqft,'1000');
+    const cadHeader=(await pool.query('SELECT * FROM app.neighborhood_frozen_cad_improvement_generations WHERE generation_id=$1',[first.generationId])).rows[0];
+    assert.equal(cadHeader.status,'complete');assert.equal(cadHeader.source_snapshot,frozen.source_snapshot);
+    assert.equal((await pool.query(`SELECT cad.source_transaction_started_at=source.source_transaction_started_at AS exact
+      FROM app.neighborhood_frozen_cad_improvement_generations cad JOIN app.neighborhood_frozen_source_generations source USING(generation_id)
+      WHERE generation_id=$1`,[first.generationId])).rows[0].exact,true,'native timestamp equality retains microseconds');
+    assert.equal(cadHeader.row_count,'7');assert.deepEqual(cadHeader.expected_counts,{primary:'3',secondary:'4'});
+    assert.equal(cadHeader.profile_sha256,getNeighborhoodFrozenCadImprovementProfile().profile_ref.content_sha256);
+    const cadRows=(await pool.query(`SELECT kind,row_key,payload FROM app.neighborhood_frozen_cad_improvement_rows
+      WHERE generation_id=$1 ORDER BY kind,row_key`,[first.generationId])).rows;
+    const primaryA=cadRows.find(r=>r.kind==='primary'&&r.row_key==='INDEX-A').payload;
+    assert.deepEqual(primaryA,{account_id:'INDEX-A',year_built:null,living_area_sqft:null,bedroom_count:'3',
+      bath_count:'2.00',number_units:null,pool:true});
+    assert.equal(cadRows.find(r=>r.row_key==='INDEX-B').payload.pool,null);
+    assert.equal(cadRows.find(r=>r.row_key==='INDEX-C').payload.pool,false);
+    assert.deepEqual(cadRows.filter(r=>r.kind==='secondary'&&r.payload.account_id==='INDEX-A').map(r=>
+      [r.row_key,r.payload.sec_imp_number,r.payload.sec_imp_type,r.payload.sec_imp_sqft]),
+      [['1','1','ATTACHED GARAGE','400'],['3','1','STORAGE BUILDING','100']],
+      'duplicate improvement numbers retain both native row identities, not one inferred garage');
+    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM app.neighborhood_frozen_cad_improvement_rows
+      WHERE generation_id=$1 AND (payload_sha256<>encode(sha256(convert_to(payload::text,'UTF8')),'hex')
+        OR payload_utf8_bytes<>octet_length(payload::text))`,[first.generationId])).rows[0].n,0);
+    for(const sql of ['UPDATE app.neighborhood_frozen_cad_improvement_rows SET payload=payload WHERE generation_id=$1',
+      'DELETE FROM app.neighborhood_frozen_cad_improvement_rows WHERE generation_id=$1',
+      'UPDATE app.neighborhood_frozen_cad_improvement_generations SET row_count=0 WHERE generation_id=$1'])
+      await assert.rejects(pool.query(sql,[first.generationId]),error=>error.code==='55000');
+    await assert.rejects(pool.query('TRUNCATE app.neighborhood_frozen_cad_improvement_rows'),error=>error.code==='55000');
+    await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
+      await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');await client.query("SET LOCAL TIME ZONE 'UTC'");
+      await materializeNeighborhoodFrozenCadImprovements(client,{generationId:first.generationId});
+    }),/same_building_source_snapshot_required/,'completed old capture is never silently backfilled');
+    // Actual fixed source-payload and independent-population guards, including
+    // letter account keys beside bigint secondary keys, in a disposable RR tx.
+    const cadCandidate=randomUUID(),cadClient=await pool.connect();
+    try {
+      await cadClient.query('BEGIN ISOLATION LEVEL REPEATABLE READ');await cadClient.query("SET LOCAL TIME ZONE 'UTC'");
+      await cadClient.query("INSERT INTO app.neighborhood_group_generations(generation_id,status) VALUES($1,'building')",[cadCandidate]);
+      const source=await materializeNeighborhoodFrozenSourceGeneration(cadClient,{generationId:cadCandidate,batchSize:1});
+      const profile=getNeighborhoodFrozenCadImprovementProfile(),args=[cadCandidate,source.source_snapshot,
+        source.source_transaction_started_at,profile.profile_ref.content_sha256,profile.definition_blob.canonical_json];
+      const refuses=async(sql,values,code='55000')=>{
+        await cadClient.query('SAVEPOINT cad_guard');await assert.rejects(cadClient.query(sql,values),e=>e.code===code);
+        await cadClient.query('ROLLBACK TO SAVEPOINT cad_guard');await cadClient.query('RELEASE SAVEPOINT cad_guard');
+      };
+      await refuses(CAD_SQL.begin,[...args,'{"primary":"0","secondary":"0"}']);
+      await cadClient.query(CAD_SQL.begin,[...args,'{"primary":"3","secondary":"4"}']);
+      await refuses(`INSERT INTO app.neighborhood_frozen_cad_improvement_rows(generation_id,kind,row_key,account_id,payload,payload_utf8_bytes,payload_sha256)
+        SELECT $1,'primary','INDEX-A','INDEX-A',$2::jsonb,octet_length(($2::jsonb)::text),encode(sha256(convert_to(($2::jsonb)::text,'UTF8')),'hex')`,
+      [cadCandidate,JSON.stringify({...primaryA,pool:false})]);
+      await refuses(`INSERT INTO app.neighborhood_frozen_cad_improvement_rows(generation_id,kind,row_key,account_id,payload,payload_utf8_bytes,payload_sha256)
+        SELECT $1,'secondary','1','INDEX-A',$2::jsonb,octet_length(($2::jsonb)::text),encode(sha256(convert_to(($2::jsonb)::text,'UTF8')),'hex')`,
+      [cadCandidate,JSON.stringify({id:'1',account_id:'INDEX-A',sec_imp_number:'1',sec_imp_type:'ATTACHED GARAGE',sec_imp_sqft:'401'})]);
+      await refuses(`INSERT INTO app.neighborhood_frozen_cad_improvement_rows(generation_id,kind,row_key,account_id,payload,payload_utf8_bytes,payload_sha256)
+        SELECT $1,'primary','INDEX-A','INDEX-A',$2::jsonb,1,repeat('a',64)`,[cadCandidate,JSON.stringify(primaryA)],'23514');
+      await refuses(`INSERT INTO app.neighborhood_frozen_cad_improvement_totals(generation_id,kind,row_count,payload_utf8_bytes)
+        VALUES($1,'primary',3,300)`,[cadCandidate]);
+      await refuses(CAD_SQL.complete,[cadCandidate,JSON.stringify({primary:{row_count:'0',payload_utf8_bytes:'0'},secondary:{row_count:'0',payload_utf8_bytes:'0'}}),'0','0']);
+      await refuses(`INSERT INTO app.neighborhood_frozen_cad_improvement_rows(generation_id,kind,row_key,account_id,payload,payload_utf8_bytes,payload_sha256)
+        SELECT $1,'secondary','9223372036854775808','INDEX-A',$2::jsonb,octet_length(($2::jsonb)::text),encode(sha256(convert_to(($2::jsonb)::text,'UTF8')),'hex')`,
+      [cadCandidate,JSON.stringify({id:'9223372036854775808',account_id:'INDEX-A',sec_imp_number:null,sec_imp_type:null,sec_imp_sqft:null})],'23514');
+    } finally {await cadClient.query('ROLLBACK');cadClient.release();}
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_group_generations WHERE generation_id=$1',[cadCandidate])).rows[0].n,0);
+    // Throw after the actual companion is complete but before index publication.
+    // The offline owner must roll back originals, companion and candidate alike.
+    await assert.rejects(runNeighborhoodGroupIndex(pool,{batchSize:1,retainOriginalSources:true,retainCadImprovementOriginals:true,
+      logger:{info(line){if(line.includes('phase=frozen_CAD_improvement_originals_complete'))throw new Error('synthetic CAD post-copy rollback');},warn(){}}}),/synthetic CAD post-copy rollback/);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_cad_improvement_generations')).rows[0].n,1);
+    assert.equal((await pool.query('SELECT generation_id::text AS id FROM app.neighborhood_group_active')).rows[0].id,first.generationId);
+    console.info('[native-frozen-CAD-improvement-originals]',{primary_rows:3,secondary_rows:4,duplicate_numbers_retained:true,
+      exact_decimal_null_boolean_literals:true,original_hash_mismatches:0,same_snapshot:true,forged_payload_counts_refused:true,
+      owner_rollback_before_publication:true,legacy_seven_layer_format_unchanged:true,
+      source_acquisition:false,amenity_resolution:false,report_update:false,production_latency:false});
     await assert.rejects(createNeighborhoodSharedTypedGeneration(pool,{generationId:first.generationId,effectiveDate:'2026-10-07'}).step(),
       /caller_transaction_required/,'autocommit must leave no shared cache header or rows');
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_typed_generations')).rows[0].n,0);
@@ -427,7 +507,8 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
         .readPreparedGeneration(claim,wrong)),/claim_lost/);
     }
     await pool.query('UPDATE gis.dcad_parcels SET residential_area_sqft=4000 WHERE object_id=2');
-    const second=await runNeighborhoodGroupIndex(pool,{batchSize:2,logger:{info(){}},retainOriginalSources:true});
+    const second=await runNeighborhoodGroupIndex(pool,{batchSize:2,logger:{info(){}},retainOriginalSources:true,
+      retainCadImprovementOriginals:true});
     assert.equal(second.status,'complete');
     const secondCache=await sharedTypedStep(pool,second.generationId);
     assert.equal(secondCache.all_layers_typed,false,'bounded partial shared generation is not complete');
@@ -449,6 +530,12 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     for(const table of ['neighborhood_frozen_typed_v2_rows','neighborhood_frozen_typed_v2_totals','neighborhood_frozen_typed_v2_generations'])
       assert.equal((await pool.query(`SELECT count(*)::int AS n FROM app.${table} WHERE generation_id=$1`,[second.generationId])).rows[0].n,0,
         'V2 partial cache retires before restrictive original FKs without disabling guards');
+    for(const table of ['neighborhood_frozen_cad_improvement_rows','neighborhood_frozen_cad_improvement_totals','neighborhood_frozen_cad_improvement_generations'])
+      assert.equal((await pool.query(`SELECT count(*)::int AS n FROM app.${table} WHERE generation_id=$1`,[second.generationId])).rows[0].n,0,
+        'unpinned CAD companion retires in bounded FK order before its original account rows');
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_cad_improvement_rows WHERE generation_id=$1',[first.generationId])).rows[0].n,7);
+    console.info('[native-frozen-CAD-retirement]',{unpinned_companion_retired:true,pinned_originals_preserved:true,
+      source_acquisition:false,production_latency:false});
     assert.deepEqual((await sharedTypedV2Step(pool,first.generationId)).progress,neutralComplete.progress,
       'new sweeps cannot retire or retype the exact pinned V2 cache');
     console.info('[native-shared-typed-v2-retirement]',{unpinned_partial_retired:true,pinned_complete_preserved:true,

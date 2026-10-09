@@ -148,6 +148,6 @@ test('V2 migration separates date-neutral keys, derives seven bounded totals and
   assert.match(sql, /reject_pinned_neighborhood_group_mutation/); assert.match(sql, /retirement_started_at IS NULL/);
   assert.doesNotMatch(sql, /ALTER TABLE|DROP TABLE|DISABLE|ON DELETE CASCADE/);
   const worker = readFileSync(new URL('../src/services/neighborhoodAssessment/neighborhoodGroupIndex.js', import.meta.url), 'utf8');
-  assert.match(worker, /PRUNE_SHARED_TYPED_V2,PRUNE_SHARED_TYPED_V2_TOTALS,PRUNE_SHARED_TYPED_V2_HEADERS,PRUNE_ORIGINALS/);
+  assert.match(worker, /PRUNE_SHARED_TYPED_V2,PRUNE_SHARED_TYPED_V2_TOTALS,PRUNE_SHARED_TYPED_V2_HEADERS,\s*PRUNE_CAD_ORIGINALS,PRUNE_CAD_TOTALS,PRUNE_CAD_HEADERS,PRUNE_ORIGINALS/);
   assert.equal(worker.includes('createNeighborhoodSharedTypedGenerationV2'), false);
 });

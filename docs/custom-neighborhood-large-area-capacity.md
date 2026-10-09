@@ -1,5 +1,68 @@
 # Complete larger-area Custom neighborhood studies
 
+## Same-snapshot local CAD improvement originals (2026-10-08, not activated)
+
+The seven frozen source kinds did not include the primary/secondary improvement
+rows used by the descriptive prepared amenity summaries. The new explicit
+`retainCadImprovementOriginals` offline option retains a separate format-1
+companion during the **same** writable REPEATABLE READ/UTC transaction as the
+complete original sweep, before its generation publishes. Both options default
+OFF; CLI, schedules, routes and application workers are unchanged. No older
+capture is backfilled and no existing seven-layer profile or report hash changes.
+
+`neighborhood-frozen-CAD-improvement-originals-v1` specifies seven primary fields
+(account, year, living area, bedrooms, baths, units and pool) and five secondary
+fields (native id, account, improvement number/type/area). Numeric values become
+exact decimal/integer text in SQL before JSON. NULL, false and zero remain
+different. Secondary native ids preserve duplicate improvement numbers, unknown
+types and rows outside any future job geometry. An absent primary row is not
+proof of no pool, bedroom count or garage. These local current-CAD literals are
+not verified GLA, historical stock or at-sale amenities. Additional provider
+fields/dictionaries and economic interpretation remain outside this profile.
+
+The additive `20261116_neighborhood_frozen_cad_improvements.sql` links every
+companion to its immutable original account and hash-binds the profile. Native
+guards require the same source snapshot/transaction, independently count both
+whole source tables and acknowledge each fixed source payload through native
+primary-key probes. SQL-derived hash/byte columns with exact native CHECKs and statement-derived totals
+prevent caller counters, invented payloads or prefixes from completing a
+population. Rows and completed headers are immutable. Bounded retirement deletes
+companion rows/totals/header before their restrictive original FKs; current pins
+prevent deletion. A failure must roll back the entire offline candidate, not
+publish an incomplete companion.
+
+Pages are capped at 250 rows/32 MB, each row at 1 MB, each layer at two million
+rows and the companion at 8 GB/one hour. Exceeding a cap refuses the operation;
+there is no clipping or summary fallback. Only aggregate counters enter Node.
+Focused tests cover exact plans/profiles, snapshot and closed-input refusal,
+counts, cursors, malformed/oversized pages, cancellation/deadlines and lost
+acknowledgements. The authored small PostgreSQL fixture checks exact decimal,
+NULL and boolean retention, duplicate numbers, forged payload/count refusal,
+rollback before publication, completed-capture backfill refusal, hashes,
+immutability and pinned/unpinned retirement. Exact head `95b38123a390328e5d9b39506ed86cd2a9c8b62b`
+passed native job `113660559850` in UAD run `37881040663`: 417 migration, seven
+native index, one subject, one edge and two bootstrap tests, zero failures/skips.
+The small native companion fixture retained three primary/four secondary originals
+with zero hash mismatches and passed rollback, lost-COMMIT reopen, forged payload/
+prefix refusal, immutability and pinned/unpinned retirement. Server passed 10,487
+with 61 separately database-gated skips; frontend passed 3,959 without skips.
+After integration of the protected #1224 merge, exact head
+`b47abacd84b2d6ab61cce665185869407326b32e` passed all 16 check runs. Native
+job `113685643265` in foundation run `37889072247` passed the same complete
+417/seven/one/one/two suites with zero failures/skips. Actual companion/retirement
+markers passed; server passed 10,487 with 61 separately database-gated skips,
+and frontend passed 3,959 without skips. Included CodeRabbit review
+`e19f59a9-e653-4151-aee5-3d1a5ad6e5b2` completed on that exact head at
+2026-10-09T06:25Z, processed all ten changed files and generated no actionable
+code findings or review threads. Its documentation-coverage warning is addressed
+by documenting helper contracts without changing implementation tokens. These
+comment/receipt-only edits still require fresh exact-head protected checks before
+normal merge; a later skipped review status is not an additional actual review.
+This is original retention groundwork, not amenity resolution,
+licensed acquisition, selected-union statistics, report publication or live
+speed acceptance. The offline owner still needs whole-source authority and
+activation prerequisites; this module does not establish a source grant.
+
 ## Current-authorized shared V2 stock projection (2026-10-08, not activated)
 
 `readSharedFrozenCaptureJobStockMetricsReferencesV2` is a separate internal
@@ -39,6 +102,17 @@ passed this small synthetic fixture. After integrating the protected parent
 merge, exact head `f9790f2754f92f72b31365f71a1bd1077e7d41f3` also passed native
 job `113678177909` in UAD run `37886697187`: 417 migration, seven native index,
 one subject, one edge and two bootstrap tests, with zero failures/skips.
+Documentation-corrected head `feb05078f668f143ab22cf2ad9480ccf45757d26` passed
+fresh native job `113682287221` in UAD run `37888013320` with the same zero-skip
+suite and all fourteen protected exact-head check runs successful. PR #1224
+normally protected-merged as `706fcf39e3133f3e3364fce4126f93a834b1c070` after
+included CodeRabbit review of all six implementation files at `f9790f27` and
+the sole documentation finding was corrected and resolved; no code changed
+between that review and `feb05078`. The actual owner marker confirms two
+accounts, issued prerequisites, effective-year projection and both-end rights/
+subject/claim/cancel refusal, with zero original reads/typed copies/checkpoint
+writes. Original `ec189d47` server/frontend receipts were 10,472 passed with 61
+separately DB-gated skips and 3,959 passed without skips, respectively.
 These receipts do not replace fresh exact-head protected CI after any further
 change and are not licensed acquisition or production-speed acceptance.
 DATA-only alternate dates do not establish historical stock or change an

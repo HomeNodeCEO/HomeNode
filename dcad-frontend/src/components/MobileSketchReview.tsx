@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import SketchCalculationBreakdown from "@/components/SketchCalculationBreakdown";
 
 import {
   type EditableInspectionSketch,
@@ -375,6 +376,7 @@ export default function MobileSketchReview({
       <div className="mt-2 text-[11px] leading-5 text-slate-500">
         Square footage updates from the measured wall geometry on screen. The server recalculates every area before saving and before producing the SVG or PDF exhibit.
       </div>
+      <SketchCalculationBreakdown breakdown={sketch.calculation_breakdown} revision={sketch.revision} dirty={dirty} />
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(340px,0.9fr)]">
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   AppState,
   Image,
   Platform,
@@ -35,6 +36,8 @@ import { usePhotoSync } from "./sync";
 import type { SelectedSketchRoom } from "../sketch/SketchEditorPanel";
 import { isUnreadableSqliteDatabaseError } from "../offline/databaseRecovery";
 import { COLORS } from "../theme";
+import { savePhotosToCameraRoll } from "./cameraRoll";
+import { cameraRollPhotos, cameraRollResultMessage } from "./cameraRollCore";
 
 function photoError(reason: unknown) {
   if (reason instanceof Error && reason.message === "mobile_offline_database_key_unavailable") {
@@ -211,6 +214,9 @@ export function PhotoCapturePanel({
   const [busy, setBusy] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [savingToPhotos, setSavingToPhotos] = useState(false);
+  const [cameraRollProgress, setCameraRollProgress] = useState("");
+  const [cameraRollMessage, setCameraRollMessage] = useState<string | null>(null);
   const captureCategories = workflowType === "uad_3_6" ? UAD_PHOTO_CATEGORIES : CUSTOM_PHOTO_CATEGORIES;
   const photoSync = usePhotoSync(store, api, ownerUserId, sessionId, online);
   const { refresh: refreshPhotoSummary, syncNow: syncPhotosNow } = photoSync;
@@ -424,6 +430,36 @@ export function PhotoCapturePanel({
     }
   };
 
+  const saveAllToPhotos = async () => {
+    if (savingToPhotos || busy || retrying) return;
+    setSavingToPhotos(true);
+    setCameraRollMessage(null);
+    setCameraRollProgress("Preparing originals…");
+    try {
+      // Include staged originals even if their queue rows have not been registered yet.
+      const staged = await recoverStagedPhotos(ownerUserId, sessionId);
+      const selected = cameraRollPhotos(photos, [...stagedPhotos, ...staged]);
+      const result = await savePhotosToCameraRoll(ownerUserId, sessionId, selected, (completed, total) => {
+        setCameraRollProgress(`Saving to Photos: ${completed}/${total}`);
+      });
+      setCameraRollMessage(selected.length ? cameraRollResultMessage(result) : "No local inspection photos to save.");
+    } catch (reason) {
+      const denied = reason instanceof Error && reason.message === "camera_roll_permission_required";
+      setCameraRollMessage(denied
+        ? "Photo-library permission was not granted. Allow HomeNode to add photos in your phone Settings, then try again. Your inspection photos are unchanged."
+        : "HomeNode could not save to Photos right now. Your originals and upload queue are unchanged; try again.");
+    } finally {
+      setSavingToPhotos(false);
+      setCameraRollProgress("");
+    }
+  };
+
+  const confirmSaveAllToPhotos = () => Alert.alert(
+    "Save inspection photos to your phone?",
+    "Copy all local photos for this inspection at original quality. HomeNode originals and cloud uploads stay unchanged. Photos may sync to iCloud or your phone's photo backup. Repeated saves skip copies HomeNode already saved.",
+    [{ text: "Cancel", style: "cancel" }, { text: "Save all photos", onPress: () => void saveAllToPhotos() }],
+  );
+
   return (
     <View style={styles.container}>
       <View style={styles.rowBetween}>
@@ -453,7 +489,9 @@ export function PhotoCapturePanel({
       <View style={styles.actions}>
         <Action title="Take photo" disabled={busy || retrying || remaining < 1} onPress={() => void takePhoto()} />
         <Action title={`Import photos (${remaining} available)`} secondary disabled={busy || retrying || remaining < 1} onPress={() => void importPhotos()} />
+        <Action title={savingToPhotos ? cameraRollProgress : "Save all photos to phone"} secondary disabled={savingToPhotos || busy || retrying || activePhotos.length + stagedPhotos.length < 1} onPress={confirmSaveAllToPhotos} />
       </View>
+      {cameraRollMessage ? <Text accessibilityLiveRegion="polite" style={styles.help}>{cameraRollMessage}</Text> : null}
       {busy || photoSync.syncing || retrying ? <View style={styles.progress}><ActivityIndicator color={COLORS.violet} /><Text style={styles.help}>{busy ? "Saving photo on this device…" : "Uploading saved photos… You can take another photo."}</Text></View> : null}
       <Text style={styles.syncLine}>
         {online ? "Online" : "Offline"} · {photoSync.summary.pending} pending · {photoSync.summary.failed} failed · {photoSync.summary.synchronized} verified

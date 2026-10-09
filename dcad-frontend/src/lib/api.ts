@@ -10,6 +10,7 @@ import {
 } from '@/lib/desktopSketchSaveOperation';
 import { createTimedRequestCache } from '@/lib/timedRequestCache';
 import type { NeighborhoodRelevanceAssessment } from '@/lib/neighborhoodRelevanceTypes';
+import type { SketchCalculationBreakdown } from '@/lib/sketchCalculationTypes';
 export type { NeighborhoodRelevanceAssessment } from '@/lib/neighborhoodRelevanceTypes';
 
 type Json = Record<string, unknown>;
@@ -457,6 +458,7 @@ export interface AppraisalAssignmentFile {
     workflow_type?: 'custom_appraisal' | 'uad_3_6' | 'property_tax_protest';
     revision: number;
     measurement_standard: 'ansi_z765_2021' | 'jurisdiction_required_other';
+    calculation_breakdown?: SketchCalculationBreakdown;
     measurement_method: 'exterior' | 'interior_perimeter' | 'plans' | 'mixed';
     review_status: 'draft' | 'appraiser_confirmed';
     confirmed_at: string | null;

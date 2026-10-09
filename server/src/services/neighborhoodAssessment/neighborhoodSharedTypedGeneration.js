@@ -2,7 +2,8 @@ import { performance } from 'node:perf_hooks';
 import { types } from 'node:util';
 import { assessmentDate, assessmentEvidenceDigest, canonicalAssessmentJson } from './contract.js';
 import { COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS as KINDS } from './cohortOriginalSourceChainV1.js';
-import { compileNeighborhoodFrozenTypedOriginalV1, getNeighborhoodFrozenTypedOriginalV1Profile } from './neighborhoodFrozenTypedOriginalV1.js';
+import { compileNeighborhoodFrozenTypedOriginalV1, getNeighborhoodFrozenTypedOriginalV1Profile,
+  compileNeighborhoodFrozenTypedOriginalV2, getNeighborhoodFrozenTypedOriginalV2Profile } from './neighborhoodFrozenTypedOriginalV1.js';
 
 export const NEIGHBORHOOD_SHARED_TYPED_LIMITS = Object.freeze({
   rows: 250, page_utf8_bytes: 2_100_000, step_utf8_bytes: 32_000_000,
@@ -34,10 +35,10 @@ function freeze(value) {
 const same = (a, b) => canonicalAssessmentJson(a) === canonicalAssessmentJson(b);
 const count = (n, max) => typeof n === 'string' && /^(?:0|[1-9][0-9]{0,18})$/.test(n) && BigInt(n) <= BigInt(max);
 function one(result) { if (result?.rowCount !== 1 || result.rows?.length !== 1) fail('invalid_result'); return result.rows[0]; }
-function progressOf(raw) {
+function progressOf(raw, format = FORMAT) {
   if (raw === null) return null;
   const p = data(raw, ['format', 'binding_sha256', 'kind_index', 'after', 'layer_rows', 'typed_rows', 'typed_utf8_bytes']);
-  if (p.format !== FORMAT || typeof p.binding_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(p.binding_sha256)
+  if (p.format !== format || typeof p.binding_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(p.binding_sha256)
     || !Number.isInteger(p.kind_index) || p.kind_index < 0 || p.kind_index > KINDS.length
     || !Number.isSafeInteger(p.layer_rows) || p.layer_rows < 0 || p.layer_rows > L.rows_per_layer
     || !count(p.typed_rows, L.total_rows) || !count(p.typed_utf8_bytes, L.total_typed_utf8_bytes)
@@ -110,6 +111,39 @@ const INSERT = `/* neighborhood-shared-typed:rows */ WITH input AS (
   RETURNING typed_utf8_bytes AS bytes
 ) SELECT count(*)::integer AS inserted_count,coalesce(sum(bytes),0)::text AS typed_utf8_bytes FROM written`;
 
+// Distinct fixed V2 tables/keys; a caller cannot pick a relation or reinterpret
+// a retained V1 cache. Source snapshots, page bounds and transaction ownership
+// are shared mechanics, not date/profile fallback or activation.
+const READ_V2 = `/* neighborhood-shared-typed-v2:read */ SELECT binding_sha256,source_metadata,definition_json,progress,status,
+  ${utcTimestamp('completed_at')} AS completed_at
+  FROM app.neighborhood_frozen_typed_v2_generations WHERE generation_id=$1::uuid AND profile_sha256=$2`;
+const PAGE_V2 = PAGE.replace('neighborhood-shared-typed:page', 'neighborhood-shared-typed-v2:page');
+const INSERT_V2 = `/* neighborhood-shared-typed-v2:rows */ WITH input AS (
+  SELECT * FROM jsonb_to_recordset($4::jsonb) AS x(row_key text,original_text text,typed jsonb)
+), written AS (
+  INSERT INTO app.neighborhood_frozen_typed_v2_rows
+    (generation_id,profile_sha256,kind,row_key,account_id,source_record_id,original_payload_sha256,typed)
+  SELECT $1::uuid,$2,$3,original.row_key,original.account_id,original.source_record_id,
+    input.typed->'original'->>'payload_sha256',input.typed FROM input
+  JOIN app.neighborhood_frozen_source_rows original ON original.generation_id=$1::uuid AND original.kind=$3 AND original.row_key=input.row_key
+  WHERE original.payload::text=input.original_text AND original.account_id IS NOT DISTINCT FROM input.typed->>'account_id'
+    AND original.source_record_id::text IS NOT DISTINCT FROM input.typed->>'source_record_id'
+    AND encode(sha256(convert_to(original.payload::text,'UTF8')),'hex')=input.typed->'original'->>'payload_sha256'
+  RETURNING typed_utf8_bytes AS bytes
+) SELECT count(*)::integer AS inserted_count,coalesce(sum(bytes),0)::text AS typed_utf8_bytes FROM written`;
+const BEGIN_V1 = `/* neighborhood-shared-typed:begin */ INSERT INTO app.neighborhood_frozen_typed_generations
+  (generation_id,profile_sha256,effective_date,binding_sha256,source_metadata,definition_json,progress)
+  VALUES($1::uuid,$2,$3::date,$4,$5::jsonb,$6,$7::jsonb)`;
+const BEGIN_V2 = `/* neighborhood-shared-typed-v2:begin */ INSERT INTO app.neighborhood_frozen_typed_v2_generations
+  (generation_id,profile_sha256,binding_sha256,source_metadata,definition_json,progress)
+  VALUES($1::uuid,$2,$3,$4::jsonb,$5,$6::jsonb)`;
+const UPDATE_V1 = `/* neighborhood-shared-typed:progress */ UPDATE app.neighborhood_frozen_typed_generations
+  SET progress=$4::jsonb,status=$5,completed_at=CASE WHEN $5='complete' THEN clock_timestamp() ELSE NULL END
+  WHERE generation_id=$1::uuid AND profile_sha256=$2 AND effective_date=$3::date AND status='building' AND progress=$6::jsonb`;
+const UPDATE_V2 = `/* neighborhood-shared-typed-v2:progress */ UPDATE app.neighborhood_frozen_typed_v2_generations
+  SET progress=$3::jsonb,status=$4,completed_at=CASE WHEN $4='complete' THEN clock_timestamp() ELSE NULL END
+  WHERE generation_id=$1::uuid AND profile_sha256=$2 AND status='building' AND progress=$5::jsonb`;
+
 /** OFF/unmounted storage builder. Its trusted offline owner must authorize the
  * integrated source mix before and after the caller-owned transaction. No pool,
  * COMMIT, current-user grant, active-generation fallback, job phase or publication
@@ -121,20 +155,36 @@ const INSERT = `/* neighborhood-shared-typed:rows */ WITH input AS (
  * continuation requires a fresh builder, not a reset of a transaction budget.
  */
 export function createNeighborhoodSharedTypedGeneration(client, rawOptions) {
+  return sharedTypedGeneration(client, rawOptions, false);
+}
+
+/** Dormant generation/profile-only V2 syntax cache. An authorized offline owner
+ * must fence integrated source rights at both transaction ends. No report date,
+ * stock/selection, licensed acquisition, route, job dispatcher or worker is
+ * supplied. Report consumers must separately apply retained date policies. */
+export function createNeighborhoodSharedTypedGenerationV2(client, rawOptions) {
+  return sharedTypedGeneration(client, rawOptions, true);
+}
+
+function sharedTypedGeneration(client, rawOptions, neutral) {
   if (typeof client?.query !== 'function') fail('client_required');
-  const o = data(rawOptions, ['generationId', 'effectiveDate'], ['signal', 'checkBudget']);
+  const o = data(rawOptions, neutral ? ['generationId'] : ['generationId', 'effectiveDate'], ['signal', 'checkBudget']);
   if (typeof o.generationId !== 'string' || !UUID.test(o.generationId)
     || o.signal !== undefined && !(o.signal instanceof AbortSignal)
     || o.checkBudget !== undefined && typeof o.checkBudget !== 'function') fail('invalid_input');
-  const generation = o.generationId, effective = assessmentDate(o.effectiveDate), signal = o.signal;
-  const profile = getNeighborhoodFrozenTypedOriginalV1Profile(), key = [generation, profile.profile_ref.content_sha256, effective];
+  const generation = o.generationId, effective = neutral ? null : assessmentDate(o.effectiveDate), signal = o.signal;
+  const profile = neutral ? getNeighborhoodFrozenTypedOriginalV2Profile() : getNeighborhoodFrozenTypedOriginalV1Profile();
+  const key = [generation, profile.profile_ref.content_sha256, ...(neutral ? [] : [effective])];
+  const format = neutral ? 'shared_frozen_typed_progress_v2' : FORMAT;
+  const prepareProgress = raw => progressOf(raw, format);
+  const read = neutral ? READ_V2 : READ, lock = `${read} FOR UPDATE NOWAIT`, page = neutral ? PAGE_V2 : PAGE;
   const deadline = performance.now() + L.step_ms; let busy = false, used = false, queries = 0, bytes = 0;
   const check = () => { if (signal?.aborted) fail('cancelled'); o.checkBudget?.();
     if (signal?.aborted) fail('cancelled'); if (performance.now() >= deadline) fail('deadline'); };
   const query = async (text, values) => { check(); if (++queries > L.queries) fail('query_limit');
     const r = await client.query({ text, values, query_timeout: Math.max(1, Math.min(5000, Math.ceil(deadline - performance.now()))) }); check(); return r; };
   return Object.freeze({ async step(rawProgress = null) {
-    const supplied = progressOf(rawProgress);
+    const supplied = prepareProgress(rawProgress);
     if (busy) fail('concurrent_operation'); if (used) fail('builder_already_used'); check(); busy = true; used = true;
     try {
       const tx = snapshot(await query(SNAPSHOT));
@@ -143,17 +193,15 @@ export function createNeighborhoodSharedTypedGeneration(client, rawOptions) {
       // an ending-only probe would be too late to roll those writes back.
       if (!same(tx, snapshot(await query(SNAPSHOT)))) fail('caller_transaction_changed');
       const source = sourceOf(await query(SOURCE, [generation]), generation);
-      const binding = assessmentEvidenceDigest({ source, profile, effective_date: effective });
-      const found = await query(READ, key); let p;
+      const binding = assessmentEvidenceDigest({ source, profile, ...(neutral ? {} : { effective_date: effective }) });
+      const found = await query(read, key); let p;
       if (found.rowCount === 0 && found.rows?.length === 0) {
         if (supplied) fail('checkpoint_mismatch');
-        p = progressOf({ format: FORMAT, binding_sha256: binding, kind_index: 0, after: '', layer_rows: 0, typed_rows: '0', typed_utf8_bytes: '0' });
-        const r = await query(`/* neighborhood-shared-typed:begin */ INSERT INTO app.neighborhood_frozen_typed_generations
-          (generation_id,profile_sha256,effective_date,binding_sha256,source_metadata,definition_json,progress)
-          VALUES($1::uuid,$2,$3::date,$4,$5::jsonb,$6,$7::jsonb)`, [...key, binding, JSON.stringify(source), profile.definition_blob.canonical_json, JSON.stringify(p)]);
+        p = prepareProgress({ format, binding_sha256: binding, kind_index: 0, after: '', layer_rows: 0, typed_rows: '0', typed_utf8_bytes: '0' });
+        const r = await query(neutral ? BEGIN_V2 : BEGIN_V1, [...key, binding, JSON.stringify(source), profile.definition_blob.canonical_json, JSON.stringify(p)]);
         if (r?.rowCount !== 1) fail('write_lost');
       } else {
-        const h = data(one(found), ['binding_sha256', 'source_metadata', 'definition_json', 'progress', 'status', 'completed_at']); p = progressOf(h.progress);
+        const h = data(one(found), ['binding_sha256', 'source_metadata', 'definition_json', 'progress', 'status', 'completed_at']); p = prepareProgress(h.progress);
         if (!p || p.binding_sha256 !== binding || h.binding_sha256 !== binding || !same(h.source_metadata, source)
           || h.definition_json !== profile.definition_blob.canonical_json || supplied && !same(supplied, p)
           || h.status !== (p.kind_index === KINDS.length ? 'complete' : 'building')
@@ -168,9 +216,9 @@ export function createNeighborhoodSharedTypedGeneration(client, rawOptions) {
         // Completed immutable metadata can be reused concurrently. Only a
         // building-cache continuation needs an exclusive header lock; verify
         // that it is still the same persisted checkpoint before inserting rows.
-        if (!same(one(await query(LOCK, key)), h)) fail('checkpoint_mismatch');
+        if (!same(one(await query(lock, key)), h)) fail('checkpoint_mismatch');
       }
-      const kind = KINDS[p.kind_index], r = one(await query(PAGE, [generation, kind, p.after, L.rows, L.page_utf8_bytes]));
+      const kind = KINDS[p.kind_index], r = one(await query(page, [generation, kind, p.after, L.rows, L.page_utf8_bytes]));
       if (typeof r.page_json !== 'string' || Buffer.byteLength(r.page_json) > L.page_utf8_bytes
         || !Number.isInteger(r.page_count) || r.page_count < 0 || r.page_count > L.rows
         || !Number.isInteger(r.candidate_count) || r.candidate_count < r.page_count || r.candidate_count > L.rows) fail('page_corrupt');
@@ -182,32 +230,31 @@ export function createNeighborhoodSharedTypedGeneration(client, rawOptions) {
         if (!isRowKey(row.row_key) || !row.row_key || Buffer.compare(Buffer.from(row.row_key), Buffer.from(last)) <= 0) fail('page_corrupt');
         last = row.row_key; check();
         return { row_key: row.row_key, original_text: row.payload_text,
-          typed: compileNeighborhoodFrozenTypedOriginalV1({ kind, ...row, effective_date: effective }) };
+          typed: neutral ? compileNeighborhoodFrozenTypedOriginalV2({ kind, ...row })
+            : compileNeighborhoodFrozenTypedOriginalV1({ kind, ...row, effective_date: effective }) };
       });
       if (r.next_cursor !== last) fail('page_corrupt');
       const encoded = JSON.stringify(input); bytes += Buffer.byteLength(r.page_json) + Buffer.byteLength(encoded);
       if (bytes > L.step_utf8_bytes) fail('byte_limit');
       let writtenBytes = 0;
       if (input.length) {
-        const ack = one(await query(INSERT, [...key, kind, encoded]));
+        const ack = one(await query(neutral ? INSERT_V2 : INSERT, [...key, kind, encoded]));
         if (ack.inserted_count !== input.length || !count(ack.typed_utf8_bytes, L.step_utf8_bytes)
           || Number(ack.typed_utf8_bytes) < input.length) fail('original_mismatch');
         writtenBytes = Number(ack.typed_utf8_bytes);
       }
       const seen = p.layer_rows + input.length, end = r.candidate_count < L.rows && r.page_count === r.candidate_count;
       if (seen > Number(source.layer_counts[kind].row_count) || end && seen !== Number(source.layer_counts[kind].row_count)) fail('layer_count_mismatch');
-      const next = progressOf({ ...p, kind_index: p.kind_index + (end ? 1 : 0), after: end ? '' : last, layer_rows: end ? 0 : seen,
+      const next = prepareProgress({ ...p, kind_index: p.kind_index + (end ? 1 : 0), after: end ? '' : last, layer_rows: end ? 0 : seen,
         typed_rows: String(Number(p.typed_rows) + input.length), typed_utf8_bytes: String(Number(p.typed_utf8_bytes) + writtenBytes) });
       // The database completion trigger independently reconciles every layer
       // against exact INSERT-transition totals (at most seven indexed rows).
       // It neither scans the city cache nor trusts caller-verified progress.
       let update;
-      try { update = await query(`/* neighborhood-shared-typed:progress */ UPDATE app.neighborhood_frozen_typed_generations
-        SET progress=$4::jsonb,status=$5,completed_at=CASE WHEN $5='complete' THEN clock_timestamp() ELSE NULL END
-        WHERE generation_id=$1::uuid AND profile_sha256=$2 AND effective_date=$3::date AND status='building' AND progress=$6::jsonb`,
+      try { update = await query(neutral ? UPDATE_V2 : UPDATE_V1,
       [...key, JSON.stringify(next), next.kind_index === KINDS.length ? 'complete' : 'building', JSON.stringify(p)]); }
       catch (error) {
-        if (error?.code === '55000' && error.message === 'neighborhood_shared_typed_population_incomplete') fail('population_incomplete');
+        if (error?.code === '55000' && error.message === (neutral ? 'neighborhood_shared_typed_v2_population_incomplete' : 'neighborhood_shared_typed_population_incomplete')) fail('population_incomplete');
         throw error;
       }
       if (update?.rowCount !== 1) fail('write_lost');
@@ -218,8 +265,9 @@ export function createNeighborhoodSharedTypedGeneration(client, rawOptions) {
           || !same(snapshot(await query(SNAPSHOT)), tx)) fail('source_changed'); check();
       }
       function receipt(progress, advanced, reused) {
-        return freeze({ status: 'shared_typed_generation_progress', authority: 'not_established',
-          coverage: 'individual_original_interpretations_only', generation_id: generation, effective_date: effective,
+        return freeze({ status: neutral ? 'shared_typed_generation_progress_v2' : 'shared_typed_generation_progress', authority: 'not_established',
+          coverage: 'individual_original_interpretations_only', generation_id: generation,
+          ...(neutral ? { temporal_basis: 'date_neutral_original_syntax' } : { effective_date: effective }),
           profile, source_metadata: source, progress, advanced, reused, all_layers_typed: progress.kind_index === KINDS.length,
           source_acquisition: 'not_established', report_update: 'none' });
       }
@@ -228,3 +276,5 @@ export function createNeighborhoodSharedTypedGeneration(client, rawOptions) {
 }
 
 export const NEIGHBORHOOD_SHARED_TYPED_SQL = Object.freeze({ snapshot: SNAPSHOT, source: SOURCE, read: READ, lock: LOCK, page: PAGE, insert: INSERT });
+export const NEIGHBORHOOD_SHARED_TYPED_V2_SQL = Object.freeze({ snapshot: SNAPSHOT, source: SOURCE,
+  read: READ_V2, lock: `${READ_V2} FOR UPDATE NOWAIT`, page: PAGE_V2, insert: INSERT_V2 });

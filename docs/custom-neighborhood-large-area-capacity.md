@@ -1,5 +1,63 @@
 # Complete larger-area Custom neighborhood studies
 
+## Shared date-neutral V2 syntax cache (2026-10-08, not activated)
+
+`compileNeighborhoodFrozenTypedOriginalV2` and the separate date-neutral reported
+witness profile accept exact original syntax without any appraisal date. Cache
+identity is **generation + complete retained profile**, not generation/profile/
+report/date. These are new content-addressed definitions; the existing V1 typed
+original and date-bound reported-witness definitions retain their exact hashes
+and behavior. No legacy cache or retained report silently changes semantics.
+
+Years are syntactically valid only from 1600 through 9999. Future years remain
+syntax observations, not proof of property existence at an appraisal date.
+Consumers must apply their retained effective-year rule before account resolution
+and aggregation and their observation-period rule before admitting transactions.
+Current CAD is not retrospective stock. Calendar dates, exact decimal strings,
+missing/invalid/unsupported/conflicting states, units and source provenance stay
+distinct. No normalized-price/unit fallback, floating point conversion, source
+grant or acquisition receipt is introduced.
+
+`createNeighborhoodSharedTypedGenerationV2` is an explicit dormant offline
+builder over the immutable original sweep. It requires a stable caller-owned
+writable REPEATABLE READ/UTC transaction, complete unretired generation metadata,
+one bounded step per builder, at most 250 byte-admitted originals per page, exact
+original text/hash/identity acknowledgements, persisted progress CAS and ending
+source/transaction checks. Lost acknowledgements reopen persisted progress
+without repeating the committed page. Finished reuse reads small metadata only;
+it does not retype, copy or count the complete population. Caller budgets,
+cancellation, empty terminal queries and existing byte ceilings still apply.
+
+The additive `20261115_neighborhood_shared_typed_v2_generations.sql` uses separate
+generation/profile keyed headers, rows and transition-derived per-layer totals.
+Profile definitions are hash-bound. Typed rows retain native original FKs, exact
+payload hashes, account/source associations, V2/profile identity and a date-neutral
+marker; date-bound rows are refused. Completion independently reconciles at most
+seven indexed totals rather than scanning the city cache. Complete rows/headers
+are immutable. Unpinned retired V2 rows, totals and headers are removed in bounded
+batches before originals; pinned data cannot be deleted or replaced. This extends
+cleanup only and does not schedule or turn on a builder.
+
+Focused tests cover all seven kinds, old-profile hash preservation, future-year
+separation, hostile inputs, exact decimals, full-250/short/empty tails, persisted
+reopen, V1 separation, transaction/budget checks, bad acknowledgements and bounded
+completion. The authored small PostgreSQL fixture tests actual storage, ending
+rollback, lost successful COMMIT, exact original mismatch refusal, immutability,
+no-date metadata reuse, preserved V1 cache and pinned/partial-cache retirement.
+**Native execution is pending cloud CI**. The fixture is not licensed >50k or
+5-mile/10-mile/city/retrospective acquisition, report integration or live speed
+acceptance. The existing synthetic 60,001-row V1 cache fixture does not prove this
+new V2 cache at that scale.
+
+The offline owner must still authorize the entire integrated source mix at both
+ends. No current-user job/HTTP path dispatches this builder; no report cache miss
+builds it. The current authorized V2 issued-head consumer, date-policy projection,
+CAD improvement/amenity lineage and transaction resolution are still subsequent
+work. Server-owned selection, exact selected-union medians/COD/quarters, coherent
+publication, durable workers/terminal pin transfer and licensed/live QA remain
+required. No source right, accepted report, genuine Hardy choice, Apply, worker,
+route/default, schedule, activation flag or Render deployment changes.
+
 ## Issued-head V2 source-identity verification (2026-10-08, not activated)
 
 `verifyFrozenCaptureJobSourceIdentityReferencesV2` is a separate internal owner
@@ -43,11 +101,18 @@ issuance boundary: guards do not replace original validation or current rights.
 Focused unit tests cover closed metadata, synthetic 60,001-row progression,
 seven exact counts, short/full-tail/empty transitions, fenced CAS, caller
 transaction refusal and scope/reference substitutions. The new native owner
-fixture is **pending protected cloud execution**, not yet an acceptance result:
+fixture passed protected cloud execution on PR #1222 exact head `1c326c6e`:
 real independent heads, unissued DONE refusal, short-prefix guard-only rollback,
 exact origin and missing-account guards, both-end license/role/subject/claim/
 cancel rollback, actual successful-COMMIT/lost-ACK next-layer resume, seven small
 no-payload receipts, ended replay, V1 separation and retained generation pin.
+All 17 protected check/status results passed; CodeRabbit reviewed that exact
+head without actionable findings. Normal merge is
+`e4ab2e37207777cbd54457f42b04c3f1aa5fddb4`. Actual PostgreSQL emitted the identity
+marker with seven layers, three source-account parcel parts/unknown origins,
+zero missing accounts, seven metadata writes and no original-payload copies.
+Migration tests passed 417/417 and native index tests 7/7 without skips; full
+server passed 10,456 (61 separately database-gated skips), frontend 3,959/3,959.
 This small native protocol fixture is not licensed >50k/5-mile/10-mile/city/
 retrospective or production saved-map-speed acceptance; full-250-tail behavior
 is currently unit/source-guard coverage, not native large-area acceptance.

@@ -44,7 +44,17 @@ reopen, V1 separation, transaction/budget checks, bad acknowledgements and bound
 completion. The authored small PostgreSQL fixture tests actual storage, ending
 rollback, lost successful COMMIT, exact original mismatch refusal, immutability,
 no-date metadata reuse, preserved V1 cache and pinned/partial-cache retirement.
-**Native execution is pending cloud CI**. The fixture is not licensed >50k or
+PR #1223 head `5d68b29a09fff69f181b838b9be125b8e017a83e` passed all 16 GitHub
+checks. UAD foundation run `37878562403`, native job `113652681029`, passed
+417 migration, 7 native index, 1 subject, 1 edge and 2 bootstrap tests without
+failures or skips. The actual `native-shared-typed-generation-v2` marker confirmed
+14 originals, one shared header, zero hash mismatches, ending rollback,
+lost-COMMIT-ACK reopen, immutable completion, zero-original/zero-write completed
+reuse and preserved V1 cache behavior. Native retirement confirmed unpinned
+partial cache removal and pinned complete cache preservation. Server passed
+10,467 tests with 61 separately DB-gated skips; frontend passed 3,959 without
+skips. These receipts verify the small native protocol only, not activation.
+The fixture is not licensed >50k or
 5-mile/10-mile/city/retrospective acquisition, report integration or live speed
 acceptance. The existing synthetic 60,001-row V1 cache fixture does not prove this
 new V2 cache at that scale.

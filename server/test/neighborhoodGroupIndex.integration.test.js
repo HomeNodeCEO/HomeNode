@@ -274,7 +274,12 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     for(const sql of ['UPDATE app.neighborhood_frozen_cad_improvement_rows SET payload=payload WHERE generation_id=$1',
       'DELETE FROM app.neighborhood_frozen_cad_improvement_rows WHERE generation_id=$1',
       'UPDATE app.neighborhood_frozen_cad_improvement_generations SET row_count=0 WHERE generation_id=$1'])
-      await assert.rejects(pool.query(sql,[first.generationId]),error=>error.code==='55000');
+      await assert.rejects(pool.query(sql,[first.generationId]),error=>error.code==='55000'
+        ||error.code==='23503'&&error.table==='neighborhood_frozen_cad_improvement_rows'
+          &&error.constraint==='neighborhood_frozen_typed_cad_r_generation_id_kind_row_key_fkey',
+      'original guards or the exact restrictive typed-CAD original FK refuse deletion');
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_cad_improvement_rows WHERE generation_id=$1',
+      [first.generationId])).rows[0].n,7,'all companion originals survive each refused deletion');
     await assert.rejects(pool.query('TRUNCATE app.neighborhood_frozen_cad_improvement_rows'),error=>error.code==='55000');
     await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
       await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');await client.query("SET LOCAL TIME ZONE 'UTC'");

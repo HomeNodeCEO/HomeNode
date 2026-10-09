@@ -1,5 +1,49 @@
 # Complete larger-area Custom neighborhood studies
 
+## Current-authorized shared V2 stock projection (2026-10-08, not activated)
+
+`readSharedFrozenCaptureJobStockMetricsReferencesV2` is a separate internal
+consumer, admitted only from `frozen_identity_refs_v2`. Actual independently
+issued completed graph, geographic-original and identity heads are required.
+Unissued DONE receipts and real partial identity heads refuse before shared
+cache I/O; a read cannot advance verification or materialize a missing cache.
+The existing V1 consumers, date-bound cache and retained profile hashes remain
+unchanged. There is no route/default or worker dispatch change.
+
+The fixed V2 SQL reads the already complete generation/profile keyed neutral
+cache against exact pinned stock accounts. Its retained effective date comes
+from the owner-resolved subject context, never a caller option. A syntactically
+valid future-year part becomes invalid before account resolution, so it cannot
+create a false conflict against an older admissible year. Original malformed
+cells still refuse the whole page. Exact decimal strings, replicated-value
+deduplication, conflicts, units and missing/invalid/unsupported part counts
+remain distinct. No part sums or JS floating-point values enter resolution.
+
+Pages stay bounded to 250 accounts/2.1 MB/16 KB per account. Whole-source part
+counts include that account's retained parts outside the geometry; these parts
+do not add outside accounts to the stock. Both transaction ends check current
+database actor, assignment, private draft, subject, source rights, claim, pin,
+stock, issued heads and cache metadata. No original payload reread, per-job
+typed copies, cache preparation, checkpoint/receipt publication, Apply or report
+update is performed by this consumer. A page end does not prove traversal of
+the complete population and is not a selected-union statistics receipt.
+
+Focused tests cover V2/V1 separation, neutral-cache reuse across DATA-only date
+variants, fixed SQL projection order, malformed future cells, exact decoder
+refusals and closed hostile-input admission. The authored small native fixture
+requires all three real issued heads, refuses unissued/partial identity before
+cache I/O, runs actual metric SQL, checks mixed old/future-year resolution and
+malformed-cell refusal, and injects ending license/role/subject/claim/cancel
+failures. **Native execution is pending cloud CI**; DATA-only alternate dates
+do not establish historical stock or change an authorized report's date.
+
+Remaining work includes improvement/amenity lineage, exact transaction resolution
+with retained observation-period policy, server-owned selection, complete-population
+selected-union medians/COD/quarter checks, coherent publication, durable workers
+and terminal pin transfer/retirement, licensed >50k/5-mile/10-mile/city/retrospective
+and live acceptance. Production, source rights, accepted reports and genuine
+Hardy choices remain unchanged; QA assignment 7 is the only Apply-test target.
+
 ## Shared date-neutral V2 syntax cache (2026-10-08, not activated)
 
 `compileNeighborhoodFrozenTypedOriginalV2` and the separate date-neutral reported
@@ -44,16 +88,25 @@ reopen, V1 separation, transaction/budget checks, bad acknowledgements and bound
 completion. The authored small PostgreSQL fixture tests actual storage, ending
 rollback, lost successful COMMIT, exact original mismatch refusal, immutability,
 no-date metadata reuse, preserved V1 cache and pinned/partial-cache retirement.
-**Native execution is pending cloud CI**. The fixture is not licensed >50k or
+PR #1223 head `5d68b29a09fff69f181b838b9be125b8e017a83e` passed actual cloud
+native/migration job `113652681029` in UAD foundation run `37878562403`:
+417/417 migration tests and 7/7 native index tests, zero failures or skips.
+`native-shared-typed-generation-v2` recorded 14 originals, one cache header,
+zero original hash mismatches, ending rollback, lost-COMMIT reopen, immutable
+completion and zero-original/zero-write metadata reuse. The retirement marker
+confirmed unpinned partial-cache retirement and pinned complete preservation.
+CodeRabbit manual review remains pending; green skipped-review status is not
+that review. The fixture is not licensed >50k or
 5-mile/10-mile/city/retrospective acquisition, report integration or live speed
 acceptance. The existing synthetic 60,001-row V1 cache fixture does not prove this
 new V2 cache at that scale.
 
 The offline owner must still authorize the entire integrated source mix at both
 ends. No current-user job/HTTP path dispatches this builder; no report cache miss
-builds it. The current authorized V2 issued-head consumer, date-policy projection,
-CAD improvement/amenity lineage and transaction resolution are still subsequent
-work. Server-owned selection, exact selected-union medians/COD/quarters, coherent
+builds it. The explicit V2 issued-head consumer and date-policy projection are
+described above and require their separate cloud verification. CAD improvement/
+amenity lineage and transaction resolution are still subsequent work.
+Server-owned selection, exact selected-union medians/COD/quarters, coherent
 publication, durable workers/terminal pin transfer and licensed/live QA remain
 required. No source right, accepted report, genuine Hardy choice, Apply, worker,
 route/default, schedule, activation flag or Render deployment changes.

@@ -166,6 +166,25 @@ test('frozen-stock owner ignores stale roles and reloads the current DB actor be
   }
 });
 
+test('V2 shared stock owner is explicit, admits only claim/page/budget, and never accepts a caller date or issued head',async()=>{
+  const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}};
+  const claim={operation_id:base.operationId,claim_token:'33333333-3333-4333-8333-333333333333',attempts:1};
+  const opts={captureJobClaim:claim,stockMetricPage:{cursor:'',rowLimit:250}},method='readSharedFrozenCaptureJobStockMetricsReferencesV2';
+  await assert.rejects(setup()[method](base,opts),/frozen_source_profile_unsupported/);
+  const service=createCustomCohortContextCapture({pool:{connect(){assert.fail('must not connect');}},
+    sourceMode:'combined-witness2-v1',authorizeMarketData:()=>assert.fail('must not authorize')});
+  for(const page of [undefined,{cursor:'',rowLimit:251},{cursor:'',rowLimit:1,observations:[]},
+    new Proxy({cursor:'',rowLimit:1},{}),{get cursor(){assert.fail('getter');},rowLimit:1}])
+    await assert.rejects(service[method](base,{...opts,stockMetricPage:page}),/invalid_input|invalid_page/);
+  for(const field of ['generationId','effectiveDate','profile','identity_reference','progress','permissions','sourceRepresentation'])
+    await assert.rejects(service[method](base,{...opts,[field]:{}}),/invalid_options/);
+  for(const field of ['effective_date','observations','source_acquisition','root','identity_verification_reference'])
+    await assert.rejects(service[method]({...base,[field]:{}},opts),/invalid_input/);
+  await assert.rejects(service[method](base,new Proxy(opts,{})),/invalid_options/);
+  await assert.rejects(service[method](base,{captureJobClaim:claim,get stockMetricPage(){assert.fail('getter');}}),/invalid_options/);
+  await assert.rejects(service[method]({...base,operationId:claim.claim_token},opts),/operation_conflict/);
+});
+
 test('recorded-group selection refreshes current roles before retained facts or head reads/writes', async () => {
   const base = input(), organization = '11111111-1111-4111-8111-111111111111';
   const report = '22222222-2222-4222-8222-222222222222';

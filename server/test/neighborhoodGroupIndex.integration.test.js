@@ -1694,7 +1694,9 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       if(config.text.includes('neighborhood-frozen-job-closure:parcels')||config.text.includes('neighborhood-frozen-stock-originals:page')
         ||config.text.includes('neighborhood-frozen-job-identity:parcels')||config.text.includes('shared-v2-stock-metrics:page')
         ||config.text===NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_SQL){
-        const fault=refsFault;if(fault!=='commit')refsFault=null;
+        // The ending-header fault is consumed by the later second metadata
+        // read, not by the page query. Keep it armed like the COMMIT fault.
+        const fault=refsFault;if(!['commit','cad_header'].includes(fault))refsFault=null;
         if(fault==='license')await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
         if(fault==='role')await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);
         if(fault==='subject')await client.query("UPDATE app.appraisal_subject_snapshots SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2000') WHERE id=$1",[sourceSnapshot]);
@@ -2423,7 +2425,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       ['cad_revision',/CAD_source_policy_changed/],['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],
       ['subject',/subject_changed/],['claim',/claim_lost/],['cancel',/cancelled/],['cad_header',/cache_unavailable/]]){
       refsFault=fault;refsAbort=new AbortController();const from=refsCalls.length;
-      await assert.rejects(cadOwner()[cadOwnerMethod](refsInput,{...cadOwnerOptions,signal:refsAbort.signal}),reason);
+      await assert.rejects(cadOwner()[cadOwnerMethod](refsInput,{...cadOwnerOptions,signal:refsAbort.signal}),reason,`ending ${fault} must refuse delivery`);
       assert.equal(refsFault,null,'actual additional CAD page ran before ending refusal');
       assert.ok(refsCalls.slice(from).includes(NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_SQL));await assertCadUnchanged();
       if(fault.startsWith('cad_'))await setCadFixtureGrant(pool,organization,cadGrant);

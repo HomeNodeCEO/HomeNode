@@ -61,10 +61,22 @@ unchanged from historical `d47486af`; comments now document the bounded helper
 and owner contracts. Re-ran 95 focused integrated owner/page/temporal tests,
 all passed without failures/skips (1721.6782ms). Syntax/diff checks passed.
 Retarget main BEFORE synchronize push so all main-required cloud workflows run.
-Fresh integrated-head native/full-suite/exact-required checks and actual included
-review remain required; historical green is not merged-head readiness. Next
-ordinary included review conservatively NOT BEFORE16:08Z after actual1232
-completion; no forced/paid allowance or required-check bypass.
+Integrated head `f78185ebfff1915edac378fcb13a0fd0abc3d6d0` actually passed all
+14 exact-head checks. Fresh foundation `37949774072` / native `113885218711`
+executed 417 migration/8 index/1 subject/1 edge/2 bootstrap tests without failures
+or skips (index 441527.481999ms). Server: 10,550 passed, zero failed, 62 separately
+DB-gated skips (256609.417425ms); frontend: 3,959 passed, zero failed/skipped
+(59801.597364ms), plus typecheck, lint, source-quality and build.
+An actual ordinary included review remained a separate merge prerequisite; it
+was requested at16:08:21Z and completed at16:14:09Z, covering all six files through
+`f78185eb`. Its one minor finding was this stale readiness wording. The separate
+72.73% docstring warning is addressed by documenting the three synthetic test
+helpers; no executable behavior, source rights or authorization guard is changed.
+No new review or recalculated coverage is claimed for those comment-only fixes.
+Fresh exact-head protected checks and current findings/thread disposition are
+still required before normal expected-head merge; historical green is not the
+later head's readiness. Next ordinary included review conservatively NOT BEFORE
+17:18Z after actual completion; no forced/paid allowance or required-check bypass.
 Source/amenity meaning, complete transaction/association resolution, server-owned
 selection, exact selected-union statistics, coherent publication, durable workers/
 terminal pin transfer and licensed large-area/retrospective/live acceptance remain.

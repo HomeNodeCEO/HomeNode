@@ -32,9 +32,21 @@ mismatches, missing boolean not false, duplicate identities and no job-cache
 writes. Server passed 10,496 with 61 separately database-gated skips; frontend
 passed 3,959 without skips. The branch now incorporates the exact protected
 #1225 merge below. Twenty-two focused compiler/profile tests passed again with
-zero failures/skips (167.3825ms), but **fresh integrated-head native and all
-main-required checks remain pending**, and actual included review is outstanding.
-Historical native receipts do not establish current integrated-head readiness.
+zero failures/skips (167.3825ms). Integrated head
+`228238dba6d59b2106af5bb6a3e4f573c65dbd58` passed all fourteen exact-head check
+runs. Foundation `37895808933`, native job `113706774910`, passed 417 migration,
+seven index, one subject, one edge and two bootstrap tests with zero failures/
+skips; the actual syntax marker again confirmed seven originals and zero hash
+mismatches. Native index duration was 291,789.463589ms. Server job `113706775035`
+passed 10,496 with 61 separately database-gated skips; frontend job `113706774717`
+passed 3,959 without skips, plus typecheck/lint/source-quality/build.
+Included CodeRabbit review `1f6c285e-bd9e-404f-aa2f-2eede0998a8f` completed on that
+exact head at 2026-10-09T07:37Z, processing all four changed files with no actionable
+code findings or review threads. Its sole documentation-coverage warning is
+addressed by helper contract comments and this receipt update, with no implementation
+token, profile, SQL, behavior or test change. Fresh protected checks for this
+comments/documentation-only correction remain pending; the coverage percentage
+has not been independently recalculated, and no extra paid/forced review is requested.
 This pure DATA compiler does not extend the previously issued
 seven-layer job graph, authorize the extra projection, materialize an amenities
 cache or establish acquisition/statistics/report publication. Shared bounded

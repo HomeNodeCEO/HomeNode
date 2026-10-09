@@ -729,6 +729,8 @@ async function authorizedRetainedInputs(client, { scopeJson, reference, input, a
  * receives only this bounded client; it may not read a pool or a remote provider.
  * No default grant is inferred from assignment access, hashes or professional
  * licensing. Source completeness and historical support remain unknown.
+ * The optional server-owned CAD policy defaults to absent; CAD pages require
+ * its separate current decision in addition to the legacy source decision.
  */
 export function createCustomCohortContextCapture({ pool, authorizeMarketData,
   authorizePrivateSales = async () => ({ allowed: false }),
@@ -1583,7 +1585,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
   }
   /** One named internal stage owns its flags and phase admission. Every source
    * read/write is fenced by current rights at both transaction ends. V2 prefix
-   * DATA has no verifier/typed/metric flags or legacy receipt conversion. */
+   * DATA has no verifier/typed/metric flags or legacy receipt conversion. CAD
+   * reads require completed issued V2 prerequisites and a separate exact CAD
+   * purpose/decision, without preparing a cache or advancing a checkpoint. */
   async function frozenCaptureJobSourceStage(value, options = {}, stage = 'prefix_v1') {
     if(typeof stage!=='string'||!Object.hasOwn(FROZEN_SOURCE_STAGES,stage))
       fail('frozen_source_representation_unsupported');
@@ -2175,13 +2179,20 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     // Still internal/unmounted: no new job phase, builder, schedule or Apply.
     readSharedFrozenCaptureJobStockMetrics: (value, options = {}) => frozenCaptureJobSourceStage(value, options, 'shared_stock_metrics_v1'),
     readSharedFrozenCaptureJobStockMetricsReferencesV2: (value, options = {}) => frozenCaptureJobSourceStage(value, options, 'shared_stock_metrics_refs_v2'),
-    // Explicit internal-only reader. Default composition has no additional CAD
-    // policy. Actual issued DONE V2 heads and both current decisions are required;
-    // no seven-layer cast, cache preparation, checkpoint or source grant write.
+    /** Read one bounded internal CAD syntax page after actual issued DONE V2
+     * prerequisites and both current source decisions. Default composition has
+     * no CAD grant; this method cannot prepare a cache, advance a checkpoint,
+     * convert legacy receipts, publish reports or infer amenity meaning. */
     readSharedFrozenCaptureJobCadImprovementsReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'shared_CAD_pages_refs_v2'),
+    /** Read current CAD account syntax using only the retained context date and
+     * both current rights decisions; missing primary remains missing, and no
+     * housing, amenity, historical or complete-population meaning is inferred. */
     readSharedFrozenCaptureJobCadAccountsReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'shared_CAD_accounts_refs_v2'),
+    /** Read one bounded all-date transaction-original page after actual issued
+     * V2 prerequisites and both-end current authorization. This does not resolve
+     * complete packages, verify transaction eligibility or publish selections. */
     readSharedFrozenCaptureJobTransactionsReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'shared_transaction_pages_refs_v2'),
     readSharedFrozenCaptureJobTransactionTemporalReferencesV2: (value, options = {}) =>

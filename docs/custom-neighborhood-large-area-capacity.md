@@ -1,5 +1,64 @@
 # Complete larger-area Custom neighborhood studies
 
+## Current CAD account projection (2026-10-08, not activated)
+
+`readSharedFrozenCaptureJobCadAccountsReferencesV2` is an explicit internal
+account-page consumer of the same separately authorized companion. It uses
+all actual issued V2 graph/geographic/identity prerequisites, current DB
+actor/assignment/draft/subject, live request/claim/pin/stock, and both current
+source decisions at both ends. Its closed request adds only `cadAccountPage`
+with a bounded account cursor/row limit. The effective date comes from the
+retained subject context, not the caller. No phase, endpoint, worker, default
+composition, grant or cache-miss preparation changes.
+
+The fixed indexed SQL starts from every exact stock account, including members
+with no primary improvement original. It joins at most one native primary row
+and returns a constant-size count of all that account's secondary native rows.
+Duplicate improvement numbers remain separate; unknown type labels never become
+garage/pool/outbuilding facts, summed area or a housing eligibility decision.
+Missing primary produces explicit missing cells, never zero or no amenity.
+Native false, NULL, invalid and unsupported literals remain distinct. Each
+primary cell is independently reconciled against its retained literal, with
+exact decimal strings and no economic Number conversion. CAD bath count is
+labelled `CAD_reported_baths`, not reinterpreted as full/half bathroom equivalence.
+The retained effective-year rule makes a future primary year invalid before
+projection; other current CAD fields do not establish historical or at-sale facts.
+
+The new hash-bound account projection profile is separate from the unchanged
+source and syntax profiles. Existing 250-row/32-KB-row/2.1-MB-page/32-MB-all-result,
+48-query/60-second-step/five-second-query bounds still apply. Each reader is
+single-use; a full account tail needs a fresh empty probe. A page end does not
+prove that preceding pages were traversed or certify complete-population metrics.
+No original payload array, dense roster, secondary row array, current core read,
+spatial recomputation, source grant, checkpoint/head copy or report write occurs.
+
+Focused tests cover absent-primary denominators, native false versus missing,
+exact decimals, duplicate-row counts, date-neutral cache reuse with DATA-only
+date variants, closed hostile inputs and ending-cache refusal. Two native
+cloud fixtures are authored: a small actual-issued owner test with both-end
+rights/auth/subject/claim/cancellation/cache refusal and lost-COMMIT replay;
+and a separate SQL DATA fixture with an actual missing primary account, future
+year, native false, duplicated secondary numbers and full-tail empty probe.
+Historical pre-integration head
+`2e008744c5c6715ba9e7ce66fad50b7e57367f36` passed foundation `37886170941` /
+native `113676551197`: 417 migration, eight index, one subject, one edge and
+two bootstrap tests without failures/skips. The actual-issued owner marker
+confirmed both-end current rights and prerequisites, retained-date provenance,
+ending refusal and lost-COMMIT reopen without original reads or durable writes.
+The separate SQL DATA marker confirmed two stock accounts, one missing primary,
+native false, duplicate secondary rows, invalid future year and an empty tail;
+it explicitly did not issue a graph or current-actor owner receipt. Server
+passed 10,537 tests with 62 separately database-gated skips; frontend passed
+3,959 without skips. These historical receipts do not verify a later integrated
+head. This branch incorporates protected #1230 merge
+`6200a01714c30efe68193b28d3b40045e67fa684`; current exact-head CI and actual
+review are verified separately before normal protected merge. Neither fixture is a
+production source license, full licensed acquisition, housing/type dictionary,
+selected-union statistics, retrospective accuracy or live speed acceptance.
+Transaction resolution, server-owned selection, exact full medians/COD/quarters,
+coherent publication, durable workers/pin transfer and licensed/live acceptance
+remain mandatory.
+
 ## Current-authorized CAD syntax page owner (2026-10-08, not activated)
 
 `readSharedFrozenCaptureJobCadImprovementsReferencesV2` is an explicit internal
@@ -70,6 +129,20 @@ this is a comment/documentation-only correction, not a claimed recalculated
 coverage score or a new review. Every later head still requires fresh exact-head
 protected checks before normal merge. These small fixtures do not establish
 licensed acquisition, housing/amenity meaning or live acceptance.
+
+Comment/documentation-only correction
+`96e23fa3e6f77447b7bf400b54fddf904f346c52` passed all 14 fresh exact-head checks.
+Foundation `37932773100` / native `113827315754` actually repeated all
+417/seven/one/one/two tests without failures/skips (index 437181.547822ms),
+including actual issued owner prerequisites, separate current CAD and legacy
+decisions at both ends, ending-cache refusal and zero original/copy/head writes.
+Full server/frontend protected statuses also passed; the earlier numerical
+receipts remain explicitly tied to b56a9064. With current main/checks/review
+threads/ruleset revalidated, #1230 normally protected-merged as
+`6200a01714c30efe68193b28d3b40045e67fa684` at 2026-10-09T13:05Z. No new review
+or recalculated docstring score is inferred from a later skipped status; the
+reviewed implementation is unchanged, and no quota or required-check bypass
+occurred. This remains small native protocol evidence, not licensed/live acceptance.
 
 ## Bounded pinned-stock CAD syntax pages (2026-10-08, not activated)
 

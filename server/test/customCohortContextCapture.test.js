@@ -208,6 +208,23 @@ test('V2 CAD owner has no default extra-field grant and admits only an exact bou
   await assert.rejects(service[method](input(),opts),/frozen_discovery_unsupported/);
 });
 
+test('CAD account owner obtains its date from retained context and accepts no caller facts, cache, date or grant',async()=>{
+  const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
+    claim={operation_id:base.operationId,claim_token:'70000000-0000-4000-8000-000000000002',attempts:1};
+  const opts={captureJobClaim:claim,cadAccountPage:{cursor:'',rowLimit:250}},method='readSharedFrozenCaptureJobCadAccountsReferencesV2';
+  let connections=0;const dependencies={pool:{async connect(){connections++;throw Error('unreachable');}},
+    sourceMode:'combined-witness2-v1',authorizeMarketData:async()=>({allowed:false})};
+  await assert.rejects(createCustomCohortContextCapture(dependencies)[method](base,opts),/CAD_source_policy_required/);
+  const service=createCustomCohortContextCapture({...dependencies,authorizeCadImprovementData:async()=>({allowed:false})});
+  for(const key of ['effectiveDate','effective_date','typed','generationId','issuedHead','sourceGrant','cadImprovementPage','stockMetricPage'])
+    await assert.rejects(service[method](base,{...opts,[key]:{}}),/invalid_options/);
+  for(const page of [undefined,{...opts.cadAccountPage,rowLimit:251},{...opts.cadAccountPage,kind:'primary'},
+    new Proxy(opts.cadAccountPage,{}),{...opts.cadAccountPage,get cursor(){assert.fail('getter');}}])
+    await assert.rejects(service[method](base,{...opts,cadAccountPage:page}),/invalid_data|invalid_page/);
+  await assert.rejects(service[method](base,{captureJobClaim:claim,get cadAccountPage(){assert.fail('getter');}}),/invalid_options/);
+  assert.equal(connections,0);
+});
+
 test('recorded-group selection refreshes current roles before retained facts or head reads/writes', async () => {
   const base = input(), organization = '11111111-1111-4111-8111-111111111111';
   const report = '22222222-2222-4222-8222-222222222222';

@@ -1,5 +1,44 @@
 # Complete larger-area Custom neighborhood studies
 
+## Separate current CAD projection rights (2026-10-08, not activated)
+
+`createCustomNeighborhoodCadImprovementSourcePolicy` is a dormant, server-only
+evaluator for the additional primary/secondary CAD fields. It reads only the
+separate `custom_neighborhood_cad_improvement_source_rights_v1` organization
+namespace, capped at 16 KB in SQL, on every admission. Legacy market and
+mapping5/witness2 purposes and grants cross-deny: neither can silently authorize
+these fields. Their existing definitions, SQL arguments and decision hashes
+remain untouched and regression-tested.
+
+The installed purpose hash-binds the exact companion original profile and both
+field lists. It covers only all retained primary/secondary rows for exact pinned
+job-stock accounts, without clipping associated rows to geometry or adding outside
+accounts. It cannot request current core/provider reads, private overlays,
+caller-selected fields, inferred amenities, at-sale or retrospective assertions.
+The descriptor takes only the owner-derived selection digest and generation ID;
+these DATA are not evidence of a real issued stock, pin or actor authorization.
+
+An independently approved entire integrated provider mix, exact projection,
+immutable retention basis, validity interval and exposure must match. Database
+wall time enforces expiry during long operations; revocation, inactive/foreign
+organizations, provider changes, partial projections, missing metadata and
+oversized rights refuse. The config hash becomes a separate decision revision.
+The policy never writes a grant, creates an assignment role, caches success,
+opens source rows or changes deployment/composition defaults.
+
+Focused tests exercise exact fields, closed hostile shapes, all old/new
+cross-denials, re-read/revocation/expiry, separately granted exposures, stable
+legacy hashes and sanitized errors. A small disposable PostgreSQL helper is
+wired into cloud native CI to verify actual bounded namespace SQL, unrelated
+metadata exclusion, no policy writes, revoked/expired/mismatched/oversized
+refusal and rollback of its synthetic owner metadata. **New native policy
+execution is pending cloud CI**; it is not a production license or source
+acquisition receipt. The future consumer still must independently reload the
+current database actor/assignment/subject, actual issued graph/geographic/
+identity heads, exact live claim/pin/stock, and this additional decision at both
+transaction ends. Issued companion provenance, explicit provider/type resolution
+and the remaining complete-population/publication/worker/live tests are unfinished.
+
 ## Shared bounded CAD syntax companion (2026-10-08, not activated)
 
 `createNeighborhoodSharedTypedCadGenerationV1` is an explicit separate offline
@@ -64,9 +103,14 @@ housing inference, retrospective assertion or measured/at-sale GLA claim.
 Both existing seven-kind V1/V2 profile hashes stay unchanged. Focused tests check
 exact decimals, unsafe wrong-type numeric tokens, year/count rules, NULL/false,
 duplicate identities, bounded labels, hostile inputs and frozen profiles.
-The authored seven-original native fixture checks the actual stored JSONB text
-hashes and literal observations, but **its execution on the new head is pending
-cloud CI**. This pure DATA compiler does not extend the previously issued
+PR #1226 head `caf1eba04f3c95e4fc4d0771a08192d21a13bec3` passed UAD foundation
+run `37881428131`. Native job `113661760318` passed 417 migration, seven index,
+one subject, one edge and two bootstrap tests without failures/skips. The actual
+`native-typed-CAD-improvement-syntax` marker confirmed seven exact originals,
+zero hash mismatches, the installed profile, missing pool not false, duplicate
+identities retained and zero job-cache writes. Server passed 10,496 tests with
+61 separately DB-gated skips; frontend passed 3,959 without skips.
+This pure DATA compiler does not extend the previously issued
 seven-layer job graph, authorize the extra projection, materialize an amenities
 cache or establish acquisition/statistics/report publication. Shared bounded
 typing, current-authorized provenance verification and explicit provider/type
@@ -112,8 +156,18 @@ counts, cursors, malformed/oversized pages, cancellation/deadlines and lost
 acknowledgements. The authored small PostgreSQL fixture checks exact decimal,
 NULL and boolean retention, duplicate numbers, forged payload/count refusal,
 rollback before publication, completed-capture backfill refusal, hashes,
-immutability and pinned/unpinned retirement. **New native execution is pending
-cloud CI**. This is original retention groundwork, not amenity resolution,
+immutability and pinned/unpinned retirement. Corrected PR #1225 head
+`95b38123a390328e5d9b39506ed86cd2a9c8b62b` passed foundation run `37881040663`:
+native job `113660559850` passed 417 migration, seven index, one subject, one
+edge and two bootstrap tests, zero failures/skips. The actual original marker
+confirmed three primary and four secondary rows, duplicate numbers retained,
+exact decimal/NULL/boolean literals, zero hash mismatches, same snapshot,
+forged-payload/count refusal and owner rollback. Actual retirement preserved
+pinned originals and removed the unpinned companion. Server passed 10,487 with
+61 separately DB-gated skips; frontend passed 3,959 without skips; mobile passed
+3/3 without skips. An initial isolated GENERATED-expression failure was fixed
+with exact SQL-derived columns/CHECKs, not a false IMMUTABLE declaration; the
+failed stage was never deployed. This is original retention groundwork, not amenity resolution,
 licensed acquisition, selected-union statistics, report publication or live
 speed acceptance. The offline owner still needs whole-source authority and
 activation prerequisites; this module does not establish a source grant.

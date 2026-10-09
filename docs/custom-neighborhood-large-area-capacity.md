@@ -34,8 +34,15 @@ refusals and closed hostile-input admission. The authored small native fixture
 requires all three real issued heads, refuses unissued/partial identity before
 cache I/O, runs actual metric SQL, checks mixed old/future-year resolution and
 malformed-cell refusal, and injects ending license/role/subject/claim/cancel
-failures. **Native execution is pending cloud CI**; DATA-only alternate dates
-do not establish historical stock or change an authorized report's date.
+failures. Native job `113655557287` (UAD run `37879463758`, commit `ec189d47`)
+passed this small synthetic fixture. After integrating the protected parent
+merge, exact head `f9790f2754f92f72b31365f71a1bd1077e7d41f3` also passed native
+job `113678177909` in UAD run `37886697187`: 417 migration, seven native index,
+one subject, one edge and two bootstrap tests, with zero failures/skips.
+These receipts do not replace fresh exact-head protected CI after any further
+change and are not licensed acquisition or production-speed acceptance.
+DATA-only alternate dates do not establish historical stock or change an
+authorized report's date.
 
 Remaining work includes improvement/amenity lineage, exact transaction resolution
 with retained observation-period policy, server-owned selection, complete-population

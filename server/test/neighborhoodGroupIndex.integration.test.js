@@ -280,7 +280,13 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
       'original guards or the exact restrictive typed-CAD original FK refuse deletion');
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_cad_improvement_rows WHERE generation_id=$1',
       [first.generationId])).rows[0].n,7,'all companion originals survive each refused deletion');
-    await assert.rejects(pool.query('TRUNCATE app.neighborhood_frozen_cad_improvement_rows'),error=>error.code==='55000');
+    // PostgreSQL checks restrictive FKs before statement TRUNCATE triggers.
+    await assert.rejects(pool.query('TRUNCATE app.neighborhood_frozen_cad_improvement_rows'),error=>error.code==='0A000'
+      &&error.detail?.includes('"neighborhood_frozen_typed_cad_rows"'));
+    await assert.rejects(pool.query('TRUNCATE app.neighborhood_frozen_cad_improvement_rows CASCADE'),error=>error.code==='55000',
+      'even an attempted CASCADE must hit the unchanged no-truncate guard');
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_cad_improvement_rows WHERE generation_id=$1',
+      [first.generationId])).rows[0].n,7);
     await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
       await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');await client.query("SET LOCAL TIME ZONE 'UTC'");
       await materializeNeighborhoodFrozenCadImprovements(client,{generationId:first.generationId});

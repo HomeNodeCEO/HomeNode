@@ -6,6 +6,7 @@ import { prepareNeighborhoodCohortBlob } from './cohortEvidenceBlobRepository.js
 import { EXACT_PAGED_DISTRIBUTION_LIMITS } from './exactPagedDistribution.js';
 
 const SCALE = 10n ** 12n;
+const issuedResults = new WeakSet();
 const STATES = ['observed', 'missing', 'invalid', 'conflicting', 'unsupported'];
 export const EXACT_DECIMAL_PAGED_DISTRIBUTION_V1_LIMITS = Object.freeze({
   page_values: EXACT_PAGED_DISTRIBUTION_LIMITS.page_values,
@@ -78,6 +79,9 @@ const PROFILE = freeze({ profile_ref: { id: DEFINITION.id, revision: DEFINITION.
   definition_blob: { ref: definitionRef, canonical_json: definitionText } });
 /** Immutable numerical definition only, never a membership or source grant. */
 export function getExactDecimalPagedDistributionV1Profile() { return PROFILE; }
+/** Local mathematical result identity only, NOT source, membership, unit or
+ * current authorization. Serialized/copied JSON is not this calculation receipt. */
+export function isIssuedExactDecimalPagedDistributionV1(value) { return issuedResults.has(value); }
 
 /** Bounded exact-decimal numerical primitive. The actual owner must verify the
  * entire selected union, every original, all five counts and one homogeneous
@@ -155,7 +159,7 @@ export async function exactDecimalDistributionFromSortedPagesV1(rawOptions) {
   if (first !== second) fail('observations_changed'); check();
   /** Convert quarter-scale quantiles to exact finite decimals with at most 14 places. */
   const quarterDecimal = value => value === null ? null : decimal(value * 25n, 14);
-  return freeze({ distribution_version: 1, interpretation_profile_ref: PROFILE.profile_ref,
+  const result = freeze({ distribution_version: 1, interpretation_profile_ref: PROFILE.profile_ref,
     authority: 'not_established', population_verification: 'not_established',
     state: count >= minimum ? 'ready' : 'insufficient',
     reason: count === 0 ? 'no_observations' : count < minimum ? 'below_minimum_count' : null,
@@ -167,4 +171,5 @@ export async function exactDecimalDistributionFromSortedPagesV1(rawOptions) {
     mean_absolute_deviation: count ? ratio(deviationsQuarterScale, BigInt(count) * 4n * SCALE) : null,
     cod_percent: count && median !== 0n ? ratio(deviationsQuarterScale * 100n, BigInt(count) * median) : null,
     exact_observation_sha256: first, report_update: 'none' });
+  issuedResults.add(result); return result;
 }

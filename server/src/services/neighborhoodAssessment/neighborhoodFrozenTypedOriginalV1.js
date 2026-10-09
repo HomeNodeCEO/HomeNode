@@ -4,7 +4,8 @@ import { assessmentDate, canonicalAssessmentJson } from './contract.js';
 import { prepareNeighborhoodCohortBlob } from './cohortEvidenceBlobRepository.js';
 import { COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS as KINDS } from './cohortOriginalSourceChainV1.js';
 import { scanOriginalJsonText } from './originalJsonTokens.js';
-import { getCustomCohortReportedSaleWitnessV2Profile, interpretCustomCohortReportedSaleWitnessV2 }
+import { getCustomCohortReportedSaleWitnessV2Profile, interpretCustomCohortReportedSaleWitnessV2,
+  getCustomCohortDateNeutralReportedSaleWitnessV1Profile, interpretCustomCohortDateNeutralReportedSaleWitnessV1 }
   from './customCohortReportedSaleWitnessV2.js';
 
 const sha = text => createHash('sha256').update(text, 'utf8').digest('hex');
@@ -86,6 +87,28 @@ const PROFILE = freeze({ profile_ref: { id: DEFINITION.id, revision: DEFINITION.
   definition_blob: { ref: profileBlob, canonical_json: profileText } });
 export function getNeighborhoodFrozenTypedOriginalV1Profile() { return PROFILE; }
 
+// V1 definitions and cache keys remain untouched. V2 is an explicitly chosen
+// interpretation profile for shared syntax, with no report date in its bytes.
+const NEUTRAL_WITNESS_PROFILE = getCustomCohortDateNeutralReportedSaleWitnessV1Profile();
+const DEFINITION_V2 = freeze({ ...DEFINITION,
+  id: 'neighborhood-frozen-date-neutral-typed-original-v2',
+  scope: 'one_exact_original_row_date_neutral_syntax_not_a_property_or_transaction',
+  numeric: { ...DEFINITION.numeric, year_policy: 'integer_1600_through_9999_calendar_syntax_only' },
+  reported_sale_witness: { ...DEFINITION.reported_sale_witness,
+    interpretation_profile_ref: NEUTRAL_WITNESS_PROFILE.profile_ref,
+    exact_definition_blob: NEUTRAL_WITNESS_PROFILE.definition_blob },
+  temporal: { effective_date: 'not_accepted_not_cached',
+    consumer_duty: 'apply_retained_effective_year_and_observation_period_before_resolution_and_aggregation',
+    future_year: 'syntactically_observed_not_historical_property_existence',
+    current_CAD: 'not_a_retrospective_stock_witness' },
+});
+const neutralText = canonicalAssessmentJson(DEFINITION_V2), neutralBlob = prepareNeighborhoodCohortBlob(neutralText);
+const PROFILE_V2 = freeze({
+  profile_ref: { id: DEFINITION_V2.id, revision: DEFINITION_V2.revision, content_sha256: neutralBlob.content_sha256 },
+  definition_blob: { ref: neutralBlob, canonical_json: neutralText },
+});
+export function getNeighborhoodFrozenTypedOriginalV2Profile() { return PROFILE_V2; }
+
 function literal(payload, field, tokens, original) {
   const node = tokens.get(field);
   if (!node) return { state: 'absent', json_type: null, value_text: null, utf8_bytes: 0, value_sha256: null };
@@ -140,10 +163,23 @@ function account(value) {
  */
 export function compileNeighborhoodFrozenTypedOriginalV1(value) {
   const input = data(value, ['kind', 'row_key', 'payload_text', 'effective_date']);
+  return compile(input, assessmentDate(input.effective_date), false);
+}
+
+/** Distinct dormant syntax-only profile for a future generation/profile cache.
+ * No date, context, selection, rights, report writer or policy override is
+ * accepted. V2 DATA cannot substitute for issued graph/identity verification. */
+export function compileNeighborhoodFrozenTypedOriginalV2(value) {
+  if (arguments.length !== 1) fail('invalid_input');
+  const input = data(value, ['kind', 'row_key', 'payload_text']);
+  return compile(input, null, true);
+}
+
+function compile(input, effective, neutral) {
   if (!KINDS.includes(input.kind) || typeof input.row_key !== 'string' || !input.row_key || Buffer.byteLength(input.row_key) > 256
     || /[\u0000-\u001f\u007f]/.test(input.row_key) || typeof input.payload_text !== 'string'
     || Buffer.byteLength(input.payload_text) > L.original_utf8_bytes) fail('invalid_input');
-  const effective = assessmentDate(input.effective_date), kind = input.kind;
+  const kind = input.kind, profile = neutral ? PROFILE_V2 : PROFILE;
   let payload, index; try { index = scanOriginalJsonText(input.payload_text, 'index').index; payload = JSON.parse(input.payload_text); }
   catch { fail('invalid_original'); }
   if (index.nodes[0].kind !== 'object') fail('invalid_original');
@@ -160,14 +196,17 @@ export function compileNeighborhoodFrozenTypedOriginalV1(value) {
     if (!witness || witness.kind !== 'object') fail('witness_unavailable');
     try { scanOriginalJsonText(input.payload_text.slice(witness.start, witness.end), 'full_value'); } catch { fail('invalid_witness'); }
   }
-  const result = { typed_original_version: 1, interpretation_profile_ref: PROFILE.profile_ref, effective_date: effective,
+  const result = { typed_original_version: neutral ? 2 : 1, interpretation_profile_ref: profile.profile_ref,
+    ...(neutral ? { temporal_basis: 'date_neutral_original_syntax' } : { effective_date: effective }),
     original: { kind, row_key: input.row_key, payload_sha256: sha(input.payload_text), payload_utf8_bytes: Buffer.byteLength(input.payload_text) },
     account_id: accountId, source_record_id: sourceId,
     observations: Object.fromEntries(Object.entries(FIELDS[kind] ?? {}).map(([key, [field, policy, unit, encoding]]) =>
-      [key, numeric(raw(field), policy, unit, encoding, BigInt(effective.slice(0, 4)))])),
+      [key, numeric(raw(field), policy, unit, encoding, neutral ? 9999n : BigInt(effective.slice(0, 4)))])),
     dates: Object.fromEntries((DATE_FIELDS[kind] ?? []).map(field => [field, date(raw(field))])),
     markers: Object.fromEntries(MARKERS[kind].map(field => [field, raw(field)])),
-    same_payload_reported_sale: kind === 'source_records' ? interpretCustomCohortReportedSaleWitnessV2(payload.source_raw_witness, effective) : null,
+    same_payload_reported_sale: kind === 'source_records' ? neutral
+      ? interpretCustomCohortDateNeutralReportedSaleWitnessV1(payload.source_raw_witness)
+      : interpretCustomCohortReportedSaleWitnessV2(payload.source_raw_witness, effective) : null,
     authority: 'not_established', coverage: 'one_original_only', source_freshness: 'not_established' };
   if (Buffer.byteLength(canonicalAssessmentJson(result)) > L.output_utf8_bytes) fail('output_limit');
   return freeze(result);

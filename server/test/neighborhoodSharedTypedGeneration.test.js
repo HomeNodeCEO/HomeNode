@@ -156,6 +156,6 @@ test('shared schema is additive, immutable, indexed and retires before originals
   assert.match(SQL.insert,/original.payload::text=input.original_text/);
   assert.match(SQL.page,/row_key>\$3::text COLLATE "C" ORDER BY row_key LIMIT/);
   const worker=readFileSync(new URL('../src/services/neighborhoodAssessment/neighborhoodGroupIndex.js',import.meta.url),'utf8');
-  assert.match(worker,/\[PRUNE_SHARED_TYPED,PRUNE_SHARED_TYPED_TOTALS,PRUNE_SHARED_TYPED_HEADERS,PRUNE_ORIGINALS,PRUNE_PARCELS,PRUNE_SALES\]/);
+  assert.match(worker,/PRUNE_SHARED_TYPED_HEADERS,[\s\S]*PRUNE_SHARED_TYPED_V2,PRUNE_SHARED_TYPED_V2_TOTALS,PRUNE_SHARED_TYPED_V2_HEADERS,PRUNE_ORIGINALS,PRUNE_PARCELS,PRUNE_SALES\]/);
   assert.equal(worker.includes('createNeighborhoodSharedTypedGeneration'),false,'cleanup integration does not turn on a new sweep');
 });

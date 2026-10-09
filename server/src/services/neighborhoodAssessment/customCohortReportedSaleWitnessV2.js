@@ -117,6 +117,24 @@ const definitionJson = canonicalAssessmentJson(DEFINITION), definitionRef = prep
 const PROFILE = freeze({ profile_ref: { id: DEFINITION.id, revision: DEFINITION.revision, content_sha256: definitionRef.content_sha256 },
   definition_blob: { ref: definitionRef, canonical_json: definitionJson } });
 export function getCustomCohortReportedSaleWitnessV2Profile() { return PROFILE; }
+// Separate syntax-only profile: the legacy date-bound definition above remains
+// byte-for-byte unchanged for retained reports. A fixed calendar ceiling is not
+// a fabricated appraisal date; consumers must apply their retained year/period
+// rules before including any observation in report statistics.
+const NEUTRAL_DEFINITION = freeze({ ...DEFINITION,
+  id: 'custom-local-date-neutral-reported-sale-witness-v1',
+  scope: 'one_admitted_same_payload_witness_date_neutral_syntax',
+  scalar: { ...DEFINITION.scalar, year_policy: 'integer_1600_through_9999_calendar_syntax_only' },
+  temporal: { effective_date: 'not_accepted_not_cached',
+    consumer_duty: 'apply_retained_effective_year_and_observation_period_before_aggregation',
+    future_year: 'syntactically_observed_not_proof_of_existence_at_appraisal_date' },
+});
+const neutralText = canonicalAssessmentJson(NEUTRAL_DEFINITION), neutralRef = prepareNeighborhoodCohortBlob(neutralText);
+const NEUTRAL_PROFILE = freeze({
+  profile_ref: { id: NEUTRAL_DEFINITION.id, revision: NEUTRAL_DEFINITION.revision, content_sha256: neutralRef.content_sha256 },
+  definition_blob: { ref: neutralRef, canonical_json: neutralText },
+});
+export function getCustomCohortDateNeutralReportedSaleWitnessV1Profile() { return NEUTRAL_PROFILE; }
 const FIELD_ENTRIES = Object.entries(DEFINITION.fields);
 const DIAGNOSTIC_KEYS = [...new Set([...FIELD_ENTRIES.flatMap(([, field]) => [field.value_field, field.unit_field]).filter(Boolean),
   ...DEFINITION.units.generic_currency_fields, 'MlsStatus', 'StandardStatus', 'CloseDate'])];
@@ -209,8 +227,19 @@ function closeDate(cell) {
 export function interpretCustomCohortReportedSaleWitnessV2(value, effectiveDate) {
   if (arguments.length !== 2) fail('arguments');
   const witness = prepareCachedSaleWitnessV2(value), effective = assessmentDate(effectiveDate, 'effective_date');
-  const fields = witness.fields, primary = status(fields.MlsStatus), secondary = status(fields.StandardStatus), effectiveYear = BigInt(effective.slice(0, 4));
-  const result = { interpretation_profile_ref: PROFILE.profile_ref, observation_basis: DEFINITION.observation_basis,
+  return interpret(witness, BigInt(effective.slice(0, 4)), PROFILE);
+}
+
+/** Pure date-neutral syntax, not a report/date policy or a source grant. Never
+ * selected by legacy report callers, and never accepts a substitute date. */
+export function interpretCustomCohortDateNeutralReportedSaleWitnessV1(value) {
+  if (arguments.length !== 1) fail('arguments');
+  return interpret(prepareCachedSaleWitnessV2(value), 9999n, NEUTRAL_PROFILE);
+}
+
+function interpret(witness, effectiveYear, profile) {
+  const fields = witness.fields, primary = status(fields.MlsStatus), secondary = status(fields.StandardStatus);
+  const result = { interpretation_profile_ref: profile.profile_ref, observation_basis: DEFINITION.observation_basis,
     observations: Object.fromEntries(FIELD_ENTRIES.map(([key, descriptor]) => [key, observation(fields, descriptor, effectiveYear)])),
     record_type: recordType(primary, secondary), close_date: closeDate(fields.CloseDate),
     diagnostics: { root_state: witness.root_state, root_json_type: witness.root_json_type,

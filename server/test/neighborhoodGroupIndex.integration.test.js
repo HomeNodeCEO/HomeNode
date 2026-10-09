@@ -49,7 +49,7 @@ import { createNeighborhoodFrozenJobStockMetricPages }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStockMetricPages.js';
 import { createNeighborhoodSharedJobStockMetricPages }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStockMetricPages.js';
-import { createNeighborhoodSharedTypedGeneration }
+import { createNeighborhoodSharedTypedGeneration, createNeighborhoodSharedTypedGenerationV2, NEIGHBORHOOD_SHARED_TYPED_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSharedTypedGeneration.js';
 import { NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL, NEIGHBORHOOD_FROZEN_JOB_IDENTITY_COVERAGE_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourceClosurePages.js';
@@ -91,6 +91,19 @@ async function sharedTypedComplete(pool,generationId,effectiveDate='2026-10-07')
   let p=null,r,steps=0;
   do {r=await sharedTypedStep(pool,generationId,p,effectiveDate);p=r.progress;assert.ok(++steps<60000);} while(!r.all_layers_typed);
   return {receipt:r,steps};
+}
+
+// V2 offline syntax storage only: no report date or current-user acquisition
+// authority is supplied by this isolated fixture.
+const sharedTypedV2Step=(pool,generationId,progress=null)=>withCustomCohortJobTransaction(pool,async client=>{
+  await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+  await client.query("SET LOCAL TIME ZONE 'UTC'");
+  return createNeighborhoodSharedTypedGenerationV2(client,{generationId}).step(progress);
+});
+async function sharedTypedV2Complete(pool,generationId,progress=null) {
+  let r; for(let i=0;i<100;i++) {r=await sharedTypedV2Step(pool,generationId,progress);progress=r.progress;
+    if(r.all_layers_typed)return r;}
+  assert.fail('small V2 fixture exceeded bounded steps');
 }
 
 test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserves exact sale dates',{
@@ -214,6 +227,67 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     assert.equal(retainedSharedCount,frozen.row_count);
     const originalCached=(await pool.query("SELECT typed->'observations'->'reported_residential_area'->>'exact_value' AS area FROM app.neighborhood_frozen_typed_rows WHERE generation_id=$1 AND kind='parcels' AND row_key='2'",[first.generationId])).rows[0].area;
     assert.equal(originalCached,'2000');
+    // Real separate generation/profile-only V2 storage. A failed ending probe
+    // rolls back the header, row inserts and independently derived totals.
+    await assert.rejects(createNeighborhoodSharedTypedGenerationV2(pool,{generationId:first.generationId}).step(),
+      /caller_transaction_required/);
+    let neutralSources=0;
+    const endingTypedFault={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
+      if(c.text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.source&&++neutralSources===2)throw Error('synthetic V2 ending refusal');
+      return raw.query(c);}};}};
+    await assert.rejects(sharedTypedV2Step(endingTypedFault,first.generationId),/synthetic V2 ending refusal/);
+    for(const table of ['neighborhood_frozen_typed_v2_generations','neighborhood_frozen_typed_v2_rows','neighborhood_frozen_typed_v2_totals'])
+      assert.equal((await pool.query(`SELECT count(*)::int AS n FROM app.${table} WHERE generation_id=$1`,[first.generationId])).rows[0].n,0);
+    let neutralLoseAck=true;
+    const neutralLostAck={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
+      const r=await raw.query(c);if(c.text==='COMMIT'&&neutralLoseAck){neutralLoseAck=false;throw Error('synthetic V2 committed ACK loss');}return r;
+    }};}};
+    await assert.rejects(sharedTypedV2Step(neutralLostAck,first.generationId),error=>error.outcome_unknown===true);
+    const neutralOpened=await sharedTypedV2Step(pool,first.generationId);
+    assert.equal(neutralOpened.advanced,false);assert.equal(neutralOpened.progress.typed_rows,'5');
+    assert.equal(Object.hasOwn(neutralOpened,'effective_date'),false);
+    assert.equal((await pool.query("SELECT row_count::text AS n FROM app.neighborhood_frozen_typed_v2_totals WHERE generation_id=$1 AND kind='parcels'",[first.generationId])).rows[0].n,'5');
+    // Independently rendered originals must match exact text/hash/identity;
+    // changing a page's payload cannot leave rows or advance the cache header.
+    const changedNeutralOriginal={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
+      const r=await raw.query(c);if(c.text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.page&&r.rows[0].page_count){
+        const rows=JSON.parse(r.rows[0].page_json),payload=JSON.parse(rows[0].payload_text);payload.county='Changed';
+        rows[0].payload_text=JSON.stringify(payload);r.rows[0].page_json=JSON.stringify(rows);
+      }return r;
+    }};}};
+    await assert.rejects(sharedTypedV2Step(changedNeutralOriginal,first.generationId,neutralOpened.progress),/original_mismatch/);
+    assert.deepEqual((await sharedTypedV2Step(pool,first.generationId)).progress,neutralOpened.progress);
+    await assert.rejects(pool.query("UPDATE app.neighborhood_frozen_typed_v2_generations SET status='complete',completed_at=now() WHERE generation_id=$1",[first.generationId]),
+      error=>error.code==='55000'&&/population_incomplete/.test(error.message));
+    const neutralComplete=await sharedTypedV2Complete(pool,first.generationId,neutralOpened.progress);
+    assert.equal(neutralComplete.progress.typed_rows,frozen.row_count);
+    const actualNeutral=(await pool.query(`SELECT count(*)::text AS n,
+      count(*) FILTER(WHERE typed.typed ? 'effective_date' OR typed.typed->>'typed_original_version'<>'2'
+        OR typed.original_payload_sha256<>encode(sha256(convert_to(original.payload::text,'UTF8')),'hex'))::text AS invalid
+      FROM app.neighborhood_frozen_typed_v2_rows typed JOIN app.neighborhood_frozen_source_rows original
+        USING(generation_id,kind,row_key) WHERE typed.generation_id=$1`,[first.generationId])).rows[0];
+    assert.deepEqual(actualNeutral,{n:frozen.row_count,invalid:'0'});
+    const neutralCalls=[];
+    const neutralReplay={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
+      neutralCalls.push(c.text);return raw.query(c);}};}};
+    const neutralReused=await sharedTypedV2Step(neutralReplay,first.generationId);
+    assert.deepEqual(neutralReused.progress,neutralComplete.progress);
+    assert.equal(neutralReused.reused,true);assert.equal(neutralReused.advanced,false);
+    assert.ok(!neutralCalls.some(text=>/shared-typed-v2:(?:page|rows|begin|progress)|FOR UPDATE/.test(text)));
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_typed_v2_generations WHERE generation_id=$1',[first.generationId])).rows[0].n,1);
+    // V1's retained date cache and definition have not been replaced or reused.
+    assert.equal((await pool.query('SELECT count(*)::text AS n FROM app.neighborhood_frozen_typed_rows WHERE generation_id=$1',[first.generationId])).rows[0].n,retainedSharedCount);
+    for(const sql of ['UPDATE app.neighborhood_frozen_typed_v2_totals SET row_count=row_count+1 WHERE generation_id=$1',
+      'UPDATE app.neighborhood_frozen_typed_v2_rows SET typed=typed WHERE generation_id=$1',
+      'UPDATE app.neighborhood_frozen_typed_v2_generations SET progress=progress WHERE generation_id=$1',
+      'DELETE FROM app.neighborhood_frozen_typed_v2_rows WHERE generation_id=$1'])
+      await assert.rejects(pool.query(sql,[first.generationId]),error=>error.code==='55000');
+    for(const table of ['neighborhood_frozen_typed_v2_generations','neighborhood_frozen_typed_v2_rows','neighborhood_frozen_typed_v2_totals'])
+      await assert.rejects(pool.query(`TRUNCATE app.${table} CASCADE`),error=>error.code==='55000');
+    console.info('[native-shared-typed-generation-v2]',{original_rows:Number(actualNeutral.n),cache_headers:1,
+      generation_profile_only:true,original_hash_mismatches:0,ending_rollback:true,lost_commit_reopen:true,
+      immutable_complete:true,reuse_original_queries:0,reuse_writes:0,legacy_cache_preserved:true,
+      report_integration:false,source_acquisition:false,production_latency:false});
     const cancelledShared=new AbortController();cancelledShared.abort();
     await assert.rejects(sharedTypedStep(pool,first.generationId,null,'2025-10-07',cancelledShared.signal),/cancelled/);
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_typed_generations WHERE generation_id=$1',[first.generationId])).rows[0].n,1);
@@ -356,6 +430,8 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     assert.equal(second.status,'complete');
     const secondCache=await sharedTypedStep(pool,second.generationId);
     assert.equal(secondCache.all_layers_typed,false,'bounded partial shared generation is not complete');
+    const secondNeutralCache=await sharedTypedV2Step(pool,second.generationId);
+    assert.equal(secondNeutralCache.all_layers_typed,false);
     assert.equal((await getPreparedNeighborhoodGroupSummary(pool,{county:'Dallas',city:'Garland',subdivision:'Monica Park 4'})).median_living_area_sqft,2500);
     assert.notEqual(first.generationId,second.generationId);
     const third=await runNeighborhoodGroupIndex(pool,{batchSize:2,logger:{info(){}}});
@@ -369,6 +445,13 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_typed_totals WHERE generation_id=$1',[second.generationId])).rows[0].n,0);
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_typed_generations WHERE generation_id=$1',[second.generationId])).rows[0].n,0,
       'partial shared cache rows/header retire before originals without disabling restrictive FKs');
+    for(const table of ['neighborhood_frozen_typed_v2_rows','neighborhood_frozen_typed_v2_totals','neighborhood_frozen_typed_v2_generations'])
+      assert.equal((await pool.query(`SELECT count(*)::int AS n FROM app.${table} WHERE generation_id=$1`,[second.generationId])).rows[0].n,0,
+        'V2 partial cache retires before restrictive original FKs without disabling guards');
+    assert.deepEqual((await sharedTypedV2Step(pool,first.generationId)).progress,neutralComplete.progress,
+      'new sweeps cannot retire or retype the exact pinned V2 cache');
+    console.info('[native-shared-typed-v2-retirement]',{unpinned_partial_retired:true,pinned_complete_preserved:true,
+      source_acquisition:false,production_latency:false});
     const reusedShared=await sharedTypedStep(pool,first.generationId);
     assert.equal(reusedShared.all_layers_typed,true);assert.equal(reusedShared.reused,true);
     assert.deepEqual(reusedShared.progress,sharedProgress,'later sweeps cannot replace the exact retained interpretation');

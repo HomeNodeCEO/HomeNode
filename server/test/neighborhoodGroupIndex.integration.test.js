@@ -274,12 +274,20 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
       reuse_original_queries:0,reuse_writes:0,immutable_complete:true,source_acquisition:false,amenity_resolution:false,
       report_update:false,production_latency:false});
     for(const sql of ['UPDATE app.neighborhood_frozen_cad_improvement_rows SET payload=payload WHERE generation_id=$1',
-      'DELETE FROM app.neighborhood_frozen_cad_improvement_rows WHERE generation_id=$1',
       'UPDATE app.neighborhood_frozen_cad_improvement_generations SET row_count=0 WHERE generation_id=$1'])
-      await assert.rejects(pool.query(sql,[first.generationId]),error=>error.code==='55000'
-        ||error.code==='23503'&&error.table==='neighborhood_frozen_cad_improvement_rows'
-          &&error.constraint==='neighborhood_frozen_typed_cad_r_generation_id_kind_row_key_fkey',
-      'original guards or the exact restrictive typed-CAD original FK refuse deletion');
+      await assert.rejects(pool.query(sql,[first.generationId]),error=>error.code==='55000');
+    // Resolve the actual native FK, rather than guessing PostgreSQL's truncated
+    // generated name or the relation named in its diagnostic table field.
+    const originalFk=await pool.query(`SELECT conname,convalidated,confdeltype,confupdtype,
+      pg_get_constraintdef(oid) AS definition FROM pg_constraint
+      WHERE conrelid='app.neighborhood_frozen_typed_cad_rows'::regclass
+        AND confrelid='app.neighborhood_frozen_cad_improvement_rows'::regclass AND contype='f'`);
+    assert.equal(originalFk.rowCount,1);const fk=originalFk.rows[0];
+    assert.equal(fk.convalidated,true);assert.equal(fk.confdeltype,'r');assert.equal(fk.confupdtype,'r');
+    assert.match(fk.definition,/FOREIGN KEY \(generation_id, kind, row_key\) REFERENCES app\.neighborhood_frozen_cad_improvement_rows\(generation_id, kind, row_key\)/);
+    await assert.rejects(pool.query('DELETE FROM app.neighborhood_frozen_cad_improvement_rows WHERE generation_id=$1',[first.generationId]),
+      error=>error.code==='55000'||error.code==='23503'&&error.constraint===fk.conname,
+      'only the original guard or the verified exact restrictive original FK may refuse this DELETE');
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_cad_improvement_rows WHERE generation_id=$1',
       [first.generationId])).rows[0].n,7,'all companion originals survive each refused deletion');
     // PostgreSQL checks restrictive FKs before statement TRUNCATE triggers.

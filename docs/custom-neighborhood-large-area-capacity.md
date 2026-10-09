@@ -57,6 +57,20 @@ production speed acceptance. Explicit provider/type/transaction resolution, comp
 union calculations, coherent publication, workers/pin transfer and live
 large-area/retrospective acceptance remain unfinished.
 
+Integrated head `b56a9064e5113cedc61b90a421c6cf64e494a0e1` passed all 14 checks.
+Foundation `37925194494` / native `113802328075` actually passed all
+417/seven/one/one/two tests without failures/skips, repeating the actual issued
+owner and both-end authorization/cache refusal markers above. Server
+`113802328180` passed 10,533 tests with 61 separately database-gated skips;
+frontend `113802327929` passed 3,959 without skips. Included review
+`a4a7f74f-6690-4d41-bbc0-def5b1f95578` covered all four changed files without
+actionable implementation findings. Its 66.67% docstring warning is addressed
+by documenting the new internal reader and its enclosing owner/stage contracts;
+this is a comment/documentation-only correction, not a claimed recalculated
+coverage score or a new review. Every later head still requires fresh exact-head
+protected checks before normal merge. These small fixtures do not establish
+licensed acquisition, housing/amenity meaning or live acceptance.
+
 ## Bounded pinned-stock CAD syntax pages (2026-10-08, not activated)
 
 `createNeighborhoodSharedJobCadImprovementPages` reads only a complete, exact

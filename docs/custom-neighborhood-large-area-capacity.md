@@ -1,5 +1,36 @@
 # Complete larger-area Custom neighborhood studies
 
+## Separate date-neutral CAD improvement syntax (2026-10-08, not activated)
+
+`compileNeighborhoodFrozenTypedCadImprovementV1` interprets **one exact** companion
+original under a new hash-bound profile. It binds the exact native primary
+account/secondary bigint key, source profile, original text hash and byte count.
+Closed inputs cannot supply an appraisal date, provider mapping, rights, context
+or alternate policy. Fixed original keys are required; a caller cannot remove
+the pool field and present an incomplete original as the stored format.
+
+Decimal/integer text is canonicalized without Number conversion. Missing,
+invalid, oversized and observed values remain different. Year syntax accepts
+1600..9999 independently of an appraisal date; later consumers must apply the
+retained effective-year policy **before** resolution. Pool evidence accepts only
+native JSON booleans: NULL remains missing, false is an observed literal, and
+text/numeric substitutes are invalid. Secondary type labels are bounded exact
+diagnostics, not a garage/pool/outbuilding dictionary. Duplicate improvement
+numbers retain their native row identities. There is no cross-row summation,
+housing inference, retrospective assertion or measured/at-sale GLA claim.
+
+Both existing seven-kind V1/V2 profile hashes stay unchanged. Focused tests check
+exact decimals, unsafe wrong-type numeric tokens, year/count rules, NULL/false,
+duplicate identities, bounded labels, hostile inputs and frozen profiles.
+The authored seven-original native fixture checks the actual stored JSONB text
+hashes and literal observations, but **its execution on the new head is pending
+cloud CI**. This pure DATA compiler does not extend the previously issued
+seven-layer job graph, authorize the extra projection, materialize an amenities
+cache or establish acquisition/statistics/report publication. Shared bounded
+typing, current-authorized provenance verification and explicit provider/type
+resolution still need composition before activation. Existing source grants
+must not be silently widened to cover additional fields.
+
 ## Same-snapshot local CAD improvement originals (2026-10-08, not activated)
 
 The seven frozen source kinds did not include the primary/secondary improvement

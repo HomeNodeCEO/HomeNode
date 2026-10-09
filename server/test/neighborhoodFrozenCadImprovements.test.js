@@ -139,7 +139,9 @@ test('additive migration enforces exact-source acknowledgement, counts, immutabi
   assert.match(sql,/source_counts_mismatch/);assert.match(sql,/count\(\*\)::text FROM core.primary_improvements/);
   assert.match(sql,/ON core.primary_improvements\(account_id COLLATE "C"\)/);
   assert.match(sql,/changed.payload IS DISTINCT FROM/);assert.match(sql,/s.id=CASE WHEN changed.kind='secondary'/);
-  assert.match(sql,/GENERATED ALWAYS AS/);assert.match(sql,/same_snapshot_required/);
+  assert.match(sql,/CHECK\(payload_sha256=encode\(sha256\(convert_to\(payload::text/);
+  assert.match(sql,/CHECK\(payload_utf8_bytes=octet_length\(payload::text\)\)/);
+  assert.doesNotMatch(sql,/GENERATED ALWAYS AS/);assert.match(sql,/same_snapshot_required/);
   assert.match(sql,/reject_pinned_neighborhood_group_mutation/);assert.match(sql,/retirement_started_at IS NULL/);
   assert.match(sql,/pg_trigger_depth\(\)<>2/);assert.match(sql,/population_incomplete/);
   assert.doesNotMatch(sql,/DISABLE TRIGGER|DROP TABLE|ON DELETE CASCADE/);

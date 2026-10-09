@@ -29,8 +29,11 @@ CREATE TABLE app.neighborhood_frozen_cad_improvement_rows (
   account_id text COLLATE "C" NOT NULL CHECK(octet_length(account_id) BETWEEN 1 AND 64),
   account_kind text NOT NULL DEFAULT 'accounts' CHECK(account_kind='accounts'),
   payload jsonb NOT NULL CHECK(jsonb_typeof(payload)='object' AND octet_length(payload::text)<=1000000),
-  payload_utf8_bytes integer GENERATED ALWAYS AS (octet_length(payload::text)) STORED,
-  payload_sha256 text GENERATED ALWAYS AS (encode(sha256(convert_to(payload::text,'UTF8')),'hex')) STORED,
+  -- convert_to is STABLE, so PostgreSQL cannot use it in a generated column.
+  -- Fixed INSERT SQL derives these values and native CHECKs acknowledge the
+  -- actual JSONB bytes; caller-supplied values cannot relabel a payload.
+  payload_utf8_bytes integer NOT NULL CHECK(payload_utf8_bytes=octet_length(payload::text)),
+  payload_sha256 text NOT NULL CHECK(payload_sha256=encode(sha256(convert_to(payload::text,'UTF8')),'hex')),
   CHECK(coalesce(payload->>'account_id'=account_id AND CASE WHEN kind='primary'
     THEN row_key=account_id AND payload ?& ARRAY['account_id','year_built','living_area_sqft','bedroom_count','bath_count','number_units','pool']
       AND (payload-ARRAY['account_id','year_built','living_area_sqft','bedroom_count','bath_count','number_units','pool'])='{}'::jsonb

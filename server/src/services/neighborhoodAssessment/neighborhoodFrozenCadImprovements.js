@@ -59,8 +59,9 @@ const PAGES=freeze(Object.fromEntries(Object.entries(PLANS).map(([kind,p])=>[kin
     FROM ${p.table} ${p.alias} WHERE ($2::text='' OR ${p.alias}.${p.key}${kind==='primary'?' COLLATE "C"':''}>NULLIF($2,'')::${p.keyType})
     ORDER BY ${p.alias}.${p.key}${kind==='primary'?' COLLATE "C"':''} LIMIT $3::integer
   ), copied AS (
-    INSERT INTO app.neighborhood_frozen_cad_improvement_rows(generation_id,kind,row_key,account_id,payload)
-    SELECT $1::uuid,'${kind}',row_key,account_id,payload FROM batch RETURNING octet_length(payload::text) AS bytes
+    INSERT INTO app.neighborhood_frozen_cad_improvement_rows(generation_id,kind,row_key,account_id,payload,payload_utf8_bytes,payload_sha256)
+    SELECT $1::uuid,'${kind}',row_key,account_id,payload,octet_length(payload::text),encode(sha256(convert_to(payload::text,'UTF8')),'hex')
+    FROM batch RETURNING payload_utf8_bytes AS bytes
   ) SELECT coalesce((SELECT row_key FROM batch ORDER BY source_order_key DESC LIMIT 1),$2)::text AS cursor,
     count(*)::integer AS copied,coalesce(sum(bytes),0)::text AS payload_utf8_bytes FROM copied`
 ])));

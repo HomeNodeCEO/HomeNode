@@ -24,7 +24,7 @@ The additive `20261116_neighborhood_frozen_cad_improvements.sql` links every
 companion to its immutable original account and hash-binds the profile. Native
 guards require the same source snapshot/transaction, independently count both
 whole source tables and acknowledge each fixed source payload through native
-primary-key probes. Generated hash/byte columns and statement-derived totals
+primary-key probes. SQL-derived hash/byte columns with exact native CHECKs and statement-derived totals
 prevent caller counters, invented payloads or prefixes from completing a
 population. Rows and completed headers are immutable. Bounded retirement deletes
 companion rows/totals/header before their restrictive original FKs; current pins

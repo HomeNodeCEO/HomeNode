@@ -225,15 +225,20 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
       };
       await refuses(CAD_SQL.begin,[...args,'{"primary":"0","secondary":"0"}']);
       await cadClient.query(CAD_SQL.begin,[...args,'{"primary":"3","secondary":"4"}']);
-      await refuses(`INSERT INTO app.neighborhood_frozen_cad_improvement_rows(generation_id,kind,row_key,account_id,payload)
-        VALUES($1,'primary','INDEX-A','INDEX-A',$2::jsonb)`,[cadCandidate,JSON.stringify({...primaryA,pool:false})]);
-      await refuses(`INSERT INTO app.neighborhood_frozen_cad_improvement_rows(generation_id,kind,row_key,account_id,payload)
-        VALUES($1,'secondary','1','INDEX-A',$2::jsonb)`,[cadCandidate,JSON.stringify({id:'1',account_id:'INDEX-A',sec_imp_number:'1',sec_imp_type:'ATTACHED GARAGE',sec_imp_sqft:'401'})]);
+      await refuses(`INSERT INTO app.neighborhood_frozen_cad_improvement_rows(generation_id,kind,row_key,account_id,payload,payload_utf8_bytes,payload_sha256)
+        SELECT $1,'primary','INDEX-A','INDEX-A',$2::jsonb,octet_length(($2::jsonb)::text),encode(sha256(convert_to(($2::jsonb)::text,'UTF8')),'hex')`,
+      [cadCandidate,JSON.stringify({...primaryA,pool:false})]);
+      await refuses(`INSERT INTO app.neighborhood_frozen_cad_improvement_rows(generation_id,kind,row_key,account_id,payload,payload_utf8_bytes,payload_sha256)
+        SELECT $1,'secondary','1','INDEX-A',$2::jsonb,octet_length(($2::jsonb)::text),encode(sha256(convert_to(($2::jsonb)::text,'UTF8')),'hex')`,
+      [cadCandidate,JSON.stringify({id:'1',account_id:'INDEX-A',sec_imp_number:'1',sec_imp_type:'ATTACHED GARAGE',sec_imp_sqft:'401'})]);
+      await refuses(`INSERT INTO app.neighborhood_frozen_cad_improvement_rows(generation_id,kind,row_key,account_id,payload,payload_utf8_bytes,payload_sha256)
+        SELECT $1,'primary','INDEX-A','INDEX-A',$2::jsonb,1,repeat('a',64)`,[cadCandidate,JSON.stringify(primaryA)],'23514');
       await refuses(`INSERT INTO app.neighborhood_frozen_cad_improvement_totals(generation_id,kind,row_count,payload_utf8_bytes)
         VALUES($1,'primary',3,300)`,[cadCandidate]);
       await refuses(CAD_SQL.complete,[cadCandidate,JSON.stringify({primary:{row_count:'0',payload_utf8_bytes:'0'},secondary:{row_count:'0',payload_utf8_bytes:'0'}}),'0','0']);
-      await refuses(`INSERT INTO app.neighborhood_frozen_cad_improvement_rows(generation_id,kind,row_key,account_id,payload)
-        VALUES($1,'secondary','9223372036854775808','INDEX-A',$2::jsonb)`,[cadCandidate,JSON.stringify({id:'9223372036854775808',account_id:'INDEX-A',sec_imp_number:null,sec_imp_type:null,sec_imp_sqft:null})],'23514');
+      await refuses(`INSERT INTO app.neighborhood_frozen_cad_improvement_rows(generation_id,kind,row_key,account_id,payload,payload_utf8_bytes,payload_sha256)
+        SELECT $1,'secondary','9223372036854775808','INDEX-A',$2::jsonb,octet_length(($2::jsonb)::text),encode(sha256(convert_to(($2::jsonb)::text,'UTF8')),'hex')`,
+      [cadCandidate,JSON.stringify({id:'9223372036854775808',account_id:'INDEX-A',sec_imp_number:null,sec_imp_type:null,sec_imp_sqft:null})],'23514');
     } finally {await cadClient.query('ROLLBACK');cadClient.release();}
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_group_generations WHERE generation_id=$1',[cadCandidate])).rows[0].n,0);
     // Throw after the actual companion is complete but before index publication.

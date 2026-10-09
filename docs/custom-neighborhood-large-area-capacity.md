@@ -42,8 +42,20 @@ forged cells/headers/order, and full-250/short/empty tails. The authored small
 native actual-issued owner fixture checks SQL one-hop scope (including exclusion
 of second-hop source 502), missing-cache/partial-head refusal, ending current
 rights/actor/subject/claim/cancel/cache denial, corrupt prerequisites and
-lost-COMMIT replay, with no original reads or durable mutations. **New native
-transaction-page execution is pending cloud CI.** No source grant, activation,
+lost-COMMIT replay, with no original reads or durable mutations. Historical
+pre-integration head `663dbe0ff6013c5ae22819ebe61f7e50fb8d86c6` passed foundation
+`37887917411` / native `113681975953`: 417 migration, eight index, one subject,
+one edge and two bootstrap tests without failures/skips. The actual issued-owner
+marker confirmed three source, three sale and four link rows, all-date retention,
+outside/unresolved and source-less evidence, second-hop exclusion, ending
+authorization/cache refusal and lost-COMMIT reopen without original reads,
+copies or durable writes. Server passed 10,543 tests with 62 separately
+database-gated skips; frontend passed 3,959 with no skips. These are historical
+small-fixture receipts, not later integrated-head readiness or licensed/live
+acceptance. This branch incorporates protected #1231 merge
+`3b69696e16709f6c0408ab969dcb62b78f6b5819`; fresh exact-head checks and actual
+review are verified separately before normal protected merge.
+No source grant, activation,
 worker, HTTP default, genuine Hardy choice, report or Apply mutation occurs.
 Transaction resolution, server-owned selection, exact complete-population
 selected-union medians/COD/quarters, coherent publication, durable workers/pin
@@ -107,6 +119,21 @@ selected-union statistics, retrospective accuracy or live speed acceptance.
 Transaction resolution, server-owned selection, exact full medians/COD/quarters,
 coherent publication, durable workers/pin transfer and licensed/live acceptance
 remain mandatory.
+
+Integrated #1231 head `0cc81988678403465723a27634cefaef36925e79` passed all
+14 exact-head checks. Foundation `37934705468` / native `113833737470` actually
+passed all 417/eight/one/one/two tests without failures/skips. Its actual-issued
+current CAD account owner and distinct missing-primary SQL DATA markers repeated
+the guards above; the DATA fixture explicitly did not issue a graph or current
+actor-owner receipt. Server `113833737922` passed 10,537 tests with 62 separately
+database-gated skips; frontend `113833738338` passed 3,959 without skips.
+Included review `04c398c4-5137-44e2-be9e-1c671ce21eeb` covered all six changed
+files without actionable findings; all five pre-merge checks passed, including
+91.67% docstring coverage. Current protected checks, head, main rules and lack
+of unresolved findings were revalidated before normal expected-head merge as
+`3b69696e16709f6c0408ab969dcb62b78f6b5819`. No activation or production change
+occurred. These small native/synthetic receipts are not licensed acquisition,
+complete-population statistics, retrospective truth or live speed acceptance.
 
 ## Current-authorized CAD syntax page owner (2026-10-08, not activated)
 

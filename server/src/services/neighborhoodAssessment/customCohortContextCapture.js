@@ -2175,6 +2175,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * housing, amenity, historical or complete-population meaning is inferred. */
     readSharedFrozenCaptureJobCadAccountsReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'shared_CAD_accounts_refs_v2'),
+    /** Read one bounded all-date transaction-original page after actual issued
+     * V2 prerequisites and both-end current authorization. This does not resolve
+     * complete packages, verify transaction eligibility or publish selections. */
     readSharedFrozenCaptureJobTransactionsReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'shared_transaction_pages_refs_v2'),
     async capture(value, options = {}) {

@@ -4,7 +4,9 @@ import { prepareNeighborhoodCohortBlob } from './cohortEvidenceBlobRepository.js
 import { getNeighborhoodFrozenTypedOriginalV2Profile } from './neighborhoodFrozenTypedOriginalV1.js';
 import { prepareNeighborhoodTypedTransactionV2 } from './neighborhoodFrozenTypedTransactionV2.js';
 
+/** Refuse the entire temporal projection without making an evidence/eligibility claim. */
 const fail = reason => { throw new TypeError(`neighborhood_transaction_temporal_${reason}`); };
+/** Freeze owned profile/projection DATA; originals were independently reconciled upstream. */
 const freeze = value => {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) { Object.values(value).forEach(freeze); Object.freeze(value); }
   return value;
@@ -33,8 +35,10 @@ const DEFINITION = freeze({
 const definitionText = canonicalAssessmentJson(DEFINITION), blob = prepareNeighborhoodCohortBlob(definitionText);
 const PROFILE = freeze({ profile_ref: { id: DEFINITION.id, revision: '1', content_sha256: blob.content_sha256 },
   definition_blob: { ref: blob, canonical_json: definitionText } });
+/** Fixed immutable date interpretation only, never current source or transaction authority. */
 export function getNeighborhoodTransactionTemporalV1Profile() { return PROFILE; }
 
+/** Admit only the actual retained inclusive study period, bounded by its effective date. */
 export function prepareNeighborhoodTransactionRetainedPeriodV1(value, effectiveDate) {
   const effective = assessmentDate(effectiveDate);
   if (!value || isProxy(value) || Object.getPrototypeOf(value) !== Object.prototype) fail('invalid_period');
@@ -45,13 +49,17 @@ export function prepareNeighborhoodTransactionRetainedPeriodV1(value, effectiveD
   if (start > end || end > effective) fail('future_or_reversed_period');
   return freeze({ start_date: start, end_date: end });
 }
+/** Preserve every fixed neutral numeric disposition without copying its original witness. */
 const compactCell = ({ state, exact_value, unit, reason }) => ({ state, exact_value, unit, reason });
+/** Preserve calendar syntax and refusal reasons independently of other date fields. */
 const compactDate = ({ state, exact_value, reason }) => ({ state, exact_value, reason });
+/** Apply retained effective-year admission before any account/transaction resolution. */
 function yearCell(cell, effective) {
   if (cell.state === 'observed' && BigInt(cell.exact_value) > BigInt(effective.slice(0, 4)))
     return { state: 'invalid', exact_value: null, unit: null, reason: 'year_after_retained_effective_year' };
   return compactCell(cell);
 }
+/** Classify one independently reconciled closing date; links inherit no other row's date. */
 function disposition(cell, period) {
   if (cell === null) return { state: 'unsupported', exact_date: null, reason: 'date_not_present_in_link_original' };
   if (cell.state !== 'observed') return { state: cell.state, exact_date: null, reason: cell.reason };
@@ -59,6 +67,7 @@ function disposition(cell, period) {
   return { state: inside ? 'in_period' : 'outside_period', exact_date: cell.exact_value,
     reason: inside ? null : 'outside_retained_observation_period' };
 }
+/** Closed-status/date syntax is not verified sale completion, consideration or eligibility. */
 function reportedDisposition(record, date) {
   if (record.state === 'conflicting') return 'conflicting_record_type';
   if (record.state === 'unknown') return 'unknown_record_type';

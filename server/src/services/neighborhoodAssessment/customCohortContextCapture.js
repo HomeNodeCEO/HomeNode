@@ -2195,6 +2195,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * complete packages, verify transaction eligibility or publish selections. */
     readSharedFrozenCaptureJobTransactionsReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'shared_transaction_pages_refs_v2'),
+    /** Project one all-date original page under actual retained dates only after
+     * issued V2 prerequisites and current authorization/cache fences at both ends.
+     * This read neither resolves complete packages nor advances durable state. */
     readSharedFrozenCaptureJobTransactionTemporalReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'shared_transaction_temporal_refs_v2'),
     async capture(value, options = {}) {

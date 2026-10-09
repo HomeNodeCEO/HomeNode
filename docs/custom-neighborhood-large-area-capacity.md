@@ -42,9 +42,29 @@ assertion expected a downstream permission error instead of the actual earlier
 `custom_cohort_job_actor_access_revoked` refusal. The current actor reload correctly
 refused delivery after real role removal. Only the test expectation is corrected,
 and it now also requires the actual page query before ending refusal; no production
-authorization guard is changed or relaxed. **Corrected temporal native execution
-is pending fresh cloud CI**. Authoring and focused DATA tests are not native or
-licensed/live acceptance.
+authorization guard is changed or relaxed. Corrected historical `d47486af` cloud
+execution actually passed: foundation `37890613643`, native `113690469943`, all
+417 migration/8 index/1 subject/1 edge/2 bootstrap tests, zero failures/skips;
+index 444332.303691ms. Actual server: 10,550 passed, zero failed, 62 separately
+DB-gated skips (281267.60689ms); frontend: 3,959 passed, zero failed/skipped
+(57012.939587ms). Those are historical pre-integration receipts, not fresh
+protected-head readiness. Small native/synthetic tests are not licensed/live
+acceptance.
+
+Actual protected #1232 merge `bd22d944a80e0af97b25e81bdc9c0f82dd943f75`
+was integrated without conflicts on 2026-10-09 after its actual included review
+completed all eight files through `603e674c`, no actionable comments, all five
+pre-merge checks (82.61% docstrings), at 15:04:07Z. Fresh main/ruleset21594102/no
+bypass/all14exactchecks/cleanmergeability/no unresolved findings preceded its
+normal expected-head merge at15:05:14Z. Current temporal implementation is
+unchanged from historical `d47486af`; comments now document the bounded helper
+and owner contracts. Re-ran 95 focused integrated owner/page/temporal tests,
+all passed without failures/skips (1721.6782ms). Syntax/diff checks passed.
+Retarget main BEFORE synchronize push so all main-required cloud workflows run.
+Fresh integrated-head native/full-suite/exact-required checks and actual included
+review remain required; historical green is not merged-head readiness. Next
+ordinary included review conservatively NOT BEFORE16:08Z after actual1232
+completion; no forced/paid allowance or required-check bypass.
 Source/amenity meaning, complete transaction/association resolution, server-owned
 selection, exact selected-union statistics, coherent publication, durable workers/
 terminal pin transfer and licensed large-area/retrospective/live acceptance remain.

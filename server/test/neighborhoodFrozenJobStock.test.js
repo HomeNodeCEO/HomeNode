@@ -310,6 +310,7 @@ function fixture(hook=()=>{},initial=false) {
   return {calls,client,store:createNeighborhoodFrozenJobStock(client,options)};
 }
 
+/** Build synthetic complete-cache DATA for page protocol tests, never an issued owner or grant. */
 async function sharedCadFixture(hook=()=>{}){
   const profile=getNeighborhoodFrozenTypedCadImprovementV1Profile(),original=getNeighborhoodFrozenCadImprovementProfile();let source,header;
   const typed=compileNeighborhoodFrozenTypedCadImprovementV1({kind:'primary',row_key:'STOCK-A',payload_text:JSON.stringify({account_id:'STOCK-A',

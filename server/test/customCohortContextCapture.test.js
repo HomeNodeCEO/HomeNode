@@ -225,10 +225,11 @@ test('CAD account owner obtains its date from retained context and accepts no ca
   assert.equal(connections,0);
 });
 
-test('transaction page owner accepts no caller period, profile, source facts, selection or issued head',async()=>{
+for(const method of ['readSharedFrozenCaptureJobTransactionsReferencesV2','readSharedFrozenCaptureJobTransactionTemporalReferencesV2'])
+test(`${method} accepts no caller period, profile, source facts, selection or issued head`,async()=>{
   const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
     claim={operation_id:base.operationId,claim_token:'70000000-0000-4000-8000-000000000002',attempts:1};
-  const opts={captureJobClaim:claim,transactionPage:{kind:'source_records',cursor:'',rowLimit:250}},method='readSharedFrozenCaptureJobTransactionsReferencesV2';
+  const opts={captureJobClaim:claim,transactionPage:{kind:'source_records',cursor:'',rowLimit:250}};
   const service=createCustomCohortContextCapture({pool:{connect(){assert.fail('must not connect');}},sourceMode:'combined-witness2-v1',
     authorizeMarketData:()=>assert.fail('must not authorize')});
   await assert.rejects(setup()[method](base,opts),/frozen_source_profile_unsupported/);

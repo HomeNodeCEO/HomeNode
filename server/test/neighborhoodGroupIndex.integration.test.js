@@ -1735,6 +1735,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       cadAccountPage:{cursor:'',rowLimit:250}};
     const transactionMethod='readSharedFrozenCaptureJobTransactionsReferencesV2',transactionOptions={...refsOptions,
       transactionPage:{kind:'source_records',cursor:'',rowLimit:1}};
+    const temporalMethod='readSharedFrozenCaptureJobTransactionTemporalReferencesV2';
     await refsOwner.prepareFrozenCaptureJobStock(refsInput,refsOptions);
     const readRefsCheckpoint=async()=>(await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[refsOperation])).rows[0].checkpoint;
     const refsStockCheckpoint=await readRefsCheckpoint();
@@ -2190,6 +2191,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await assert.rejects(cadOwner()[cadOwnerMethod](refsInput,cadOwnerOptions),/checkpoint_conflict/);
     await assert.rejects(cadOwner()[cadAccountMethod](refsInput,cadAccountOptions),/checkpoint_conflict/);
     await assert.rejects(freshRefsOwner()[transactionMethod](refsInput,transactionOptions),/checkpoint_conflict/);
+    await assert.rejects(freshRefsOwner()[temporalMethod](refsInput,transactionOptions),/checkpoint_conflict/);
     assert.ok(!refsCalls.slice(identityFrom).some(sql=>/neighborhood-frozen-job-identity:|stock-originals:|neighborhood-frozen-job-closure:/.test(sql)));
     assert.ok(!refsCalls.slice(identityFrom).some(sql=>/shared-typed-v2:|shared-v2-stock-metrics:page|shared-job-transactions-v2:page/.test(sql)),
       'an unissued DONE receipt refuses before any shared cache header or metric SQL');
@@ -2231,6 +2233,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await assert.rejects(cadOwner()[cadOwnerMethod](refsInput,cadOwnerOptions),/unfinished_identity_verification/);
     await assert.rejects(cadOwner()[cadAccountMethod](refsInput,cadAccountOptions),/unfinished_identity_verification/);
     await assert.rejects(freshRefsOwner()[transactionMethod](refsInput,transactionOptions),/unfinished_identity_verification/);
+    await assert.rejects(freshRefsOwner()[temporalMethod](refsInput,transactionOptions),/unfinished_identity_verification/);
     assert.deepEqual(await readRefsCheckpoint(),identityFirst);assert.deepEqual(await readIdentityAnchor(),identityFirstAnchor);
     assert.ok(!refsCalls.slice(partialIdentityFrom).some(sql=>/neighborhood-frozen-job-identity:|shared-typed-v2:|shared-v2-stock-metrics:page|shared-job-transactions-v2:page|checkpoint-save|anchor-advance/.test(sql)),
       'metric reads cannot advance a real partial identity head or silently finish its verification');
@@ -2311,6 +2314,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     const noCacheFrom=refsCalls.length;
     await assert.rejects(freshRefsOwner()[metricV2Method](refsInput,metricV2Options),/invalid_result/);
     await assert.rejects(freshRefsOwner()[transactionMethod](refsInput,transactionOptions),/invalid_result/);
+    await assert.rejects(freshRefsOwner()[temporalMethod](refsInput,transactionOptions),/invalid_result/);
     assert.ok(!refsCalls.slice(noCacheFrom).some(sql=>/shared-typed-v2:begin|shared-typed-v2:rows|shared-v2-stock-metrics:page|checkpoint-save/.test(sql)));
     const neutralPrepared=await sharedTypedV2Complete(pool,frozen.generationId);
     assert.equal(neutralPrepared.all_layers_typed,true);
@@ -2439,6 +2443,54 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       current_authorization_and_ending_cache_refusal:true,partial_unissued_corrupt_heads_refused:true,lost_commit_reopen:true,
       original_payload_reads:0,job_typed_copies:0,checkpoint_or_head_writes:0,
       source_acquisition:false,transaction_eligibility:false,report_update:false,production_latency:false});
+    // Fresh current-authorized temporal projection, not a caller date or a
+    // fabricated canonical transaction. Every old/outside/unknown row remains.
+    const temporalFrom=refsCalls.length,temporalRows={};
+    for(const kind of ['source_records','sales','sale_links']){
+      const page=await freshRefsOwner()[temporalMethod](refsInput,{...transactionOptions,transactionPage:{kind,cursor:'',rowLimit:250}});
+      assert.equal(page.status,'retained_transaction_temporal_page');
+      assert.deepEqual(page.rows.map(r=>r.row_key),expected[kind]);temporalRows[kind]=page.rows;
+      assert.equal(page.retained_effective_date,'2026-10-07');assert.deepEqual(page.retained_observation_period,refsInput.observationPeriod);
+      assert.equal(page.temporal_profile.profile_ref.id,'neighborhood-retained-transaction-temporal-v1');
+      for(const row of page.rows){
+        assert.equal(row.retained_effective_date,'2026-10-07');assert.deepEqual(row.retained_observation_period,refsInput.observationPeriod);
+        assert.equal(row.original.payload_sha256,transactionRows[kind].find(r=>r.row_key===row.row_key).original_payload_sha256);
+        assert.equal(row.transaction_eligibility,'not_established');assert.equal(row.association_resolution,'not_established');
+      }
+      assert.equal(page.transaction_eligibility,'not_established');assert.equal(page.report_update,'none');
+    }
+    assert.equal(temporalRows.source_records.find(r=>r.row_key==='501').normalized.period_disposition.state,'outside_period');
+    assert.equal(temporalRows.source_records.find(r=>r.row_key==='504').normalized.period_disposition.state,'in_period');
+    assert.equal(temporalRows.source_records.find(r=>r.row_key==='501').same_payload_reported_sale.closed_record_disposition,'unknown_record_type',
+      'normalized stored close date cannot fabricate missing same-payload status/date');
+    assert.equal(temporalRows.sales.find(r=>r.row_key==='3').normalized.period_disposition.state,'outside_period');
+    assert.equal(temporalRows.sales.find(r=>r.row_key==='3').same_payload_reported_sale,null);
+    assert.equal(temporalRows.sale_links.find(r=>r.row_key==='4').account_id,null);
+    assert.equal(temporalRows.sale_links.find(r=>r.row_key==='4').normalized.period_disposition.state,'unsupported');
+    assert.equal(temporalRows.sale_links.find(r=>r.row_key==='4').markers.is_resolved.value_text,'false');
+    for(const [fault,reason] of [['license',/market_data_access_denied/],['role',/permission_denied/],
+      ['subject',/subject_changed/],['claim',/claim_lost/],['cancel',/cancelled/],['transaction_header',/cache_unavailable/]]){
+      refsAbort=new AbortController();refsFault=fault;
+      await assert.rejects(freshRefsOwner()[temporalMethod](refsInput,{...transactionOptions,signal:refsAbort.signal}),reason,`temporal ending ${fault}`);
+      assert.equal(refsFault,null);await assertTransactionUnchanged();
+      if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+      if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    }
+    refsFault='commit';await assert.rejects(freshRefsOwner()[temporalMethod](refsInput,transactionOptions),e=>e.outcome_unknown===true);
+    await assertTransactionUnchanged();assert.deepEqual((await freshRefsOwner()[temporalMethod](refsInput,transactionOptions)).rows,[temporalRows.source_records[0]]);
+    for(const fault of ['missing_receipt','corrupt_receipt','missing_geo_receipt','corrupt_geo_receipt','missing_identity_receipt','corrupt_identity_receipt']){
+      refsFault=fault;const from=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[temporalMethod](refsInput,transactionOptions),/checkpoint_conflict|storage_conflict|invalid_receipt/);
+      assert.equal(refsFault,null);assert.ok(!refsCalls.slice(from).includes(NEIGHBORHOOD_SHARED_JOB_TRANSACTION_V2_PAGE_SQL));
+      await assertTransactionUnchanged();
+    }
+    assert.ok(!refsCalls.slice(temporalFrom).some(sql=>/ST_DWithin|neighborhood-frozen-job-closure:|payload::text|shared-typed-v2:(?:page|begin|rows|progress)|checkpoint-save|anchor-(?:advance|insert)/.test(sql)));
+    console.info('[native-retained-transaction-temporal-owner-v1]',{source_records:3,sales:3,sale_links:4,
+      actual_issued_owner_and_retained_period:true,older_and_outside_originals_retained:true,closing_date_bounds_inclusive:true,
+      no_normalized_reported_fallback:true,unresolved_links_without_invented_date:true,
+      unissued_partial_corrupt_prerequisites_refused:true,ending_current_authorization_cache_refusal:true,lost_commit_reopen:true,
+      original_payload_reads:0,job_typed_copies:0,cache_checkpoint_or_head_writes:0,
+      transaction_resolution:false,licensed_population:false,report_update:false,production_speed:false});
     // Actual current-authorized companion consumer, not a DATA-only raw reader.
     // The additional synthetic CAD grant never provisions production rights.
     const cadBeforeBlobs=await refsBlobCount(),cadInitialFrom=refsCalls.length;

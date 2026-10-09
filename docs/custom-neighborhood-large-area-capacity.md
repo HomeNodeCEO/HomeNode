@@ -1,5 +1,49 @@
 # Complete larger-area Custom neighborhood studies
 
+## Retained transaction temporal projection (2026-10-09, not activated)
+
+`readSharedFrozenCaptureJobTransactionTemporalReferencesV2` is a separate dormant
+internal consumer of the bounded shared transaction pages. The actual issued V2
+graph/geography/identity owner supplies the retained subject effective date and
+the exact saved study period; caller options cannot provide dates, facts, a
+selection, a profile or an issued head. Complete cache/seed prerequisites and
+current database actor/assignment/draft/subject/original source rights/live claim,
+pin/stock/issued heads are required at both ends. No read advances a prerequisite
+or prepares a cache miss.
+
+Before later account/transaction resolution, normalized and same-payload reported
+future years become explicit invalid cells under the retained effective-year
+rule. Their neutral originals remain unchanged and hash-referenced. Each original
+is retained, including older/outside evidence, source-less sales, and unresolved
+package links. Fixed closing-date-only inclusive period dispositions keep stored
+normalized closing dates and reported `CloseDate` separate. Neither supplies a
+fallback for the other; contract dates, capture/load timestamps and another row's
+date cannot fabricate missing evidence. Links have no date until independent
+complete package resolution. Original link position/resolution and source markers
+remain bounded literal diagnostics, not provider or housing classifications.
+
+Reported status and close-date syntax produce separate dispositions such as
+unknown/conflicting/nonclosed/missing/invalid/unsupported/outside-period and
+`closed_in_period_syntax_only`. That last label is not verified sale completion,
+consideration, currency, transaction equivalence, historical stock or at-sale GLA.
+Price/unit disagreements and exact decimals stay separate; nothing is allocated,
+aggregated or made report-eligible. Output projections have an additional 8-KB
+per-row and 2.1-MB page ceiling; the underlying all-date read retains its existing
+250-row/query/byte/time fences and full-tail empty probe.
+
+95 focused owner/page/temporal tests passed with zero failures/skips (1,306.58ms).
+The new temporal fixture extends the actual issued-owner native cloud test with
+three source/sale/link page kinds, retained dates/period, older evidence refusal
+for in-period use, no normalized/reported fallback, initial prerequisite failures,
+ending authorization/cache refusal, lost-COMMIT reopen and unchanged original
+cache/checkpoint/heads/blobs. **New temporal native execution is pending cloud CI**;
+authoring and focused DATA tests are not native or licensed/live acceptance.
+Source/amenity meaning, complete transaction/association resolution, server-owned
+selection, exact selected-union statistics, coherent publication, durable workers/
+terminal pin transfer and licensed large-area/retrospective/live acceptance remain.
+No production activation, grant, report, genuine Hardy choice or Apply is changed;
+QA assignment 7 remains the only Apply-test target.
+
 ## Bounded shared transaction originals (2026-10-09, not activated)
 
 `readSharedFrozenCaptureJobTransactionsReferencesV2` is an explicit internal

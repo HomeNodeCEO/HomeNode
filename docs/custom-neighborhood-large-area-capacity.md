@@ -34,7 +34,19 @@ acknowledgement/count/CAS failure and two-layer completion. The authored small
 native fixture tests actual 7-original cache storage, ending rollback,
 lost-successful-COMMIT reopen, altered original refusal, incomplete-prefix
 refusal, immutable completion, zero-original/zero-write metadata reuse and
-partial-cache/pinned retirement. **New native execution is pending cloud CI**.
+partial-cache/pinned retirement. Historical exact head
+`8035062aac1af93797212a891f1f30a9ed072b56` passed foundation `37884454741`,
+native job `113671200374`: 417 migration, seven index, one subject, one edge and
+two bootstrap tests, zero failures/skips. The native companion marker confirmed
+seven originals/seven typed rows with zero hash mismatches, rollback, lost-COMMIT
+reopen, forged-prefix and immutability refusal, zero-original/zero-write completed
+reuse, and unpinned retirement while pinned originals remained intact. Server
+passed 10,503 with 61 separately database-gated skips; frontend passed 3,959
+without skips. The branch now incorporates the exact protected #1226 merge
+below, plus helper-contract comments; implementation remains unchanged from
+that historical head. **Fresh integrated-head native and all main-required
+checks remain pending**, as does actual included review. Historical receipts
+are not current protected readiness or licensed/live acceptance.
 The offline owner must authorize the whole original projection at both ends.
 This builder does not grant extra-field rights, extend issued job graphs,
 resolve amenities, prove licensed acquisition or publish report/statistics.
@@ -86,9 +98,16 @@ Included CodeRabbit review `1f6c285e-bd9e-404f-aa2f-2eede0998a8f` completed on t
 exact head at 2026-10-09T07:37Z, processing all four changed files with no actionable
 code findings or review threads. Its sole documentation-coverage warning is
 addressed by helper contract comments and this receipt update, with no implementation
-token, profile, SQL, behavior or test change. Fresh protected checks for this
-comments/documentation-only correction remain pending; the coverage percentage
-has not been independently recalculated, and no extra paid/forced review is requested.
+token, profile, SQL, behavior or test change. Comments/documentation-only head
+`720578ffd743263cdf63237b8a04679f57ce8200` then passed all fourteen fresh exact-head
+checks. Foundation `37901425551`, native job `113724647061`, passed the same
+417/seven/one/one/two suites with zero failures/skips, including the actual
+seven-original syntax marker and zero hash mismatches (index 429,507.515862ms).
+With no unresolved threads, #1226 normally protected-merged as
+`0abdbbf4d9b459f5ae250c683dbfd9a189d316b6` at 2026-10-09T08:05Z. The actual
+included review covered the unchanged implementation; a later skipped review
+status is not another actual review. The warning percentage was not independently
+recalculated; no extra paid/forced review, quota or required-check bypass occurred.
 This pure DATA compiler does not extend the previously issued
 seven-layer job graph, authorize the extra projection, materialize an amenities
 cache or establish acquisition/statistics/report publication. Shared bounded

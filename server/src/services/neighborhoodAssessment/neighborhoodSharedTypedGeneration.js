@@ -38,6 +38,7 @@ function freeze(value) {
 const same = (a, b) => canonicalAssessmentJson(a) === canonicalAssessmentJson(b);
 const count = (n, max) => typeof n === 'string' && /^(?:0|[1-9][0-9]{0,18})$/.test(n) && BigInt(n) <= BigInt(max);
 function one(result) { if (result?.rowCount !== 1 || result.rows?.length !== 1) fail('invalid_result'); return result.rows[0]; }
+/** Validate the installed format's bounded persisted prefix; caller progress is never authority. */
 function progressOf(raw, format = FORMAT, kinds = KINDS, totalRows = L.total_rows) {
   if (raw === null) return null;
   const p = data(raw, ['format', 'binding_sha256', 'kind_index', 'after', 'layer_rows', 'typed_rows', 'typed_utf8_bytes']);
@@ -67,6 +68,7 @@ const SOURCE = `/* neighborhood-shared-typed:source */ SELECT source.generation_
   FROM app.neighborhood_frozen_source_generations source JOIN app.neighborhood_group_generations generation USING(generation_id)
   WHERE source.generation_id=$1::uuid AND generation.status='complete' AND generation.retirement_started_at IS NULL
   FOR SHARE OF generation NOWAIT`;
+/** Reconcile complete immutable source metadata, fixed layer totals and any separate CAD profile. */
 function sourceOf(result, generation, cad = false) {
   const kinds=cad?CAD_KINDS:KINDS,totalRows=cad?4_000_000:L.total_rows;
   const r = data(one(result), ['generation_id', 'format_version', 'status', 'source_snapshot', 'started_at',
@@ -204,6 +206,7 @@ export function createNeighborhoodSharedTypedCadGenerationV1(client,rawOptions){
   return sharedTypedGeneration(client,rawOptions,'cad');
 }
 
+/** Build one bounded caller-transaction step for a fixed V1, neutral V2 or separate CAD cache. */
 function sharedTypedGeneration(client, rawOptions, neutral) {
   const cad=neutral==='cad',kinds=cad?CAD_KINDS:KINDS;
   if (typeof client?.query !== 'function') fail('client_required');
@@ -299,10 +302,12 @@ function sharedTypedGeneration(client, rawOptions, neutral) {
       if (update?.rowCount !== 1) fail('write_lost');
       await ending(); return receipt(next, true, false);
 
+      /** Recheck the exact source, transaction and budget before delivering a step receipt. */
       async function ending() {
         if (!same(sourceOf(await query(cad?SOURCE_CAD:SOURCE, [generation]), generation,cad), source)
           || !same(snapshot(await query(SNAPSHOT)), tx)) fail('source_changed'); check();
       }
+      /** Describe stored interpretation progress without claiming acquisition or report authority. */
       function receipt(progress, advanced, reused) {
         return freeze({ status: cad?'shared_typed_CAD_generation_progress_v1':neutral ? 'shared_typed_generation_progress_v2' : 'shared_typed_generation_progress', authority: 'not_established',
           coverage: 'individual_original_interpretations_only', generation_id: generation,

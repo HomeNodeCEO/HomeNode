@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { materializeNeighborhoodFrozenSourceGeneration } from './neighborhoodFrozenSourceGeneration.js';
+import { materializeNeighborhoodFrozenCadImprovements } from './neighborhoodFrozenCadImprovements.js';
 
 // This is a prepared lookup, not appraisal evidence. The entire generation is
 // built under one repeatable-read snapshot and published with one pointer.
@@ -203,6 +204,9 @@ const PRUNE_SHARED_TYPED_HEADERS=PRUNE_FACTS('neighborhood_frozen_typed_generati
 const PRUNE_SHARED_TYPED_V2=PRUNE_FACTS('neighborhood_frozen_typed_v2_rows');
 const PRUNE_SHARED_TYPED_V2_TOTALS=PRUNE_FACTS('neighborhood_frozen_typed_v2_totals');
 const PRUNE_SHARED_TYPED_V2_HEADERS=PRUNE_FACTS('neighborhood_frozen_typed_v2_generations');
+const PRUNE_CAD_ORIGINALS=PRUNE_FACTS('neighborhood_frozen_cad_improvement_rows');
+const PRUNE_CAD_TOTALS=PRUNE_FACTS('neighborhood_frozen_cad_improvement_totals');
+const PRUNE_CAD_HEADERS=PRUNE_FACTS('neighborhood_frozen_cad_improvement_generations');
 
 /** Retire an unpinned prior generation after publication. A short exclusive
  * retirement claim prevents new pins before bounded, restartable deletions;
@@ -227,7 +231,8 @@ async function pruneObsoleteGeneration(client,batchSize,deadline) {
   // Reusable interpretations reference originals, so retire their bounded rows
   // first. The same exclusive-generation/no-pin database guards apply.
   for (const sql of [PRUNE_SHARED_TYPED,PRUNE_SHARED_TYPED_TOTALS,PRUNE_SHARED_TYPED_HEADERS,
-    PRUNE_SHARED_TYPED_V2,PRUNE_SHARED_TYPED_V2_TOTALS,PRUNE_SHARED_TYPED_V2_HEADERS,PRUNE_ORIGINALS,PRUNE_PARCELS,PRUNE_SALES]) for (;;) {
+    PRUNE_SHARED_TYPED_V2,PRUNE_SHARED_TYPED_V2_TOTALS,PRUNE_SHARED_TYPED_V2_HEADERS,
+    PRUNE_CAD_ORIGINALS,PRUNE_CAD_TOTALS,PRUNE_CAD_HEADERS,PRUNE_ORIGINALS,PRUNE_PARCELS,PRUNE_SALES]) for (;;) {
     if (Date.now()>deadline) return {status:'deferred',generationId:old};
     const count=(await client.query({text:sql,values:[old,batchSize],query_timeout:120_000})).rows?.[0]?.removed;
     if (!Number.isSafeInteger(count) || count<0 || count>batchSize) throw new Error('neighborhood_group_index_prune_invalid');
@@ -271,10 +276,13 @@ async function copyBatches(client, sql, generationId, batchSize, deadline, progr
  * the active generation changes atomically only when both facts and summaries
  * finish. Failure rolls back the candidate and leaves the previous index live.
  */
-export async function runNeighborhoodGroupIndex(pool,{batchSize=1000,maximumRuntimeMinutes=90,logger=console,retainOriginalSources=false}={}) {
+export async function runNeighborhoodGroupIndex(pool,{batchSize=1000,maximumRuntimeMinutes=90,logger=console,
+  retainOriginalSources=false,retainCadImprovementOriginals=false}={}) {
   positiveInteger(batchSize,5000,'batch_size');
   positiveInteger(maximumRuntimeMinutes,180,'maximum_runtime_minutes');
   if (typeof retainOriginalSources!=='boolean') throw new TypeError('invalid_neighborhood_group_index:retain_original_sources');
+  if(typeof retainCadImprovementOriginals!=='boolean'||retainCadImprovementOriginals&&!retainOriginalSources)
+    throw new TypeError('invalid_neighborhood_group_index:retain_CAD_improvement_originals');
   if (!pool || typeof pool.connect!=='function') throw new TypeError('neighborhood_group_index_pool_required');
   const client=await pool.connect();
   let locked=false,transaction=false,phase='lock';
@@ -296,6 +304,12 @@ export async function runNeighborhoodGroupIndex(pool,{batchSize=1000,maximumRunt
       await materializeNeighborhoodFrozenSourceGeneration(client,{generationId,
         batchSize:Math.min(batchSize,250),maximumRuntimeMs:Math.min(3_600_000,Math.max(1,deadline-Date.now()))});
       logger.info?.('[neighborhood-group-index] phase=frozen_original_sources_complete');
+      if(retainCadImprovementOriginals){
+        phase='frozen_CAD_improvement_originals';
+        await materializeNeighborhoodFrozenCadImprovements(client,{generationId,batchSize:Math.min(batchSize,250),
+          maximumRuntimeMs:Math.min(3_600_000,Math.max(1,deadline-Date.now()))});
+        logger.info?.('[neighborhood-group-index] phase=frozen_CAD_improvement_originals_complete');
+      }
     }
     phase='parcel_batches';
     const parcels=await copyBatches(client,PARCEL_BATCH,generationId,batchSize,deadline,

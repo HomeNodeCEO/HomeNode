@@ -67,6 +67,14 @@ test('invalid frozen-source opt-in is rejected before connecting a worker',async
   }
 });
 
+test('CAD original companion requires explicit boolean opt-in and the original sweep before connection',async()=>{
+  for(const options of [{retainCadImprovementOriginals:true},...['true',1,null,{}].map(value=>
+    ({retainOriginalSources:true,retainCadImprovementOriginals:value}))]){
+    const f=fixture();await assert.rejects(runNeighborhoodGroupIndex(f.pool,options),/retain_CAD_improvement_originals/);
+    assert.deepEqual(f.calls,[]);
+  }
+});
+
 test('failed generation rolls back and never replaces the active pointer',async()=>{
   const f=fixture({fail:true});
   await assert.rejects(runNeighborhoodGroupIndex(f.pool),/synthetic_batch_error/);

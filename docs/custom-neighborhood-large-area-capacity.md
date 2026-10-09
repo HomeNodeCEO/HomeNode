@@ -1,5 +1,50 @@
 # Complete larger-area Custom neighborhood studies
 
+## Same-snapshot local CAD improvement originals (2026-10-08, not activated)
+
+The seven frozen source kinds did not include the primary/secondary improvement
+rows used by the descriptive prepared amenity summaries. The new explicit
+`retainCadImprovementOriginals` offline option retains a separate format-1
+companion during the **same** writable REPEATABLE READ/UTC transaction as the
+complete original sweep, before its generation publishes. Both options default
+OFF; CLI, schedules, routes and application workers are unchanged. No older
+capture is backfilled and no existing seven-layer profile or report hash changes.
+
+`neighborhood-frozen-CAD-improvement-originals-v1` specifies seven primary fields
+(account, year, living area, bedrooms, baths, units and pool) and five secondary
+fields (native id, account, improvement number/type/area). Numeric values become
+exact decimal/integer text in SQL before JSON. NULL, false and zero remain
+different. Secondary native ids preserve duplicate improvement numbers, unknown
+types and rows outside any future job geometry. An absent primary row is not
+proof of no pool, bedroom count or garage. These local current-CAD literals are
+not verified GLA, historical stock or at-sale amenities. Additional provider
+fields/dictionaries and economic interpretation remain outside this profile.
+
+The additive `20261116_neighborhood_frozen_cad_improvements.sql` links every
+companion to its immutable original account and hash-binds the profile. Native
+guards require the same source snapshot/transaction, independently count both
+whole source tables and acknowledge each fixed source payload through native
+primary-key probes. Generated hash/byte columns and statement-derived totals
+prevent caller counters, invented payloads or prefixes from completing a
+population. Rows and completed headers are immutable. Bounded retirement deletes
+companion rows/totals/header before their restrictive original FKs; current pins
+prevent deletion. A failure must roll back the entire offline candidate, not
+publish an incomplete companion.
+
+Pages are capped at 250 rows/32 MB, each row at 1 MB, each layer at two million
+rows and the companion at 8 GB/one hour. Exceeding a cap refuses the operation;
+there is no clipping or summary fallback. Only aggregate counters enter Node.
+Focused tests cover exact plans/profiles, snapshot and closed-input refusal,
+counts, cursors, malformed/oversized pages, cancellation/deadlines and lost
+acknowledgements. The authored small PostgreSQL fixture checks exact decimal,
+NULL and boolean retention, duplicate numbers, forged payload/count refusal,
+rollback before publication, completed-capture backfill refusal, hashes,
+immutability and pinned/unpinned retirement. **New native execution is pending
+cloud CI**. This is original retention groundwork, not amenity resolution,
+licensed acquisition, selected-union statistics, report publication or live
+speed acceptance. The offline owner still needs whole-source authority and
+activation prerequisites; this module does not establish a source grant.
+
 ## Current-authorized shared V2 stock projection (2026-10-08, not activated)
 
 `readSharedFrozenCaptureJobStockMetricsReferencesV2` is a separate internal
@@ -34,7 +79,15 @@ refusals and closed hostile-input admission. The authored small native fixture
 requires all three real issued heads, refuses unissued/partial identity before
 cache I/O, runs actual metric SQL, checks mixed old/future-year resolution and
 malformed-cell refusal, and injects ending license/role/subject/claim/cancel
-failures. **Native execution is pending cloud CI**; DATA-only alternate dates
+failures. PR #1224 head `ec189d47e6ae9fcf1eed1705474ffc8bb7eb9ed2` passed
+actual UAD foundation run `37879463758`: job `113655557287` ran 417/417 migration
+and 7/7 native index tests, zero failures/skips. The
+`native-shared-stock-owner-v2` marker confirmed two accounts, actual issued
+graph/geography/identity requirement, effective-year projection, both-end
+rights/subject/claim/cancel refusal, zero original payload reads, zero per-job
+typed copies and zero checkpoint writes. Server tests passed 10,472 with 61
+separately DB-gated skips; frontend passed 3,959 without skips. Parent dependency
+integration and normal included review remain pending. DATA-only alternate dates
 do not establish historical stock or change an authorized report's date.
 
 Remaining work includes improvement/amenity lineage, exact transaction resolution

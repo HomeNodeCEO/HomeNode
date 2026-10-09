@@ -43,19 +43,23 @@ const DEFINITION=freeze({id:'neighborhood-frozen-date-neutral-typed-CAD-improvem
 const definitionText=canonicalAssessmentJson(DEFINITION),definitionBlob=prepareNeighborhoodCohortBlob(definitionText);
 const PROFILE=freeze({profile_ref:{id:DEFINITION.id,revision:DEFINITION.revision,content_sha256:definitionBlob.content_sha256},
   definition_blob:{ref:definitionBlob,canonical_json:definitionText}});
+/** Return the immutable, hash-bound syntax profile; this is not source authority. */
 export function getNeighborhoodFrozenTypedCadImprovementV1Profile(){return PROFILE;}
+/** Admit exactly three own data fields without invoking accessors or proxies. */
 function inputOf(value){
   if(!value||types.isProxy(value)||Object.getPrototypeOf(value)!==Object.prototype)fail('invalid_input');
   const ds=Object.getOwnPropertyDescriptors(value),names=Reflect.ownKeys(ds),keys=['kind','row_key','payload_text'];
   if(names.length!==keys.length||!keys.every(k=>names.includes(k)&&ds[k].enumerable&&Object.hasOwn(ds[k],'value')))fail('invalid_input');
   return Object.fromEntries(keys.map(k=>[k,ds[k].value]));
 }
+/** Retain bounded literal diagnostics and exact token hashes without numeric coercion. */
 function rawLiteral(payload,node,text,field){
   if(node.kind==='null')return {state:'json_null',json_type:'null',value_text:null,utf8_bytes:0,value_sha256:null};
   const value=node.kind==='string'?payload[field]:text.slice(node.start,node.end),bytes=Buffer.byteLength(value);
   return {state:['string','number','boolean'].includes(node.kind)?bytes>L.raw_literal_utf8_bytes?'oversize':'scalar':'non_scalar',
     json_type:node.kind,value_text:bytes<=L.raw_literal_utf8_bytes?value:null,utf8_bytes:bytes,value_sha256:sha(value)};
 }
+/** Canonicalize admitted decimal text exactly, or return null for policy-invalid syntax. */
 function exactDecimal(text,policy){
   const token=text.trim();if(token.length>L.numeric_token_characters||!/^\+?(?:\d+(?:\.\d*)?|\.\d+)$/.test(token))return null;
   let [whole,fraction='']=token.replace(/^\+/,'').split('.');whole=whole.replace(/^0+/,'')||'0';fraction=fraction.replace(/0+$/,'');
@@ -65,6 +69,7 @@ function exactDecimal(text,policy){
     ||policy==='year'&&(BigInt(whole)<1600n||BigInt(whole)>9999n))return null;
   return whole+(fraction?`.${fraction}`:'');
 }
+/** Keep missing, unsupported and invalid numeric literals distinct from exact observations. */
 function numeric(raw,policy,unit){
   const cell=(state,exact_value,reason)=>({state,exact_value,unit:state==='observed'?unit:null,reason,raw});
   if(raw.state==='json_null'||raw.state==='scalar'&&raw.json_type==='string'&&!raw.value_text.trim())return cell('missing',null,'raw_value_missing');
@@ -72,6 +77,7 @@ function numeric(raw,policy,unit){
   if(raw.state!=='scalar'||raw.json_type!=='string')return cell('invalid',null,'raw_value_type_invalid');
   const exact=exactDecimal(raw.value_text,policy);return exact===null?cell('invalid',null,'raw_value_invalid'):cell('observed',exact,null);
 }
+/** Admit only native JSON booleans; missing evidence never becomes an observed false. */
 function boolean(raw){
   const cell=(state,exact_value,reason)=>({state,exact_value,unit:state==='observed'?'reported_pool_flag':null,reason,raw});
   if(raw.state==='json_null')return cell('missing',null,'raw_value_missing');

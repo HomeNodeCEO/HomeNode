@@ -1,5 +1,43 @@
 # Complete larger-area Custom neighborhood studies
 
+## Bounded pinned-stock CAD syntax pages (2026-10-08, not activated)
+
+`createNeighborhoodSharedJobCadImprovementPages` reads only a complete, exact
+generation/profile-keyed CAD syntax cache for the retained job-stock accounts.
+It joins the stock account index to the companion kind/account/key index; it
+does not transfer a dense roster, clip associated improvements to geometry,
+read current core/provider tables, copy original payloads, or prepare a cache
+on a miss. Native secondary IDs remain separate even when improvement numbers
+repeat. Account/key cursors use the installed C-text order, not bigint order.
+
+One single-use reader admits at most 250 rows, 32 KB per row, 2.1 MB per page,
+32 MB of result rows across all queries, 48 queries including every existing
+stock/claim/transaction fence, and 60 seconds. Each query has a five-second
+timeout. A full tail requires a fresh-reader empty terminal probe; a byte-cut
+prefix is not an end-of-kind receipt. Empty candidates with a nonempty prefix,
+oversized rows, malformed counts/order/cursors and cancellation refuse.
+
+Both ends reload the exact live claim/pin/stock, original snapshot and completed
+immutable CAD cache header. The installed source/typing definitions, bindings,
+counts and completed progress must agree. Each returned cell is independently
+reconciled with its bounded retained literal without economic Number conversion;
+NULL, blank, invalid, unsupported and native false remain distinct. The syntax
+reader accepts no report date, provider mapping or amenity classification.
+
+Focused tests cover hostile admission, exact large decimals, neutral years,
+missing-not-no-amenity, installed boolean/numeric interpretation, bounds,
+full-tail probing, malformed cache/cells, cancellation and both ending fences.
+The authored small native fixture verifies one pinned stock account, its primary
+and duplicate-number secondary rows, outside-account exclusion, the empty tail
+and ending-cache refusal. **New native page execution is pending cloud CI.** Its
+artificial graph reference is explicitly DATA, not an issued owner receipt.
+The future owner still must reload current actor/assignment/subject and actual
+issued V2 graph/geographic/identity heads, plus the separate exact additional
+CAD purpose and current source decision at both ends. No endpoint, worker,
+activation default, grant, selection, publication or report changes occur here.
+This is not licensed acquisition, complete-population statistics or speed
+acceptance; those remaining roadmap tests stay mandatory.
+
 ## Separate current CAD projection rights (2026-10-08, not activated)
 
 `createCustomNeighborhoodCadImprovementSourcePolicy` is a dormant, server-only

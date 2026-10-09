@@ -31,8 +31,18 @@ cross-denials, re-read/revocation/expiry, separately granted exposures, stable
 legacy hashes and sanitized errors. A small disposable PostgreSQL helper is
 wired into cloud native CI to verify actual bounded namespace SQL, unrelated
 metadata exclusion, no policy writes, revoked/expired/mismatched/oversized
-refusal and rollback of its synthetic owner metadata. **New native policy
-execution is pending cloud CI**; it is not a production license or source
+refusal and rollback of its synthetic owner metadata. Historical exact head
+`99a7e1d333f31e2ce7d05223614cfb51da821c7b` passed foundation `37884486668`,
+native job `113671298030`: 417 migration, seven index, one subject, one edge
+and two bootstrap tests, zero failures/skips. Its actual policy marker confirmed
+eight bounded namespace reads, no unrelated metadata transfer or policy writes,
+wall-clock expiry/revocation refusal and exact projection requirements. Server
+passed 10,526 with 61 separately database-gated skips; frontend passed 3,959
+without skips. This branch now incorporates the exact protected #1227 merge
+below. Documentation conflicts retained the newer protected receipts; added helper
+contract comments do not alter implementation. **Fresh integrated-head native
+and main-required CI, and actual included review, remain pending**. The historical
+receipt is not current integrated readiness, a production license or source
 acquisition receipt. The future consumer still must independently reload the
 current database actor/assignment/subject, actual issued graph/geographic/
 identity heads, exact live claim/pin/stock, and this additional decision at both
@@ -83,9 +93,23 @@ reuse, and unpinned retirement while pinned originals remained intact. Server
 passed 10,503 with 61 separately database-gated skips; frontend passed 3,959
 without skips. The branch now incorporates the exact protected #1226 merge
 below, plus helper-contract comments; implementation remains unchanged from
-that historical head. **Fresh integrated-head native and all main-required
-checks remain pending**, as does actual included review. Historical receipts
-are not current protected readiness or licensed/live acceptance.
+that historical head. Integrated head
+`5a8d44080ea00bf53eead3f0cf048deff51cbad0` passed all sixteen exact-head checks.
+Foundation `37903030997`, native job `113729795344`, passed the same complete
+417/seven/one/one/two suites with zero failures/skips (index 436,687.939056ms).
+The actual shared-CAD marker again confirmed seven originals/seven typed rows,
+zero hash mismatches, rollback, lost-COMMIT recovery, exact-payload and prefix
+refusal, immutable completion and zero-original/zero-write completed reuse.
+Retirement preserved pinned originals. Server `113729795613` passed 10,503 with
+61 separately database-gated skips; frontend `113729795538` passed 3,959 without
+skips, plus typecheck/lint/source-quality/build. Included CodeRabbit review
+`2ba0ca55-d8c6-407c-8eb5-7b1df8822240` processed all nine changed files through
+that exact head at 2026-10-09T08:54Z with no actionable findings or review threads;
+all five pre-merge checks passed, including 83.33% docstring coverage. With all
+current protected checks revalidated, #1227 normally merged as
+`0d1c1cc6abf3d5ea47e7ca80147eb1fac74ac596` at 2026-10-09T09:05Z. No quota,
+paid/forced review or required-check bypass. These are small native protocol
+receipts, not licensed acquisition, amenity resolution or production speed acceptance.
 The offline owner must authorize the whole original projection at both ends.
 This builder does not grant extra-field rights, extend issued job graphs,
 resolve amenities, prove licensed acquisition or publish report/statistics.

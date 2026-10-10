@@ -5278,6 +5278,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           assert.equal(metric.selected_entry?.partition_ordinal??null,selectedCount?(allSelected?1:2):null);
           assert.equal(metric.reported_comparison?.metrics.reported_market_value.exact_value??null,null);
           assert.equal(metric.reported_comparison?.metrics.reported_market_value.recorded_comparison_eligible??false,false);
+          assert.equal(metric.metric_row_retained,false);
           if(selectedCount){
             assert.equal(metric.reported_comparison.authority,'not_established');
             assert.equal(metric.reported_comparison.economic_unit,'not_established');
@@ -5287,7 +5288,29 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             assert.equal(metric.reported_comparison.metrics.reported_year_built.exact_value,null);
             assert.equal(metric.reported_comparison.metrics.reported_residential_area.exact_value,null);
             assert.equal(metric.reported_comparison.metrics.reported_site_area.exact_value,allSelected?'8000':'0');
-          }else assert.equal(metric.reported_comparison,null);
+            const row=metric.metric_row_candidate;
+            assert.equal(row.format,'cohort_selected_reported_metric_row_v2');
+            assert.equal(row.basis,'current_retained_reported_comparison_not_verified_GLA_currency_historical_housing_or_economic_transaction');
+            for(const key of ['command_id','union_reference','eligibility_reference','evidence_reference'])assert.deepEqual(row[key],metric[key]);
+            assert.deepEqual(row.selected_entry,Object.fromEntries(['account_id','ordinal','partition_ordinal','entry_reference']
+              .map(key=>[key,metric.selected_entry[key]])));
+            assert.equal(row.effective_date,metric.retained_effective_date);
+            assert.deepEqual(row.observation_period,metric.retained_observation_period);
+            assert.deepEqual(row.subject_housing,{state:metric.subject.state,category:metric.subject.category});
+            assert.equal(row.housing_comparison,metric.reported_comparison.housing.state);
+            for(const [key,cell] of Object.entries(row.metrics)){
+              assert.deepEqual(cell,Object.fromEntries(['recorded_comparison_eligible','complete_observed_parts','exact_value','unit']
+                .map(field=>[field,metric.reported_comparison.metrics[key][field]])));
+              assert.equal(Object.isFrozen(cell),true);
+            }
+            assert.equal(row.metrics.reported_year_built.exact_value,null);
+            assert.equal(row.metrics.reported_residential_area.exact_value,null);
+            assert.equal(row.metrics.reported_site_area.exact_value,allSelected?'8000':'0');
+            assert.equal(row.metrics.reported_site_area.unit,'reported_sqft');
+            assert.deepEqual(row.metrics.reported_market_value,{recorded_comparison_eligible:false,
+              complete_observed_parts:false,exact_value:null,unit:null});
+            assert.equal(Object.isFrozen(row),true);assert.ok(Buffer.byteLength(JSON.stringify(row))<=4096);
+          }else{assert.equal(metric.reported_comparison,null);assert.equal(metric.metric_row_candidate,null);}
           assert.equal(metricCalls.filter(sql=>sql===NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL).length,1);
           assert.ok(!metricCalls.some(sql=>sql===NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL
             ||/custom-cohort-selected-evidence-v2:head-(?:insert|advance)|custom-cohort-job:checkpoint-save|custom-cohort-v2-continuation:yield/.test(sql)));
@@ -5297,6 +5320,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             fresh_fixed_native_first_not_sixth_ACK_or_caller_cells:true,explicit_empty:selectedCount===0,
             whole_original_graph_and_every_required_original_entire_cache:true,current_and_ending_assignment_draft_source_fences:true,
             first_reported_comparison_only_not_complete_distribution:true,maximum_whole_owner_sql_queries:Math.max(...metricQueries),
+            closed_first_metric_row_candidate_bound_to_native_parents_and_retained_dates:true,metric_row_not_retained:true,
             no_metric_rows_heads_checkpoint_continuation_workspace_reports_choices_or_pins_written:true,
             licensed_acquisition:false,production_speed:false,worker_activation:false});
           assert.ok(evidenceQueries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries));

@@ -68,6 +68,7 @@ import { createCustomCohortSelectedEligibilityV2Repository } from './customCohor
 import { prepareCohortSelectedEligibilityReceiptV2, SELECTED_RECORDED_ELIGIBILITY_METRICS } from './cohortSelectedEligibilityReceiptV2.js';
 import { createCustomCohortSelectedEvidenceV2Repository } from './customCohortSelectedEvidenceV2Repository.js';
 import { prepareCohortSelectedEvidenceReceiptV2 } from './cohortSelectedEvidenceReceiptV2.js';
+import { prepareCohortSelectedMetricRowV2, SELECTED_REPORTED_METRIC_ROW_V2_BASIS } from './cohortSelectedMetricRowV2.js';
 import { encodeCohortDiagnosticCompressedJsonV1 } from './cohortDiagnosticCompressedJsonV1.js';
 import { createCustomCohortV2ContinuationRepository } from './customCohortV2ContinuationRepository.js';
 import { createCustomCohortV2SelectionWaitRepository } from './customCohortV2SelectionWaitRepository.js';
@@ -2378,12 +2379,27 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             // Numerical cells come only from THIS fresh original/ENTIRE-cache
             // replay, never from the metadata-only sixth acknowledgement.
             // Fixed ordinal1 is not a distribution or complete metric ledger.
+            const metricRowMetadata=firstSelectedEntry===null?null:{command_id:issuedSelectionIntent.command_id,
+              union_reference:unionAnchor.receipt_reference,eligibility_reference:eligibilityAnchor.receipt_reference,
+              evidence_reference:evidenceAnchor.receipt_reference,selected_entry:Object.fromEntries(
+                ['account_id','ordinal','partition_ordinal','entry_reference'].map(k=>[k,firstSelectedEntry[k]])),
+              effective_date:context.effective_date,observation_period:input.observationPeriod,subject_housing:subjectHousing,
+              housing_comparison:decision.housing.state};
+            // A closed future-ledger row candidate, derived INSIDE the actual
+            // bounded original owner. It is not retained or a capability; the
+            // unchanged ending fences below MUST pass before it can escape.
+            const metricRowCandidate=metricRowMetadata===null?null:prepareCohortSelectedMetricRowV2({
+              format:'cohort_selected_reported_metric_row_v2',...metricRowMetadata,
+              metrics:Object.fromEntries(Object.entries(decision.metrics).map(([k,c])=>[k,Object.fromEntries(
+                ['recorded_comparison_eligible','complete_observed_parts','exact_value','unit'].map(field=>[field,c[field]]))])),
+              basis:SELECTED_REPORTED_METRIC_ROW_V2_BASIS},metricRowMetadata);
             subjectHousingResult={status:'current_authorized_first_selected_metric_originals_reopened',operation_id:input.operationId,
               command_id:issuedSelectionIntent.command_id,union_reference:unionAnchor.receipt_reference,
               eligibility_reference:eligibilityAnchor.receipt_reference,evidence_reference:evidenceAnchor.receipt_reference,
               selected_entry:firstSelectedEntry,subject,subject_original_fallback:preferred===null,
               subject_equals_selected:paired.subject_equals_next,distinct_original_count:paired.distinct_original_count,
-              reported_comparison:decision,retained_effective_date:context.effective_date,retained_observation_period:input.observationPeriod,
+              reported_comparison:decision,metric_row_candidate:metricRowCandidate,metric_row_retained:false,
+              retained_effective_date:context.effective_date,retained_observation_period:input.observationPeriod,
               original_reconciliation:'every_selected_stock_CAD_whole_all_date_transaction_and_required_subject_original_entire_cache_partition_catalog_reopened',
               coverage:'fixed_first_native_selected_ordinal_only_after_DONE_union_fifth_and_sixth',empty_selected_union:firstSelectedEntry===null,
               shared_budget:'one_single_use_child_one_aggregate_250_original_transport_output_SQL_deadline_budget',

@@ -42,11 +42,29 @@ cleanup and mutable-page detachment. Lazy synthetic DATA streams exercised
 page. Those tests took less than a second locally; no database/full-server/
 frontend suite ran locally. This is not an actual licensed >50k acquisition,
 whole selected-union owner, native sort/run integration or production SLA.
-Cloud full-suite verification is pending for this new head.
+Initial STACKED `35fa40644be7a0ddf0e57aedfed506400bf3fb0b` cloud execution was
+independently verified: foundation37945516947/native113870625955 passed 417
+migration/8 index/1 subject/1 edge/2 bootstrap tests, zero failures/skips;
+index285792.682688ms. Server113870625703 passed10569, failed0, with62 separately
+DB-gated skips; frontend113870625545 passed3959, failed/skipped0,97873.019653ms
+plus typecheck/lint/source-quality/build; redteam113870625778 and Sales37945516908
+passed. These historical receipts are not the protected-parent-integrated head.
 
-This work is stacked on whole-native-package #1234 at historical `0e7afb4e`.
-Actual protected parent integration/main retargeting/fresh exact-head checks and
-included review remain required. No route/default/deploy, source grant, worker,
+On2026-10-10, #1234 was normally protected-merged as
+`13586d3670411ddf31460c0a099f02ada8b2e92e` after exacta052 all14 checks and
+actual included review3e45a7e8-1bf2-41df-bef3-8704caccd2b7, no actionable
+comments, completed06:44:20Z. Its bounded-count correction and actual parent
+fixes were integrated here as34129a8edc5c4c2083f02b959a5673a98cc3a5c5 without
+conflicts. #1235 was retargeted to MAIN BEFORE any synchronize push. Exact
+decimal implementation semantics are unchanged. Fresh integrated-head required
+111 focused integrated kernel/transaction-plan/package/stock/current-owner
+tests passed, zero failed/skipped (1384.1753ms); no heavy suite ran locally.
+Source/native fixture syntax and diff checks passed. Fresh integrated-head required
+security/native/full-suite gates and actual included review must be verified
+before any normal expected-head protected merge; initial stacked results and
+automatic review SKIP are not authority. Next ordinary included request is
+conservatively not before07:49Z plus fresh repository-wide allowance preflight.
+No paid/forced quota or required-check bypass. No route/default/deploy, source grant, worker,
 pin, report, genuine Hardy choice or Apply change. Full roadmap/live acceptance
 remains incomplete; QA assignment 7 only for future Apply tests.
 

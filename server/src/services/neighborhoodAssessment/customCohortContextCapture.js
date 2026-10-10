@@ -63,6 +63,8 @@ import { createCustomCohortRecordedPartitionV2Repository } from './customCohortR
 import { createCustomCohortRecordedCatalogV2Repository } from './customCohortRecordedCatalogV2Repository.js';
 import { prepareCohortRecordedCatalogReceiptV2 } from './cohortRecordedCatalogReceiptV2.js';
 import { createCustomCohortV2ContinuationRepository } from './customCohortV2ContinuationRepository.js';
+import { createCustomCohortOriginalAccountOwnerBudget,
+  CUSTOM_COHORT_ORIGINAL_ACCOUNT_OWNER_LIMITS } from './customCohortOriginalAccountOwnerBudget.js';
 import { getNeighborhoodOriginalRecordedGroupV2Profile } from './neighborhoodOriginalRecordedGroupV2.js';
 import { createCustomCohortRecordedGroupSelectionOwner,
   reopenCustomCohortRecordedGroupSelectionOriginal } from './customCohortRecordedGroupSelectionOwner.js';
@@ -1675,8 +1677,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     if(!reportedProfile) fail('frozen_source_profile_unsupported');
     if(originalInput.privateSalesImport || originalInput.discovery?.profile_id!=='custom-suburban-radius-v2') fail('frozen_discovery_unsupported');
     if(readingCadPages&&typeof authorizeCadImprovementData!=='function')fail('CAD_source_policy_required');
-    const budget=operationBudget(budgetOptions,LIMITS.capture_duration_ms);
-    return transaction(pool,'READ COMMITTED',budget,async client=>{
+    const boundedOriginalAccountOwner=traversingStock||partitioningRecordedGroups||readingRecordedPartition||catalogingRecordedGroups;
+    const budget=operationBudget(budgetOptions,boundedOriginalAccountOwner
+      ?CUSTOM_COHORT_ORIGINAL_ACCOUNT_OWNER_LIMITS.operation_ms:LIMITS.capture_duration_ms);
+    return transaction(pool,'READ COMMITTED',budget,async transactionClient=>{
+      const client=boundedOriginalAccountOwner?createCustomCohortOriginalAccountOwnerBudget(transactionClient,{checkBudget:budget.check}):transactionClient;
       const locator=one(await client.query(`/* custom-cohort-capture:job-organization */
         SELECT organization_id FROM app.assignment_files WHERE id=$1::bigint AND account_id=$2`,
       [originalInput.assignmentFileId,originalInput.accountId]));

@@ -51,6 +51,8 @@ import { createCustomCohortRecordedCatalogV2Repository } from '../src/services/n
 import { prepareCohortRecordedCatalogReceiptV2 } from '../src/services/neighborhoodAssessment/cohortRecordedCatalogReceiptV2.js';
 import { createCustomCohortV2ContinuationRepository }
   from '../src/services/neighborhoodAssessment/customCohortV2ContinuationRepository.js';
+import { CUSTOM_COHORT_ORIGINAL_ACCOUNT_OWNER_LIMITS as ORIGINAL_OWNER_LIMITS }
+  from '../src/services/neighborhoodAssessment/customCohortOriginalAccountOwnerBudget.js';
 import { getNeighborhoodOriginalRecordedGroupV2Profile }
   from '../src/services/neighborhoodAssessment/neighborhoodOriginalRecordedGroupV2.js';
 import { createCustomCohortContextCapture }
@@ -1792,6 +1794,9 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         const fault=refsFault;refsFault=null;
         return fault==='missing_catalog_receipt'?{rowCount:0,rows:[]}:{...result,rows:result.rows.map(row=>({...row,canonical_utf8:'{}'}))};
       }
+      if(config.text.includes('custom-cohort-recorded-catalog-v2:anchor-insert')&&refsFault==='catalog_owner_written_bytes'){
+        refsFault=null;return {...result,rows:result.rows.map(row=>({...row,synthetic_owner_transport_padding:'x'.repeat(32000001)}))};
+      }
       if(config.text.includes('custom-cohort-recorded-catalog-v2:anchor-insert')&&refsFault==='catalog_counts_ending')refsFault='catalog_counts_mismatch';
       if(config.text.includes('custom-cohort-recorded-catalog-v2:counts')&&refsFault==='catalog_read_counts_ending')refsFault='catalog_counts_mismatch_after_first';
       else if(config.text.includes('custom-cohort-recorded-catalog-v2:counts')&&refsFault==='catalog_counts_mismatch_after_first')refsFault='catalog_counts_mismatch';
@@ -1815,6 +1820,18 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         if(fault==='catalog_group_count')row.member_count=0;
         if(fault==='catalog_group_count_after_first')row.member_count++;
         return {...result,rows:[row]};
+      }
+      if(config.text.includes('custom-cohort-group-workspace:read')&&refsFault==='catalog_owner_bytes_ending'){
+        refsFault='catalog_owner_bytes_after_first';return result;
+      }
+      if(config.text.includes('custom-cohort-group-workspace:read')&&refsFault==='catalog_owner_bytes_after_first'){
+        refsFault=null;return {...result,rows:result.rows.map(row=>({...row,synthetic_owner_transport_padding:'x'.repeat(32000001)}))};
+      }
+      if(config.text.includes('custom-cohort-group-selection:head')&&refsFault==='catalog_prior_head_ending'){
+        refsFault='catalog_prior_head_after_first';return result;
+      }
+      if(config.text.includes('custom-cohort-group-selection:head')&&refsFault==='catalog_prior_head_after_first'){
+        refsFault=null;return {...result,rows:result.rows.map(row=>({...row,selection_sha256:'f'.repeat(64)}))};
       }
       if(config.text.includes('custom-cohort-group-workspace:read')&&refsFault?.startsWith('catalog_workspace_')){
         const fault=refsFault;
@@ -3644,6 +3661,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     assert.ok(!refsCalls.slice(catalogUnissuedReadFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));await catalogInitial();
     for(const [fault,reason] of [['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],['subject',/subject_changed/],
       ['claim',/claim_lost/],['cancel',/cancelled/],['transaction_header',/cache_unavailable/],['catalog_counts_ending',/catalog_original_mismatch/],
+      ['catalog_owner_written_bytes',/original_account_owner_byte_limit/],
       ['stock_cells_mismatch',/original_mismatch/],['stock_cells_missing',/original_mismatch/],['stock_cells_original',/original_mismatch/],
       ['partition_entry_ending',/partition_original_mismatch/],['partition_entry_ordinal',/partition_original_mismatch/],
       ['partition_entry_ref',/partition_original_mismatch/],['partition_corrupt_blob',/storage_conflict/]]){
@@ -3818,7 +3836,35 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     const targetAbsentFrom=refsCalls.length;
     await assert.rejects(freshRefsOwner()[workspaceTargetMethod](refsInput,stockAccountOptions),/group_workspace_unavailable/);
     assert.ok(!refsCalls.slice(targetAbsentFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
-    const pendingTarget={workspace_version:7,active:null,pending_capture:{operation_id:refsOperation,
+    // Isolated metadata-only PRIOR editor fixture, not an issued context or
+    // old source facts. Reuse an existing blob so the immutable source/root
+    // inventory stays unchanged. Its contents MUST NOT be opened as a header
+    // or selection manifest by the pending-target reader.
+    const priorTargetContext={context_id:randomUUID(),context_revision:'1',context_sha256:'a'.repeat(64)},
+      priorTargetSelection={selection_version:1,selection_revision:1,selection_sha256:'b'.repeat(64),
+        manifest_ref:catalogFinal.receipt_reference};
+    await pool.query(`INSERT INTO app.neighborhood_custom_cohort_contexts
+      (organization_id,report_file_id,assignment_file_id,account_id,context_id,context_revision,context_sha256,
+        header_content_sha256,header_canonical_utf8_bytes)
+      VALUES($1,$2,$3,$4,$5,1,$6,$7,$8)`,[organization,report,assignment,scope.account_id,priorTargetContext.context_id,
+      priorTargetContext.context_sha256,catalogFinal.receipt_reference.content_sha256,catalogFinal.receipt_reference.canonical_utf8_bytes]);
+    await pool.query(`INSERT INTO app.neighborhood_custom_cohort_group_selections
+      (organization_id,context_id,report_file_id,assignment_file_id,account_id,context_revision,context_sha256,
+        selection_revision,operation_id,request_sha256,selection_sha256,manifest_content_sha256,manifest_canonical_utf8_bytes)
+      VALUES($1,$2,$3,$4,$5,1,$6,1,$7,$8,$9,$10,$11)`,[organization,priorTargetContext.context_id,report,assignment,scope.account_id,
+      priorTargetContext.context_sha256,randomUUID(),'c'.repeat(64),priorTargetSelection.selection_sha256,
+      priorTargetSelection.manifest_ref.content_sha256,priorTargetSelection.manifest_ref.canonical_utf8_bytes]);
+    await pool.query(`INSERT INTO app.neighborhood_custom_cohort_group_selection_heads
+      (organization_id,context_id,selection_revision) VALUES($1,$2,1)`,[organization,priorTargetContext.context_id]);
+    const readPriorTargetMetadata=async()=>({
+      context:(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_contexts WHERE organization_id=$1 AND context_id=$2',
+        [organization,priorTargetContext.context_id])).rows,
+      selection:(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_group_selections WHERE organization_id=$1 AND context_id=$2',
+        [organization,priorTargetContext.context_id])).rows,
+      head:(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_group_selection_heads WHERE organization_id=$1 AND context_id=$2',
+        [organization,priorTargetContext.context_id])).rows}),priorTargetMetadata=await readPriorTargetMetadata();
+    const pendingTarget={workspace_version:7,active:{context_ref:priorTargetContext,selection_ref:priorTargetSelection,
+      observation_period:refsInput.observationPeriod},pending_capture:{operation_id:refsOperation,
       observation_period:refsInput.observationPeriod,discovery:refsInput.discovery}};
     await pool.query(`INSERT INTO app.custom_appraisal_workfile_sections(assignment_file_id,section_key,section_value,revision,updated_by)
       VALUES($1,'neighborhood_workspace',$2::jsonb,1,$3)`,[assignment,canonicalAssessmentJson(pendingTarget),actor]);
@@ -3835,19 +3881,44 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     }
     await pool.query(`UPDATE app.custom_appraisal_workfile_sections SET section_value=$2::jsonb
       WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`,[assignment,canonicalAssessmentJson(pendingTarget)]);
+    const emptyPriorTarget={...pendingTarget,active:null};
+    await pool.query(`UPDATE app.custom_appraisal_workfile_sections SET section_value=$2::jsonb
+      WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`,[assignment,canonicalAssessmentJson(emptyPriorTarget)]);
+    const emptyPriorFrom=refsCalls.length,emptyPriorResult=await freshRefsOwner()[workspaceTargetMethod](refsInput,stockAccountOptions);
+    assert.deepEqual(emptyPriorResult.selection_workspace_target.workspace_checkpoint,emptyPriorTarget);
+    assert.equal(refsCalls.slice(emptyPriorFrom).filter(sql=>sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,1);
+    assert.ok(!refsCalls.slice(emptyPriorFrom).some(sql=>sql.includes('custom-cohort-group-selection:')));
+    await assertCatalogReadUnchanged();
+    const wrongPriorTarget=structuredClone(pendingTarget);wrongPriorTarget.active.selection_ref.selection_sha256='d'.repeat(64);
+    await pool.query(`UPDATE app.custom_appraisal_workfile_sections SET section_value=$2::jsonb
+      WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`,[assignment,canonicalAssessmentJson(wrongPriorTarget)]);
+    const wrongPriorFrom=refsCalls.length;
+    await assert.rejects(freshRefsOwner()[workspaceTargetMethod](refsInput,stockAccountOptions),/group_workspace_selection_changed/);
+    assert.ok(!refsCalls.slice(wrongPriorFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
+    await pool.query(`UPDATE app.custom_appraisal_workfile_sections SET section_value=$2::jsonb
+      WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`,[assignment,canonicalAssessmentJson(pendingTarget)]);
     const targetWorkspace=await readTargetWorkspace(),targetHistory=await readTargetHistory(),targetReport=await readTargetReport(),
       targetWorkfile=await readTargetWorkfile(),assertTargetUnchanged=async()=>{
         await assertCatalogReadUnchanged();assert.deepEqual(await readTargetWorkspace(),targetWorkspace);
         assert.deepEqual(await readTargetHistory(),targetHistory);assert.deepEqual(await readTargetReport(),targetReport);
-        assert.deepEqual(await readTargetWorkfile(),targetWorkfile);
+        assert.deepEqual(await readTargetWorkfile(),targetWorkfile);assert.deepEqual(await readPriorTargetMetadata(),priorTargetMetadata);
       },targetFrom=refsCalls.length;
-    const targetA=await freshRefsOwner()[workspaceTargetMethod](refsInput,stockAccountOptions),
+    const targetA=await freshRefsOwner()[workspaceTargetMethod](refsInput,stockAccountOptions),targetBFrom=refsCalls.length,
       targetB=await freshRefsOwner()[workspaceTargetMethod](refsInput,{...stockAccountOptions,stockAccountPackagePage:{cursor:targetA.next_cursor}}),
+      targetEndFrom=refsCalls.length,
       targetEnd=await freshRefsOwner()[workspaceTargetMethod](refsInput,{...stockAccountOptions,stockAccountPackagePage:{cursor:targetB.next_cursor}});
+    const targetOwnerQueryCounts=[targetBFrom-targetFrom-3,targetEndFrom-targetBFrom-3,refsCalls.length-targetEndFrom-3];
+    for(const count of targetOwnerQueryCounts)assert.ok(count>0&&count<=ORIGINAL_OWNER_LIMITS.sql_queries,
+      'whole owner includes all authority/workspace/prerequisite/original/ending SQL, excluding only outer BEGIN/SET/COMMIT');
     assert.equal(refsCalls.slice(targetFrom).filter(sql=>sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,3);
     const targetWorkspaceReads=refsCalls.slice(targetFrom).flatMap((sql,i)=>sql.includes('custom-cohort-group-workspace:read')
       ?[{sql,values:refsQueryParameters[targetFrom+i]}]:[]);
     assert.equal(targetWorkspaceReads.length,6,'the same actual pending workspace is fenced at BOTH ends, including empty probe');
+    const targetPriorHeads=refsCalls.slice(targetFrom).flatMap((sql,i)=>sql.includes('custom-cohort-group-selection:head')
+      ?[{sql,values:refsQueryParameters[targetFrom+i]}]:[]);
+    assert.equal(targetPriorHeads.length,6,'actual prior metadata head is checked at BOTH ends, including empty probe');
+    for(const {values} of targetPriorHeads)assert.deepEqual(values,[organization,priorTargetContext.context_id,report,assignment,
+      scope.account_id,priorTargetContext.context_revision,priorTargetContext.context_sha256]);
     for(const {sql,values} of targetWorkspaceReads){assert.deepEqual(values,[assignment,'neighborhood_workspace',524288]);
       assert.ok(sql.includes('FOR UPDATE NOWAIT'));assert.ok(!/array_agg|jsonb_agg|ST_DWithin/.test(sql));}
     for(const [actual,original] of [[targetA,catalogReplayA],[targetB,catalogReplayB],[targetEnd,catalogReplayEnd]]){
@@ -3863,7 +3934,9 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       assert.ok(Object.isFrozen(actual.selection_workspace_target.workspace_checkpoint));assert.ok(Buffer.byteLength(JSON.stringify(actual))<=2100000);
     }
     assert.equal(targetEnd.end_of_accounts,true);await assertTargetUnchanged();
-    for(const [fault,reason] of [['catalog_workspace_revision_ending',/workspace_target_changed/],
+    for(const [fault,reason] of [['catalog_owner_bytes_ending',/original_account_owner_byte_limit/],
+      ['catalog_prior_head_ending',/group_workspace_selection_changed/],
+      ['catalog_workspace_revision_ending',/workspace_target_changed/],
       ['catalog_workspace_pending_ending',/group_workspace_study_changed/],['catalog_workspace_missing_ending',/group_workspace_unavailable/],
       ['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],['subject',/subject_changed/],
       ['claim',/claim_lost/],['cancel',/cancelled/],['transaction_header',/cache_unavailable/],
@@ -3891,10 +3964,13 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     assertBoundedCohortAuthorityAggregates(targetQueries.map((text,index)=>({text,values:refsQueryParameters[targetFrom+index]})),
       {actorUserId:actor,organizationId:organization,assignmentFileId:assignment});
     console.info('[native-original-selection-workspace-target-v2]',{accounts:2,fresh_empty_probe:true,
+      whole_owner_sql_query_counts:targetOwnerQueryCounts,whole_owner_limits:ORIGINAL_OWNER_LIMITS,
+      whole_owner_ending_decoded_byte_overflow_refuses_without_budget_reset:true,
       actual_pending_job_period_discovery_private_review_fenced_before_original_io:true,actual_workspace_revision_and_pending_fenced_both_ends:true,
       exactly_one_whole_original_packet_per_call:true,current_ending_authority_and_original_cache_partition_catalog_group_fences:true,
       workspace_history_workfile_accepted_report_heads_roots_job_continuation_attempts_pins_unchanged:true,lost_commit_fresh_reopen:true,
-      native_prior_active_head_case:false,focused_prior_active_head_case:true,genuine_new_group_command:false,old_choice_carried:false,
+      native_empty_prior_active_case:true,native_prior_active_head_case:true,prior_metadata_only_not_source_authority:true,
+      prior_head_mismatch_before_originals_and_at_ending_refused:true,focused_prior_active_head_case:true,genuine_new_group_command:false,old_choice_carried:false,
       complete_catalog_original_replay:false,selected_union:false,statistics:false,publication:false,licensed_acquisition:false,production_speed:false});
     // Remove ONLY the synthetic fixture row just inserted above; preserve the
     // pre-existing absence expected by the rest of this isolated cloud fixture.
@@ -3908,6 +3984,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     assertBoundedCohortAuthorityAggregates(catalogQueries.map((text,index)=>({text,values:refsQueryParameters[catalogFrom+index]})),
       {actorUserId:actor,organizationId:organization,assignmentFileId:assignment});
     console.info('[native-original-recorded-catalog-issued-owner-v2]',{accounts:2,assigned_groups:1,assigned_accounts:1,unassigned_accounts:1,
+      whole_owner_byte_overflow_after_real_catalog_dml_rolls_back_head_rows_blobs_checkpoint_and_job:true,
       all_whole_originals_entire_neutral_cache_and_entire_partition_entries_replayed:true,outside_conflicting_candidates_not_promoted:true,
       native_exact_next_ordinal_orphan_summary_and_head_without_root_refused:true,current_ending_authority_cache_counts_fences:true,
       lost_commit_resumes_next_account:true,fresh_original_and_partition_empty_terminal_reopen:true,

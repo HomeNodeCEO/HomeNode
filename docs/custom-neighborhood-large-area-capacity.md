@@ -1,5 +1,49 @@
 # Complete larger-area Custom neighborhood studies
 
+## Whole database-owner budget (2026-10-10, not activated)
+
+The fixed original-backed stock traversal, recorded partition and catalog
+owners, their original-account readers and the pending workspace-target reader
+now share ONE aggregate executor per entire actual database-owner transaction
+body, including their same-transaction successful continuation releases.
+Current actor/assignment/private draft,
+workspace/prior head, job request, retained subject, issued prerequisites, whole
+original/cache/partition/catalog/group and every ending SQL result all charge
+the same lifetime counter: at most 256 SQL attempts and 32,000,000 decoded-row
+UTF-8 bytes. The whole operation, including connection checkout, is limited to
+60 seconds and still honors earlier caller cancellation/deadlines. The existing
+5-second query limit and every stricter child limit remain unchanged, including
+the single-use original packet's separate 128-query cap. This new whole-owner
+ceiling does not replace or widen that child ceiling. BEGIN/connection settings,
+COMMIT and failure cleanup remain owned by the existing transaction wrapper.
+
+This closes the distinction between a reader-local budget and the complete
+owner's prerequisite/workspace/ending work. The executor has no reset, limit,
+clock or source adapter override. A failure poisons that operation so a fresh
+child reader cannot continue under a reset budget; actual transaction rollback
+and lost-COMMIT classification are unchanged. No original reconciliation or
+current source/actor/assignment/subject/claim/head fence is removed or reordered.
+The executor preserves the transaction-local client shape used by the existing
+prior-selection repository, but its `release` guard refuses to release the real
+connection. A regression with a nonempty prior active workspace exercises that
+repository through this same executor, including missing/changed prior-head
+refusals; it does not read old source facts or mint new selection intent.
+
+Focused tests execute exact/one-over query and cumulative byte boundaries,
+shared initial/ending deadline/cancellation, malformed driver rows and original
+SQL failure preservation. Authored native assertions count ALL SQL in each
+actual A/B/empty workspace-target operation and inject an oversized ending
+transport row after original reconciliation; the whole operation must refuse
+with unchanged workspace/history/report and all durable roots. A separate
+native fault exceeds the whole budget AFTER real catalog DML and must roll back
+its native head/rows/blobs/checkpoint/job before any successful release. New-head native
+and full application CI are pending. This is a budget control, not complete
+catalog semantics, human intent, selected-union/statistics/publication authority,
+licensed acquisition or production-speed acceptance. No deployment, source
+grants, worker/route/default activation, pins, accepted reports, genuine Hardy
+choices or Apply changes. The remaining roadmap and included review/protected
+dependency-order gates remain unchanged; same heartbeat active.
+
 ## Current pending editor target in the original owner (2026-10-10, not activated)
 
 `readOriginalFrozenCaptureJobSelectionWorkspaceTargetReferencesV2` extends the
@@ -26,13 +70,17 @@ choices remain unchanged and are never inferred to apply to the new study.
 
 Focused tests cover exact pending identity, detached immutable target output,
 the metadata-only prior active head, missing/changed heads, hostile options and
-same-owner interruption. Authored native assertions use an isolated synthetic
-empty-prior-active V7 workspace: A/B/fresh-empty replay, both-end section reads,
+same-owner interruption. Authored native assertions use isolated synthetic
+empty and nonempty-prior-active V7 workspaces: A/B/fresh-empty replay, both-end section reads,
 wrong pending identity before originals, ending revision/pending disappearance,
 existing current authority/original/prerequisite refusals, lost COMMIT/fresh
 reopen and unchanged workspace/history/workfile/report and all durable roots.
-The nonempty prior active head is focused-tested, not yet executed natively in
-this fixture. New-head native/full execution is pending. No heavy local suite,
+The nonempty prior active head is focused-tested through the whole-owner
+executor. The updated native fixture now authors real scoped context/selection/
+head metadata reads at both ends, mismatched prior heads before original I/O
+and at the ending fence, and unchanged prior metadata. This isolated metadata
+fixture deliberately cannot supply old source facts or new human intent;
+new-head native/full execution is pending. No heavy local suite,
 route/worker/default/activation/source grant/report/genuine Hardy choice/Apply
 mutation; QA assignment 7 only for future Apply. Protected parents in order,
 fresh integrated security/native/full suites and actual included review remain

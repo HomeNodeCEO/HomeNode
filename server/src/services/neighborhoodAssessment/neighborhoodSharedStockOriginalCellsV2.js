@@ -60,6 +60,88 @@ const PROFILE=freeze({profile_ref:{id:DEFINITION.id,revision:'1',content_sha256:
 /** Return the pinned projection definition, not a source or selection capability. */
 export function getNeighborhoodStockOriginalCellsV2Profile(){return PROFILE;}
 
+/** The server chooses the next exact stock account; this is only a keyset. */
+export function prepareNeighborhoodStockAccountPackagePageV2(value){
+  const page=data(value,['cursor']);cursor(page.cursor,'accounts');return freeze(page);
+}
+const PACKAGE_DEFINITION=freeze({id:'neighborhood-stock-account-original-package-v2',revision:'1',
+  original_cell_profile:PROFILE,limits:L,population:'one_next_exact_stock_account_chosen_by_server',
+  completeness:'both_original_kind_counts_bounded_at_251_then_all_or_nothing_total_cap_250',
+  parts:'all_retained_parcel_parts_including_outside_geometry_plus_account_original_if_present',
+  resolution:'retained_year_before_exact_distinct_value_five_state_resolution_no_summing_parts',
+  missing_account:'explicit_zero_originals_no_fabricated_markers',
+  units:'reported_sqft_and_year_only_market_value_currency_unknown_not_inferred',
+  authority:'not_established',coverage:'one_complete_account_package_not_complete_selected_union',
+  limitations:['not_verified_GLA_or_historical_stock','no_amenity_dictionary_or_economic_unit_inference',
+    'no_selected_revision_statistics_publication_acquisition_or_report_update']});
+const packageDefinitionText=canonicalAssessmentJson(PACKAGE_DEFINITION),packageDefinitionRef=prepareNeighborhoodCohortBlob(packageDefinitionText);
+const PACKAGE_PROFILE=freeze({profile_ref:{id:PACKAGE_DEFINITION.id,revision:'1',content_sha256:packageDefinitionRef.content_sha256},
+  definition_blob:{ref:packageDefinitionRef,canonical_json:packageDefinitionText}});
+/** A fixed interpretation definition, never account/selection/source authority. */
+export function getNeighborhoodStockAccountPackageV2Profile(){return PACKAGE_PROFILE;}
+
+// ORIGINAL counts, not cache counts, detect a missing cache row. Every per-kind
+// counter stops at cap+1; over-limit packets deliver ZERO original payloads.
+// The fixed stock PK picks one next account; neither caller account lists nor
+// a filtered generation sweep can choose the population. All indexed probes
+// are correlated to that one exact account before materializing any payload.
+export const NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL=`/* neighborhood-stock-account-original-package-v2 */
+WITH chosen AS MATERIALIZED (
+  SELECT account_id,parcel_count FROM app.neighborhood_custom_cohort_stock_accounts
+  WHERE operation_id=$1::uuid AND account_id>$4::text COLLATE "C" ORDER BY account_id LIMIT 1
+), totals AS MATERIALIZED (
+  SELECT kind,(SELECT count(*)::integer FROM (SELECT 1 FROM app.neighborhood_frozen_source_rows o
+    WHERE o.generation_id=$2::uuid AND o.kind=k.kind AND o.account_id=(SELECT account_id FROM chosen)
+    LIMIT ($5::integer+1)) bounded) AS n FROM (VALUES ('parcels'),('accounts')) k(kind)
+), members AS MATERIALIZED (
+  SELECT o.kind,o.row_key,t.row_key IS NULL OR t.account_id IS DISTINCT FROM o.account_id
+      OR t.source_record_id IS DISTINCT FROM o.source_record_id AS invalid,
+    octet_length(o.payload::text) AS original_bytes,octet_length(t.typed::text) AS typed_bytes,
+    jsonb_build_object('kind',o.kind,'row_key',o.row_key,'account_id',o.account_id,
+      'source_record_id',o.source_record_id::text,'original_text',o.payload::text,
+      'cached_account_id',t.account_id,'cached_source_record_id',t.source_record_id::text,
+      'original_payload_sha256',t.original_payload_sha256,'typed',t.typed)::text AS encoded
+  FROM chosen a CROSS JOIN (VALUES ('parcels'),('accounts')) k(kind)
+  CROSS JOIN LATERAL (SELECT o.kind,o.row_key,o.account_id,o.source_record_id,o.payload
+    FROM app.neighborhood_frozen_source_rows o WHERE o.generation_id=$2::uuid AND o.kind=k.kind AND o.account_id=a.account_id
+      AND (SELECT sum(n) FROM totals)<=$5::integer OFFSET 0) o
+  LEFT JOIN LATERAL (SELECT t.row_key,t.account_id,t.source_record_id,t.original_payload_sha256,t.typed
+    FROM app.neighborhood_frozen_typed_v2_rows t WHERE t.generation_id=$2::uuid AND t.profile_sha256=$3
+      AND t.kind=o.kind AND t.row_key=o.row_key OFFSET 0) t ON true
+), sized AS MATERIALIZED (SELECT *,octet_length(encoded) AS bytes FROM members)
+SELECT (SELECT account_id FROM chosen) AS account_id,(SELECT parcel_count::text FROM chosen) AS geographic_parcel_count,
+  (SELECT jsonb_object_agg(kind,n) FROM totals) AS original_counts,count(*)::integer AS page_count,
+  coalesce(sum(CASE WHEN invalid THEN 1 ELSE 0 END),0)::integer AS invalid_count,
+  coalesce(max(bytes),0)>$7::integer OR coalesce(max(original_bytes),0)>$8::integer
+    OR coalesce(sum(bytes+1),0)+2>$6::integer OR coalesce(sum(2*coalesce(typed_bytes,0)+1024),0)+2>$9::integer AS packet_oversize,
+  CASE WHEN coalesce(max(bytes),0)<=$7::integer AND coalesce(max(original_bytes),0)<=$8::integer
+    AND coalesce(sum(bytes+1),0)+2<=$6::integer AND coalesce(sum(2*coalesce(typed_bytes,0)+1024),0)+2<=$9::integer
+    THEN coalesce('['||string_agg(encoded,',' ORDER BY kind COLLATE "C",row_key COLLATE "C")||']','[]') ELSE '[]' END AS page_json
+FROM sized`;
+
+const METRICS=Object.freeze({reported_year_built:'year',reported_residential_area:'reported_sqft',reported_site_area:'reported_sqft',reported_market_value:null});
+/** Compare canonical exact decimal literals; never round economic values. */
+function decimal(value){const [whole,fraction='']=value.split('.');return BigInt(whole)*1000000000000n+BigInt(fraction.padEnd(12,'0'));}
+/** Resolve only a complete original parcel packet, retaining every reason. */
+function resolveAccount(rows){
+  const parts=rows.filter(r=>r.kind==='parcels'),observations={};
+  for(const [metric,unit] of Object.entries(METRICS)){
+    const counts={observed:0,missing:0,invalid:0,unsupported:0};let low=null,high=null;
+    for(const part of parts){const c=part.retained_observations[metric];
+      if(!Object.hasOwn(counts,c.state)||c.state==='observed'&&(unit===null||c.unit!==unit))fail('invalid_original');
+      counts[c.state]++;
+      if(c.exact_value!==null){const value=decimal(c.exact_value);
+        if(low===null||value<low.value)low={value,text:c.exact_value};if(high===null||value>high.value)high={value,text:c.exact_value};}
+    }
+    const state=low!==null&&low.value!==high.value?'conflicting':counts.observed?'observed':counts.unsupported?'unsupported':counts.invalid?'invalid':'missing';
+    observations[metric]={state,exact_value:['observed','unsupported'].includes(state)?low?.text??null:null,
+      unit:state==='observed'?unit:null,source_part_count:String(parts.length),
+      ...Object.fromEntries(Object.entries(counts).map(([s,n])=>[`${s}_part_count`,String(n)])),
+      conflict_values:state==='conflicting'?[low.text,high.text]:[]};
+  }
+  return observations;
+}
+
 // Start from ORIGINALS, not the cache: a missing typed row cannot disappear.
 // The existing generation/kind/C-key PK, stock-account PK and typed PK scope
 // one bounded original-key prefix BEFORE stock filtering. Empty scoped pages
@@ -131,10 +213,9 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
     bytes+=Buffer.byteLength(encoded);if(bytes>L.read_utf8_bytes)fail('byte_limit');check();return result;
   };
   const stocks=createNeighborhoodFrozenJobStock({query:execute},options);
-  return Object.freeze({
-    /** Reconcile one original-key prefix; a page end proves no earlier traversal. */
-    async page(rawPage){
-      const page=prepareNeighborhoodStockOriginalCellPageV2(rawPage);if(used)fail('single_use');used=true;started=performance.now();
+  /** Both fixed consumers share one single-use budget and identical fences. */
+  async function open(){
+      if(used)fail('single_use');used=true;started=performance.now();
       const stock=await stocks.read(),original=stock.original;
       const source=prepareNeighborhoodSharedTypedSource(await execute(NEIGHBORHOOD_SHARED_TYPED_V2_SQL.source,[stock.generation_id]),stock.generation_id);
       const expected={generation_id:original.generation_id,format_version:original.source_format_version,status:'complete',
@@ -152,6 +233,34 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
           ||p.typed_rows!==source.row_count||!count(p.typed_utf8_bytes,8000000000)||BigInt(p.typed_utf8_bytes)<BigInt(p.typed_rows))fail('cache_unavailable');
       };
       const header=one(await execute(NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read,headerValues));validateHeader(header);
+      return {stock,source,async finish(){
+        if(!same(await stocks.read(),stock)||!same(prepareNeighborhoodSharedTypedSource(
+          await execute(NEIGHBORHOOD_SHARED_TYPED_V2_SQL.source,[stock.generation_id]),stock.generation_id),source))fail('source_changed');
+        const ending=one(await execute(NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read,headerValues));validateHeader(ending);
+        if(!same(ending,header))fail('source_changed');check();
+      }};
+  }
+  /** Recompile a complete original; never accept the stored cell as authority. */
+  function reconcile(value){
+    check();const row=data(value,['kind','row_key','account_id','source_record_id','original_text',
+      'cached_account_id','cached_source_record_id','original_payload_sha256','typed']);
+    if(!KINDS.includes(row.kind))fail('invalid_original');cursor(row.row_key,row.kind);
+    if(!row.row_key||row.account_id===null||row.source_record_id!==null||typeof row.original_text!=='string'
+      ||Buffer.byteLength(row.original_text)>L.original_utf8_bytes||Buffer.byteLength(JSON.stringify(row))>L.row_utf8_bytes)fail('invalid_original');
+    const replay=compileNeighborhoodFrozenTypedOriginalV2({kind:row.kind,row_key:row.row_key,payload_text:row.original_text});
+    if(!same(replay,row.typed)||replay.account_id!==row.account_id||row.cached_account_id!==row.account_id
+      ||replay.source_record_id!==row.source_record_id||row.cached_source_record_id!==row.source_record_id
+      ||row.original_payload_sha256!==replay.original.payload_sha256)fail('original_mismatch');
+    const observations=structuredClone(replay.observations),year=observations.reported_year_built;
+    if(year?.state==='observed'&&year.exact_value>effective.slice(0,4))Object.assign(year,
+      {state:'invalid',exact_value:null,unit:null,reason:'year_after_retained_effective_year'});
+    check();return {kind:row.kind,row_key:row.row_key,account_id:row.account_id,
+      original_payload_sha256:replay.original.payload_sha256,typed:replay,retained_observations:observations};
+  }
+  return Object.freeze({
+    /** Reconcile one original-key prefix; a page end proves no earlier traversal. */
+    async page(rawPage){
+      const page=prepareNeighborhoodStockOriginalCellPageV2(rawPage),context=await open(),{stock,source}=context;
       const result=one(await execute(NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL,[stock.operation_id,stock.generation_id,
         TYPED.profile_ref.content_sha256,page.kind,page.cursor,page.rowLimit,L.page_utf8_bytes,L.row_utf8_bytes,L.original_utf8_bytes,L.output_utf8_bytes]));
       if(!Number.isInteger(result.page_count)||!Number.isInteger(result.candidate_count)||!Number.isInteger(result.scan_count)||result.page_count<0
@@ -162,21 +271,9 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
       if(!Array.isArray(rows)||rows.length!==result.page_count||!rows.length&&result.candidate_count!==0)fail('invalid_result');
       let previous=page.cursor;
       rows=rows.map(value=>{
-        check();const row=data(value,['kind','row_key','account_id','source_record_id','original_text',
-          'cached_account_id','cached_source_record_id','original_payload_sha256','typed']);
-        cursor(row.row_key,page.kind);
-        if(row.kind!==page.kind||!row.row_key||Buffer.compare(Buffer.from(row.row_key),Buffer.from(previous))<=0
-          ||row.account_id===null||row.source_record_id!==null||typeof row.original_text!=='string'
-          ||Buffer.byteLength(row.original_text)>L.original_utf8_bytes||Buffer.byteLength(JSON.stringify(row))>L.row_utf8_bytes)fail('invalid_original');
-        const replay=compileNeighborhoodFrozenTypedOriginalV2({kind:row.kind,row_key:row.row_key,payload_text:row.original_text});
-        if(!same(replay,row.typed)||replay.account_id!==row.account_id||row.cached_account_id!==row.account_id
-          ||replay.source_record_id!==row.source_record_id||row.cached_source_record_id!==row.source_record_id
-          ||row.original_payload_sha256!==replay.original.payload_sha256)fail('original_mismatch');
-        const observations=structuredClone(replay.observations),year=observations.reported_year_built;
-        if(year?.state==='observed'&&year.exact_value>effective.slice(0,4))Object.assign(year,
-          {state:'invalid',exact_value:null,unit:null,reason:'year_after_retained_effective_year'});
-        previous=row.row_key;check();return {kind:row.kind,row_key:row.row_key,account_id:row.account_id,
-          original_payload_sha256:replay.original.payload_sha256,typed:replay,retained_observations:observations};
+        const row=reconcile(value);
+        if(row.kind!==page.kind||Buffer.compare(Buffer.from(row.row_key),Buffer.from(previous))<=0)fail('invalid_original');
+        previous=row.row_key;return row;
       });
       if(result.scan_count===0){if(result.scan_cursor!==null)fail('invalid_result');}
       else{cursor(result.scan_cursor,page.kind);
@@ -185,16 +282,52 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
       const next=result.page_count===result.candidate_count?result.scan_cursor:rows.length?previous:null;
       if(result.next_cursor!==next)fail('invalid_result');
       if(Buffer.byteLength(JSON.stringify(rows))>L.output_utf8_bytes)fail('byte_limit');
-      if(!same(await stocks.read(),stock)||!same(prepareNeighborhoodSharedTypedSource(
-        await execute(NEIGHBORHOOD_SHARED_TYPED_V2_SQL.source,[stock.generation_id]),stock.generation_id),source))fail('source_changed');
-      const ending=one(await execute(NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read,headerValues));validateHeader(ending);
-      if(!same(ending,header))fail('source_changed');check();
+      await context.finish();
       return freeze({page_version:2,status:'reconciled_stock_original_cells_page',authority:'not_established',coverage:'one_kind_page_only',
         graph,stock,source_metadata:source,typed_profile:TYPED,page_profile:PROFILE,effective_date:effective,
         kind:page.kind,cursor:page.cursor,rows,next_cursor:next??page.cursor,
         scanned_original_count:result.scan_count,scoped_candidate_count:result.candidate_count,
         end_of_kind:result.scan_count<page.rowLimit&&result.page_count===result.candidate_count,
         original_reconciliation:'every_delivered_original_recompiled',selected_union:'not_established',
+        source_acquisition:'not_established',report_update:'none'});
+    },
+    /** All retained originals for ONE server-picked account, or complete refusal. */
+    async accountPackage(rawPage){
+      const page=prepareNeighborhoodStockAccountPackagePageV2(rawPage),context=await open(),{stock,source}=context;
+      const result=one(await execute(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL,[stock.operation_id,stock.generation_id,
+        TYPED.profile_ref.content_sha256,page.cursor,L.rows,L.page_utf8_bytes,L.row_utf8_bytes,L.original_utf8_bytes,L.output_utf8_bytes]));
+      const counts=data(result.original_counts,KINDS);
+      if(!Object.values(counts).every(n=>Number.isInteger(n)&&n>=0&&n<=L.rows+1)
+        ||!Number.isInteger(result.page_count)||result.page_count<0||result.invalid_count!==0
+        ||typeof result.packet_oversize!=='boolean'||typeof result.page_json!=='string')fail('invalid_result');
+      const total=counts.parcels+counts.accounts;
+      if(total>L.rows){if(result.page_count!==0||result.page_json!=='[]')fail('invalid_result');fail('account_package_row_limit');}
+      if(result.packet_oversize)fail('account_package_byte_limit');
+      if(result.page_count!==total||counts.parcels>layers.parcels||counts.accounts>layers.accounts
+        ||Buffer.byteLength(result.page_json)>L.page_utf8_bytes)fail('invalid_result');
+      const present=result.account_id!==null;
+      if(present){cursor(result.account_id,'accounts');
+        if(!result.account_id||Buffer.compare(Buffer.from(result.account_id),Buffer.from(page.cursor))<=0
+          ||!count(result.geographic_parcel_count,2000000)||result.geographic_parcel_count==='0'
+          ||BigInt(result.geographic_parcel_count)>BigInt(counts.parcels)||counts.accounts>1)fail('invalid_result');
+      }else if(total!==0||result.geographic_parcel_count!==null)fail('invalid_result');
+      let rows;try{rows=JSON.parse(result.page_json);}catch{fail('invalid_result');}
+      if(!Array.isArray(rows)||rows.length!==total)fail('invalid_result');
+      let previous=null;const seen={parcels:0,accounts:0};
+      rows=rows.map(value=>{const row=reconcile(value),key=`${row.kind}\u0000${row.row_key}`;
+        if(row.account_id!==result.account_id||previous!==null&&Buffer.compare(Buffer.from(key),Buffer.from(previous))<=0)fail('invalid_original');
+        seen[row.kind]++;previous=key;return row;});
+      if(!same(seen,counts))fail('invalid_result');
+      const observations=present?resolveAccount(rows):null;
+      if(Buffer.byteLength(JSON.stringify({rows,observations}))>L.output_utf8_bytes)fail('byte_limit');
+      await context.finish();
+      return freeze({page_version:2,status:'reconciled_stock_account_original_package',authority:'not_established',
+        coverage:'one_complete_account_package_only',graph,stock,source_metadata:source,typed_profile:TYPED,
+        package_profile:PACKAGE_PROFILE,effective_date:effective,cursor:page.cursor,account_id:result.account_id,
+        geographic_parcel_count:result.geographic_parcel_count,original_counts:counts,rows,observations,
+        account_original_state:present?counts.accounts===1?'present':'absent':'not_applicable',
+        next_cursor:result.account_id??page.cursor,end_of_accounts:!present,
+        original_reconciliation:'every_package_original_recompiled',selected_union:'not_established',
         source_acquisition:'not_established',report_update:'none'});
     },
   });

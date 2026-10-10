@@ -57,7 +57,7 @@ import { createNeighborhoodFrozenJobStockMetricPages }
 import { createNeighborhoodSharedJobStockMetricPages, createNeighborhoodSharedJobStockMetricPagesV2,
   NEIGHBORHOOD_SHARED_STOCK_METRIC_V2_PAGE_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStockMetricPages.js';
-import { NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL }
+import { NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL, NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
 import { createNeighborhoodSharedTypedGeneration, createNeighborhoodSharedTypedGenerationV2, NEIGHBORHOOD_SHARED_TYPED_V2_SQL,
   createNeighborhoodSharedTypedCadGenerationV1,NEIGHBORHOOD_SHARED_TYPED_CAD_SQL }
@@ -1694,14 +1694,15 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       refsCalls.push(config.text);
       if(config.text.includes('neighborhood-cohort-blob:insert */'))refsBlobPuts.push(config.values[3]);
       const result=await client.query(config);
-      if(config.text===NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL
+      if([NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL,NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL].includes(config.text)
         &&['stock_cells_mismatch','stock_cells_missing','stock_cells_original'].includes(refsFault)){
         // Corrupt only the transient transport, never the immutable original or
         // installed cache. Correct hashes/counts cannot launder changed cells.
         const fault=refsFault;refsFault=null;const rows=JSON.parse(result.rows[0].page_json);
-        if(fault==='stock_cells_missing')rows[0].typed=null;
-        if(fault==='stock_cells_mismatch')rows[0].typed.observations.reported_year_built.exact_value='1900';
-        if(fault==='stock_cells_original')rows[0].original_text=rows[0].original_text.replace('1960','1950');
+        const row=rows.find(r=>r.kind==='parcels');
+        if(fault==='stock_cells_missing')row.typed=null;
+        if(fault==='stock_cells_mismatch')row.typed.observations.reported_year_built.exact_value='1900';
+        if(fault==='stock_cells_original')row.original_text=row.original_text.replace('1960','1950');
         return {...result,rows:[{...result.rows[0],page_json:JSON.stringify(rows)}]};
       }
       if(['missing_receipt','corrupt_receipt'].includes(refsFault)&&config.text.includes('neighborhood-cohort-blob:read */')
@@ -1723,6 +1724,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         ||config.text.includes('neighborhood-frozen-job-identity:parcels')||config.text.includes('shared-v2-stock-metrics:page')
         ||config.text===NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_SQL||config.text===NEIGHBORHOOD_SHARED_JOB_CAD_ACCOUNT_PAGE_SQL
         ||config.text===NEIGHBORHOOD_SHARED_JOB_TRANSACTION_V2_PAGE_SQL||config.text===NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL
+        ||config.text===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL
         ||Object.values(NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL).includes(config.text)){
         // The ending-header fault is consumed by the later second metadata
         // read, not by the page query. Keep it armed like the COMMIT fault.
@@ -1767,6 +1769,8 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       transactionPackagePage:{kind:'source_record',cursor:''}};
     const stockCellsMethod='readSharedFrozenCaptureJobStockOriginalCellsReferencesV2',stockCellsOptions={...refsOptions,
       stockOriginalCellPage:{kind:'parcels',cursor:'',rowLimit:1}};
+    const stockAccountMethod='readSharedFrozenCaptureJobStockAccountPackagesReferencesV2',stockAccountOptions={...refsOptions,
+      stockAccountPackagePage:{cursor:''}};
     await refsOwner.prepareFrozenCaptureJobStock(refsInput,refsOptions);
     const readRefsCheckpoint=async()=>(await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[refsOperation])).rows[0].checkpoint;
     const refsStockCheckpoint=await readRefsCheckpoint();
@@ -2225,6 +2229,8 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await assert.rejects(freshRefsOwner()[temporalMethod](refsInput,transactionOptions),/checkpoint_conflict/);
     await assert.rejects(freshRefsOwner()[packageMethod](refsInput,packageOptions),/checkpoint_conflict/);
     await assert.rejects(freshRefsOwner()[stockCellsMethod](refsInput,stockCellsOptions),/checkpoint_conflict/);
+    await assert.rejects(freshRefsOwner()[stockAccountMethod](refsInput,stockAccountOptions),/checkpoint_conflict/);
+    assert.ok(!refsCalls.slice(identityFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
     assert.ok(!refsCalls.slice(identityFrom).includes(NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL));
     assert.ok(!refsCalls.slice(identityFrom).some(sql=>/neighborhood-frozen-job-identity:|stock-originals:|neighborhood-frozen-job-closure:/.test(sql)));
     assert.ok(!refsCalls.slice(identityFrom).some(sql=>/shared-typed-v2:|shared-v2-stock-metrics:page|shared-job-transactions-v2:page/.test(sql)),
@@ -2270,6 +2276,8 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await assert.rejects(freshRefsOwner()[temporalMethod](refsInput,transactionOptions),/unfinished_identity_verification/);
     await assert.rejects(freshRefsOwner()[packageMethod](refsInput,packageOptions),/unfinished_identity_verification/);
     await assert.rejects(freshRefsOwner()[stockCellsMethod](refsInput,stockCellsOptions),/unfinished_identity_verification/);
+    await assert.rejects(freshRefsOwner()[stockAccountMethod](refsInput,stockAccountOptions),/unfinished_identity_verification/);
+    assert.ok(!refsCalls.slice(partialIdentityFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
     assert.ok(!refsCalls.slice(partialIdentityFrom).includes(NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL));
     assert.deepEqual(await readRefsCheckpoint(),identityFirst);assert.deepEqual(await readIdentityAnchor(),identityFirstAnchor);
     assert.ok(!refsCalls.slice(partialIdentityFrom).some(sql=>/neighborhood-frozen-job-identity:|shared-typed-v2:|shared-v2-stock-metrics:page|shared-job-transactions-v2:page|checkpoint-save|anchor-advance/.test(sql)),
@@ -2353,6 +2361,8 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await assert.rejects(freshRefsOwner()[transactionMethod](refsInput,transactionOptions),/invalid_result/);
     await assert.rejects(freshRefsOwner()[temporalMethod](refsInput,transactionOptions),/invalid_result/);
     await assert.rejects(freshRefsOwner()[stockCellsMethod](refsInput,stockCellsOptions),/invalid_result/);
+    await assert.rejects(freshRefsOwner()[stockAccountMethod](refsInput,stockAccountOptions),/invalid_result/);
+    assert.ok(!refsCalls.slice(noCacheFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
     assert.ok(!refsCalls.slice(noCacheFrom).includes(NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL));
     assert.ok(!refsCalls.slice(noCacheFrom).some(sql=>/shared-typed-v2:begin|shared-typed-v2:rows|shared-v2-stock-metrics:page|checkpoint-save/.test(sql)));
     const neutralPrepared=await sharedTypedV2Complete(pool,frozen.generationId);
@@ -2654,6 +2664,76 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       ending_current_authorization_cache_refusal:true,corrupt_cells_with_unchanged_hash_counts_refused:true,lost_commit_reopen:true,
       fresh_empty_terminal_probes:true,original_payload_copies:0,job_typed_copies:0,checkpoint_or_head_writes:0,
       complete_selected_union:false,licensed_acquisition:false,statistics:false,production_speed:false});
+    // ONE complete original account package, including retained parcel parts
+    // outside geometry. The server chooses the account; this is not a selected
+    // union traversal receipt or licensed/live acceptance.
+    const stockAccountsFrom=refsCalls.length;
+    const accountA=await freshRefsOwner()[stockAccountMethod](refsInput,stockAccountOptions);
+    const accountB=await freshRefsOwner()[stockAccountMethod](refsInput,{...stockAccountOptions,
+      stockAccountPackagePage:{cursor:accountA.next_cursor}});
+    const accountEnd=await freshRefsOwner()[stockAccountMethod](refsInput,{...stockAccountOptions,
+      stockAccountPackagePage:{cursor:accountB.next_cursor}});
+    assert.deepEqual([accountA.account_id,accountB.account_id],['CLOSURE-A','CLOSURE-B']);
+    assert.deepEqual(accountA.original_counts,{parcels:2,accounts:1});assert.deepEqual(accountB.original_counts,{parcels:1,accounts:1});
+    assert.equal(accountA.geographic_parcel_count,'1');assert.equal(accountA.account_original_state,'present');
+    for(const p of [accountA,accountB]){
+      assert.equal(p.status,'reconciled_stock_account_original_package');assert.equal(p.coverage,'one_complete_account_package_only');
+      assert.equal(p.original_reconciliation,'every_package_original_recompiled');assert.equal(p.selected_union,'not_established');
+      assert.equal(p.retained_effective_date,'2026-10-07');assert.equal(p.end_of_accounts,false);
+      assert.deepEqual(p.identity_verification_reference,identityIssued.receipt_reference);
+      const originals=[...stockCellsRows.accounts,...stockCellsRows.parcels].filter(r=>r.account_id===p.account_id);
+      assert.deepEqual(p.rows,originals,'the packet retains every independently checked original, including outside parts');
+      assert.ok(p.rows.every(r=>!Object.hasOwn(r,'original_text')));
+    }
+    const resolvedA=accountA.observations,resolvedB=accountB.observations;
+    assert.equal(resolvedA.reported_residential_area.state,'conflicting');
+    assert.deepEqual(resolvedA.reported_residential_area.conflict_values,['1000.01','2000.02']);
+    assert.equal(resolvedA.reported_residential_area.exact_value,null,'parts are not summed into GLA');
+    assert.equal(resolvedA.reported_year_built.state,'observed');assert.equal(resolvedA.reported_year_built.exact_value,'1960');
+    assert.equal(resolvedA.reported_year_built.missing_part_count,'1');
+    assert.equal(resolvedA.reported_market_value.state,'unsupported');assert.equal(resolvedA.reported_market_value.unit,null);
+    assert.equal(resolvedA.reported_market_value.exact_value,'9007199254740993');
+    assert.equal(resolvedA.reported_market_value.unsupported_part_count,'2','replicated retained price is not summed');
+    assert.equal(resolvedB.reported_year_built.state,'invalid');assert.equal(resolvedB.reported_residential_area.state,'invalid');
+    assert.equal(resolvedB.reported_site_area.state,'observed');assert.equal(resolvedB.reported_site_area.exact_value,'0');
+    assert.equal(accountEnd.end_of_accounts,true);assert.equal(accountEnd.account_id,null);assert.equal(accountEnd.next_cursor,'CLOSURE-B');
+    assert.equal(accountEnd.observations,null);assert.deepEqual(accountEnd.rows,[]);
+    for(const fault of ['stock_cells_mismatch','stock_cells_missing','stock_cells_original']){
+      refsFault=fault;const from=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[stockAccountMethod](refsInput,stockAccountOptions),/original_mismatch/);
+      assert.equal(refsFault,null);assert.ok(refsCalls.slice(from).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
+      await assertTransactionUnchanged();
+    }
+    await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+    const accountDeniedFrom=refsCalls.length;
+    await assert.rejects(freshRefsOwner()[stockAccountMethod](refsInput,stockAccountOptions),/market_data_access_denied/);
+    assert.ok(!refsCalls.slice(accountDeniedFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));
+    for(const [fault,reason] of [['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],
+      ['subject',/subject_changed/],['claim',/claim_lost/],['cancel',/cancelled/],['transaction_header',/cache_unavailable/]]){
+      refsAbort=new AbortController();refsFault=fault;const from=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[stockAccountMethod](refsInput,{...stockAccountOptions,signal:refsAbort.signal}),reason,`account package ending ${fault}`);
+      assert.equal(refsFault,null);assert.ok(refsCalls.slice(from).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
+      await assertTransactionUnchanged();
+      if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+      if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    }
+    refsFault='commit';await assert.rejects(freshRefsOwner()[stockAccountMethod](refsInput,stockAccountOptions),e=>e.outcome_unknown===true);
+    await assertTransactionUnchanged();assert.deepEqual((await freshRefsOwner()[stockAccountMethod](refsInput,stockAccountOptions)).rows,accountA.rows);
+    for(const fault of ['missing_receipt','corrupt_receipt','missing_geo_receipt','corrupt_geo_receipt','missing_identity_receipt','corrupt_identity_receipt']){
+      refsFault=fault;const from=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[stockAccountMethod](refsInput,stockAccountOptions),/checkpoint_conflict|storage_conflict|invalid_receipt/);
+      assert.equal(refsFault,null);assert.ok(!refsCalls.slice(from).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));await assertTransactionUnchanged();
+    }
+    await assert.rejects(freshRefsOwner()[stockAccountMethod](sourceInput,{...stockAccountOptions,captureJobClaim:sourceClaim}),/checkpoint_conflict/);
+    assert.ok(!refsCalls.slice(stockAccountsFrom).some(sql=>/ST_DWithin|neighborhood-frozen-job-closure:|shared-typed-v2:(?:page|begin|rows|progress)|checkpoint-save|anchor-(?:advance|insert)/.test(sql)));
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_custom_cohort_typed_original_rows WHERE operation_id=$1',[refsOperation])).rows[0].n,0);
+    console.info('[native-reconciled-stock-account-packages-owner-v2]',{accounts:2,parcel_originals:3,account_originals:2,
+      every_original_recompiled_before_resolution:true,outside_parts_retained:true,exact_conflicts_without_sums:true,
+      unsupported_currency_not_inferred:true,retained_year_before_conflict:true,missing_part_denominators:true,
+      partial_unissued_corrupt_prerequisites_refused:true,current_and_ending_rights_cache_refusal:true,lost_commit_reopen:true,
+      fresh_empty_terminal_probe:true,original_payload_copies:0,job_typed_copies:0,checkpoint_or_head_writes:0,
+      complete_selected_union:false,statistics:false,licensed_acquisition:false,production_speed:false});
     // Actual current-authorized companion consumer, not a DATA-only raw reader.
     // The additional synthetic CAD grant never provisions production rights.
     const cadBeforeBlobs=await refsBlobCount(),cadInitialFrom=refsCalls.length;

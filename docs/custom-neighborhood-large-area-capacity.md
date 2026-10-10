@@ -1,5 +1,80 @@
 # Complete larger-area Custom neighborhood studies
 
+## Complete single-account original packages (2026-10-10, not activated)
+
+PR #1239 was retargeted to main at 14:50:52 UTC BEFORE synchronization, then
+integrated the actual protected #1238 merge
+`d2930c13b157c5258439110ad3d6955b688cadfe` without conflicts. The integrated
+diff remains this seven-file account-package slice; the protected transaction
+and stock-original database checks are both retained. Fresh integrated-head
+security/native/full-suite checks and an actual included review are required;
+the historical initial-stack receipts are not integrated readiness. No internal
+stage, deployment, source grant, worker, pin, report or Apply was activated.
+The integrated lightweight owner/stock/V1-and-V2 original-compiler run passed
+115 tests, zero failures or skips (1450.4428 ms); all six changed JavaScript
+files passed syntax checks and the diff check passed. Heavy database, full
+server and frontend suites remain cloud-only.
+
+`readSharedFrozenCaptureJobStockAccountPackagesReferencesV2` extends the actual
+bounded V2 database capture owner, not a caller-supplied account callback. It
+requires the independently issued DONE original graph, geographic and identity
+heads, complete neutral cache, pinned stock, current database actor/assignment/
+private draft/retained subject/source-purpose authorization and both-end checks.
+The only consumer input is a closed `stockAccountPackagePage: {cursor}`. The
+server selects the next exact stock account using its native C-key index.
+
+For that ONE account, the fixed query counts both ORIGINAL kinds at cap+1
+(251) BEFORE payload materialization. It admits the entire parcel/account packet
+only when its total is at most 250 and every original/envelope/transport/output
+byte bound fits. An over-limit packet refuses with zero payload delivery; it
+cannot become a partial account. All retained parcel parts are included, even
+outside the geographic boundary. The account original is optional but absence
+is explicit, not fabricated. A missing cache row remains a refusal, not a
+smaller denominator. Every original is recompiled and the entire cache row and
+native identities are compared before ANY account resolution. The exact hash
+and byte count are recomputed, never substituted for original replay.
+
+Reported year, residential area, site area and market-value cells retain their
+observed/missing/invalid/unsupported part counts and complete source-part
+denominator. Distinct exact numeric values produce `conflicting` with exact
+minimum/maximum literals, including differences above 2^53. Replicated values
+are NOT summed. The owner-retained effective-year rule runs on each original
+cell before conflict resolution. Unknown market currency remains unsupported;
+reported square feet are not verified GLA, economic equivalence or historical
+stock. Literal typed markers remain available but no housing/amenity dictionary
+or sale allocation is inferred. Original payload text/geometry is not delivered.
+
+Both original-page and complete-account methods share the same single-use,
+32-MB all-nested-query result, 128-query, 60-second and five-second-query budget.
+The 1-MB original, 2.1-MB envelope/output and 8-MB transport caps are unchanged.
+No new phase, migration, public route, cache-miss preparation, worker, selection
+head or report write is introduced. Every nonempty account requires a separate
+fresh empty terminal probe; no cursor/end proves earlier packages were consumed.
+
+The lightweight combined local run passed 146 tests, failed zero, with one
+deliberately cloud-only large-stream DATA test skipped (1,327.8868 ms). Source,
+helper and native-fixture syntax and diff checks passed; no local database/full
+server/frontend suite was run. Focused synthetic tests exercise actual original compiler replay, exact values,
+five-state resolution, missing account originals, future-year-before-conflict,
+whole-packet caps, cache/original/identity forgeries, single-use and ending cache
+refusal, and closed hostile input. The authored native tests extend the actual
+issued current-authorized owner with two complete account packets (three parcel
+and two account originals), outside parts, exact conflicts/no sums, unsupported
+currency, current/ending rights/cache/prerequisite refusal and lost-COMMIT reopen.
+A separate rolled-back TEMP SQL DATA fixture checks exact total 250/whole 251
+refusal, both counters capped at 251, no oversized payload delivery, whole byte
+refusal, missing-cache preservation and fresh empty probes. Native/cloud execution
+for this NEW slice is pending, not claimed by the earlier original-page receipt.
+
+This establishes neither complete selected-union traversal nor an issued selected
+revision, immutable full-population ordinal cell source, amenities/transaction
+eligibility, medians/COD/calendar-quarter receipts, acquisition or publication.
+Durable large-area finite work and terminal pin transfer/retirement, dependency-
+ordered protected integration, licensed >50k/5-mile/10-mile/city/retrospective
+and live Hardy saved-map reload acceptance remain required. Synthetic/native
+protocol tests cannot satisfy those licensed/live gates. Internal stages remain
+inactive and production/accepted reports/genuine Hardy choices are unchanged.
+
 ## Original-reconciled stock cell pages (2026-10-10, not activated)
 
 PR #1238 was retargeted to main before synchronizing the actual protected
@@ -8,8 +83,20 @@ test-call conflict preserves BOTH the protected transaction-package database
 checks and this stock-original database check. The focused owner/stock run
 passes 97 tests, zero failures or skips (1353.6981 ms); native-fixture syntax
 and diff checks pass. Fresh integrated-head security/native/full suites and
-actual included review are still required. Historical stacked receipts below
-do not substitute for this integrated verification. No activation changed.
+actual included review subsequently passed on exact integrated
+`158c9c3e13d60a4e2d9d6965e61aecac7f4d667d`: all 14 checks were freshly
+re-read successful, including CodeQL, dependency/security, native and full
+server/frontend checks. Native job `114226635469` passed all 417 migration,
+eight index, one subject, one edge and two bootstrap cases with no failures or
+skips, and executed the original-reconciled actual-owner marker separately
+from TEMP admission DATA. Included review run
+`f598085b-3ad2-4472-9744-75954f318b01` finished at 14:47:47 UTC, covered all
+seven changed files through that exact head and reported no actionable findings.
+Fresh protected rules/MAIN/checks/threads were re-read before the normal
+expected-head merge at 14:50:38 UTC, producing protected MAIN
+`d2930c13b157c5258439110ad3d6955b688cadfe`. Neither this small native protocol
+proof nor that review establishes complete licensed acquisition, selected-union
+authority or live-speed acceptance. No activation changed.
 
 `readSharedFrozenCaptureJobStockOriginalCellsReferencesV2` is a separate dormant
 internal consumer of the actual issued DONE V2 graph, geographic and identity
@@ -60,7 +147,18 @@ An independent rolled-back TEMP SQL-only DATA fixture adds 10,001 rows, verifies
 the bounded 250-key plan/index input, transport/output prefixes, zero oversized
 original delivery and sparse watermark semantics. Those TEMP rows are NOT
 issued originals, original reconciliation, current rights or licensed acquisition.
-Native/full-suite execution for this new slice is pending cloud CI, not claimed.
+Initial exact `99fe2a1490e9027d697a6c75ffef662537e0f192` cloud foundation
+38026824587/native 114139325338 actually passed 417 migration, 8 index, 1 subject,
+1 edge and 2 bootstrap tests, zero failures/skips (index 441,924.094239 ms).
+Both new native markers above executed: the TEMP fixture proved the 250-key
+main index input and the separate actual issued owner recompiled all three parcel
+and two account originals with current/ending guards and zero copies/head writes.
+Frontend 114139325358 passed 3,959 tests, zero failures/skips (99,052.586405 ms),
+typecheck/lint/source quality/build; server 114139325217, redteam and Sales also
+succeeded. Initial stacked checks are NOT future main-protected security/native/
+full-suite or actual included-review readiness; automatic skipped review is not
+review. Integrate actual protected parents in order, retarget main BEFORE push
+and obtain fresh required exact-head checks and actual review before merging.
 These fixtures are not licensed acquisition or production speed acceptance.
 
 This is an original-cell page boundary, NOT a complete selected-union source,

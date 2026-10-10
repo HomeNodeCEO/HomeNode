@@ -72,6 +72,7 @@ test('actual capture entry points refuse executable claim Proxies before connect
     'awaitOriginalFrozenCaptureJobSelectionReferencesV2','readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2',
     'continueOriginalFrozenCaptureJobSelectedStockUnionReferencesV2','readOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2',
     'readOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2','readOriginalFrozenCaptureJobFirstSelectedAmenitiesReferencesV2',
+    'readOriginalFrozenCaptureJobFirstSelectedTransactionsReferencesV2',
     'progressOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2']){
     assert.equal(typeof service[method],'function',method);
     for(const value of values)await assert.rejects(service[method](base,{captureJobClaim:value}),/invalid_input|invalid_options/);
@@ -326,6 +327,7 @@ for(const method of ['advanceOriginalFrozenCaptureJobStockTraversalReferencesV2'
   'readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','continueOriginalFrozenCaptureJobSelectedStockUnionReferencesV2',
   'readOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2','readOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2',
   'readOriginalFrozenCaptureJobFirstSelectedAmenitiesReferencesV2',
+  'readOriginalFrozenCaptureJobFirstSelectedTransactionsReferencesV2',
   'progressOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2'])
 test(`${method} admits only the live claim and bounded operation, not caller continuation`,async()=>{
   const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},

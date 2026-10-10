@@ -1,5 +1,49 @@
 # Complete larger-area Custom neighborhood studies
 
+## Original-backed first selected transaction associations (2026-10-10, not activated)
+
+`readOriginalFrozenCaptureJobFirstSelectedTransactionsReferencesV2` is a separate
+INACTIVE read-only actual bounded V2 owner path. It reopens the complete issued
+original graph/geography/identity/traversal, DONE native selected union, immutable
+command, full original partition entry/catalog literals and current DB actor,
+organization/assignment/private draft/retained subject, claim, pin and workspace
+at both ends. The fixed native ordinal chooses the member, not caller account,
+date, cursor, callback, cached membership or first C-sorted stock account.
+
+One original SQL packet first probes three indexed all-date original account
+prefixes, each capped at 251 keys. More than 250 total anchors refuses BEFORE
+payload reads. The deduplicated native source IDs then reopen EVERY original
+source-record/sale/link association, including outside accounts, NULL accounts
+and unresolved links; each source-less sale remains its own native original.
+Required subject stock fallback is deduplicated with selected stock. ALL these
+originals share ONE 250-original aggregate, 8 MB transport, 2.1 MB child output,
+128-query/32 MB/60-second single-use child inside the actual whole owner's
+unchanged 256-query/32 MB/60-second budget. Every original is recompiled against
+the ENTIRE neutral cache/native identity/hash/byte length before projection.
+There is no second source reader, per-package reset or dense population array.
+
+The actual retained effective year/observation period is applied before native
+association resolution, never as a source filter. All dates and local observed,
+missing, invalid, conflicting and unsupported cells remain explicit. The compact
+owner response retains every diagnostic using declared fixed-field tuples;
+only repeated per-row constants/dates already stated once are omitted. Its
+unchanged 16 KB cap refuses oversized envelopes instead of truncating evidence.
+Native association is NOT economic equivalence, verified completion, price
+allocation, at-sale area/housing, provider dictionary or transaction eligibility.
+No receipt/head/checkpoint/continuation/lease/pin/worker/report writes are added.
+Complete selected-union transaction/amenity/economic eligibility, exact original-
+reconciled medians/COD/calendar-quarter checks, coherent publication, durable
+large-area workers/terminal pin transfer, licensed >50k/5-mile/10-mile/city/
+retrospective and Hardy live/reload speed acceptance remain unfinished.
+
+256 focused synthetic tests pass, zero failures/skips, 1731.1952 ms; syntax and
+diff checks pass. Native assertions are AUTHORED NOT EXECUTED for this new slice:
+independently issued B versus first stock A, explicit-empty/both selection,
+all-date outside/unresolved/source-less original associations, full cache/original
+and native member/partition forgeries, current and ending rights/actor/subject/
+claim/cache/workspace faults, lost real read-only COMMIT and unchanged durable
+state. Heavy native/full-server/frontend verification runs only in cloud CI.
+
 ## Original-backed first selected CAD amenities (2026-10-10, not activated)
 
 The initial exact `a785f7fd5965174cb1332c140ba87408680f0bb5` cloud native job

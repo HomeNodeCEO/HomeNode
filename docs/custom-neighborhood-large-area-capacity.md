@@ -1,5 +1,96 @@
 # Complete larger-area Custom neighborhood studies
 
+## Exact-decimal bounded distribution primitive (2026-10-09, not activated)
+
+`exactDecimalDistributionFromSortedPagesV1` is a new numerical DATA primitive,
+separate from the unchanged legacy Number kernel and accepted-report semantics.
+New date-neutral source observations preserve exact decimal strings; converting
+them to Number would silently lose values such as `9007199254740993.01`. This
+helper instead admits only canonical nonnegative decimals with the existing
+30-digit/12-fractional-place syntax and performs all value arithmetic in BigInt.
+It reads two fresh, globally numerically sorted passes in detached pages of at
+most 1,000 observations. Both streams must exhaust their independently declared
+counts and have identical complete ordered digests, including empty streams.
+No full observation array or average of page statistics is built.
+
+Whole-observed-population Type-7 Q1/median/Q3 are exact finite decimals, including
+14-place quartile interpolation. Mean, mean absolute deviation **from the exact
+median** (`mean_absolute_deviation_from_median`), coverage and
+descriptive COD percent are reduced exact rationals, not arbitrarily rounded
+display numbers. A zero median yields null COD; no observations and an explicit
+empty population retain distinct denominators. Observed, missing, invalid,
+conflicting and unsupported counts must sum to every member. The unchanged
+250,000-member numerical ceiling remains a whole-result refusal, not a new
+capture-capacity grant. Quartiles here are numerical order statistics, **not**
+the remaining calendar-quarter sales checks.
+
+The actual future owner still must derive every count from the complete verified
+selected set union, admit one homogeneous metric/unit and source lineage, create
+and reopen bounded exact sorted runs, enforce its aggregate budget/current
+rights/retained dates, and publish all results coherently. The two-pass digest
+is repeatability evidence, not source authenticity, member verification,
+transaction eligibility, source acquisition or a selected-union traversal
+receipt. No currency/measurement/GLA/historical/property equivalence, reliability
+or predominant-value claim is inferred. Ratios require an explicit future
+publication/display contract; legacy numeric consumers are not silently rewired.
+
+Nine focused tests actually passed without failures/skips (658.3061ms), including
+>2^53 values, 14-place interpolation, repeating rational means/COD, zero/empty and
+all five states, independent dense odd/even/page-boundary quantile/COD checks,
+changed/missing/extra/unordered passes, hostile DATA, cancellation/deadline
+cleanup and mutable-page detachment. Lazy synthetic DATA streams exercised
+60,001 and the unchanged 250,000 numerical cap with at most 1,000 values per
+page. Those tests took less than a second locally; no database/full-server/
+frontend suite ran locally. This is not an actual licensed >50k acquisition,
+whole selected-union owner, native sort/run integration or production SLA.
+Initial STACKED `35fa40644be7a0ddf0e57aedfed506400bf3fb0b` cloud execution was
+independently verified: foundation37945516947/native113870625955 passed 417
+migration/8 index/1 subject/1 edge/2 bootstrap tests, zero failures/skips;
+index285792.682688ms. Server113870625703 passed10569, failed0, with62 separately
+DB-gated skips; frontend113870625545 passed3959, failed/skipped0,97873.019653ms
+plus typecheck/lint/source-quality/build; redteam113870625778 and Sales37945516908
+passed. These historical receipts are not the protected-parent-integrated head.
+
+On 2026-10-10, #1234 was normally protected-merged as
+`13586d3670411ddf31460c0a099f02ada8b2e92e` after exact a052 passed all 14 checks and
+actual included review 3e45a7e8-1bf2-41df-bef3-8704caccd2b7, no actionable
+comments, completed 06:44:20Z. Its bounded-count correction and actual parent
+fixes were integrated here as 34129a8edc5c4c2083f02b959a5673a98cc3a5c5 without
+conflicts. #1235 was retargeted to MAIN BEFORE any synchronize push. Exact
+decimal implementation semantics are unchanged.
+111 focused integrated kernel/transaction-plan/package/stock/current-owner
+tests passed, zero failed/skipped (1384.1753ms); no heavy suite ran locally.
+Source/native fixture syntax and diff checks passed. Exact integrated f1269036
+passed all 14 required/security/native/full-suite checks; native 114155863245
+passed 417 migration / 8 index / 1 subject / 1 edge / 2 bootstrap tests, 0 failures
+and 0 skips, index 443617.344804ms; frontend 114155863252 passed 3959 tests,
+0 failures and 0 skips, 96954.670416ms plus all checks.
+Actual included review b2005cfb-3cb1-4235-9ad8-2e7d130fca27 covered f1269036,
+completed 07:52:44Z, and found 4236925906: the public deviation field did not name
+its center. This correction explicitly names the exact median in the exposed
+field AND content-addressed definition; the BigInt calculation is unchanged.
+For the asymmetric 1/2/4 regression (median 2, mean 7/3), mean absolute deviation
+from the median is 1, not the 10/9 deviation from the mean. It checks absence of
+the ambiguous alias and independently reconciles the median-deviation rational
+over all existing odd/even/page oracles.
+No installed consumer/accepted report or legacy Number field is renamed.
+All 122 focused corrected-head kernel/transaction-plan/package/stock/current-owner
+tests passed, 0 failures and 0 skips, 1359.9381ms; no heavy suite ran locally.
+Diff checks passed.
+Fresh corrected-head required security/native/full-suite gates and ACTUAL included
+review remain mandatory before normal expected-head protected merge; the previous
+head's green checks/review and automatic review SKIP are not new-head authority.
+The ordinary included request after the conservative 08:58Z allowance gate
+produced actual review 9f836df3-afa2-4cf5-9936-850ab141edb1 of c6ce7972, finished
+09:02:19Z. It found documentation spacing issue 4237112764, corrected here without
+changing the reported values or implementation. This new head still requires
+fresh checks and actual review; the next ordinary request is conservatively not
+before 10:07Z plus fresh repository-wide invocation/allowance preflight. Newer
+actual reviews move it later.
+No paid/forced quota or required-check bypass. No route/default/deploy, source grant, worker,
+pin, report, genuine Hardy choice or Apply change. Full roadmap/live acceptance
+remains incomplete; QA assignment 7 only for future Apply tests.
+
 ## Whole native transaction association packages (2026-10-09, not activated)
 
 `readSharedFrozenCaptureJobTransactionPackagesReferencesV2` is a separate dormant

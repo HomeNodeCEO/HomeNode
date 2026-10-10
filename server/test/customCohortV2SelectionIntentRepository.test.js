@@ -79,9 +79,9 @@ function retainedSetup({patch={},auto=false,endAuto=false,missing=false}={}){
   const calls=[];let transactions=0;
   return {calls,owner:repository({async query(sql,values){calls.push({sql,values});
     if(sql.includes(':transaction'))return {rowCount:1,rows:[{transaction_id:String(auto?++transactions:endAuto&&++transactions===3?9:8)}]};
-    if(sql.includes(':retained-read')||sql.includes(':replay-read'))return {rowCount:missing?0:1,rows:missing?[]:[{...structuredClone(command),
+    if(sql.includes(':retained-read')||sql.includes(':replay-read')||sql.includes(':eligibility-read'))return {rowCount:missing?0:1,rows:missing?[]:[{...structuredClone(command),
       job_request_sha256:command.request_sha256,job_checkpoint:structuredClone(checkpoint),
-      ...(sql.includes(':replay-read')?{replay_binding:true}:{}),...patch}]};
+      ...(sql.includes(':replay-read')?{replay_binding:true}:{}),...(sql.includes(':eligibility-read')?{eligibility_binding:true}:{}),...patch}]};
     assert.fail(sql);
   }})};
 }
@@ -153,4 +153,33 @@ test('fourth-pass reader retains closed grammar and same caller transaction, no 
   }
   await assert.rejects(retainedSetup({auto:true}).owner.readForReplay(currentClaim,workerOptions),/caller_transaction_required/);
   await assert.rejects(retainedSetup({endAuto:true}).owner.readForReplay(currentClaim,workerOptions),/caller_transaction_required/);
+});
+
+test('fifth-pass command reader requires actual DONE union/consumed continuation and exactly ten or eleven original-preserving roots',async()=>{
+  const fresh={...currentClaim,claim_token:id(9)};
+  for(const n of [10,11]){
+    const progressed={phase:n===10?'frozen_selected_union_refs_v2':'frozen_selected_eligibility_refs_v2',
+      evidence_refs:[...checkpoint.evidence_refs,...Array(n-9).fill(ref)]},
+      {owner,calls}=retainedSetup({patch:{job_checkpoint:progressed}}),result=await owner.readForEligibility(fresh,workerOptions);
+    assert.deepEqual(result.claim,fresh);assert.equal(result.command_id,intent.command_id);
+    const sql=calls.find(c=>c.sql.includes(':eligibility-read')).sql;
+    for(const s of ['neighborhood_selected_union_v2_checkpoint_matches','neighborhood_selected_eligibility_v2_checkpoint_matches',
+      "body.canonical_utf8::jsonb->'after'->>'done'='true'",'c.consumed_claim_token IS NOT NULL',
+      'job.claim_token=c.consumed_claim_token','job.attempts>c.issued_attempts','job.claim_token<>command.resume_claim_token'])assert.ok(sql.includes(s),s);
+    assert.doesNotMatch(sql,/INSERT INTO|UPDATE app\.|DELETE FROM/);
+    for(const patch of [{eligibility_binding:false},{job_checkpoint:checkpoint},
+      {job_checkpoint:{...progressed,evidence_refs:[ref]}},{job_checkpoint:{...progressed,phase:'free_done'}},
+      {job_request_sha256:'d'.repeat(64)},{issued_attempts:6},{workspace_revision:2}])
+      await assert.rejects(retainedSetup({patch:{job_checkpoint:progressed,...patch}}).owner.readForEligibility(fresh,workerOptions));
+    await assert.rejects(owner.readForEligibility(currentClaim,workerOptions),/claim_lost/);
+    await assert.rejects(owner.readRetained(fresh,workerOptions),/checkpoint_changed/);
+    if(n===11)await assert.rejects(owner.readForReplay(fresh,workerOptions),/checkpoint_changed/);
+  }
+  await assert.rejects(retainedSetup().owner.readForEligibility(fresh,workerOptions),/checkpoint_changed/);
+  for(const raw of [{...workerOptions,ordinal:1},{...workerOptions,readOriginal:()=>{}},new Proxy(workerOptions,{getPrototypeOf(){assert.fail('proxy');}})]){
+    const {owner,calls}=retainedSetup();await assert.rejects(owner.readForEligibility(fresh,raw));assert.equal(calls.length,0);
+  }
+  await assert.rejects(retainedSetup({auto:true}).owner.readForEligibility(fresh,workerOptions),/caller_transaction_required/);
+  const cp={phase:'frozen_selected_union_refs_v2',evidence_refs:[...checkpoint.evidence_refs,ref]};
+  await assert.rejects(retainedSetup({endAuto:true,patch:{job_checkpoint:cp}}).owner.readForEligibility(fresh,workerOptions),/caller_transaction_required/);
 });

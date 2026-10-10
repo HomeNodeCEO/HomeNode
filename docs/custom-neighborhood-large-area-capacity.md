@@ -1,5 +1,59 @@
 # Complete larger-area Custom neighborhood studies
 
+## Durable original-backed selected recorded-comparison pass (2026-10-10, not activated)
+
+The actual bounded database owner has a separate fifth-pass internal method,
+`progressOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2`.
+It admits ONLY the actual DONE selected union and exactly ten or eleven issued
+roots, immutable human command, current scoped database actor/assignment/private
+draft/retained subject/source-purpose rights/pin and exact pending workspace.
+Old human resume, nine-root and ten-root readers remain strict. The next member
+comes ONLY from the native eligibility head and selected ordinal, never a caller
+account/cursor/ordinal, first stock account, callback, hash or count-derived roster.
+
+Each step reopens EVERY required subject and selected-account original, including
+outside parts, and compares the ENTIRE neutral cache, full partition-entry bytes,
+native ordinals, catalog literals and immutable chosen-group membership. Subject
+precedence is unchanged. One single-use child shares the aggregate250-original,
+8MB transport/2.1MB output bounds; the complete actual owner retains its existing
+256 SQL/32MB/60s ceilings. Every current/ending fence precedes native progress.
+
+Additive migration20261126 retains ONE native eligibility head. Immutable compact
+receipt blobs hold the exact union/command/selected-entry reference, subject
+housing state/category, three recorded-comparison bits and cumulative counts;
+there are NO exact value, whole-decision, original or typed copies. Head, exact
+eleven-root checkpoint and single-use continuation commit in the SAME transaction.
+The first ten roots are unchanged; successful continuation never resets attempts
+or failure history. Only a fresh native EMPTY probe after every selected ordinal
+finishes this recorded-comparison pass, including an explicit-empty selection.
+It does not return a preceding account decision on EMPTY. Cancellation, orphan
+COMMIT, deletion/truncation, backward phases and terminal progress remain refused.
+
+243 focused synthetic tests PASS0fail0skip (1703.6086ms). Actual issued PostgreSQL
+tests are AUTHORED NOT EXECUTED for this new slice: selected B/partition2 versus
+first stock A and explicit-empty; initial/ending original/cache/member/catalog/
+rights faults; real INSERT/UPDATE/yield rollback and orphan COMMIT; lost REAL
+COMMIT acknowledgment and fresh single-consume recovery; ordinary higher failure
+attempt, exact ten preserved roots, unknown denominator counts, forged correctly
+hashed terminal receipts, fresh EMPTY, strict old readers and unchanged all prior
+heads/union/intent/pins/workspace/history/reports. Native/full-server/frontend
+verification remains cloud-only; these authored assertions are NOT acceptance.
+
+Bits/counts are audit DATA, NOT original, economic/historical eligibility or
+statistics authority. Every future semantic consumer must reopen originals again.
+Market-value currency, verified GLA, one economic unit, historical housing,
+amenity/transaction selection eligibility, complete selected-union medians/CODs/
+calendar-quarter checks, coherent publication, durable dispatch and terminal pin
+transfer/retirement, licensed >50k/5-mile/10-mile/city/retrospective acquisition and
+Hardy saved-map/live-speed acceptance remain unfinished. No worker/HTTP/default/
+schedule/source-grant/Render/report/Apply activation is added.
+
+Parent #1264 ad1a9019 native CI correctly refused a forged catalog label at the
+earlier closed storage validator, but its test expected only the later owner
+error. The assertion was corrected in625f413a without changing validation; fresh
+cloud CI is pending. Its initial server/frontend/bootstrap passed. This is a
+test expectation repair, not a successful native acceptance claim or rerun bypass.
+
 ## First native selected-ordinal original eligibility admission (2026-10-10, not activated)
 
 A distinct READ-ONLY internal owner reopens ordinal1 of the ACTUAL completed

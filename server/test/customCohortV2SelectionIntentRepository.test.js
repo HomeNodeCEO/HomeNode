@@ -79,8 +79,9 @@ function retainedSetup({patch={},auto=false,endAuto=false,missing=false}={}){
   const calls=[];let transactions=0;
   return {calls,owner:repository({async query(sql,values){calls.push({sql,values});
     if(sql.includes(':transaction'))return {rowCount:1,rows:[{transaction_id:String(auto?++transactions:endAuto&&++transactions===3?9:8)}]};
-    if(sql.includes(':retained-read'))return {rowCount:missing?0:1,rows:missing?[]:[{...structuredClone(command),
-      job_request_sha256:command.request_sha256,job_checkpoint:structuredClone(checkpoint),...patch}]};
+    if(sql.includes(':retained-read')||sql.includes(':replay-read'))return {rowCount:missing?0:1,rows:missing?[]:[{...structuredClone(command),
+      job_request_sha256:command.request_sha256,job_checkpoint:structuredClone(checkpoint),
+      ...(sql.includes(':replay-read')?{replay_binding:true}:{}),...patch}]};
     assert.fail(sql);
   }})};
 }
@@ -127,4 +128,29 @@ test('retained worker has a closed read-only grammar and requires the same actua
   const before=retainedSetup({auto:true});await assert.rejects(before.owner.readRetained(currentClaim,workerOptions),/caller_transaction_required/);
   assert.equal(before.calls.length,2);
   await assert.rejects(retainedSetup({endAuto:true}).owner.readRetained(currentClaim,workerOptions),/caller_transaction_required/);
+});
+
+test('fourth-pass command reader admits fresh same-attempt continuation ONLY with actual native progress binding',async()=>{
+  assert.deepEqual((await retainedSetup().owner.readForReplay(currentClaim,workerOptions)).claim,currentClaim);
+  const progressed={phase:'frozen_selected_union_refs_v2',evidence_refs:[...checkpoint.evidence_refs,ref]},
+    fresh={...currentClaim,claim_token:id(9)};
+  const {owner,calls}=retainedSetup({patch:{job_checkpoint:progressed}}),result=await owner.readForReplay(fresh,workerOptions);
+  assert.deepEqual(result.claim,fresh);assert.equal(result.issued_attempts,5);
+  for(const s of ['neighborhood_selected_union_v2_checkpoint_matches','c.progress_reference=head.receipt_reference',
+    'job.claim_token=c.consumed_claim_token','job.attempts>c.issued_attempts','job.claim_token<>command.resume_claim_token'])
+    assert.ok(calls.find(c=>c.sql.includes(':replay-read')).sql.includes(s));
+  for(const patch of [{job_checkpoint:progressed,replay_binding:false},
+    {job_checkpoint:{...progressed,evidence_refs:[ref]}},{job_checkpoint:{...progressed,phase:'free_done'}},
+    {job_checkpoint:progressed,issued_attempts:6}])
+    await assert.rejects(retainedSetup({patch}).owner.readForReplay(fresh,workerOptions),/checkpoint_changed|claim_lost/);
+  await assert.rejects(retainedSetup({patch:{job_checkpoint:progressed}}).owner.readForReplay(currentClaim,workerOptions),/claim_lost/);
+  await assert.rejects(retainedSetup({patch:{job_checkpoint:progressed}}).owner.readRetained(fresh,workerOptions),/checkpoint_changed/);
+});
+test('fourth-pass reader retains closed grammar and same caller transaction, no token/lease/progress resets',async()=>{
+  for(const raw of [{...workerOptions,checkpoint},{...workerOptions,continuation:{token:id(9)}},
+    {...workerOptions,readOriginal:()=>{}},new Proxy(workerOptions,{getPrototypeOf(){assert.fail('proxy');}})]){
+    const {owner,calls}=retainedSetup();await assert.rejects(owner.readForReplay(currentClaim,raw));assert.equal(calls.length,0);
+  }
+  await assert.rejects(retainedSetup({auto:true}).owner.readForReplay(currentClaim,workerOptions),/caller_transaction_required/);
+  await assert.rejects(retainedSetup({endAuto:true}).owner.readForReplay(currentClaim,workerOptions),/caller_transaction_required/);
 });

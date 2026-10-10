@@ -1,5 +1,102 @@
 # Complete larger-area Custom neighborhood studies
 
+## Independent original replay and explicit selected-stock union (2026-10-10, not activated)
+
+The next INACTIVE internal phase extends the ACTUAL bounded database owner,
+not a DATA callback/roster. It independently starts at the native empty C-text
+stock cursor and replays ONE complete next account per transaction: every
+original, all outside-geometry parts, full recorded-group literals, retained-date
+metric states, the ENTIRE neutral cache and ENTIRE immutable partition entry.
+The combined housing/group package is read ONCE. Unknown/conflicting housing
+stays explicit; group membership does NOT establish housing/metric eligibility.
+
+Current database actor/private draft/assignment/subject, original source rights,
+locked pending V7/prior active head, exact immutable selection intent, issued
+graph/geography/identity/stock/traversal/partition/catalog heads and all ending
+checks share the unchanged 256-query / 32MB / 60s whole-owner executor. Source
+policy precedes even the command and known-ID reads. The native replay head,
+bounded per-group counters and distinct chosen-account ordinals are server-owned.
+Only the immutable NEW-study IDs choose stock membership, including explicit
+empty. Conflicting candidates are not promoted to an assigned group. No source
+cells or job-typed population copies are stored in this union.
+
+The original nine roots remain EXACTLY the command's frozen roots. An additive
+fourth native head/tenth root and single-consume continuation commit atomically
+with ONE original-reconciled account. The old completed catalog is read-only.
+The first catalog-to-union transition permits ONLY the exact authenticated
+human-resume token/native first head bridge, not a general token relaxation.
+Later same-attempt success claims require their actual consumed native union
+continuation; ordinary higher-attempt failure recovery preserves history.
+All current ending checks precede provisional writes; every failure thereafter
+rolls back counters, union rows, blob/head/root and yield together. Only a NEW
+whole-original/cache/partition EMPTY probe, complete denominator and native
+anti-join of EVERY catalog group against the independent original replay can
+mark the distinct selected STOCK union complete. Partial counts never mean
+complete selection, eligibility, publication or an accepted report.
+
+163 focused closed-grammar/storage/owner tests pass, zero failures/skips
+(721.1522ms after the first cloud migration repair); source/native-fixture
+syntax and diff checks pass. These SQL
+doubles prove mechanics ONLY. Cloud native assertions are AUTHORED, not yet
+executed: two independently BUILT actual graphs cover nonempty and explicit
+empty choices, all current ending faults, REAL provisional DML rollback, exact
+first human bridge, fresh same-attempt continuation, real higher-attempt
+failure/reclaim, lost REAL COMMIT acknowledgment without duplicate recapture,
+unknown housing retention, terminal complete-catalog reconciliation, unchanged
+original roots/intent/pins/workspace/history/reports and native cancellation.
+The first cloud head failed before executing this stage: PostgreSQL bound
+subtraction before JSON extraction in the nine-root predicate. The extraction
+is now parenthesized; forward transitions also require the actual completed
+catalog root, and cannot skip earlier phases. A native negative test executes
+the REAL yield then rolls back only that statement, requiring REAL COMMIT to
+reject the still-pending orphan group/head/root writes. Fresh exact-head cloud
+execution remains required; the failed head is not native acceptance.
+The repaired head passes bootstrap, full server and frontend checks, but native
+CI stopped at an older single-table intent-TRUNCATE assertion: the new union
+head foreign key correctly refuses before the expected trigger. The fixture
+now asserts that FK refusal and separately attempts both linked tables to
+exercise immutable triggers as well. No FK or trigger was weakened. This
+failed fixture did not reach the new union protocol and is not acceptance;
+fresh exact-head native execution remains required.
+
+The subsequent exact-head native run passed 417 migration tests and ten of
+twelve index cases, then exposed a real union continuation transition error.
+PostgreSQL runs BEFORE INSERT for the provisional ON CONFLICT row: the guard
+was rejecting the union phase before its already-existing continuation could
+reach the strict UPDATE guard. It now permits that provisional INSERT ONLY
+when the scoped native continuation already exists. A free new union row still
+refuses; the actual UPDATE retains every sequence, phase, consumed-token and
+first-human bridge check. The fixture also keeps union rollback faults armed
+through the original read so they reach the REAL group/head/yield DML and
+orphan COMMIT checks. Fresh native execution of this repair is still required;
+the failed run established no completed union, eligibility or live acceptance.
+The repaired owner/storage/closed-grammar regression set passes 90 tests,
+zero failures/skips (697.5905ms); native-fixture syntax and diff checks pass.
+Those focused SQL doubles and source checks are mechanics, not native proof.
+
+The next cloud head (`b7b3d256`) passed all 417 migration tests and reached the
+terminal union/cancellation assertions for BOTH explicit-empty and nonempty
+choices. Its remaining two index failures are a final negative-test mismatch:
+the existing pending-continuation job guard correctly refuses a cancelled-job
+escape before the selection-wait guard expected by the test. The fixture now
+accepts either specific native refusal and verifies the ENTIRE cancelled job,
+continuation and union remain unchanged after EACH attempted escape. No native
+guard or implementation was weakened. The complete fresh native run must still
+pass before this stage has native protocol acceptance; this is not licensed or
+live-speed acceptance.
+Focused owner/storage/grammar regressions pass 91 tests, zero failures/skips
+(597.1242ms), with native-fixture syntax and diff checks passing. These local
+checks do not execute PostgreSQL or establish complete source authority.
+
+The finite 8,000,004 success ceiling covers THESE FOUR fixed stock passes only;
+it is NOT a whole-roadmap runtime or production-SLA claim. No HTTP/default
+worker dispatch, source acquisition, source grant, housing/metric eligibility,
+exact statistics, publication, context completion or terminal pin transfer is
+activated here. Protected parents must integrate in order, main retargeted
+BEFORE synchronize pushes, with fresh exact-head security/native/full CI and
+ACTUAL included review. Synthetic or small native protocol evidence is not
+licensed >50k/5-mile/10-mile/city/retrospective or Hardy/live-speed acceptance.
+
 ## Retained new-study intent under replacement worker claims (2026-10-10, not activated)
 
 A separate, read-only internal stage now extends the ACTUAL bounded original

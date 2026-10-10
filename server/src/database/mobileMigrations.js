@@ -89,6 +89,7 @@ const MIGRATIONS = Object.freeze([
   "20261122_custom_cohort_catalog_continuations_v2.sql",
   "20261123_custom_cohort_selection_wait_v2.sql",
   "20261124_custom_cohort_selection_intent_v2.sql",
+  "20261125_custom_cohort_selected_union_replay_v2.sql",
 ]);
 const ADVISORY_LOCK_KEY = 3_603_600_821;
 

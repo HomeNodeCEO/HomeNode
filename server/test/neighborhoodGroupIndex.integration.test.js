@@ -3654,7 +3654,16 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     for(const table of ['neighborhood_custom_cohort_recorded_catalog_v2_groups','neighborhood_custom_cohort_recorded_catalog_v2_heads'])
       for(const sql of [`DELETE FROM app.${table} WHERE operation_id=$1`,`UPDATE app.${table} SET organization_id=organization_id WHERE operation_id=$1`,`TRUNCATE app.${table}`])
         await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql,sql.includes('$1')?[refsOperation]:[])),/immutable|transition_conflict|prefix_conflict/);
-    assert.ok(!refsCalls.slice(catalogFrom).some(sql=>/ST_DWithin|job-typed:|jsonb_agg|array_agg/.test(sql)));
+    const catalogQueries=refsCalls.slice(catalogFrom);
+    assert.ok(!catalogQueries.some(sql=>/ST_DWithin|job-typed:|jsonb_agg/.test(sql)));
+    const catalogArrayQueries=catalogQueries.filter(sql=>/array_agg/.test(sql));
+    assert.ok(catalogArrayQueries.length>=2,'both-end current actor role reads remain mandatory');
+    for(const sql of catalogArrayQueries){
+      assert.match(sql,/\/\* custom-cohort-job:current-actor \*\//);
+      assert.match(sql,/array_remove\(array_agg\(DISTINCT roles\.role_code ORDER BY roles\.role_code\), NULL\) AS roles/);
+      assert.equal([...sql.matchAll(/\b(?:array_agg|jsonb_agg)\s*\(/g)].length,1,'only the existing bounded role aggregate is allowed');
+      assert.doesNotMatch(sql,/account_id|parcel|source_record|neighborhood_custom_cohort|jsonb_agg/,'never aggregate population or original rows');
+    }
     console.info('[native-original-recorded-catalog-issued-owner-v2]',{accounts:2,assigned_groups:1,assigned_accounts:1,unassigned_accounts:1,
       all_whole_originals_entire_neutral_cache_and_entire_partition_entries_replayed:true,outside_conflicting_candidates_not_promoted:true,
       native_exact_next_ordinal_orphan_summary_and_head_without_root_refused:true,current_ending_authority_cache_counts_fences:true,

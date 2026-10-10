@@ -14,7 +14,8 @@ counts and have identical complete ordered digests, including empty streams.
 No full observation array or average of page statistics is built.
 
 Whole-observed-population Type-7 Q1/median/Q3 are exact finite decimals, including
-14-place quartile interpolation. Mean, mean absolute deviation, coverage and
+14-place quartile interpolation. Mean, mean absolute deviation **from the exact
+median** (`mean_absolute_deviation_from_median`), coverage and
 descriptive COD percent are reduced exact rationals, not arbitrarily rounded
 display numbers. A zero median yields null COD; no observations and an explicit
 empty population retain distinct denominators. Observed, missing, invalid,
@@ -59,11 +60,26 @@ conflicts. #1235 was retargeted to MAIN BEFORE any synchronize push. Exact
 decimal implementation semantics are unchanged.
 111 focused integrated kernel/transaction-plan/package/stock/current-owner
 tests passed, zero failed/skipped (1384.1753ms); no heavy suite ran locally.
-Source/native fixture syntax and diff checks passed. Fresh integrated-head required
-security/native/full-suite gates and actual included review must be verified
-before any normal expected-head protected merge; initial stacked results and
-automatic review SKIP are not authority. Next ordinary included request is
-conservatively not before07:49Z plus fresh repository-wide allowance preflight.
+Source/native fixture syntax and diff checks passed. Exact integratedf1269036
+passed all14 required/security/native/full-suite checks; native114155863245
+passed417migration/8index/1subject/1edge/2bootstrap0fail0skip,index443617.344804ms;
+frontend114155863252 passed3959,0fail0skip,96954.670416ms plus all checks.
+Actual included reviewb2005cfb-3cb1-4235-9ad8-2e7d130fca27 coveredf1269036,
+completed07:52:44Z, and found4236925906: the public deviation field did not name
+its center. This correction explicitly names the exact median in the exposed
+field AND content-addressed definition; the BigInt calculation is unchanged.
+For the asymmetric1/2/4 regression (median2, mean7/3), mean absolute deviation
+from the median is1, not the10/9 deviation from the mean. It checks absence of
+the ambiguous alias and independently
+reconciles the median-deviation rational over all existing odd/even/page oracles.
+No installed consumer/accepted report or legacy Number field is renamed.
+All122 focused corrected-head kernel/transaction-plan/package/stock/current-owner
+tests passed,0fail0skip,1359.9381ms; no heavy suite ran locally. Diff checks passed.
+Fresh corrected-head required security/native/full-suite gates and ACTUAL included
+review remain mandatory before normal expected-head protected merge; the previous
+head's green checks/review and automatic review SKIP are not new-head authority.
+Next ordinary included request is conservatively not before08:58Z plus fresh
+repository-wide invocation/allowance preflight; newer actual reviews move it later.
 No paid/forced quota or required-check bypass. No route/default/deploy, source grant, worker,
 pin, report, genuine Hardy choice or Apply change. Full roadmap/live acceptance
 remains incomplete; QA assignment 7 only for future Apply tests.

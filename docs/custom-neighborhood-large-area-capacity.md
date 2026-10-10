@@ -2,6 +2,19 @@
 
 ## Complete single-account original packages (2026-10-10, not activated)
 
+PR #1239 was retargeted to main at 14:50:52 UTC BEFORE synchronization, then
+integrated the actual protected #1238 merge
+`d2930c13b157c5258439110ad3d6955b688cadfe` without conflicts. The integrated
+diff remains this seven-file account-package slice; the protected transaction
+and stock-original database checks are both retained. Fresh integrated-head
+security/native/full-suite checks and an actual included review are required;
+the historical initial-stack receipts are not integrated readiness. No internal
+stage, deployment, source grant, worker, pin, report or Apply was activated.
+The integrated lightweight owner/stock/V1-and-V2 original-compiler run passed
+115 tests, zero failures or skips (1450.4428 ms); all six changed JavaScript
+files passed syntax checks and the diff check passed. Heavy database, full
+server and frontend suites remain cloud-only.
+
 `readSharedFrozenCaptureJobStockAccountPackagesReferencesV2` extends the actual
 bounded V2 database capture owner, not a caller-supplied account callback. It
 requires the independently issued DONE original graph, geographic and identity
@@ -70,8 +83,20 @@ test-call conflict preserves BOTH the protected transaction-package database
 checks and this stock-original database check. The focused owner/stock run
 passes 97 tests, zero failures or skips (1353.6981 ms); native-fixture syntax
 and diff checks pass. Fresh integrated-head security/native/full suites and
-actual included review are still required. Historical stacked receipts below
-do not substitute for this integrated verification. No activation changed.
+actual included review subsequently passed on exact integrated
+`158c9c3e13d60a4e2d9d6965e61aecac7f4d667d`: all 14 checks were freshly
+re-read successful, including CodeQL, dependency/security, native and full
+server/frontend checks. Native job `114226635469` passed all 417 migration,
+eight index, one subject, one edge and two bootstrap cases with no failures or
+skips, and executed the original-reconciled actual-owner marker separately
+from TEMP admission DATA. Included review run
+`f598085b-3ad2-4472-9744-75954f318b01` finished at 14:47:47 UTC, covered all
+seven changed files through that exact head and reported no actionable findings.
+Fresh protected rules/MAIN/checks/threads were re-read before the normal
+expected-head merge at 14:50:38 UTC, producing protected MAIN
+`d2930c13b157c5258439110ad3d6955b688cadfe`. Neither this small native protocol
+proof nor that review establishes complete licensed acquisition, selected-union
+authority or live-speed acceptance. No activation changed.
 
 `readSharedFrozenCaptureJobStockOriginalCellsReferencesV2` is a separate dormant
 internal consumer of the actual issued DONE V2 graph, geographic and identity

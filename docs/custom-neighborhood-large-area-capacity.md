@@ -1,5 +1,46 @@
 # Complete larger-area Custom neighborhood studies
 
+## First native selected-ordinal original eligibility admission (2026-10-10, not activated)
+
+A distinct READ-ONLY internal owner reopens ordinal1 of the ACTUAL completed
+native selected union. It does not choose the first C-sorted stock account or
+accept a caller account, ordinal, cursor, decision, receipt or callback. It
+requires the exact ten issued roots, complete native union, immutable human
+command, current database actor/assignment/private draft/subject/source rights
+and exact pending workspace, with all existing ending fences.
+
+The selected account and required subject CAD share ONE aggregate 250-original
+packet, including all outside parts and ENTIRE neutral cache reconciliation.
+Retained subject precedence still permits CAD ONLY for genuine absence; explicit
+null/unknown/conflicting preferred observations do not fall through. Full
+partition-entry bytes, native selected/partition ordinals, exact catalog literals
+and immutable chosen-group membership are compared independently of counts.
+The first native member is re-read at the end. The compact transient decision
+retains unresolved housing and every metric-part denominator; it does not infer
+currency, sums, economic units, GLA or historical housing. Explicit-empty returns
+null member/decision after a fresh native read, not a previous account result.
+
+279 focused synthetic tests PASS0fail0skip (1688.1002ms), including single-use
+shared-budget, aggregate251 refusal, hostile input and native-entry storage
+grammar checks. New full issued PostgreSQL assertions are AUTHORED NOT EXECUTED:
+selected B/partition2 versus first stock A, explicit-empty, whole originals/cache,
+forged initial/ending member, partition/catalog changes, current/ending rights,
+read-only lost REAL COMMIT and unchanged all heads/job/continuation/blobs/intent/
+pins/workspace/history/reports. Heavy native/full-server/frontend suites remain
+cloud-only. This adds NO migration, progress head, checkpoint, decision copy,
+lease, continuation or activation. It is fixed-first admission, NOT the fifth
+durable eligibility pass or complete selected-population eligibility.
+
+Prior-head evidence is now decoded: #1263 e760740b native job114253513918 passed
+417 migration /12 index /1 subject /1 edge /2 bootstrap tests, all zero failures
+or skips; index632404.885813ms. Both independently issued unions verified the
+one-account decision and forged selected-delta rollback after REAL DML, maximum
+230of256 whole-owner SQL queries. Its initial stack server/frontend/bootstrap
+also passed. Integrated-main #1240 39d5b594 has all14 checks green and native
+417/8/1/1/2 tests, all zero failures/skips; its actual review is still pending,
+not before17:01:51UTC AND a fresh repository-wide included-review activity check.
+Neither result proves licensed acquisition, complete eligibility or live speed.
+
 ## Original-backed per-account recorded eligibility (2026-10-10, not activated)
 
 The actual native union-progress owner now derives a transient decision for
@@ -24,9 +65,11 @@ A fresh terminal EMPTY returns no previous account decision.
 269 focused synthetic tests passed, zero failures/skips (1648.4677ms), including
 actual neutral-compiler replay with a future outside-part year invalidated
 before account resolution. Full issued native union assertions for selected
-and explicit-empty unions are AUTHORED NOT EXECUTED for this new change. They
-require unresolved subject/account reasons, native selected ordinal, terminal
-EMPTY and unchanged source/typed copies and all existing native safeguards.
+and explicit-empty unions PASSED at exact e760740b in cloud job114253513918
+(12index tests, zero failures/skips). They verified unresolved subject/account
+reasons, native selected ordinal, terminal EMPTY, selected-count mismatch
+rollback after REAL DML and unchanged source/typed copies and native safeguards.
+This is initial stacked-head proof, not future protected-parent integration.
 
 This is ONE-account decision groundwork, NOT an issued eligibility pass or
 complete selected-population eligibility. Decisions are not copied into blobs,

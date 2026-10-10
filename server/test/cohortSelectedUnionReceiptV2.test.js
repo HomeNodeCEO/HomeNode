@@ -38,12 +38,14 @@ test('union DATA rejects free DONE, count jumps, selection outside stock, comman
 });
 // SQL doubles test closed mechanics only; cloud PostgreSQL must execute guards,
 // actual original/current authority fences, DML rollback and real COMMIT loss.
-function setup({auto=false,selected=true,bad=false}={}){
+function setup({auto=false,selected=true,bad=false,first=null}={}){
   const calls=[];let current=null,tx=12,counts={...zero,selected_count:0};
   const client={async query(sql,v){calls.push({sql,v});
     if(sql.includes(':transaction'))return {rowCount:1,rows:[{transaction_id:String(auto?++tx:tx)}]};
     if(sql.includes(':head-read'))return {rowCount:1,rows:[current??{command_id:null,receipt_reference:null,sequence:null}]};
     if(sql.includes(':counts'))return {rowCount:1,rows:[bad?{...counts,selected_count:4}:{...counts}]};
+    if(sql.includes(':first-selected-entry'))return {rowCount:1,rows:[first??{account_id:null,ordinal:null,
+      partition_ordinal:null,entry_reference:null,state:null,assigned_group_id:null}]};
     if(sql.includes(':group-contribute')){counts.unassigned_accounts++;return {rowCount:1,rows:[{last_ordinal:v[9]}]};}
     if(sql.includes(':member-insert')){if(selected)counts.selected_count++;return {rowCount:selected?1:0,rows:selected?[{ordinal:counts.selected_count}]:[]};}
     if(sql.includes(':head-insert')){current={command_id:v[8],receipt_reference:JSON.parse(v[9]),sequence:1};return {rowCount:1,rows:[{sequence:1}]};}
@@ -75,6 +77,24 @@ test('native union storage refuses transaction changes, ordinal jumps, free elig
     await assert.rejects(owner.contribute(null,e));assert.equal(calls.length,0);
   assert.throws(()=>repository({client,claim,scope,actorUserId:id(6),command_id:id(7),readOriginal:()=>{}}));
   await assert.rejects(setup({bad:true}).owner.counts(),/corrupt/);
+});
+
+test('fixed native first-selected entry binds completed head, exact partition identity and no caller cursor',async()=>{
+  const first={account_id:'B',ordinal:1,partition_ordinal:2,entry_reference:ref(9),state:'unassigned',assigned_group_id:null},
+    {owner,calls}=setup({first}),read=await owner.readFirstSelectedEntry();
+  assert.deepEqual(read,first);assert.ok(Object.isFrozen(read)&&Object.isFrozen(read.entry_reference));
+  assert.equal(await setup().owner.readFirstSelectedEntry(),null);
+  const sql=calls[0].sql;
+  for(const expected of ['r.ordinal=1','entry.account_id=r.account_id','entry.ordinal=r.partition_ordinal',
+    'entry.entry_reference=r.entry_reference','neighborhood_selected_union_v2_checkpoint_matches',
+    "body.canonical_utf8::jsonb->'after'->>'done'='true'",'job.claim_token=$2::uuid','job.actor_user_id=$8::uuid'])assert.ok(sql.includes(expected));
+  assert.doesNotMatch(sql,/array_agg|jsonb_agg|ST_DWithin|INSERT INTO|UPDATE app\.|DELETE FROM/);
+  for(const bad of [{...first,ordinal:2},{...first,partition_ordinal:0},{...first,state:null},{...first,account_id:'\ud800'},
+    {...first,selected:true},new Proxy(first,{ownKeys(){assert.fail('proxy');}}),
+    {...first,get account_id(){assert.fail('getter');}}])await assert.rejects(setup({first:bad}).owner.readFirstSelectedEntry());
+  const before=calls.length;for(const input of [{cursor:''},1,()=>assert.fail('callback')])
+    await assert.rejects(owner.readFirstSelectedEntry(input),/invalid_input/);
+  assert.equal(calls.length,before);
 });
 test('registered fourth-pass guards preserve nine roots, exact first human bridge and later consumed-token rules',()=>{
   const name='20261125_custom_cohort_selected_union_replay_v2.sql',sql=readFileSync(new URL(`../migrations/${name}`,import.meta.url),'utf8'),

@@ -313,6 +313,23 @@ test(`${method} admits only the live claim and bounded operation, not caller con
   await assert.rejects(service[method](base,{captureJobClaim:claim,signal:controller.signal}),/cancelled/);
 });
 
+test('new-study selection intent owner accepts no caller claim, source adapter, workspace or prior automatic choice',async()=>{
+  const method='resumeOriginalFrozenCaptureJobSelectionIntentReferencesV2',
+    base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
+    selectionIntent={command_id:'70000000-0000-4000-8000-000000000002',catalog_reference:{content_sha256:'a'.repeat(64),canonical_utf8_bytes:'123'},
+      workspace_revision:1,included_recorded_group_ids:[]},
+    service=createCustomCohortContextCapture({pool:{connect(){assert.fail('must not connect');}},sourceMode:'combined-witness2-v1',
+      authorizeMarketData:()=>assert.fail('must not authorize')});
+  for(const key of ['captureJobClaim','claim','cursor','count','done','readOriginal','profile','sourceGrant','workspace','expectedWorkspaceCheckpoint',
+    'account_ids','groups','leaseSeconds','run_after'])
+    await assert.rejects(service[method](base,{selectionIntent,[key]:{}}),/invalid_options/);
+  await assert.rejects(service[method](base,{get selectionIntent(){assert.fail('getter');}}),/invalid_options/);
+  await assert.rejects(service[method](base,{}),/invalid_input/);
+  await assert.rejects(service[method]({...base,selected_accounts:[]},{selectionIntent}),/invalid_input/);
+  const controller=new AbortController();controller.abort();
+  await assert.rejects(service[method](base,{selectionIntent,signal:controller.signal}),/cancelled/);
+});
+
 for(const method of ['readSharedFrozenCaptureJobStockAccountPackagesReferencesV2','readOriginalFrozenCaptureJobAccountHousingReferencesV2',
   'readOriginalFrozenCaptureJobAccountRecordedGroupReferencesV2','readOriginalFrozenCaptureJobRecordedPartitionAccountReferencesV2',
   'readOriginalFrozenCaptureJobRecordedCatalogAccountReferencesV2',

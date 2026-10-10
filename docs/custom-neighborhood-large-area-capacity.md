@@ -1,5 +1,94 @@
 # Complete larger-area Custom neighborhood studies
 
+## Durable original-backed selected recorded-comparison pass (2026-10-10, not activated)
+
+The actual bounded database owner has a separate fifth-pass internal method,
+`progressOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2`.
+It admits ONLY the actual DONE selected union and exactly ten or eleven issued
+roots, immutable human command, current scoped database actor/assignment/private
+draft/retained subject/source-purpose rights/pin and exact pending workspace.
+Old human resume, nine-root and ten-root readers remain strict. The next member
+comes ONLY from the native eligibility head and selected ordinal, never a caller
+account/cursor/ordinal, first stock account, callback, hash or count-derived roster.
+
+Each step reopens EVERY required subject and selected-account original, including
+outside parts, and compares the ENTIRE neutral cache, full partition-entry bytes,
+native ordinals, catalog literals and immutable chosen-group membership. Subject
+precedence is unchanged. One single-use child shares the aggregate 250-original,
+8 MB transport/2.1 MB output bounds; the complete actual owner retains its existing
+256 SQL/32 MB/60 s ceilings. Every current/ending fence precedes native progress.
+
+Additive migration 20261126 retains ONE native eligibility head. Immutable compact
+receipt blobs hold the exact union/command/selected-entry reference, subject
+housing state/category, three recorded-comparison bits and cumulative counts;
+there are NO exact value, whole-decision, original or typed copies. Head, exact
+eleven-root checkpoint and single-use continuation commit in the SAME transaction.
+The first ten roots are unchanged; successful continuation never resets attempts
+or failure history. Only a fresh native EMPTY probe after every selected ordinal
+finishes this recorded-comparison pass, including an explicit-empty selection.
+It does not return a preceding account decision on EMPTY. Cancellation, orphan
+COMMIT, deletion/truncation, backward phases and terminal progress remain refused.
+
+243 focused synthetic tests passed, zero failures/skips (1725.7983 ms). Actual issued PostgreSQL
+tests are AUTHORED NOT EXECUTED for this new slice: selected B/partition2 versus
+first stock A and explicit-empty; initial/ending original/cache/member/catalog/
+rights faults; real INSERT/UPDATE/yield rollback and orphan COMMIT; lost REAL
+COMMIT acknowledgment and fresh single-consume recovery; ordinary higher failure
+attempt, exact ten preserved roots, unknown denominator counts, forged correctly
+hashed terminal receipts, fresh EMPTY, strict old readers and unchanged all prior
+heads/union/intent/pins/workspace/history/reports. Native/full-server/frontend
+verification remains cloud-only; these authored assertions are NOT acceptance.
+
+Additional native assertions now independently build an explicit-both-group
+study, selecting unassigned A and assigned B only by immutable chosen IDs.
+They exercise selected ordinal 1 on A, ordinal 2 on B, second-member
+UPDATE/yield/orphan rollback, a second lost REAL COMMIT acknowledgment and
+fresh terminal EMPTY at ordinal 2. No roots or originals are copied/rebound.
+The latest authored fixture retains preferred observed subject housing and B's
+whole original A11 literal BEFORE capture. A's outside-part housing conflict
+contributes zero; B's matching recorded housing admits only the original reported
+site area of zero, incrementing that one count exactly once. B's future year,
+zero residential area and unsupported market-value currency remain ineligible.
+Preferred subject housing avoids unnecessary CAD fallback; each selected packet
+still reopens every original and the entire cache. Second-member original/cache
+faults, rollback and lost-COMMIT recovery must preserve the positive count through
+fresh EMPTY. Receipts retain no exact values or whole decisions. These assertions
+are AUTHORED NOT EXECUTED, not complete economic/historical eligibility, statistics,
+licensed-population acquisition or live acceptance.
+The TRUNCATE negative test includes the new eligibility FK child so it can
+reach unchanged immutable guards without removing any FK or trigger.
+
+Exact head e9245b49 cloud native job 114264744273 passed 417 migration tests
+and the subject test, but the index suite finished with 10 passes and three
+failures (zero skips). The single/empty selections reached real eligibility
+COMMIT while preserving attempt 3; their assertions incorrectly expected 2.
+The explicit-both selection's forged count was rejected by the earlier closed
+native count validator, before the later original-owner mismatch. Assertions
+now derive attempts from the prior native job (and increment only for actual
+failure reclaim), retain its error history, and require the exact earlier
+validator for that fixture. No implementation guard, trigger or right was
+changed. Fresh native execution of these repairs and the positive-count fixture
+remains required; no completed fifth-pass native proof is claimed yet.
+
+Bits/counts are audit DATA, NOT original, economic/historical eligibility or
+statistics authority. Every future semantic consumer must reopen originals again.
+Market-value currency, verified GLA, one economic unit, historical housing,
+amenity/transaction selection eligibility, complete selected-union medians/CODs/
+calendar-quarter checks, coherent publication, durable dispatch and terminal pin
+transfer/retirement, licensed >50k/5-mile/10-mile/city/retrospective acquisition and
+Hardy saved-map/live-speed acceptance remain unfinished. No worker/HTTP/default/
+schedule/source-grant/Render/report/Apply activation is added.
+
+Parent #1264 ad1a9019 native CI correctly refused a forged catalog label at the
+earlier closed storage validator, but its test expected only the later owner
+error. The assertion was corrected in 625f413a without changing validation.
+Fresh exact-head native job 114261300266 has now passed 417 migration /12 index /
+1 subject /1 edge /2 bootstrap tests, all zero failures or skips; index
+781479.217869ms. Both selected B/partition2 and explicit-empty first-read markers
+ran, with maximum211/208 whole-owner SQL queries of256. Server/frontend/bootstrap
+also passed. This is bounded native protocol evidence for #1264, NOT #1265
+execution, licensed acquisition, complete selected eligibility or live acceptance.
+
 ## First native selected-ordinal original eligibility admission (2026-10-10, not activated)
 
 A distinct READ-ONLY internal owner reopens ordinal1 of the ACTUAL completed

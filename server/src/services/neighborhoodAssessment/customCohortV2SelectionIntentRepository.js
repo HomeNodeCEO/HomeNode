@@ -209,5 +209,60 @@ export function createCustomCohortV2SelectionIntentRepository(client){
     if(await tx()!==started)fail('caller_transaction_required');
     return Object.freeze({command_id:intent.command_id,claim,issued_attempts:row.issued_attempts,
       included_recorded_group_ids:intent.included_recorded_group_ids,catalog_reference:intent.catalog_reference});
+  },
+  /** Separate fifth-pass admission. Neither original human resume nor the
+   * strict nine/ten-root readers can consume eleven roots. Requires a DONE
+   * native union and its consumed single-use continuation (or ordinary higher
+   * failure attempt), with exact immutable command/workspace and first9 roots. */
+  async readForEligibility(rawClaim,raw){
+    const claim=prepareCustomCohortCaptureJobClaim(data(rawClaim,['operation_id','claim_token','attempts'])),
+      o=data(raw,['scope','actorUserId','workspaceTarget']),scope=authority(o),target=workspaceOf(o.workspaceTarget,claim.operation_id),
+      values=[claim.operation_id,claim.claim_token,claim.attempts,scope.organization_id,scope.report_file_id,
+        scope.assignment_file_id,scope.account_id,o.actorUserId],started=await tx();
+    if(await tx()!==started)fail('caller_transaction_required');
+    const row=data(one(await client.query(`/* custom-cohort-v2-selection-intent:eligibility-read */
+      SELECT command.command_id::text,command.request_sha256,command.checkpoint,command.profile_reference,
+        command.workspace_revision,command.workspace_checkpoint,command.included_group_ids,command.issued_attempts,
+        command.resume_claim_token::text,job.request_sha256 AS job_request_sha256,job.checkpoint AS job_checkpoint,
+        coalesce(u.command_id=command.command_id AND body.canonical_utf8::jsonb->>'format'='cohort_selected_union_receipt_v2'
+          AND body.canonical_utf8::jsonb->>'sequence'=u.sequence::text AND body.canonical_utf8::jsonb->'after'->>'done'='true'
+          AND ((h.operation_id IS NULL AND c.phase='frozen_selected_union_refs_v2' AND c.progress_reference=u.receipt_reference
+              AND app.neighborhood_selected_union_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint))
+            OR (c.phase='frozen_selected_eligibility_refs_v2' AND c.progress_reference=h.receipt_reference
+              AND app.neighborhood_selected_eligibility_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)))
+          AND c.consumed_claim_token IS NOT NULL AND c.issued_attempts>=command.issued_attempts
+          AND ((job.attempts=c.issued_attempts AND job.claim_token=c.consumed_claim_token)
+            OR (job.attempts>c.issued_attempts AND job.claim_token<>c.issued_claim_token
+              AND job.claim_token<>c.consumed_claim_token AND job.claim_token<>command.resume_claim_token)),false) AS eligibility_binding
+      FROM app.neighborhood_custom_cohort_capture_jobs job
+      JOIN app.neighborhood_custom_cohort_v2_selection_intents command USING(operation_id,organization_id)
+      JOIN app.neighborhood_custom_cohort_selected_union_v2_heads u USING(operation_id,organization_id)
+      JOIN app.neighborhood_cohort_evidence_blobs body ON body.organization_id=u.organization_id
+        AND body.content_sha256=u.receipt_reference->>'content_sha256'
+        AND body.canonical_utf8_bytes::text=u.receipt_reference->>'canonical_utf8_bytes' AND body.canonical_utf8_bytes<=16000
+      LEFT JOIN app.neighborhood_custom_cohort_selected_eligibility_v2_heads h ON h.operation_id=job.operation_id AND h.organization_id=job.organization_id
+      JOIN app.neighborhood_custom_cohort_v2_continuations c ON c.operation_id=job.operation_id AND c.organization_id=job.organization_id
+      WHERE job.operation_id=$1::uuid AND job.claim_token=$2::uuid AND job.attempts=$3::integer
+        AND job.organization_id=$4::uuid AND job.report_file_id=$5::uuid AND job.assignment_file_id=$6::bigint
+        AND job.account_id=$7 AND job.actor_user_id=$8::uuid AND job.status='running'
+        AND job.lease_expires_at>clock_timestamp() AND job.cancellation_requested_at IS NULL AND job.context_sha256 IS NULL
+      FOR SHARE OF job,command NOWAIT`,values)),['command_id','request_sha256','checkpoint','profile_reference',
+      'workspace_revision','workspace_checkpoint','included_group_ids','issued_attempts','resume_claim_token',
+      'job_request_sha256','job_checkpoint','eligibility_binding']);
+    const cp=row.job_checkpoint,roots=cp?.evidence_refs;
+    if(!/^[a-f0-9]{64}$/.test(row.request_sha256??'')||row.request_sha256!==row.job_request_sha256
+      ||row.checkpoint?.phase!=='frozen_recorded_catalog_refs_v2'||row.checkpoint.evidence_refs?.length!==9
+      ||!same(row.profile_reference,getNeighborhoodOriginalRecordedGroupV2Profile().definition_blob.ref)
+      ||row.eligibility_binding!==true||!['frozen_selected_union_refs_v2','frozen_selected_eligibility_refs_v2'].includes(cp?.phase)
+      ||!Array.isArray(roots)||roots.length!==(cp.phase==='frozen_selected_union_refs_v2'?10:11)
+      ||!same(roots.slice(0,9),row.checkpoint.evidence_refs))fail('checkpoint_changed');
+    if(row.workspace_revision!==target.revision||!same(row.workspace_checkpoint,target.checkpoint))fail('workspace_changed');
+    if(!Number.isInteger(row.issued_attempts)||row.issued_attempts<1||row.issued_attempts>claim.attempts
+      ||typeof row.resume_claim_token!=='string'||!UUID.test(row.resume_claim_token)||claim.claim_token===row.resume_claim_token)fail('claim_lost');
+    const intent=prepareCustomCohortV2SelectionIntent({command_id:row.command_id,catalog_reference:row.checkpoint.evidence_refs[8],
+      workspace_revision:row.workspace_revision,included_recorded_group_ids:row.included_group_ids});
+    if(await tx()!==started)fail('caller_transaction_required');
+    return Object.freeze({command_id:intent.command_id,claim,issued_attempts:row.issued_attempts,
+      included_recorded_group_ids:intent.included_recorded_group_ids,catalog_reference:intent.catalog_reference});
   }});
 }

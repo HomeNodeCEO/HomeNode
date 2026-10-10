@@ -207,6 +207,26 @@ WITH next_account AS MATERIALIZED (
     AND body.canonical_utf8::jsonb->'after'->>'done'='true'
 ${SUBJECT_AND_CHOSEN_PACKAGE_V2_SQL}`;
 
+// Fifth-pass next ordinal derives ONLY from the actual native eligibility head.
+// No external cursor/account/ordinal or second aggregate budget is admitted.
+export const NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_ELIGIBILITY_PACKAGE_V2_SQL=`/* neighborhood-stock-subject-and-next-eligibility-original-package-v2 */
+WITH next_account AS MATERIALIZED (
+  SELECT a.account_id,a.parcel_count FROM app.neighborhood_custom_cohort_capture_jobs job
+  JOIN app.neighborhood_custom_cohort_selected_union_v2_heads u USING(operation_id,organization_id)
+  JOIN app.neighborhood_cohort_evidence_blobs body ON body.organization_id=u.organization_id
+    AND body.content_sha256=u.receipt_reference->>'content_sha256'
+    AND body.canonical_utf8_bytes::text=u.receipt_reference->>'canonical_utf8_bytes' AND body.canonical_utf8_bytes<=16000
+  LEFT JOIN app.neighborhood_custom_cohort_selected_eligibility_v2_heads h ON h.operation_id=job.operation_id AND h.organization_id=job.organization_id
+  JOIN app.neighborhood_custom_cohort_selected_union_v2_rows r
+    ON r.operation_id=job.operation_id AND r.organization_id=job.organization_id AND r.ordinal=coalesce(h.sequence,0)+1
+  JOIN app.neighborhood_custom_cohort_stock_accounts a ON a.operation_id=r.operation_id AND a.account_id=r.account_id
+  WHERE job.operation_id=$1::uuid AND $4::text=''
+    AND ((h.operation_id IS NULL AND app.neighborhood_selected_union_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint))
+      OR app.neighborhood_selected_eligibility_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint))
+    AND body.canonical_utf8::jsonb->>'format'='cohort_selected_union_receipt_v2'
+    AND body.canonical_utf8::jsonb->'after'->>'done'='true'
+${SUBJECT_AND_CHOSEN_PACKAGE_V2_SQL}`;
+
 const METRICS=Object.freeze({reported_year_built:'year',reported_residential_area:'reported_sqft',reported_site_area:'reported_sqft',reported_market_value:null});
 /** Compare canonical exact decimal literals; never round economic values. */
 function decimal(value){const [whole,fraction='']=value.split('.');return BigInt(whole)*1000000000000n+BigInt(fraction.padEnd(12,'0'));}
@@ -406,10 +426,11 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
   /** Both complete accounts share every original/transport/output/SQL bound.
    * This is source DATA only; actual issued owner chooses the next cursor and
    * independently fences the full native graph, intent and current authority. */
-  async function subjectAndNextPackage(rawPage,rawSubject,firstSelected=false){
+  async function subjectAndNextPackage(rawPage,rawSubject,firstSelected=false,nextEligibility=false){
     const page=prepareNeighborhoodStockAccountPackagePageV2(rawPage),{includeSubject}=data(rawSubject,['includeSubject']);
     if(typeof includeSubject!=='boolean')fail('invalid_input');
-    const context=await open(),{stock,source}=context,result=one(await execute(firstSelected
+    const context=await open(),{stock,source}=context,result=one(await execute(nextEligibility
+      ?NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_ELIGIBILITY_PACKAGE_V2_SQL:firstSelected
       ?NEIGHBORHOOD_STOCK_SUBJECT_AND_FIRST_SELECTED_PACKAGE_V2_SQL:NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,
       [stock.operation_id,stock.generation_id,TYPED.profile_ref.content_sha256,page.cursor,L.rows,L.page_utf8_bytes,
         L.row_utf8_bytes,L.original_utf8_bytes,L.output_utf8_bytes,includeSubject]));
@@ -461,7 +482,8 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
     // Charge the ENTIRE outgoing envelope; duplicated facts are marked as an
     // alias rather than serialized twice. Neither metadata nor the second
     // account receives a reset output allowance.
-    const output={page_version:2,status:firstSelected?'reconciled_subject_and_first_selected_stock_original_package'
+    const output={page_version:2,status:nextEligibility?'reconciled_subject_and_next_eligibility_stock_original_package'
+      :firstSelected?'reconciled_subject_and_first_selected_stock_original_package'
       :'reconciled_subject_and_next_stock_original_package',authority:'not_established',
       coverage:'at_most_two_complete_distinct_accounts_one_aggregate_budget',graph,stock,source_metadata:source,typed_profile:TYPED,
       package_profile:PACKAGE_PROFILE,effective_date:effective,cursor:page.cursor,account_id:result.account_id,
@@ -528,6 +550,9 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
      * immutable intent/current authorization. This reader issues no progress. */
     subjectAndFirstSelectedRecordedGroupHousingAccountPackage(...args){
       if(args.length!==1)fail('invalid_input');return subjectAndNextPackage({cursor:''},args[0],true);
+    },
+    subjectAndNextEligibilityRecordedGroupHousingAccountPackage(...args){
+      if(args.length!==1)fail('invalid_input');return subjectAndNextPackage({cursor:''},args[0],false,true);
     },
   });
 }

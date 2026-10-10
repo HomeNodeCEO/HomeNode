@@ -116,7 +116,7 @@ import { NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL }
 import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL,
   NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSelectedTransactionOriginalPackageV2.js';
-import { expandCohortDiagnosticFieldTuplesV1 } from './helpers/expandCohortDiagnosticFieldTuplesV1.js';
+import { expandCohortDiagnosticFieldTuplesV2 } from './helpers/expandCohortDiagnosticFieldTuplesV2.js';
 
 // Disposable native fixture only, never production rights provisioning. The
 // real evaluator reads current organization metadata/time on every admission.
@@ -4834,9 +4834,9 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           await firstUnchanged();await setCadFixtureGrant(pool,organization,cadGrant);
           const combinedFrom=refsCalls.length,combined=await combinedRead(),combinedCalls=refsCalls.slice(combinedFrom);
           assert.equal(combined.status,'current_authorized_first_selected_combined_originals_reopened');
-          assert.equal(combined.combined_diagnostic_encoding,'cohort_diagnostic_field_tuples_v1');
-          assert.deepEqual(expandCohortDiagnosticFieldTuplesV1(combined.selected_CAD),firstAmenity.selected_CAD);
-          assert.deepEqual(expandCohortDiagnosticFieldTuplesV1(combined.selected_transactions),tx);
+          assert.equal(combined.combined_diagnostic_encoding,'cohort_diagnostic_field_tuples_v2');
+          assert.deepEqual(expandCohortDiagnosticFieldTuplesV2(combined.selected_CAD),firstAmenity.selected_CAD);
+          assert.deepEqual(expandCohortDiagnosticFieldTuplesV2(combined.selected_transactions),tx);
           assert.deepEqual(combined.selected_entry,firstEligibility.selected_entry);assert.deepEqual(combined.decision,firstEligibility.decision);
           assert.deepEqual(combined.subject,firstEligibility.subject);assert.equal(combined.read_only,true);
           assert.equal(combined.distinct_original_count,selectionWaitFixture==='union-empty'?0:allSelected?10:13);
@@ -4874,7 +4874,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           console.info('[native-first-selected-combined-original-owner-v2]',{independently_issued_complete_original_graph_and_DONE_union:true,
             explicit_empty:selectionWaitFixture==='union-empty',first_selected_B_not_first_stock_A:!allSelected&&selectionWaitFixture!=='union-empty',
             one_packet_subject_selected_stock_CAD_and_whole_transactions_originals:true,aggregate250_not250_per_source:true,
-            lossless_declared_field_tuples_expand_to_both_independent_source_diagnostics:true,unchanged_16KB_owner_cap:true,
+            lossless_declared_V2_field_and_string_tables_expand_to_both_independent_source_diagnostics:true,unchanged_16KB_owner_cap:true,
             every_original_and_entire_cache_reconciled:true,separate_initial_and_ending_CAD_and_market_rights:true,
             actual_partition_catalog_and_immutable_choice:true,all_original_cache_member_and_end_fences_refused:true,
             lost_real_read_only_COMMIT_fresh_reopen_all_durable_heads_pins_workspace_reports_unchanged:true,

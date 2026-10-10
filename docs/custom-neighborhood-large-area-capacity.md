@@ -27,6 +27,20 @@ accepted report, genuine Hardy choice, production or Apply changes are made.
 
 ## One aggregate selected stock/CAD/transaction packet (2026-10-10, not activated)
 
+The subsequent f40e3981 field-shape-only encoding run also FAILED one nonempty
+explicit-selection case at the unchanged 16 KB owner cap. Foundation
+38077251077 / native 114286701209: 417 migration/one subject passed; index
+12 passed/one failed, zero skips (540704.978683 ms). EMPTY and the two-account
+combined fixture passed, but that is NOT combined acceptance. The proposed V1
+encoder remains unchanged; a distinct `cohort_diagnostic_field_tuples_v2`
+presentation additionally retains repeated scalar strings once in a declared
+bounded string table. Every occurrence expands exactly; unique and dictionary-
+overflow values stay inline. The actual combined owner uses V2 for CAD and
+transaction diagnostics only. Native assertions expand both and compare the
+ENTIRE values with independently original-reconciled responses. No original,
+query, response or other budget is widened, and no field is dropped. Fresh
+native verification is required; these changes are not acceptance evidence.
+
 The initial d84923c0 native run FAILED two nonempty selections at the existing
 16 KB owner response cap; EMPTY passed. Foundation 38075596792 / native job
 114281786272: 417 migration and one subject test passed; index 11 passed/two

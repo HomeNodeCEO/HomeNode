@@ -4153,7 +4153,7 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
         assert.equal(resumedJob.status,'running');assert.notEqual(resumedJob.claim_token,refsClaim.claim_token);
         assert.equal(resumedJob.claim_token,retainedIntent.resume_claim_token);assert.equal(resumedJob.attempts,2);
         assert.equal(resumedJob.last_error_code,'synthetic_pre_selection_failure');assert.equal(resumedJob.context_sha256,null);
-        assert.deepEqual(resumedJob.checkpoint,waiting.checkpoint);assert.equal(resumedJob.run_after,waiting.run_after);
+        assert.deepEqual(resumedJob.checkpoint,waiting.checkpoint);assert.deepEqual(resumedJob.run_after,waiting.run_after);
         assert.equal(intentCalls.filter(sql=>sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,1);
         assert.equal(intentCalls.filter(sql=>sql.includes('custom-cohort-v2-selection-intent:insert')).length,1);
         assert.ok(intentCalls.length-3<=ORIGINAL_OWNER_LIMITS.sql_queries);

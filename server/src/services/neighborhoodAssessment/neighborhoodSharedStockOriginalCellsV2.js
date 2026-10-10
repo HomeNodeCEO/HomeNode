@@ -7,6 +7,8 @@ import { compileNeighborhoodFrozenTypedOriginalV2, getNeighborhoodFrozenTypedOri
   from './neighborhoodFrozenTypedOriginalV1.js';
 import { NEIGHBORHOOD_SHARED_TYPED_V2_SQL, prepareNeighborhoodSharedTypedSource } from './neighborhoodSharedTypedGeneration.js';
 import { resolveNeighborhoodOriginalAccountHousingV2 } from './neighborhoodOriginalAccountHousingV2.js';
+import { projectNeighborhoodOriginalRecordedGroupLabelsV2,resolveNeighborhoodOriginalRecordedGroupV2 }
+  from './neighborhoodOriginalRecordedGroupV2.js';
 
 export const NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_LIMITS = Object.freeze({ rows:250,
   original_utf8_bytes:1000000, row_utf8_bytes:2100000, page_utf8_bytes:8000000,
@@ -242,7 +244,7 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
       }};
   }
   /** Recompile a complete original; never accept the stored cell as authority. */
-  function reconcile(value){
+  function reconcile(value,recordedGroup=false){
     check();const row=data(value,['kind','row_key','account_id','source_record_id','original_text',
       'cached_account_id','cached_source_record_id','original_payload_sha256','typed']);
     if(!KINDS.includes(row.kind))fail('invalid_original');cursor(row.row_key,row.kind);
@@ -255,12 +257,19 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
     const observations=structuredClone(replay.observations),year=observations.reported_year_built;
     if(year?.state==='observed'&&year.exact_value>effective.slice(0,4))Object.assign(year,
       {state:'invalid',exact_value:null,unit:null,reason:'year_after_retained_effective_year'});
+    // The neutral cache deliberately retains only128 bytes of marker text.
+    // A distinct original projection preserves the recorded catalog's512-byte
+    // labels ONLY AFTER this complete original/ENTIRE cache replay. Never
+    // fabricate missing membership or recover a longer label from its hash.
+    const originalLabels=recordedGroup?projectNeighborhoodOriginalRecordedGroupLabelsV2({kind:row.kind,row_key:row.row_key,
+      account_id:row.account_id,payload_text:row.original_text}):null;
     check();return {kind:row.kind,row_key:row.row_key,account_id:row.account_id,
-      original_payload_sha256:replay.original.payload_sha256,typed:replay,retained_observations:observations};
+      original_payload_sha256:replay.original.payload_sha256,typed:replay,retained_observations:observations,
+      ...(recordedGroup?{original_recorded_labels:originalLabels}:{})};
   }
   /** Same original-count, whole-payload and lifetime SQL budgets for both
    * consumers. Housing cannot reopen a page under a reset per-method budget. */
-  async function accountPackage(rawPage,housing){
+  async function accountPackage(rawPage,housing,recordedGroup=false){
       const page=prepareNeighborhoodStockAccountPackagePageV2(rawPage),context=await open(),{stock,source}=context;
       const result=one(await execute(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL,[stock.operation_id,stock.generation_id,
         TYPED.profile_ref.content_sha256,page.cursor,L.rows,L.page_utf8_bytes,L.row_utf8_bytes,L.original_utf8_bytes,L.output_utf8_bytes]));
@@ -282,19 +291,23 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
       let rows;try{rows=JSON.parse(result.page_json);}catch{fail('invalid_result');}
       if(!Array.isArray(rows)||rows.length!==total)fail('invalid_result');
       let previous=null;const seen={parcels:0,accounts:0};
-      rows=rows.map(value=>{const row=reconcile(value),key=`${row.kind}\u0000${row.row_key}`;
+      rows=rows.map(value=>{const row=reconcile(value,recordedGroup),key=`${row.kind}\u0000${row.row_key}`;
         if(row.account_id!==result.account_id||previous!==null&&Buffer.compare(Buffer.from(key),Buffer.from(previous))<=0)fail('invalid_original');
         seen[row.kind]++;previous=key;return row;});
       if(!same(seen,counts))fail('invalid_result');
       const observations=present?resolveAccount(rows):null;
       const recordedHousing=housing&&present?resolveNeighborhoodOriginalAccountHousingV2(rows,check):null;
-      if(Buffer.byteLength(JSON.stringify({rows,observations,...(housing?{recorded_housing:recordedHousing}:{})}))>L.output_utf8_bytes)fail('byte_limit');
+      const group=recordedGroup&&present?resolveNeighborhoodOriginalRecordedGroupV2(rows,check):null;
+      if(Buffer.byteLength(JSON.stringify({rows,observations,...(housing?{recorded_housing:recordedHousing}:{}),
+        ...(recordedGroup?{recorded_group:group}:{})}))>L.output_utf8_bytes)fail('byte_limit');
       await context.finish();
-      return freeze({page_version:2,status:housing?'reconciled_stock_account_recorded_housing':'reconciled_stock_account_original_package',authority:'not_established',
+      return freeze({page_version:2,status:recordedGroup?'reconciled_stock_account_recorded_group'
+        :housing?'reconciled_stock_account_recorded_housing':'reconciled_stock_account_original_package',authority:'not_established',
         coverage:'one_complete_account_package_only',graph,stock,source_metadata:source,typed_profile:TYPED,
         package_profile:PACKAGE_PROFILE,effective_date:effective,cursor:page.cursor,account_id:result.account_id,
         geographic_parcel_count:result.geographic_parcel_count,original_counts:counts,rows,observations,
         ...(housing?{recorded_housing:recordedHousing}:{}),
+        ...(recordedGroup?{recorded_group:group}:{}),
         account_original_state:present?counts.accounts===1?'present':'absent':'not_applicable',
         next_cursor:result.account_id??page.cursor,end_of_accounts:!present,
         original_reconciliation:'every_package_original_recompiled',selected_union:'not_established',
@@ -338,5 +351,8 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
     accountPackage:rawPage=>accountPackage(rawPage,false),
     /** Distinct dormant bounded consumer; legacy package bytes stay unchanged. */
     housingAccountPackage:rawPage=>accountPackage(rawPage,true),
+    /** Original512-byte county/labels after whole original/ENTIRE cache replay;
+     * distinct dormant consumer, not a complete catalog/selected partition. */
+    recordedGroupAccountPackage:rawPage=>accountPackage(rawPage,false,true),
   });
 }

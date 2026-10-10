@@ -1339,6 +1339,12 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       (3,'CLOSURE-OUTSIDE','Outside Stock','c',ST_Multi(ST_MakeEnvelope(-97.7,32.9,-97.699,32.901,4326))),
       (4,'CLOSURE-A','Original Stock','d',ST_Multi(ST_MakeEnvelope(-97.71,32.9,-97.709,32.901,4326))),
       (5,NULL,NULL,'e',ST_MakeEnvelope(-96.7,32.901,-96.699,32.902,4326))`);
+    // The actual original group consumer must recover bounded labels beyond
+    // the neutral marker's128byte diagnostic limit, never from its hash.
+    const originalGroupLongLabel='Synthetic '+ 'x'.repeat(502);
+    await pool.query('UPDATE core.accounts SET subdivision=$1 WHERE account_id=$2',[originalGroupLongLabel,'CLOSURE-B']);
+    await pool.query('UPDATE gis.dcad_parcels SET subdivision_name=$1 WHERE object_id=2',[originalGroupLongLabel]);
+    await pool.query("UPDATE gis.dcad_parcels SET subdivision_name='Outside Original Stock' WHERE object_id=4");
     await pool.query(`UPDATE gis.dcad_parcels SET residential_year_built=1960,parcel_area_sqft=8000,
       current_market_value=9007199254740993,residential_area_sqft=CASE WHEN object_id=1 THEN 1000.01 ELSE 2000.02 END
       WHERE object_id IN (1,4)`);
@@ -1811,6 +1817,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     const stockAccountMethod='readSharedFrozenCaptureJobStockAccountPackagesReferencesV2',stockAccountOptions={...refsOptions,
       stockAccountPackagePage:{cursor:''}};
     const housingMethod='readOriginalFrozenCaptureJobAccountHousingReferencesV2';
+    const recordedGroupMethod='readOriginalFrozenCaptureJobAccountRecordedGroupReferencesV2';
     await refsOwner.prepareFrozenCaptureJobStock(refsInput,refsOptions);
     const readRefsCheckpoint=async()=>(await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[refsOperation])).rows[0].checkpoint;
     const refsStockCheckpoint=await readRefsCheckpoint();
@@ -2897,6 +2904,66 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       current_and_ending_rights_cache_refusal:true,unchanged_hash_count_forgeries_refused:true,lost_commit_reopen:true,
       fresh_empty_probe:true,original_payload_copies:0,job_typed_copies:0,checkpoint_or_head_writes:0,
       selected_union:false,licensed_acquisition:false,statistics:false,report_update:false,production_speed:false});
+    // Current-authorized ORIGINAL recorded labels, not a truncated neutral
+    // marker or DATA-only callback. Existing independently replayed account
+    // originals above retain all outside parts and the unchanged cache bytes.
+    const recordedGroupFrom=refsCalls.length,groupA=await freshRefsOwner()[recordedGroupMethod](refsInput,stockAccountOptions),
+      groupB=await freshRefsOwner()[recordedGroupMethod](refsInput,{...stockAccountOptions,stockAccountPackagePage:{cursor:groupA.next_cursor}}),
+      groupEnd=await freshRefsOwner()[recordedGroupMethod](refsInput,{...stockAccountOptions,stockAccountPackagePage:{cursor:groupB.next_cursor}});
+    assert.equal(groupA.status,'reconciled_stock_account_recorded_group');assert.equal(groupA.recorded_group.state,'unassigned');
+    assert.equal(groupA.recorded_group.assigned_group_id,null);
+    assert.deepEqual(groupA.recorded_group.reasons,['conflicting_recorded_subdivision_labels']);
+    assert.deepEqual(groupA.recorded_group.candidate_groups.map(g=>g.normalized_label),['original stock','outside original stock']);
+    assert.equal(groupA.recorded_group.parcel_source_row_count,'2');assert.equal(groupA.geographic_parcel_count,'1');
+    assert.equal(groupB.recorded_group.state,'assigned');assert.equal(groupB.recorded_group.candidate_groups.length,1);
+    assert.equal(groupB.recorded_group.candidate_groups[0].normalized_county,'dallas');
+    assert.equal(groupB.recorded_group.candidate_groups[0].normalized_label,originalGroupLongLabel.toLowerCase());
+    assert.deepEqual(groupB.recorded_group.raw_label_variants,[originalGroupLongLabel]);
+    assert.equal(groupB.rows[0].typed.markers.subdivision.state,'oversize');assert.equal(groupB.rows[0].typed.markers.subdivision.value_text,null);
+    assert.equal(groupB.rows[0].original_recorded_labels.subdivision.raw,originalGroupLongLabel);
+    for(const [actual,prior] of [[groupA,accountA],[groupB,accountB]]){
+      assert.deepEqual(actual.rows.map(({original_recorded_labels,...row})=>row),prior.rows,'full neutral bytes remain unchanged');
+      assert.deepEqual(actual.identity_verification_reference,identityIssued.receipt_reference);
+      assert.equal(actual.original_reconciliation,'every_package_original_recompiled');assert.equal(actual.selected_union,'not_established');
+      assert.equal(actual.recorded_group.authority,'not_established');assert.equal(actual.report_update,'none');
+      assert.ok(actual.rows.every(row=>!Object.hasOwn(row,'original_text')));
+    }
+    assert.equal(groupEnd.end_of_accounts,true);assert.equal(groupEnd.recorded_group,null);assert.deepEqual(groupEnd.rows,[]);
+    for(const fault of ['stock_cells_mismatch','stock_cells_missing','stock_cells_original']){
+      refsFault=fault;const from=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[recordedGroupMethod](refsInput,stockAccountOptions),/original_mismatch/);
+      assert.equal(refsFault,null);assert.ok(refsCalls.slice(from).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));await assertTransactionUnchanged();
+    }
+    await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+    const groupDeniedFrom=refsCalls.length;
+    await assert.rejects(freshRefsOwner()[recordedGroupMethod](refsInput,stockAccountOptions),/market_data_access_denied/);
+    assert.ok(!refsCalls.slice(groupDeniedFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));
+    for(const [fault,reason] of [['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],
+      ['subject',/subject_changed/],['claim',/claim_lost/],['cancel',/cancelled/],['transaction_header',/cache_unavailable/]]){
+      refsAbort=new AbortController();refsFault=fault;const from=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[recordedGroupMethod](refsInput,{...stockAccountOptions,signal:refsAbort.signal}),reason,`recorded group ending ${fault}`);
+      assert.equal(refsFault,null);assert.ok(refsCalls.slice(from).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));await assertTransactionUnchanged();
+      if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+      if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    }
+    refsFault='commit';await assert.rejects(freshRefsOwner()[recordedGroupMethod](refsInput,stockAccountOptions),e=>e.outcome_unknown===true);
+    await assertTransactionUnchanged();assert.deepEqual((await freshRefsOwner()[recordedGroupMethod](refsInput,stockAccountOptions)).recorded_group,groupA.recorded_group);
+    for(const fault of ['missing_receipt','corrupt_receipt','missing_geo_receipt','corrupt_geo_receipt','missing_identity_receipt','corrupt_identity_receipt']){
+      refsFault=fault;const from=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[recordedGroupMethod](refsInput,stockAccountOptions),/checkpoint_conflict|storage_conflict|invalid_receipt/);
+      assert.equal(refsFault,null);assert.ok(!refsCalls.slice(from).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));await assertTransactionUnchanged();
+    }
+    await assert.rejects(freshRefsOwner()[recordedGroupMethod](sourceInput,{...stockAccountOptions,captureJobClaim:sourceClaim}),/checkpoint_conflict/);
+    assert.ok(!refsCalls.slice(recordedGroupFrom).some(sql=>/ST_DWithin|neighborhood-frozen-job-closure:|shared-typed-v2:(?:page|begin|rows|progress)|checkpoint-save|anchor-(?:advance|insert)/.test(sql)));
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_custom_cohort_typed_original_rows WHERE operation_id=$1',[refsOperation])).rows[0].n,0);
+    console.info('[native-original-recorded-group-current-owner-v2]',{accounts:2,parcel_originals:3,account_originals:2,
+      every_original_and_entire_cache_replayed:true,original512byte_labels_not_128byte_marker_hash:true,
+      outside_part_conflict_unassigned_all_candidates_retained:true,county_not_fabricated:true,neutral_bytes_unchanged:true,
+      current_and_ending_authority_cache_refusal:true,partial_unissued_corrupt_heads_refused:true,
+      unchanged_hash_count_forgeries_refused:true,lost_commit_reopen:true,fresh_empty_probe:true,
+      original_payload_copies:0,job_typed_copies:0,checkpoint_or_head_writes:0,complete_catalog:false,
+      selected_union:false,statistics:false,licensed_acquisition:false,production_speed:false,report_update:false});
     // Actual current-authorized companion consumer, not a DATA-only raw reader.
     // The additional synthetic CAD grant never provisions production rights.
     const cadBeforeBlobs=await refsBlobCount(),cadInitialFrom=refsCalls.length;

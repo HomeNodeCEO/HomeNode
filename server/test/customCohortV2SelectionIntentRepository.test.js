@@ -79,10 +79,11 @@ function retainedSetup({patch={},auto=false,endAuto=false,missing=false}={}){
   const calls=[];let transactions=0;
   return {calls,owner:repository({async query(sql,values){calls.push({sql,values});
     if(sql.includes(':transaction'))return {rowCount:1,rows:[{transaction_id:String(auto?++transactions:endAuto&&++transactions===3?9:8)}]};
-    if(sql.includes(':retained-read')||sql.includes(':replay-read')||sql.includes(':eligibility-read')||sql.includes(':evidence-read')||sql.includes(':metrics-read'))return {rowCount:missing?0:1,rows:missing?[]:[{...structuredClone(command),
+    if(sql.includes(':retained-read')||sql.includes(':replay-read')||sql.includes(':eligibility-read')||sql.includes(':evidence-read')||sql.includes(':metrics-read')||sql.includes(':statistics-read'))return {rowCount:missing?0:1,rows:missing?[]:[{...structuredClone(command),
       job_request_sha256:command.request_sha256,job_checkpoint:structuredClone(checkpoint),
       ...(sql.includes(':replay-read')?{replay_binding:true}:{}),...(sql.includes(':eligibility-read')?{eligibility_binding:true}:{}),
-      ...(sql.includes(':evidence-read')?{evidence_binding:true}:{}),...(sql.includes(':metrics-read')?{metrics_binding:true}:{}),...patch}]};
+      ...(sql.includes(':evidence-read')?{evidence_binding:true}:{}),...(sql.includes(':metrics-read')?{metrics_binding:true}:{}),
+      ...(sql.includes(':statistics-read')?{statistics_binding:true}:{}),...patch}]};
     assert.fail(sql);
   }})};
 }
@@ -251,4 +252,28 @@ test('seventh reader admits only exact12/13 roots with DONE union/fifth/sixth an
     const {owner,calls}=retainedSetup();await assert.rejects(owner.readForMetrics(fresh,raw));assert.equal(calls.length,0);
   }
   await assert.rejects(retainedSetup({auto:true}).owner.readForMetrics(fresh,workerOptions),/caller_transaction_required/);
+});
+
+test('statistics source admission requires exact13 and all DONE native parents/current consumed continuation, never widens old readers',async()=>{
+  const fresh={...currentClaim,claim_token:id(9)},cp={phase:'frozen_selected_metrics_refs_v2',evidence_refs:[...checkpoint.evidence_refs,...Array(4).fill(ref)]},
+    {owner,calls}=retainedSetup({patch:{job_checkpoint:cp}});
+  assert.equal((await owner.readForStatistics(fresh,workerOptions)).command_id,intent.command_id);
+  const sql=calls.find(c=>c.sql.includes(':statistics-read')).sql;
+  for(const s of ['h.evidence_reference=sixth.receipt_reference',"metrics_body.canonical_utf8::jsonb->'after'->>'done'='true'",
+    'neighborhood_selected_metrics_v2_checkpoint_matches','c.progress_reference=h.receipt_reference',
+    'c.consumed_claim_token IS NOT NULL','job.claim_token=c.consumed_claim_token','job.attempts>c.issued_attempts',
+    'job.claim_token<>command.resume_claim_token','FOR SHARE OF job,command NOWAIT'])assert.ok(sql.includes(s),s);
+  assert.doesNotMatch(sql,/h.operation_id IS NULL|INSERT INTO|UPDATE app\.|DELETE FROM/);
+  for(const patch of [{statistics_binding:false},{job_checkpoint:checkpoint},{workspace_revision:2},{issued_attempts:6},
+    {job_request_sha256:'d'.repeat(64)},{job_checkpoint:{...cp,evidence_refs:cp.evidence_refs.slice(1)}}])
+    await assert.rejects(retainedSetup({patch:{job_checkpoint:cp,...patch}}).owner.readForStatistics(fresh,workerOptions));
+  for(const n of [9,10,11,12,14])await assert.rejects(retainedSetup({patch:{job_checkpoint:{...cp,evidence_refs:Array(n).fill(ref)}}})
+    .owner.readForStatistics(fresh,workerOptions),/checkpoint_changed/);
+  for(const method of ['readRetained','readForReplay','readForEligibility','readForEvidence'])await assert.rejects(owner[method](fresh,workerOptions),/checkpoint_changed/);
+  for(const raw of [{...workerOptions,ordinal:1},{...workerOptions,readOriginal:()=>assert.fail('callback')},
+    new Proxy(workerOptions,{getPrototypeOf(){assert.fail('proxy');}})]){
+    const {owner,calls}=retainedSetup();await assert.rejects(owner.readForStatistics(fresh,raw));assert.equal(calls.length,0);
+  }
+  await assert.rejects(retainedSetup({auto:true}).owner.readForStatistics(fresh,workerOptions),/caller_transaction_required/);
+  await assert.rejects(retainedSetup({endAuto:true,patch:{job_checkpoint:cp}}).owner.readForStatistics(fresh,workerOptions),/caller_transaction_required/);
 });

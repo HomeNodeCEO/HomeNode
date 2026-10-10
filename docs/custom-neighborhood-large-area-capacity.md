@@ -42,31 +42,32 @@ member bounds with one-over refusal. Syntax/diff checks passed; new-head full
 cloud execution is pending. No local database/full-server/frontend suite ran.
 
 Independently, actual integrated #1233 `f78185eb` passed all 14 exact checks:
-foundation37949774072/native113885218711 executed all417migration/8index/
-1subject/1edge/2bootstrap tests, zero failures/skips; index441527.481999ms.
-The actual retained temporal owner marker executed3source3sale4link rows,
+foundation 37949774072 / native 113885218711 executed all 417 migration / 8 index /
+1 subject / 1 edge / 2 bootstrap tests, zero failures/skips; index 441527.481999 ms.
+The actual retained temporal owner marker executed 3 source / 3 sale / 4 link rows,
 retained old/outside evidence and independent dates, refused partial/unissued/
 corrupt prerequisites and ending current authorization/cache changes, recovered
 lost COMMIT, and made zero original reads/typed copies/checkpoint/head writes.
-Actual server10550pass0fail62separatelyDBgatedskip256609.417425ms; frontend
-3959pass0fail0skip59801.597364ms. Included review remains required, not before
+Actual server: 10550 pass, 0 fail, 62 separately DB-gated skips, 256609.417425 ms;
+frontend: 3959 pass, 0 fail, 0 skip, 59801.597364 ms. Included review remains required, not before
 16:08Z after prior actual completion; automatic skipped reviews are not reviews.
 
 Exact #1236 `3e9bdb4a` also passed all five initial stacked checks. Actual
-foundation37949414839/native113883990588 repeated all417/8/1/1/2 tests without
-failures/skips; index367013.905351ms, actual issued-current-authorized whole
-package marker3sourcepackages1legacy/3sources3sales4links/independentcounts/
-fresh-empty-probes/prerequisite-current-rights-cache-refusal/lostCOMMIT and zero
-original reads/copies/durable writes. Actual server10579pass0fail62DBgatedskip
-166358.938711ms includes the new cloud-only60001/250000 decimal-run test actually
-executed, not skipped; frontend3959pass0fail0skip59519.539539ms. Main-only security,
+foundation 37949414839 / native 113883990588 repeated all 417 / 8 / 1 / 1 / 2 tests without
+failures/skips; index 367013.905351 ms, actual issued-current-authorized whole
+package marker: 3 source packages (1 legacy) / 3 sources / 3 sales / 4 links /
+independent counts / fresh-empty probes / prerequisite-current-rights-cache refusal /
+lost COMMIT, and zero original reads/copies/durable writes. Actual server: 10579 pass,
+0 fail, 62 DB-gated skips, 166358.938711 ms; includes the new cloud-only 60001/250000
+decimal-run test actually executed, not skipped; frontend: 3959 pass, 0 fail,
+0 skip, 59519.539539 ms. Main-only security,
 real protected-parent integration and included review are still outstanding.
 Synthetic large numerical tests and small native protocols are not licensed
 population acquisition, selected-union owner or live production SLA acceptance.
 
 This work is stacked on historical #1236 `3e9bdb4a`, not a protected coherent
 release. No route/default/schema, deployment/source grant, worker/pin, report,
-genuine Hardy choice or Apply mutation. QA assignment7only future Apply tests.
+genuine Hardy choice or Apply mutation. QA assignment 7 only for future Apply tests.
 Actual owner integration/provider-amenity/economic resolution/server selection/
 coherent publication/durable workers-terminal pin retirement/licensed larger
 areas and retrospective/live Hardy acceptance remain incomplete.

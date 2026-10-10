@@ -338,7 +338,15 @@ BEGIN
     RAISE EXCEPTION 'neighborhood_v2_continuation_claim_conflict' USING ERRCODE='55000';
   END IF;
   IF TG_OP='INSERT' THEN
-    IF NEW.sequence<>1 OR NEW.phase='frozen_selected_union_refs_v2' THEN RAISE EXCEPTION 'neighborhood_v2_continuation_transition_conflict' USING ERRCODE='55000'; END IF;
+    -- BEFORE INSERT also fires for the provisional row of INSERT ... ON
+    -- CONFLICT DO UPDATE. A union may never create a free continuation, but
+    -- its already-existing native continuation must reach the UPDATE guard
+    -- below. That guard still enforces the exact old head, next sequence,
+    -- consumed token and first-human bridge; this is not a new-row admission.
+    IF NEW.sequence<>1 OR (NEW.phase='frozen_selected_union_refs_v2' AND NOT EXISTS(
+      SELECT 1 FROM app.neighborhood_custom_cohort_v2_continuations existing
+      WHERE existing.operation_id=NEW.operation_id AND existing.organization_id=NEW.organization_id)) THEN
+      RAISE EXCEPTION 'neighborhood_v2_continuation_transition_conflict' USING ERRCODE='55000'; END IF;
   ELSE
     -- ONLY the first actual union head may bridge the fresh authenticated human
     -- resume token at the same attempt; all later consumed-token rules remain.

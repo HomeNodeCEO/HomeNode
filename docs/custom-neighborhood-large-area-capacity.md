@@ -59,6 +59,21 @@ exercise immutable triggers as well. No FK or trigger was weakened. This
 failed fixture did not reach the new union protocol and is not acceptance;
 fresh exact-head native execution remains required.
 
+The subsequent exact-head native run passed 417 migration tests and ten of
+twelve index cases, then exposed a real union continuation transition error.
+PostgreSQL runs BEFORE INSERT for the provisional ON CONFLICT row: the guard
+was rejecting the union phase before its already-existing continuation could
+reach the strict UPDATE guard. It now permits that provisional INSERT ONLY
+when the scoped native continuation already exists. A free new union row still
+refuses; the actual UPDATE retains every sequence, phase, consumed-token and
+first-human bridge check. The fixture also keeps union rollback faults armed
+through the original read so they reach the REAL group/head/yield DML and
+orphan COMMIT checks. Fresh native execution of this repair is still required;
+the failed run established no completed union, eligibility or live acceptance.
+The repaired owner/storage/closed-grammar regression set passes 90 tests,
+zero failures/skips (697.5905ms); native-fixture syntax and diff checks pass.
+Those focused SQL doubles and source checks are mechanics, not native proof.
+
 The finite 8,000,004 success ceiling covers THESE FOUR fixed stock passes only;
 it is NOT a whole-roadmap runtime or production-SLA claim. No HTTP/default
 worker dispatch, source acquisition, source grant, housing/metric eligibility,

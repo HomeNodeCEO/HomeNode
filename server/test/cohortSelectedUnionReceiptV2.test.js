@@ -85,10 +85,21 @@ test('registered fourth-pass guards preserve nine roots, exact first human bridg
     'FULL JOIN app.neighborhood_custom_cohort_selected_union_v2_groups','g.member_count IS DISTINCT FROM r.member_count',
     'g.last_ordinal IS DISTINCT FROM r.last_ordinal','CHECK(sequence BETWEEN 1 AND 8000004)',
     'command.resume_claim_token=NEW.issued_claim_token','actual_sequence=1','AND NOT first_union_bridge',
+    "NEW.phase='frozen_selected_union_refs_v2' AND NOT EXISTS(",
+    'existing.operation_id=NEW.operation_id AND existing.organization_id=NEW.organization_id',
     "NEW.phase='frozen_selected_union_refs_v2' AND OLD.phase NOT IN ('frozen_recorded_catalog_refs_v2','frozen_selected_union_refs_v2')",
     "command.checkpoint->'evidence_refs'->8=OLD.progress_reference",
     "OLD.phase='frozen_selected_union_refs_v2' AND NEW.phase<>'frozen_selected_union_refs_v2'",'BEFORE TRUNCATE'])assert.ok(sql.includes(s),s);
   for(const m of sql.matchAll(/CREATE (?:TABLE|FUNCTION|TRIGGER|INDEX|CONSTRAINT TRIGGER) (?:app\.)?([a-z0-9_]+)/g))assert.ok(Buffer.byteLength(m[1])<=63,m[1]);
   assert.doesNotMatch(sql,/DISABLE TRIGGER|DROP TABLE|DROP TRIGGER|UPDATE app\.report_files|ST_DWithin|array_agg|jsonb_agg/);
   assert.doesNotMatch(sql,/cp->'evidence_refs'-9/); // subtraction binds before -> in PostgreSQL
+  assert.doesNotMatch(sql,/NEW.sequence<>1 OR NEW.phase='frozen_selected_union_refs_v2'/);
+});
+
+test('native union rollback faults survive the real original read until their real DML or COMMIT',()=>{
+  const fixture=readFileSync(new URL('./neighborhoodGroupIndex.integration.test.js',import.meta.url),'utf8');
+  assert.ok(fixture.includes("&&!fault?.startsWith('union_')"));
+  for(const tag of ['custom-cohort-selected-union-v2:group-contribute','custom-cohort-selected-union-v2:head-insert',
+    'custom-cohort-v2-continuation:yield'])assert.ok(fixture.includes(tag));
+  assert.ok(fixture.includes("ROLLBACK TO SAVEPOINT synthetic_union_yield"));
 });

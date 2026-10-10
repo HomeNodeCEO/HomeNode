@@ -37,9 +37,9 @@ function anchor(v){if(v===null)return null;const a=data(v,['command_id','union_r
   if(typeof a.command_id!=='string'||!UUID.test(a.command_id)||!Number.isInteger(a.sequence)||a.sequence<1||a.sequence>2000001)fail('corrupt');
   return Object.freeze({...a,union_reference:ref(a.union_reference),eligibility_reference:ref(a.eligibility_reference),receipt_reference:ref(a.receipt_reference)});}
 function one(r){if(r?.rowCount!==1||r.rows?.length!==1)fail('claim_lost');return r.rows[0];}
-/** UNMOUNTED sixth-pass storage candidate, not source/selection authority.
- * Runtime use requires the additive native head/checkpoint/deferred guards and
- * an actual bounded current-authorized original owner. The owner must reopen
+/** Dormant sixth-pass storage only, not source/selection authority.
+ * The additive native head/checkpoint/deferred guards and actual bounded
+ * current-authorized original owner are mandatory. The owner must reopen
  * every original and ALL current/ending fences, then atomically retain head,
  * receipt, checkpoint and single-use continuation in this caller transaction.
  * No caller ordinal/cursor/DONE/decision/observations or source callback. */

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { prepareCohortSelectedEvidenceReceiptV2 as prepare }
   from '../src/services/neighborhoodAssessment/cohortSelectedEvidenceReceiptV2.js';
 import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL as transaction,
@@ -103,4 +104,34 @@ test('sixth candidate plan derives one next ordinal from native head and require
   assert.equal((next.match(/LIMIT \(\$5::integer\+1\)/g)??[]).length,4);
   assert.deepEqual([...new Set([...next.matchAll(/\$(\d+)/g)].map(m=>Number(m[1])))].sort((a,b)=>a-b),
     [1,2,3,4,5,6,7,8,9,10,11]);
+});
+
+test('additive sixth native guard binds exact12 roots/BOTH DONE parents/native next ordinal and atomic continuation',()=>{
+  const name='20261127_custom_cohort_selected_evidence_v2.sql',
+    sql=readFileSync(new URL('../migrations/'+name,import.meta.url),'utf8'),
+    registry=readFileSync(new URL('../src/database/mobileMigrations.js',import.meta.url),'utf8'),
+    owner=readFileSync(new URL('../src/services/neighborhoodAssessment/customCohortContextCapture.js',import.meta.url),'utf8');
+  assert.ok(registry.indexOf(name)>registry.indexOf('20261126_custom_cohort_selected_recorded_eligibility_v2.sql'));
+  for(const m of sql.matchAll(/CREATE (?:TABLE|FUNCTION|TRIGGER|INDEX|CONSTRAINT TRIGGER) (?:app\.)?([a-z0-9_]+)/g))
+    assert.ok(Buffer.byteLength(m[1])<=63,m[1]);
+  for(const s of ["jsonb_array_length(cp->'evidence_refs')=12","cp->'evidence_refs'->11=h.receipt_reference",
+    "(cp->'evidence_refs')-11","fifth_body->'after'->>'done' IS DISTINCT FROM 'true'",
+    "union_body->'after'->>'done' IS DISTINCT FROM 'true'",'ordinal=NEW.sequence',
+    "NEW.eligibility_reference IS DISTINCT FROM fifth.receipt_reference","(SELECT count(*) FROM jsonb_object_keys(body))<>10",
+    'NEW.sequence<>OLD.sequence+1',"prior->'after'->>'done' IS DISTINCT FROM 'false'",
+    'neighborhood_selected_evidence_v2_complete_union_conflict','member.partition_ordinal','p.entry_reference=member.entry_reference',
+    'DEFERRABLE INITIALLY DEFERRED','neighborhood_selected_evidence_v2_orphan_progress',
+    "c.phase<>'frozen_selected_evidence_refs_v2'","job.status<>'retry'",'c.consumed_claim_token IS NOT NULL',
+    'job.claim_token IS NOT NULL','job.lease_expires_at IS NOT NULL','BEFORE TRUNCATE',
+    'CHECK(sequence BETWEEN 1 AND 12000006)',"h.eligibility_reference=OLD.progress_reference",
+    "NEW.status IN ('succeeded','awaiting_selection')",'NEW.attempts<OLD.attempts',
+    "OLD.phase='frozen_selected_evidence_refs_v2' AND NEW.phase<>'frozen_selected_evidence_refs_v2'"])assert.ok(sql.includes(s),s);
+  // No skipping fifth or backing out of sixth: these precise prior rules stay.
+  assert.ok(sql.includes("OLD.checkpoint->>'phase'='frozen_selected_union_refs_v2' AND NEW.checkpoint->>'phase' NOT IN ('frozen_selected_union_refs_v2','frozen_selected_eligibility_refs_v2')"));
+  assert.ok(sql.includes("OLD.phase='frozen_selected_union_refs_v2' AND NEW.phase NOT IN ('frozen_selected_union_refs_v2','frozen_selected_eligibility_refs_v2')"));
+  assert.ok(sql.includes("NEW.phase='frozen_selected_eligibility_refs_v2' AND OLD.phase NOT IN ('frozen_selected_union_refs_v2','frozen_selected_eligibility_refs_v2')"));
+  for(const s of ["progressingSelectedEvidence?'readForEvidence'","'subjectAndNextSelectedCombinedAccountPackage'",
+    'prepareCohortSelectedEvidenceReceiptV2','evidenceStore.advance','checkpoint.evidence_refs.slice(0,11)',
+    'progressOriginalFrozenCaptureJobSelectedEvidenceReferencesV2'])assert.ok(owner.includes(s),s);
+  assert.doesNotMatch(sql,/DISABLE TRIGGER|DROP TABLE|DROP TRIGGER|DELETE FROM|UPDATE app\.report|SET attempts=0|ST_DWithin/);
 });

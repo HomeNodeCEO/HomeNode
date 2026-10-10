@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL as TRANSACTION,
-  NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL as COMBINED }
+  NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL as COMBINED,
+  NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL as NEXT_COMBINED }
   from '../../src/services/neighborhoodAssessment/neighborhoodSelectedTransactionOriginalPackageV2.js';
 import { NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL as AMENITY }
   from '../../src/services/neighborhoodAssessment/neighborhoodSelectedAmenityOriginalPackageV2.js';
@@ -14,14 +15,18 @@ import { NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_LIMITS as L }
  * native checkpoint/selection/current/end authority; these TEMP rows do not.
  */
 export async function runNeighborhoodSelectedPacketByteGateDatabaseChecks(client){
-  const operation=randomUUID(),generation=randomUUID(),organization=randomUUID(),profile='a'.repeat(64),cadProfile='b'.repeat(64),
+  const operation=randomUUID(),generation=randomUUID(),organization=randomUUID(),command=randomUUID(),profile='a'.repeat(64),cadProfile='b'.repeat(64),
     tableNames={neighborhood_frozen_source_rows:'selected_gate_originals',neighborhood_frozen_typed_v2_rows:'selected_gate_typed',
       neighborhood_frozen_cad_improvement_rows:'selected_gate_cad',neighborhood_frozen_typed_cad_rows:'selected_gate_cad_typed',
       neighborhood_custom_cohort_stock_accounts:'selected_gate_stock',neighborhood_custom_cohort_capture_jobs:'selected_gate_jobs',
       neighborhood_custom_cohort_selected_union_v2_heads:'selected_gate_heads',neighborhood_cohort_evidence_blobs:'selected_gate_blobs',
-      neighborhood_custom_cohort_selected_union_v2_rows:'selected_gate_union'},
+      neighborhood_custom_cohort_selected_union_v2_rows:'selected_gate_union',
+      neighborhood_custom_cohort_v2_selection_intents:'selected_gate_intents',
+      neighborhood_custom_cohort_selected_eligibility_v2_heads:'selected_gate_fifth',
+      neighborhood_custom_cohort_selected_evidence_v2_heads:'selected_gate_sixth'},
     substitute=text=>{for(const [name,temp] of Object.entries(tableNames))text=text.replaceAll(`app.${name}`,`pg_temp.${temp}`);
-      return text.replaceAll('app.neighborhood_selected_union_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)','true');};
+      for(const phase of ['union','eligibility','evidence'])text=text.replaceAll(`app.neighborhood_selected_${phase}_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)`,'true');
+      return text;};
   await client.query('BEGIN');
   try{
     await client.query("SET LOCAL statement_timeout='5000ms'");
@@ -39,21 +44,34 @@ export async function runNeighborhoodSelectedPacketByteGateDatabaseChecks(client
       account_id text,original_payload_sha256 text,typed jsonb,PRIMARY KEY(generation_id,profile_sha256,kind,row_key)) ON COMMIT DROP`);
     await client.query(`CREATE TEMP TABLE selected_gate_stock(operation_id uuid,account_id text COLLATE "C",parcel_count bigint,
       PRIMARY KEY(operation_id,account_id)) ON COMMIT DROP`);
-    await client.query(`CREATE TEMP TABLE selected_gate_jobs(operation_id uuid PRIMARY KEY,organization_id uuid,account_id text,checkpoint jsonb) ON COMMIT DROP`);
-    await client.query(`CREATE TEMP TABLE selected_gate_heads(operation_id uuid,organization_id uuid,receipt_reference jsonb) ON COMMIT DROP`);
+    await client.query(`CREATE TEMP TABLE selected_gate_jobs(operation_id uuid PRIMARY KEY,organization_id uuid,account_id text,checkpoint jsonb,
+      status text,claim_token uuid,lease_expires_at timestamptz,cancellation_requested_at timestamptz,context_sha256 text) ON COMMIT DROP`);
+    await client.query(`CREATE TEMP TABLE selected_gate_heads(operation_id uuid,organization_id uuid,receipt_reference jsonb,command_id uuid,sequence integer) ON COMMIT DROP`);
+    await client.query(`CREATE TEMP TABLE selected_gate_intents(operation_id uuid,organization_id uuid,command_id uuid) ON COMMIT DROP`);
+    await client.query(`CREATE TEMP TABLE selected_gate_fifth(operation_id uuid,organization_id uuid,command_id uuid,union_reference jsonb,
+      receipt_reference jsonb,sequence integer) ON COMMIT DROP`);
+    await client.query(`CREATE TEMP TABLE selected_gate_sixth(operation_id uuid,organization_id uuid,command_id uuid,union_reference jsonb,
+      eligibility_reference jsonb,receipt_reference jsonb,sequence integer) ON COMMIT DROP`);
     await client.query(`CREATE TEMP TABLE selected_gate_blobs(organization_id uuid,content_sha256 text,canonical_utf8_bytes bigint,canonical_utf8 text) ON COMMIT DROP`);
     await client.query(`CREATE TEMP TABLE selected_gate_union(operation_id uuid,organization_id uuid,account_id text,ordinal integer,
       PRIMARY KEY(operation_id,organization_id,ordinal)) ON COMMIT DROP`);
     await client.query("INSERT INTO pg_temp.selected_gate_stock VALUES($1,'A',1),($1,'B',1)",[operation]);
-    await client.query("INSERT INTO pg_temp.selected_gate_jobs VALUES($1,$2,'A','{}')",[operation,organization]);
-    const body=JSON.stringify({format:'cohort_selected_union_receipt_v2',after:{done:true}}),bytes=Buffer.byteLength(body);
-    await client.query('INSERT INTO pg_temp.selected_gate_heads VALUES($1,$2,$3)',[operation,organization,
-      JSON.stringify({content_sha256:profile,canonical_utf8_bytes:String(bytes)})]);
+    await client.query("INSERT INTO pg_temp.selected_gate_jobs VALUES($1,$2,'A','{}','running',$3,clock_timestamp()+interval '1 hour',NULL,NULL)",[operation,organization,randomUUID()]);
+    const body=JSON.stringify({format:'cohort_selected_union_receipt_v2',sequence:1,after:{done:true},after_selected_count:1}),bytes=Buffer.byteLength(body),
+      unionRef={content_sha256:profile,canonical_utf8_bytes:String(bytes)},
+      fifthBody=JSON.stringify({format:'cohort_selected_recorded_eligibility_receipt_v2',sequence:1,union_reference:unionRef,
+        command_id:command,selected_stock_count:1,after:{selected_ordinal:1,done:true}}),fifthBytes=Buffer.byteLength(fifthBody),
+      fifthRef={content_sha256:'c'.repeat(64),canonical_utf8_bytes:String(fifthBytes)};
+    await client.query('INSERT INTO pg_temp.selected_gate_heads VALUES($1,$2,$3,$4,1)',[operation,organization,JSON.stringify(unionRef),command]);
+    await client.query('INSERT INTO pg_temp.selected_gate_intents VALUES($1,$2,$3)',[operation,organization,command]);
+    await client.query('INSERT INTO pg_temp.selected_gate_fifth VALUES($1,$2,$3,$4,$5,1)',[operation,organization,command,JSON.stringify(unionRef),JSON.stringify(fifthRef)]);
     await client.query('INSERT INTO pg_temp.selected_gate_blobs VALUES($1,$2,$3,$4)',[organization,profile,bytes,body]);
+    await client.query('INSERT INTO pg_temp.selected_gate_blobs VALUES($1,$2,$3,$4)',[organization,fifthRef.content_sha256,fifthBytes,fifthBody]);
     await client.query("INSERT INTO pg_temp.selected_gate_union VALUES($1,$2,'B',1)",[operation,organization]);
     for(const {withCad,transactions,statement} of [
       {withCad:false,transactions:true,statement:TRANSACTION},
       {withCad:true,transactions:true,statement:COMBINED},
+      {withCad:true,transactions:true,statement:NEXT_COMBINED},
       {withCad:true,transactions:false,statement:AMENITY}]){
       for(const name of ['selected_gate_originals','selected_gate_typed','selected_gate_cad','selected_gate_cad_typed'])
         await client.query(`DELETE FROM pg_temp.${name}`);
@@ -116,7 +134,7 @@ export async function runNeighborhoodSelectedPacketByteGateDatabaseChecks(client
       assert.equal(empty.page_count,0);assert.equal(empty.packet_oversize,false);assert.equal(empty.page_json,'[]');
     }
     console.info('[native-selected-transaction-combined-raw-byte-gate-DATA-v2]',{both_fixed_plans:true,
-      separate_selected_amenity_fixed_plan:true,total_fixed_plans:3,original_cap:250,
+      separate_selected_amenity_fixed_plan:true,next_selected_combined_fixed_plan:true,total_fixed_plans:4,original_cap:250,
       mixed_families_share_one_byte_gate:true,actual_raw_size_rows:250,actual_raw_over_limit_encoded_rows:0,
       count_251_reads_zero_raw_sizes_and_zero_encoded_members:true,original_1MB_gate:true,
       raw_fit_exact_encoding_over_refused:true,missing_cache_not_skipped:true,missing_subject_zero_payload:true,

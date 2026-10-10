@@ -1,5 +1,57 @@
 # Complete larger-area Custom neighborhood studies
 
+## Sixth-pass bounded original owner implemented; native execution pending (2026-10-10)
+
+This supersedes the older UNMOUNTED preparation notes below. The dormant sixth
+pass now extends the actual bounded database owner, not a caller DATA adapter.
+The additive 20261127 migration binds a new native head to the exact DONE union,
+DONE fifth pass and immutable command. Its exact 12-root matcher preserves all
+eleven parent roots. Native next-entry/sequence/previous/member/terminal-count
+guards, no backward/skipped phase transitions and deferred orphan-COMMIT refusal
+require receipt/head/checkpoint/single-use continuation to commit atomically.
+The old nine/ten and ten/eleven-root intent readers remain strict; a distinct
+eleven/twelve-root reader requires BOTH native DONE parents and the exact consumed
+continuation or ordinary higher failure attempt, with unchanged workspace/choice.
+
+Each actual owner step reopens the full issued source graph/geography/identity,
+traversal/partition/catalog/native union and DONE fifth receipt, then independently
+reconciles every selected stock/CAD/whole all-date transaction original, required
+subject fallback, ENTIRE neutral cache and literal native partition/catalog/choice.
+One single-use child shares the aggregate 250-original admission, raw and exact
+byte gates; separate current and ending CAD/market rights, actor/assignment/draft/
+subject/claim/pin/workspace fences are mandatory. The 256-query/32-MB/60-second/
+16-KB whole-owner and 128-query/8-MB transport/2.1-MB output child limits are not
+widened. The retained receipt is metadata only, with no original, typed-value,
+diagnostic or decision copies. Every later semantic consumer must reopen originals
+again; references, counts and acknowledgements are not source or selection authority.
+
+Native B-only/EMPTY/both-account complete-graph fixtures are authored for actual
+original/cache/native-entry/ending-fence forgeries, insert/update/checkpoint/yield
+rollback, deferred orphan REAL COMMIT, lost REAL COMMIT ACK, fresh single-use
+reclaim without duplicated ordinals/history, ordinary failure replacement and
+fresh terminal EMPTY. A fourth rolled-back TEMP byte-plan block covers the next
+combined SQL; TEMP substitution is explicitly DATA only, never authority. Local
+124 focused synthetic tests passed with zero failures/skips (4288.9827 ms), plus
+syntax/diff checks. The expanded 13-file source/owner/storage regression run
+also passed all 159 tests, zero failures/skips (710.7487 ms). Native/cloud
+execution for this new slice is still PENDING;
+authored tests and synthetic success are not native or licensed/live acceptance.
+
+Separately, protected-chain #1241 exact `291f287d` now passed all 14 cloud checks.
+Its complete decoded native job 114299602222 passed migration/subject/index/edge/
+bootstrap suites with zero failures/skips, including the standalone CAD raw-byte
+fix. It still needs an ACTUAL included exact-head review before protected merge;
+automatic skipped reviews are not reviews. The conservative request gate remains
+20:39:59 UTC AND fresh repository-wide actual review activity/head/rules/checks.
+No request, forced/paid review, quota or required-check bypass has occurred.
+
+All stages remain inactive: no HTTP route/worker/scheduler/production activation,
+source grants, pin transfer, accepted reports, genuine Hardy choices or Apply
+changed. Licensed >50k/5-mile/10-mile/city/retrospective, semantic eligibility,
+exact complete-population medians/COD/calendar quarters, coherent publication,
+durable workers/terminal pin retirement and live Hardy reload acceptance remain
+open. Heavy suites run only in cloud; Windows Indexer remains untouched.
+
 ## Sixth-pass preparation and newly completed cloud proofs (2026-10-10)
 
 The previously pending exact heads now have decoded complete native results:

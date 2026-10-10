@@ -26,7 +26,7 @@ function setup({auto=false,next=member,native=null,corrupt=false,readback=false}
   return {calls,options,owner:repository(options)};
 }
 
-test('unmounted sixth storage binds BOTH DONE native parents and derives next ordinal without caller membership',async()=>{
+test('dormant sixth storage binds BOTH DONE native parents and derives next ordinal without caller membership',async()=>{
   const {owner,calls}=setup();assert.equal(await owner.read(),null);
   assert.deepEqual(await owner.readNextSelectedEntry(),member);
   const head=await owner.advance(null,ref(3));assert.deepEqual(head,{command_id:id(3),union_reference:ref(1),

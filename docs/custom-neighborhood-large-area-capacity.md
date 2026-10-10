@@ -43,6 +43,13 @@ outstanding. It has no HTTP route, worker/scheduler or production activation.
 Protected-parent integration, exact integrated checks and actual included review
 remain required; skipped review is not review and no paid/forced request is made.
 
+The first seventh-pass cloud attempt at2fbfe1fb failed before native execution:
+the PL/pgSQL condition's CASE expression required parentheses so its THEN did
+not prematurely terminate the IF expression. The migration is corrected and a
+focused regression pins the parenthesized form. Fresh exact-head cloud/native
+verification is required; the failed attempt is not acceptance and is not retried
+as an incident-cancelled run.
+
 ## Closed first-metric candidate passed native cloud verification (2026-10-10)
 
 This supersedes the older pending/authored candidate notes below. Exact

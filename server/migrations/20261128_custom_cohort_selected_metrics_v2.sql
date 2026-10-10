@@ -187,7 +187,7 @@ BEGIN
           RAISE EXCEPTION 'neighborhood_selected_metrics_v2_cell_conflict' USING ERRCODE='55000'; END IF;
       ELSE
         IF key='reported_market_value' OR jsonb_typeof(cell->'exact_value') IS DISTINCT FROM 'string'
-          OR cell->>'unit' IS DISTINCT FROM CASE WHEN key='reported_year_built' THEN 'year' ELSE 'reported_sqft' END
+          OR cell->>'unit' IS DISTINCT FROM (CASE WHEN key='reported_year_built' THEN 'year' ELSE 'reported_sqft' END)
           OR length(cell->>'exact_value')>31 OR length(replace(cell->>'exact_value','.',''))>30
           OR length(split_part(cell->>'exact_value','.',2))>12 OR cell->>'exact_value' !~ '^(0|[1-9][0-9]*)([.][0-9]*[1-9])?$'
           OR (key='reported_residential_area' AND cell->>'exact_value'='0')

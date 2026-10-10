@@ -146,3 +146,22 @@ test('native sixth fault injection stays armed until actual source-ending, DML o
     'evidence_orphan_commit','evidence_head_ending'])assert.ok(fixture.includes(tag),tag);
   assert.ok(fixture.includes("'evidence_orphan_commit'].includes(refsFault)"));
 });
+
+test('native intent truncate proof includes every command FK child without bypassing triggers or weakening refusal',()=>{
+  const fixture=readFileSync(new URL('./neighborhoodGroupIndex.integration.test.js',import.meta.url),'utf8'),
+    statement=fixture.match(/'TRUNCATE app\.neighborhood_custom_cohort_v2_selection_intents, ([^']+)'/);
+  assert.ok(statement,'multi-table proof must reach the native immutable triggers');
+  const children=statement[1].split(', ');
+  for(const [migration,table] of [
+    ['20261125_custom_cohort_selected_union_replay_v2.sql','app.neighborhood_custom_cohort_selected_union_v2_heads'],
+    ['20261126_custom_cohort_selected_recorded_eligibility_v2.sql','app.neighborhood_custom_cohort_selected_eligibility_v2_heads'],
+    ['20261127_custom_cohort_selected_evidence_v2.sql','app.neighborhood_custom_cohort_selected_evidence_v2_heads']]){
+    const sql=readFileSync(new URL('../migrations/'+migration,import.meta.url),'utf8');
+    assert.ok(sql.includes('REFERENCES app.neighborhood_custom_cohort_v2_selection_intents(command_id) ON DELETE RESTRICT ON UPDATE RESTRICT'));
+    assert.ok(children.includes(table),table);
+  }
+  assert.equal(children.length,3);
+  assert.doesNotMatch(statement[0],/CASCADE|DISABLE|DROP/);
+  assert.ok(fixture.includes("'TRUNCATE app.neighborhood_custom_cohort_v2_selection_intents')),\n          /cannot truncate a table referenced in a foreign key constraint/"));
+  assert.ok(fixture.includes('/selection_intent_immutable|custom_cohort_context_immutable/'));
+});

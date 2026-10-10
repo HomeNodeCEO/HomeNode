@@ -1,5 +1,22 @@
 # Complete larger-area Custom neighborhood studies
 
+## Sixth native predecessor test corrected; full rerun required (2026-10-10)
+
+Exact `077f4d59` cloud native job 114303783811 passed 417 migration tests and
+one subject test, but the index suite failed four cases (9 passed, zero skipped).
+All four stopped at the older multi-table intent-TRUNCATE assertion, before the
+new selected-evidence traversal. The sixth head adds another command foreign key;
+PostgreSQL correctly refused the incomplete TRUNCATE table list before reaching
+the existing immutable triggers. No sixth-pass native acceptance was established.
+
+The negative test now includes all three native command-FK children to reach
+the immutable triggers, while retaining the separate single-table FK-refusal
+test, unchanged strict error assertion and unchanged-state checks. A focused
+regression pins every child against its additive migration. No foreign key or
+trigger is disabled, removed or bypassed; no CASCADE is used. This is a test
+correction, not a retry of an incident cancellation. The corrected exact head
+requires a fresh full cloud run. All internal stages remain inactive.
+
 ## Sixth-pass bounded original owner implemented; native execution pending (2026-10-10)
 
 This supersedes the older UNMOUNTED preparation notes below. The dormant sixth

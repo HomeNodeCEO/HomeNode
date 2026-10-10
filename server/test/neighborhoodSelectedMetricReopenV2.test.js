@@ -42,10 +42,10 @@ test('actual owner only admits exact12 roots and reopens originals before presen
     "if((progressingSelectedEvidence||readingSelectedMetricSource)&&!same(await evidenceStore.read(),evidenceAnchor))",
     'readOriginalFrozenCaptureJobFirstSelectedMetricReferencesV2'])assert.ok(owner.includes(s),s);
   assert.equal((owner.match(/progressingSelectedEvidence\|\|readingSelectedMetricSource\?'readForEvidence'/g)??[]).length,2);
-  const firstRead=owner.indexOf('firstSelectedEntry=await (readingSelectedMetricSource?'),
+  const firstRead=owner.indexOf('firstSelectedEntry=await (progressingSelectedMetrics?'),
     originals=owner.indexOf("'subjectAndFirstSelectedMetricAccountPackage'",firstRead),
     compare=owner.indexOf('decision=resolveNeighborhoodOriginalAccountEligibilityV2',originals),
-    result=owner.indexOf("status:'current_authorized_first_selected_metric_originals_reopened'",compare);
+    result=owner.indexOf("'current_authorized_first_selected_metric_originals_reopened'",compare);
   assert.ok(firstRead>0&&originals>firstRead&&compare>originals&&result>compare);
   const row=owner.indexOf('const metricRowCandidate=',compare),ending=owner.indexOf(
     'if((progressingSelectedEvidence||readingSelectedMetricSource)&&!same(await evidenceStore.read(),evidenceAnchor))',row);

@@ -50,6 +50,7 @@ import { createCustomCohortRecordedPartitionV2Repository }
 import { createCustomCohortRecordedCatalogV2Repository } from '../src/services/neighborhoodAssessment/customCohortRecordedCatalogV2Repository.js';
 import { prepareCohortRecordedCatalogReceiptV2 } from '../src/services/neighborhoodAssessment/cohortRecordedCatalogReceiptV2.js';
 import { createCustomCohortSelectedEligibilityV2Repository } from '../src/services/neighborhoodAssessment/customCohortSelectedEligibilityV2Repository.js';
+import { createCustomCohortSelectedMetricsV2Repository } from '../src/services/neighborhoodAssessment/customCohortSelectedMetricsV2Repository.js';
 import { createCustomCohortSelectedEvidenceV2Repository } from '../src/services/neighborhoodAssessment/customCohortSelectedEvidenceV2Repository.js';
 import { createCustomCohortV2ContinuationRepository }
   from '../src/services/neighborhoodAssessment/customCohortV2ContinuationRepository.js';
@@ -116,7 +117,8 @@ import { NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSelectedAmenityOriginalPackageV2.js';
 import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL,
   NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,
-  NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL }
+  NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,
+  NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSelectedTransactionOriginalPackageV2.js';
 import { expandCohortDiagnosticCompressedJsonV1 } from './helpers/expandCohortDiagnosticCompressedJsonV1.js';
 
@@ -1761,7 +1763,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       refsCalls.push(config.text);
       refsQueryParameters.push(config.values);
       if(config.text.includes('neighborhood-cohort-blob:insert */'))refsBlobPuts.push(config.values[3]);
-      const orphanUnionYield=['union_orphan_commit','eligibility_orphan_commit','evidence_orphan_commit'].includes(refsFault)&&config.text.includes('custom-cohort-v2-continuation:yield');
+      const orphanUnionYield=['union_orphan_commit','eligibility_orphan_commit','evidence_orphan_commit','metrics_orphan_commit'].includes(refsFault)&&config.text.includes('custom-cohort-v2-continuation:yield');
       // Negative native guard test: execute the REAL yield, then roll back ONLY
       // that statement. The earlier real group/head/root writes remain pending;
       // REAL COMMIT must reject orphan progress. No fabricated SQL result.
@@ -1778,7 +1780,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         if(fault==='evidence_draft_ending')await client.query(
           "UPDATE app.custom_appraisal_workfiles SET status='archived' WHERE assignment_file_id=$1",[assignment]);
       }
-      if(config.text===NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL
+      if([NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
         &&['metric_assignment_ending','metric_draft_ending'].includes(refsFault)){
         const fault=refsFault;refsFault=null;
         if(fault==='metric_assignment_ending')await client.query(
@@ -1808,7 +1810,12 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         ['evidence_insert_rollback','custom-cohort-selected-evidence-v2:head-insert'],
         ['evidence_advance_rollback','custom-cohort-selected-evidence-v2:head-advance'],
         ['evidence_checkpoint_rollback','custom-cohort-job:checkpoint-save'],
-        ['evidence_yield_rollback','custom-cohort-v2-continuation:yield']]){
+        ['evidence_yield_rollback','custom-cohort-v2-continuation:yield'],
+        ['metrics_row_rollback','custom-cohort-selected-metrics-v2:row-insert'],
+        ['metrics_insert_rollback','custom-cohort-selected-metrics-v2:head-insert'],
+        ['metrics_advance_rollback','custom-cohort-selected-metrics-v2:head-advance'],
+        ['metrics_checkpoint_rollback','custom-cohort-job:checkpoint-save'],
+        ['metrics_yield_rollback','custom-cohort-v2-continuation:yield']]){
         if(refsFault===fault&&config.text.includes(tag)){refsFault=null;throw new Error(`actual ${fault}`);}
       }
       if(config.text.includes('custom-cohort-v2-selection-wait:release')&&refsFault==='wait_release_rollback'){
@@ -1819,7 +1826,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       }
       if([NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL,
         NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,
-        NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
+        NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
         &&['cad_original_cell','cad_original_missing','cad_original_text','cad_original_bytes'].includes(refsFault)){
         const fault=refsFault;refsFault=null;const key=config.text===NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL?'packet_json':'page_json',
           rows=JSON.parse(result.rows[0][key]),row=rows.find(r=>r.kind==='primary');
@@ -1831,7 +1838,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       }
       if((Object.values(NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL).includes(config.text)
         ||[NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,
-          NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL].includes(config.text))
+          NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL].includes(config.text))
         &&['tx_original_mismatch','tx_original_missing','tx_original_text'].includes(refsFault)){
         const fault=refsFault,key=Object.values(NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL).includes(config.text)?'packet_json':'page_json';
         refsFault=null;const rows=JSON.parse(result.rows[0][key]);
@@ -1846,7 +1853,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         NEIGHBORHOOD_STOCK_SUBJECT_AND_FIRST_SELECTED_PACKAGE_V2_SQL,NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_ELIGIBILITY_PACKAGE_V2_SQL,
         NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL,
         NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,
-        NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
+        NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
         &&['stock_cells_mismatch','stock_cells_missing','stock_cells_original'].includes(refsFault)){
         // Corrupt only the transient transport, never the immutable original or
         // installed cache. Correct hashes/counts cannot launder changed cells.
@@ -1883,7 +1890,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         }
       }
       if(config.text.includes('custom-cohort-selected-eligibility-v2:next-selected-entry')||config.text.includes('custom-cohort-selected-evidence-v2:next-selected-entry')
-        ||config.text.includes('custom-cohort-selected-evidence-v2:first-metric-entry')){
+        ||config.text.includes('custom-cohort-selected-evidence-v2:first-metric-entry')||config.text.includes('custom-cohort-selected-metrics-v2:next-selected-entry')){
         if(refsFault==='eligibility_entry_ending'){refsFault='eligibility_entry_after_first';return result;}
         if(['eligibility_entry_wrong','eligibility_entry_after_first','eligibility_entry_partition','eligibility_entry_missing'].includes(refsFault)){
           const fault=refsFault;refsFault=null;return {...result,rows:result.rows.map(r=>fault==='eligibility_entry_missing'
@@ -2012,13 +2019,14 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         ||config.text===NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL
         ||config.text===NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL
         ||config.text===NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL
+        ||config.text===NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL
         ||Object.values(NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL).includes(config.text)
         ||Object.values(NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL).includes(config.text)){
         // The ending-header fault is consumed by the later second metadata
         // read, not by the page query. Keep it armed like the COMMIT fault.
         const fault=refsFault;if(!['commit','cad_header','transaction_header','wait_release_rollback','intent_resume_rollback'].includes(fault)
           &&!fault?.startsWith('partition_')&&!fault?.startsWith('catalog_')&&!fault?.startsWith('union_')&&!fault?.startsWith('eligibility_')
-          &&!fault?.startsWith('evidence_')&&!fault?.startsWith('metric_'))refsFault=null;
+          &&!fault?.startsWith('evidence_')&&!fault?.startsWith('metric_')&&!fault?.startsWith('metrics_'))refsFault=null;
         if(fault==='license')await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
         if(fault==='role')await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);
         if(fault==='subject')await client.query("UPDATE app.appraisal_subject_snapshots SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2000') WHERE id=$1",[sourceSnapshot]);
@@ -4327,7 +4335,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         // row triggers. Include ALL children to exercise the immutable guards
         // too, never remove the FK or disable a trigger to reach them.
         await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
-          'TRUNCATE app.neighborhood_custom_cohort_v2_selection_intents, app.neighborhood_custom_cohort_selected_union_v2_heads, app.neighborhood_custom_cohort_selected_eligibility_v2_heads, app.neighborhood_custom_cohort_selected_evidence_v2_heads')),
+          'TRUNCATE app.neighborhood_custom_cohort_v2_selection_intents, app.neighborhood_custom_cohort_selected_union_v2_heads, app.neighborhood_custom_cohort_selected_eligibility_v2_heads, app.neighborhood_custom_cohort_selected_evidence_v2_heads, app.neighborhood_custom_cohort_selected_metrics_v2_heads')),
         /selection_intent_immutable|custom_cohort_context_immutable/);
         for(const set of ["status='awaiting_selection',claim_token=NULL,lease_expires_at=NULL",'checkpoint=NULL',
           "status='succeeded',context_sha256=repeat('a',64)"])
@@ -4589,7 +4597,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           for(const table of tables.filter(key=>finalUnion[key].length))await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
             `DELETE FROM app.neighborhood_custom_cohort_selected_union_v2_${table} WHERE operation_id=$1`,[refsOperation])),/immutable/);
           await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
-            'TRUNCATE app.neighborhood_custom_cohort_selected_union_v2_rows')),/immutable|mutation|not permitted/);
+            'TRUNCATE app.neighborhood_custom_cohort_selected_union_v2_rows, app.neighborhood_custom_cohort_selected_metrics_v2_rows')),/immutable|mutation|not permitted/);
           assert.deepEqual(await readUnion(),finalUnion);
           // Reopen the ACTUAL completed native union under its freshly consumed
           // claim. No caller receipt, material, subject account, category or
@@ -5339,6 +5347,173 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             prior_heads_intent_union_eligibility_pins_workspace_history_reports_unchanged:true,
             complete_original_reopening_traversal:true,semantic_eligibility:false,statistics:false,publication:false,
             licensed_acquisition:false,worker_activation:false,production_speed:false});
+          // Seventh pass: actual bounded owner, not a caller row/roster/hash ACK.
+          // Reopen every original/ENTIRE cache again for EACH native ordinal,
+          // then atomically retain only the closed reported row and native progress.
+          {
+          const metricsMethod='progressOriginalFrozenCaptureJobSelectedMetricReferencesV2',metricsQueries=[],
+            metricsStep=async()=>{const from=refsCalls.length;try{return await cadOwner()[metricsMethod](refsInput,{captureJobClaim:liveClaim});}
+              finally{metricsQueries.push(refsCalls.length-from-3);}},
+            readMetrics=async()=>(await pool.query(`SELECT h.*,b.canonical_utf8 FROM app.neighborhood_custom_cohort_selected_metrics_v2_heads h
+              JOIN app.neighborhood_cohort_evidence_blobs b ON b.organization_id=h.organization_id
+                AND b.content_sha256=h.receipt_reference->>'content_sha256' AND b.canonical_utf8_bytes::text=h.receipt_reference->>'canonical_utf8_bytes'
+              WHERE h.operation_id=$1`,[refsOperation])).rows,
+            readMetricRows=async()=>(await pool.query(`SELECT r.*,b.canonical_utf8 FROM app.neighborhood_custom_cohort_selected_metrics_v2_rows r
+              JOIN app.neighborhood_cohort_evidence_blobs b ON b.organization_id=r.organization_id
+                AND b.content_sha256=r.row_reference->>'content_sha256' AND b.canonical_utf8_bytes::text=r.row_reference->>'canonical_utf8_bytes'
+              WHERE r.operation_id=$1 ORDER BY r.ordinal`,[refsOperation])).rows,
+            metricsSnapshot=async()=>({heads:await readMetrics(),rows:await readMetricRows(),job:await continuationJob(),continuation:await continuationRow(),blobs:await refsBlobCount()}),
+            metricsUnchanged=async snapshot=>{assert.deepEqual(await metricsSnapshot(),snapshot);
+              assert.deepEqual(await readEvidence(),completedEvidence.heads);assert.deepEqual(await readEligibility(),completedEligibility.heads);await stablePrior();},
+            authorityRefusal=async snapshot=>{const beforeAuthority=await readEvidenceAuthority();
+              for(const [fault,reason] of [['metric_assignment_ending',/assignment_access_denied/],['metric_draft_ending',/private_source_read_only/]]){
+                const from=refsCalls.length;refsFault=fault;await assert.rejects(metricsStep(),reason);assert.equal(refsFault,null);
+                assert.equal(refsCalls.slice(from).filter(sql=>sql===NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL).length,1);
+                assert.ok(!refsCalls.slice(from).some(sql=>/custom-cohort-selected-metrics-v2:(row-insert|head-insert|head-advance)|custom-cohort-v2-continuation:yield/.test(sql)));
+                await metricsUnchanged(snapshot);assert.deepEqual(await readEvidenceAuthority(),beforeAuthority);
+              }};
+          const initialMetrics=await metricsSnapshot();assert.deepEqual(initialMetrics.heads,[]);assert.deepEqual(initialMetrics.rows,[]);
+          await authorityRefusal(initialMetrics);
+          await assert.rejects(freshRefsOwner()[metricsMethod](refsInput,{captureJobClaim:liveClaim}),/CAD_source_policy_required/);
+          await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+          const denied=refsCalls.length;await assert.rejects(metricsStep(),/market_data_access_denied/);
+          assert.ok(!refsCalls.slice(denied).some(sql=>sql.includes('selection-intent:metrics-read')||sql.includes('custom-cohort-selected-metrics-v2:')||sql===NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL));
+          await metricsUnchanged(initialMetrics);await setFixtureGrant(pool,organization,fixtureGrant(organization));
+          for(const [fault,reason] of [['metrics_insert_rollback',/actual metrics_insert_rollback/],
+            ['metrics_checkpoint_rollback',/actual metrics_checkpoint_rollback/],['metrics_yield_rollback',/actual metrics_yield_rollback/],
+            ['metrics_orphan_commit',/orphan_progress/],['subject',/subject_changed/],['claim',/claim_lost/],
+            ['cad_header',/CAD_cache_unavailable/],['transaction_header',/cache_unavailable/],
+            ['cad_license',/market_data_access_denied/],['license',/market_data_access_denied/]]){
+            refsFault=fault;await assert.rejects(metricsStep(),reason);assert.equal(refsFault,null);await metricsUnchanged(initialMetrics);
+            if(fault==='cad_license')await setCadFixtureGrant(pool,organization,cadGrant);
+            if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+          }
+          if(selectedCount){
+            for(const [fault,reason] of [['metrics_row_rollback',/actual metrics_row_rollback/],
+              ['cad_original_cell',/original_mismatch/],['tx_original_mismatch',/original_mismatch/],
+              ['stock_cells_mismatch',/original_mismatch/],['eligibility_entry_wrong',/selected_union_original_mismatch/],
+              ['eligibility_entry_partition',/partition_original_mismatch/],['eligibility_entry_ending',/selected_union_original_mismatch/]]){
+              refsFault=fault;await assert.rejects(metricsStep(),reason);assert.equal(refsFault,null);await metricsUnchanged(initialMetrics);
+            }
+            // Negative native grammar probes only: these caller-forged DATA
+            // rows are NEVER accepted as original/membership authority.
+            const candidate=metric.metric_row_candidate;
+            for(const mutate of [r=>{r.effective_date='2001-01-01';},r=>{r.observation_period.start_date='2001-01-01';},
+              r=>{r.subject_housing={state:'unknown',category:null};},r=>{r.evidence_reference=r.union_reference;},
+              r=>{r.selected_entry.ordinal++;},r=>{r.metrics.reported_site_area.exact_value='01';},
+              r=>{r.metrics.reported_site_area.recorded_comparison_eligible=!r.metrics.reported_site_area.recorded_comparison_eligible;},
+              r=>{r.metrics.reported_market_value={complete_observed_parts:true,recorded_comparison_eligible:r.housing_comparison==='matching',exact_value:'1000',unit:'USD'};},
+              r=>{r.metrics.reported_year_built={complete_observed_parts:true,recorded_comparison_eligible:r.housing_comparison==='matching',exact_value:'9999',unit:'year'};}]){
+              await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
+                const row=structuredClone(candidate);mutate(row);
+                const blobs=createNeighborhoodCohortBlobRepository(client,organization),rowReference=await blobs.put(canonicalAssessmentJson(row)),
+                  zero={reported_year_built:0,reported_residential_area:0,reported_site_area:0},
+                  receipt={format:'cohort_selected_metrics_receipt_v2',command_id:terminal.command_id,
+                    union_reference:terminal.union_reference,eligibility_reference:completedEligibility.heads[0].receipt_reference,
+                    evidence_reference:completedEvidence.heads[0].receipt_reference,selected_stock_count:selectedCount,sequence:1,previous:null,
+                    before:{selected_ordinal:0,done:false},after:{selected_ordinal:1,done:false},selected_entry:candidate.selected_entry,
+                    row_reference:rowReference,before_counts:zero,after_counts:Object.fromEntries(Object.keys(zero).map(k=>[k,Number(row.metrics[k].recorded_comparison_eligible)]))},
+                  receiptReference=await blobs.put(canonicalAssessmentJson(receipt));
+                await createCustomCohortSelectedMetricsV2Repository({client,claim:liveClaim,scope,actorUserId:actor,
+                  command_id:terminal.command_id,union_reference:terminal.union_reference,
+                  eligibility_reference:completedEligibility.heads[0].receipt_reference,evidence_reference:completedEvidence.heads[0].receipt_reference})
+                  .advance(null,receiptReference,rowReference);
+              }),/neighborhood_selected_metrics_v2_(row|cell)_conflict/);await metricsUnchanged(initialMetrics);
+            }
+            // REAL row insert without head/checkpoint/yield must fail REAL COMMIT.
+            await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
+              const rowReference=await createNeighborhoodCohortBlobRepository(client,organization).put(canonicalAssessmentJson(metric.metric_row_candidate));
+              await client.query(`INSERT INTO app.neighborhood_custom_cohort_selected_metrics_v2_rows
+                (operation_id,organization_id,ordinal,account_id,partition_ordinal,entry_reference,row_reference)
+                SELECT operation_id,organization_id,ordinal,account_id,partition_ordinal,entry_reference,$2::jsonb
+                FROM app.neighborhood_custom_cohort_selected_union_v2_rows WHERE operation_id=$1 AND ordinal=1`,[refsOperation,canonicalAssessmentJson(rowReference)]);
+            }),/query returned no rows|orphan_row/);await metricsUnchanged(initialMetrics);
+          }
+          let previousMetrics=null;const metricAccounts=[];
+          for(let ordinal=1;ordinal<=selectedCount;ordinal++){
+            const before=await metricsSnapshot();
+            if(ordinal>1){refsFault='metrics_advance_rollback';await assert.rejects(metricsStep(),/actual metrics_advance_rollback/);
+              assert.equal(refsFault,null);await metricsUnchanged(before);}
+            refsFault='commit';await assert.rejects(metricsStep(),e=>e.outcome_unknown===true);
+            const state=await metricsSnapshot(),body=JSON.parse(state.heads[0].canonical_utf8),row=JSON.parse(state.rows.at(-1).canonical_utf8);
+            assert.equal(state.heads[0].sequence,ordinal);assert.equal(body.sequence,ordinal);assert.equal(Object.keys(body).length,14);
+            assert.deepEqual(body.previous,previousMetrics);assert.deepEqual(body.before,{selected_ordinal:ordinal-1,done:false});
+            assert.deepEqual(body.after,{selected_ordinal:ordinal,done:false});assert.equal(state.rows.length,ordinal);
+            const account=allSelected?(ordinal===1?'CLOSURE-A':'CLOSURE-B'):'CLOSURE-B';
+            assert.equal(row.selected_entry.account_id,account);assert.equal(row.selected_entry.ordinal,ordinal);
+            assert.equal(row.selected_entry.partition_ordinal,account==='CLOSURE-A'?1:2);
+            assert.deepEqual(row.selected_entry,body.selected_entry);assert.deepEqual(body.row_reference,state.rows.at(-1).row_reference);
+            assert.deepEqual(row.evidence_reference,completedEvidence.heads[0].receipt_reference);
+            assert.deepEqual(row.eligibility_reference,completedEligibility.heads[0].receipt_reference);
+            assert.equal(row.effective_date,metric.retained_effective_date);assert.deepEqual(row.observation_period,refsInput.observationPeriod);
+            assert.deepEqual(row.subject_housing,{state:metric.subject.state,category:metric.subject.category});
+            assert.equal(row.metrics.reported_year_built.exact_value,null);assert.equal(row.metrics.reported_residential_area.exact_value,null);
+            assert.equal(row.metrics.reported_site_area.exact_value,account==='CLOSURE-A'?'8000':'0');
+            assert.equal(row.metrics.reported_site_area.recorded_comparison_eligible,account==='CLOSURE-B'&&observedHousingFixture);
+            assert.deepEqual(row.metrics.reported_market_value,{recorded_comparison_eligible:false,complete_observed_parts:false,exact_value:null,unit:null});
+            assert.ok(Buffer.byteLength(state.rows.at(-1).canonical_utf8)<=4096);
+            assert.ok(!/original_text|typed_value|diagnostic|source_records|payload/.test(state.rows.at(-1).canonical_utf8));
+            assert.equal(state.job.status,'retry');assert.equal(state.job.attempts,before.job.attempts);
+            assert.equal(state.job.last_error_code,before.job.last_error_code);assert.equal(state.job.context_sha256,null);
+            assert.deepEqual(state.job.checkpoint.evidence_refs.slice(0,12),completedEvidence.job.checkpoint.evidence_refs);
+            assert.equal(state.job.checkpoint.evidence_refs.length,13);assert.equal(state.blobs,before.blobs+2);
+            assert.deepEqual(await readEvidence(),completedEvidence.heads);assert.deepEqual(await readEligibility(),completedEligibility.heads);await stablePrior();
+            await assert.rejects(metricsStep(),/claim_lost/);await metricsUnchanged(state);
+            liveClaim=await consume();assert.equal(liveClaim.attempts,state.job.attempts);
+            const pendingState=await metricsSnapshot(),oldFrom=refsCalls.length;
+            for(const method of [evidenceMethod,eligibilityMethod,metricMethod])
+              await assert.rejects(cadOwner()[method](refsInput,{captureJobClaim:liveClaim}),/checkpoint_conflict/);
+            assert.ok(!refsCalls.slice(oldFrom).includes(NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL));
+            await metricsUnchanged(pendingState);metricAccounts.push(account);previousMetrics=state.heads[0].receipt_reference;
+          }
+          const pendingMetrics=await metricsSnapshot();await authorityRefusal(pendingMetrics);
+          for(const [fault,reason] of [[selectedCount?'metrics_advance_rollback':'metrics_insert_rollback',/actual metrics_(advance|insert)_rollback/],
+            ['metrics_checkpoint_rollback',/actual metrics_checkpoint_rollback/],['metrics_yield_rollback',/actual metrics_yield_rollback/],
+            ['metrics_orphan_commit',/orphan_progress/]]){
+            refsFault=fault;await assert.rejects(metricsStep(),reason);assert.equal(refsFault,null);await metricsUnchanged(pendingMetrics);
+          }
+          if(selectedCount){
+            await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).failClaim(liveClaim,'synthetic_metrics_reclaim',{retrySeconds:1}));
+            await new Promise(resolve=>setTimeout(resolve,1100));
+            const [replacement]=await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900}));
+            assert.equal(replacement.operation_id,refsOperation);assert.equal(replacement.attempts,pendingMetrics.job.attempts+1);
+            liveClaim={operation_id:replacement.operation_id,claim_token:replacement.claim_token,attempts:replacement.attempts};
+            assert.deepEqual(await readMetrics(),pendingMetrics.heads);assert.deepEqual(await readMetricRows(),pendingMetrics.rows);
+          }
+          const terminalMetricsFrom=refsCalls.length,metricDone=await metricsStep(),terminalMetrics=await metricsSnapshot();
+          assert.deepEqual(metricDone.progress,{selected_ordinal:selectedCount,done:true});assert.equal(metricDone.selected_entry,null);
+          assert.equal(metricDone.metric_row_reference,null);assert.equal(metricDone.metric_row_retained,false);
+          assert.equal(metricDone.complete_selected_union_metric_population,true);assert.equal(metricDone.original_reconciled_reported_metric_rows_complete,true);
+          assert.equal(metricDone.statistics,'not_established');assert.equal(metricDone.publication,'not_established');assert.equal(metricDone.context_complete,false);
+          assert.deepEqual(metricDone.recorded_comparison_counts,JSON.parse(completedEligibility.heads[0].canonical_utf8).after_counts);
+          assert.equal(terminalMetrics.rows.length,selectedCount);assert.deepEqual(terminalMetrics.rows,pendingMetrics.rows);
+          assert.equal(terminalMetrics.heads[0].sequence,selectedCount+1);assert.equal(terminalMetrics.blobs,pendingMetrics.blobs+1);
+          assert.equal(refsCalls.slice(terminalMetricsFrom).filter(sql=>sql===NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL).length,1);
+          liveClaim=await consume();const finishedMetrics=await metricsSnapshot(),finishedMetricsFrom=refsCalls.length;
+          await assert.rejects(metricsStep(),/selected_metrics_finished/);await metricsUnchanged(finishedMetrics);
+          assert.ok(!refsCalls.slice(finishedMetricsFrom).includes(NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL));
+          if(selectedCount)for(const sql of [
+            'UPDATE app.neighborhood_custom_cohort_selected_metrics_v2_rows SET row_reference=entry_reference WHERE operation_id=$1',
+            'DELETE FROM app.neighborhood_custom_cohort_selected_metrics_v2_rows WHERE operation_id=$1']){
+            await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql,[refsOperation])),/immutable/);await metricsUnchanged(finishedMetrics);
+          }
+          for(const sql of ['TRUNCATE app.neighborhood_custom_cohort_selected_metrics_v2_rows','TRUNCATE app.neighborhood_custom_cohort_selected_metrics_v2_heads']){
+            await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql)),/immutable|mutation|not permitted/);await metricsUnchanged(finishedMetrics);
+          }
+          assert.equal(new Set(metricAccounts).size,selectedCount);assert.ok(metricsQueries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries));
+          console.info('[native-selected-reported-metric-traversal-owner-v2]',{actual_DONE_union_fifth_sixth:true,explicit_empty:selectedCount===0,
+            selected_ordinals:selectedCount,reported_rows:finishedMetrics.rows.length,
+            original_graph_every_selected_original_entire_cache_and_current_ending_authority_reopened:true,
+            native_row_head_checkpoint13_and_single_use_continuation_atomic:true,
+            actual_row_head_checkpoint_yield_rollback_and_orphan_REAL_COMMIT_refused:true,
+            lost_REAL_COMMIT_ack_no_duplicate_and_ordinary_higher_failure_attempt_preserves_history:selectedCount>0,
+            exact_null_vs_site_zero_and_fifth_complete_eligibility_counts_reconciled:true,
+            strict_old_readers_refuse13_fresh_terminal_EMPTY_no_row_or_prior_value:true,
+            maximum_whole_owner_sql_queries:Math.max(...metricsQueries),whole_owner_limits:ORIGINAL_OWNER_LIMITS,
+            prior_heads_selection_workspace_reports_choices_and_pins_unchanged:true,
+            statistics:false,publication:false,licensed_acquisition:false,production_speed:false,worker_activation:false});
+          }
+
           }
           assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,refsOperation)),{status:'running'});
           await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).failClaim(liveClaim,'synthetic_subject_housing_cancel'));

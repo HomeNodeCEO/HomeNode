@@ -2,9 +2,11 @@
 
 ## Whole database-owner budget (2026-10-10, not activated)
 
-The two fixed completed-catalog account readers (original account replay and
-pending workspace target) now share ONE aggregate executor for their entire
-actual database-owner transaction body. Current actor/assignment/private draft,
+The fixed original-backed stock traversal, recorded partition and catalog
+owners, their original-account readers and the pending workspace-target reader
+now share ONE aggregate executor per entire actual database-owner transaction
+body, including their same-transaction successful continuation releases.
+Current actor/assignment/private draft,
 workspace/prior head, job request, retained subject, issued prerequisites, whole
 original/cache/partition/catalog/group and every ending SQL result all charge
 the same lifetime counter: at most 256 SQL attempts and 32,000,000 decoded-row
@@ -27,7 +29,9 @@ shared initial/ending deadline/cancellation, malformed driver rows and original
 SQL failure preservation. Authored native assertions count ALL SQL in each
 actual A/B/empty workspace-target operation and inject an oversized ending
 transport row after original reconciliation; the whole operation must refuse
-with unchanged workspace/history/report and all durable roots. New-head native
+with unchanged workspace/history/report and all durable roots. A separate
+native fault exceeds the whole budget AFTER real catalog DML and must roll back
+its native head/rows/blobs/checkpoint/job before any successful release. New-head native
 and full application CI are pending. This is a budget control, not complete
 catalog semantics, human intent, selected-union/statistics/publication authority,
 licensed acquisition or production-speed acceptance. No deployment, source

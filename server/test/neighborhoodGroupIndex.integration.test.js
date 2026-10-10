@@ -1794,6 +1794,9 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         const fault=refsFault;refsFault=null;
         return fault==='missing_catalog_receipt'?{rowCount:0,rows:[]}:{...result,rows:result.rows.map(row=>({...row,canonical_utf8:'{}'}))};
       }
+      if(config.text.includes('custom-cohort-recorded-catalog-v2:anchor-insert')&&refsFault==='catalog_owner_written_bytes'){
+        refsFault=null;return {...result,rows:result.rows.map(row=>({...row,synthetic_owner_transport_padding:'x'.repeat(32000001)}))};
+      }
       if(config.text.includes('custom-cohort-recorded-catalog-v2:anchor-insert')&&refsFault==='catalog_counts_ending')refsFault='catalog_counts_mismatch';
       if(config.text.includes('custom-cohort-recorded-catalog-v2:counts')&&refsFault==='catalog_read_counts_ending')refsFault='catalog_counts_mismatch_after_first';
       else if(config.text.includes('custom-cohort-recorded-catalog-v2:counts')&&refsFault==='catalog_counts_mismatch_after_first')refsFault='catalog_counts_mismatch';
@@ -3652,6 +3655,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     assert.ok(!refsCalls.slice(catalogUnissuedReadFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));await catalogInitial();
     for(const [fault,reason] of [['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],['subject',/subject_changed/],
       ['claim',/claim_lost/],['cancel',/cancelled/],['transaction_header',/cache_unavailable/],['catalog_counts_ending',/catalog_original_mismatch/],
+      ['catalog_owner_written_bytes',/original_account_owner_byte_limit/],
       ['stock_cells_mismatch',/original_mismatch/],['stock_cells_missing',/original_mismatch/],['stock_cells_original',/original_mismatch/],
       ['partition_entry_ending',/partition_original_mismatch/],['partition_entry_ordinal',/partition_original_mismatch/],
       ['partition_entry_ref',/partition_original_mismatch/],['partition_corrupt_blob',/storage_conflict/]]){
@@ -3923,6 +3927,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     assertBoundedCohortAuthorityAggregates(catalogQueries.map((text,index)=>({text,values:refsQueryParameters[catalogFrom+index]})),
       {actorUserId:actor,organizationId:organization,assignmentFileId:assignment});
     console.info('[native-original-recorded-catalog-issued-owner-v2]',{accounts:2,assigned_groups:1,assigned_accounts:1,unassigned_accounts:1,
+      whole_owner_byte_overflow_after_real_catalog_dml_rolls_back_head_rows_blobs_checkpoint_and_job:true,
       all_whole_originals_entire_neutral_cache_and_entire_partition_entries_replayed:true,outside_conflicting_candidates_not_promoted:true,
       native_exact_next_ordinal_orphan_summary_and_head_without_root_refused:true,current_ending_authority_cache_counts_fences:true,
       lost_commit_resumes_next_account:true,fresh_original_and_partition_empty_terminal_reopen:true,

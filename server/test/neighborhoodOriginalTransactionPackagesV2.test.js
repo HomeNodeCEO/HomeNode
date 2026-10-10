@@ -89,3 +89,18 @@ test('closed hostile DATA and cancellation are refused; fixed original SQL bound
   for(const text of Object.values(SQL))assert.doesNotMatch(text,/FROM (?:core|gis)\.|ST_DWithin|INSERT|UPDATE|DELETE|AVG\(/);
   assert.equal(getNeighborhoodOriginalTransactionPackageV2Profile().profile_ref.id,'neighborhood-original-transaction-packages-v2');
 });
+
+test('fixed original SQL byte admission precedes encoding and retains exact whole-package refusal',()=>{
+  for(const text of Object.values(SQL)){
+    const sizes=text.indexOf('raw_sizes AS MATERIALIZED'),gate=text.indexOf('raw_gate AS MATERIALIZED'),members=text.indexOf('members AS MATERIALIZED');
+    assert.ok(sizes>0&&gate>sizes&&members>gate);
+    assert.doesNotMatch(text.slice(sizes,gate),/jsonb_build_object| AS encoded|array_agg|string_agg/);
+    assert.match(text.slice(sizes,gate),/octet_length\(o\.payload::text\)/);
+    assert.match(text.slice(sizes,gate),/SELECT sum\(n\) FROM totals/);
+    assert.match(text.slice(gate,members),/sum\(original_bytes::bigint\+coalesce\(typed_bytes,0\)\+1\)/);
+    assert.match(text.slice(members),/AND NOT \(SELECT oversize FROM raw_gate\) OFFSET 0/);
+    assert.match(text,/\(SELECT oversize FROM raw_gate\) OR coalesce\(max\(bytes\),0\)>\$7/);
+    assert.match(text,/CASE WHEN NOT \(SELECT oversize FROM raw_gate\)[\s\S]*sum\(bytes\+1\)[\s\S]*ELSE '\[\]' END AS packet_json/);
+  }
+  assert.throws(()=>replay({...complete(),packet_oversize:true,row_count:0,invalid_count:0,packet_json:'[]'},PAGE,()=>{}),/byte_limit/);
+});

@@ -561,6 +561,7 @@ function fixture(hook=()=>{},initial=false,transactionCounts=null) {
   return {calls,client,store:createNeighborhoodFrozenJobStock(client,options)};
 }
 
+/** Build synthetic complete-cache DATA for page protocol tests, never an issued owner or grant. */
 async function sharedCadFixture(hook=()=>{}){
   const profile=getNeighborhoodFrozenTypedCadImprovementV1Profile(),original=getNeighborhoodFrozenCadImprovementProfile();let source,header;
   const primaryText=JSON.stringify({account_id:'STOCK-A',year_built:'2050',living_area_sqft:'9007199254740993',bedroom_count:'3',bath_count:'2.00',number_units:'1',pool:null});

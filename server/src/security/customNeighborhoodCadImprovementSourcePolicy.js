@@ -30,6 +30,7 @@ const CONFIG_KEYS = ['policy_version', 'organization_id', 'grant_id', 'dataset',
 // Deliberate small duplication preserves both installed legacy evaluators'
 // configurations, hashes, SQL arguments and error bytes. This dormant evaluator
 // has one fixed additional projection/namespace, never a caller-selected grant.
+/** Admit a closed own-data object without invoking accessors or proxy traps. */
 function exact(value, keys) {
   return value !== null && typeof value === 'object' && !isProxy(value) && Object.getPrototypeOf(value) === Object.prototype
     && Reflect.ownKeys(value).length === keys.length && keys.every(key => {
@@ -37,6 +38,7 @@ function exact(value, keys) {
       return descriptor?.enumerable === true && Object.hasOwn(descriptor, 'value');
     });
 }
+/** Require a bounded dense ordinary array with own enumerable data entries. */
 function dense(value, maximum) {
   if (isProxy(value) || !Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype || value.length > maximum
     || Reflect.ownKeys(value).length !== value.length + 1) return false;
@@ -46,34 +48,42 @@ function dense(value, maximum) {
   }
   return true;
 }
+/** Admit bounded well-formed identifiers without whitespace aliases or control characters. */
 function text(value, limit = 200) {
   return typeof value === 'string' && value.length > 0 && value.length <= limit && value.isWellFormed()
     && value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value);
 }
+/** Validate an exact calendar date without accepting JavaScript date normalization. */
 function date(value) {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
     && Number.isFinite(Date.parse(`${value}T00:00:00.000Z`))
     && new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) === value;
 }
+/** Validate fixed-width UTC microsecond text for exact wall-clock interval comparisons. */
 function instant(value) {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(value)
     && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === `${value.slice(0, 23)}Z`;
 }
+/** Canonicalize previously validated policy DATA for stable decision revision hashing. */
 function canonical(value) {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
   if (value && typeof value === 'object') return `{${Object.keys(value).sort()
     .map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
   return JSON.stringify(value);
 }
+/** Require a bounded, explicit provider mix with unique exact provider identifiers. */
 function providers(value) {
   return dense(value, 32) && value.length > 0
     && value.every(item => exact(item, ['provider_id', 'revision']) && text(item.provider_id) && text(item.revision))
     && new Set(value.map(item => item.provider_id)).size === value.length;
 }
+/** Sort a validated provider mix without changing the caller's array. */
 function providerSet(value) { return [...value].sort((a, b) => a.provider_id < b.provider_id ? -1 : a.provider_id > b.provider_id ? 1 : 0); }
+/** Compare a bounded literal array to the complete installed projection in order. */
 function literalArray(value, expected) {
   return dense(value, expected.length) && value.length === expected.length && value.every((item, index) => item === expected[index]);
 }
+/** Require the complete installed CAD purpose, including both exact retained field lists. */
 function purposeScope(value) {
   if (!exact(value, Object.keys(PURPOSE)) || !literalArray(value.source_classes, PURPOSE.source_classes)
     || !exact(value.source_classification, PURPOSE.source_classes)
@@ -88,11 +98,13 @@ function purposeScope(value) {
     && literalArray(projection.fields.primary, expected.fields.primary)
     && literalArray(projection.fields.secondary, expected.fields.secondary);
 }
+/** Admit only the owner-derived selection digest and exact retained generation identifier. */
 function requestOf(value) {
   return exact(value, ['selection_sha256', 'generation_id'])
     && typeof value.selection_sha256 === 'string' && /^[0-9a-f]{64}$/.test(value.selection_sha256)
     && typeof value.generation_id === 'string' && UUID.test(value.generation_id);
 }
+/** Reconcile a purpose descriptor with its fixed scope and bounded owner-derived binding. */
 function purposeOf(value) {
   if (!exact(value, [...Object.keys(PURPOSE), 'selection_sha256', 'generation_id'])) return false;
   const scope = Object.fromEntries(Object.keys(PURPOSE).map(key => [key, value[key]]));
@@ -106,6 +118,7 @@ export function describeNeighborhoodCadImprovementPurpose(request) {
   if (!requestOf(request)) throw new TypeError('custom_neighborhood_cad_improvement_purpose_required');
   return Object.freeze({...PURPOSE, selection_sha256: request.selection_sha256, generation_id: request.generation_id});
 }
+/** Validate current organization rights, exact integrated provider mix and unexpired retention basis. */
 function configOf(value, organizationId, expected, now) {
   if (!exact(value, CONFIG_KEYS) || value.policy_version !== 1 || value.purpose_version !== 1
     || value.organization_id !== organizationId || !text(value.grant_id, 80)
@@ -137,6 +150,7 @@ export function createCustomNeighborhoodCadImprovementSourcePolicy(options) {
     || !providers(options.providerRevisions)) throw new TypeError('custom_neighborhood_cad_improvement_source_policy_profile_required');
   const expected = { datasetRevision: options.datasetRevision,
     providerRevisions: providerSet(options.providerRevisions.map(item => ({ ...item }))) };
+  /** Re-read only the separate bounded rights namespace and return a fresh decision or denial. */
   return async function authorizeMarketData(client, auth, context, purpose, requested) {
     const organizationId = context?.scope?.organization_id;
     if (typeof client?.query !== 'function' || !text(auth?.userId) || typeof organizationId !== 'string'
@@ -171,5 +185,4 @@ export function createCustomNeighborhoodCadImprovementSourcePolicy(options) {
       policy_revision: `custom-neighborhood-cad-improvement-source-rights-v1:sha256:${digest}` });
   };
 }
-
 

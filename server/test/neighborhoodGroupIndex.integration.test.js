@@ -77,6 +77,8 @@ import { NEIGHBORHOOD_SHARED_JOB_TRANSACTION_V2_PAGE_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSharedJobTransactionPagesV2.js';
 import { NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSharedTransactionPackagesV1.js';
+import { runNeighborhoodTransactionPackageDatabaseChecks }
+  from './helpers/neighborhoodTransactionPackageDatabaseChecks.js';
 
 // Disposable native fixture only, never production rights provisioning. The
 // real evaluator reads current organization metadata/time on every admission.
@@ -145,7 +147,10 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
   const pool=new pg.Pool({connectionString:target.connectionString,max:2,statement_timeout:120_000});
   try {
     const policyClient=await pool.connect();
-    try {await runCustomNeighborhoodCadImprovementPolicyDatabaseChecks(policyClient);}finally {policyClient.release();}
+    try {
+      await runCustomNeighborhoodCadImprovementPolicyDatabaseChecks(policyClient);
+      await runNeighborhoodTransactionPackageDatabaseChecks(policyClient);
+    }finally {policyClient.release();}
     await pool.query(NEIGHBORHOOD_CACHED_SOURCE_SCHEMA);
     // The isolated UAD fixture has bedroom/bath and secondary rows but omits
     // the DCAD pool column. Add it only inside this throwaway child database.

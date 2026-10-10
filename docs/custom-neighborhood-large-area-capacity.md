@@ -12,8 +12,10 @@ accepted. Reading cannot finish a prerequisite, prepare a cache miss, advance a
 checkpoint or issue a head.
 
 Fixed indexed SQL takes one next original-stock source seed in exact native
-BIGINT order and independently counts every native source, sale and link row
-before materializing its complete package. A separate C-text keyset reads each
+BIGINT order and independently counts native source, sale and link rows up to
+251 per kind before materializing a package. Every admitted count is exact;
+a cap+1 sentinel rejects the whole oversized package, never claiming an exact
+over-limit population count or scanning all its matching rows. A separate C-text keyset reads each
 source-less legacy sale whose exact original account belongs to stock. Each
 count must equal all independently reconciled delivered rows. A package is never
 split into a silently accepted prefix. The installed generation/profile/kind/
@@ -85,6 +87,21 @@ required before normal protected merge. The integrated focused owner/stock/share
 typing/temporal/package suite passed 111 tests, zero failed/skipped (13984.6933ms);
 source/native-fixture syntax and diff checks passed. This local check is not
 fresh native/full-suite or licensed/live acceptance.
+
+The actual integrated included review completed at 2026-10-10T04:25:52Z
+through `b3fa3bca`, which passed all 14 cloud checks. It found one valid
+pre-admission count scan issue. The correction bounds each independent count
+at cap+1; payloads still require the complete exact sum to fit 250. Focused
+regressions reject sentinel counts without delivering a prefix. A separate
+corrected focused run passed 111 tests, zero failures/skips (1293.2042ms),
+with source/helper/native-fixture syntax and diff checks passing. A separate
+rolled-back TEMP DATA native SQL fixture covers 250, 251, 1,000 sales plus
+1,000 links, actual EXPLAIN counter limits, zero oversized payload members,
+fresh empty probes and the legacy plan. This plan fixture is not an issued
+owner, licensed acquisition or production-speed receipt; the actual issued
+owner fixture remains independently required. Fresh corrected-head checks
+and ordinary included review remain pending; no early merge is authorized.
+
 No production grant/deploy/activation, worker,
 HTTP default, accepted report, genuine Hardy choice or Apply changes. Provider/
 amenity meaning and economic transaction resolution, server-owned selection,

@@ -1,5 +1,73 @@
 # Complete larger-area Custom neighborhood studies
 
+## Sixth-pass preparation and newly completed cloud proofs (2026-10-10)
+
+The previously pending exact heads now have decoded complete native results:
+#1268 `9d24ab39`, native job 114294127524: 417 migration / 1 subject / 13 index /
+1 edge / 2 bootstrap tests passed, zero failures or skips. Index duration was
+536550.120876 ms. The actual current-authorized combined original reader passed
+B-only, EMPTY and both-account fixtures with both entire independent CAD and
+transaction diagnostics losslessly expanded, unchanged 16-KB owner cap, one
+aggregate 250-original admission, separate current/ending source purposes and
+lost-real-COMMIT reopening without durable mutation. This supersedes the older
+500d0d87 one-case response-size failure, not a retry or bypass of that failure.
+
+#1269 `6710271a`, native job 114294242153: the same five native suites passed,
+zero failures/skips; index duration 927036.323038 ms. #1270 `d9df38f4`, native job
+114294315209: all five passed, zero failures/skips; index duration 960852.889471 ms.
+The latter executed raw-byte gates for all five whole-stock plans, the bounded
+original-key prefix, standalone CAD and all three selected-source packet plans.
+Actual over-limit 250-original packets encoded zero members; 251-count packets
+read zero raw-size/member rows; per-original refusal, raw-fit/exact-encoding-over,
+missing cache/subject, exact partial delivered cursor and fresh EMPTY passed.
+These plan blocks use rolled-back TEMP DATA, not issued original/rights authority.
+Separate actual owner fixtures still performed full issued graph/original/cache/
+partition/catalog/immutable selection and both-end authorization reconciliation.
+Neither synthetic large stocks nor these small native protocols establish
+licensed acquisition, complete semantic eligibility, statistics or live speed.
+
+The sixth-pass preparation in this branch is explicitly UNMOUNTED and incomplete.
+`cohortSelectedEvidenceReceiptV2` is closed transition DATA only: exact union and
+DONE-fifth references, immutable command, native selected entry/ordinal, previous
+receipt and one fresh terminal EMPTY after the full selected count. It retains
+no original, typed value, diagnostic, decision or per-source payload copies.
+`customCohortSelectedEvidenceV2Repository` is storage only, with exact current
+job/scope/claim fences, both native DONE parents, a next native ordinal and
+same-transaction CAS/readback. It does not establish source rights or originals.
+
+The separate fixed next-selected combined SQL candidate derives membership
+from the native sixth head, never a caller account/cursor/ordinal. It retains one
+aggregate subject/stock/CAD/whole all-date transaction admission and the existing
+raw plus exact byte gates. Both pre-existing first-selected SQL strings are
+byte-for-byte unchanged, checked against their pre-change hashes. These hashes
+are regression evidence only, never source or selected-population authority.
+
+114 focused tests passed, zero failures/skips (1580.2702 ms). These are synthetic
+grammar/storage/query regressions, NOT execution of a sixth-pass native owner.
+The expanded 12-file focused regression run also passed all 227 tests, zero
+failures/skips (1852.3357 ms), including the old strict intent/continuation and
+selected-union/fifth-pass/actual-owner admission, compression and source readers.
+No sixth-pass migration, phase admission, owner method, worker or runtime use is
+installed yet. Next implement the additive exact 12-root native head/checkpoint/
+transition/terminal/deferred-COMMIT guards, separate strict 11/12-root intent
+reader, actual original-reconciling bounded owner and atomic continuation, then
+run full native B-only/EMPTY/both traversal and failure/rights/lost-COMMIT coverage
+in cloud. Never substitute this DATA, counts or references for original replay.
+
+The independent protected chain has advanced: #1240 actual exact reviewed 7b92505e
+merged normally as 92896a389e308a10075599c581b6944083d8f9e9. #1241 was retargeted
+to main before integrating that parent as 72f66b7f; its fresh integrated cloud
+checks and actual included review remain pending. Current descendants here are
+still UNPROTECTED. Integrate actual parents only in dependency order and obtain
+fresh exact-head security/native/full-suite checks and actual included review.
+The next conservative included request gate is 20:39:59 UTC AND fresh repository
+actual review activity, not an automatic skip. No paid/forced/quota/check bypass.
+
+All internal stages remain inactive. No production operation, source grant,
+worker/scheduler, pin, accepted report, genuine Hardy choice or Apply changed.
+QA assignment 7 remains the only future Apply-test target. Heavy suites stay in
+cloud, local checks remain light, and Windows Indexer is untouched.
+
 ## Standalone CAD and selected-amenity raw-byte gates (2026-10-10, not activated)
 
 The same fix now also covers the two whole-stock SQL stems: standalone account

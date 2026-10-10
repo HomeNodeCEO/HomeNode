@@ -51,6 +51,8 @@ import { createCustomCohortRecordedCatalogV2Repository } from '../src/services/n
 import { prepareCohortRecordedCatalogReceiptV2 } from '../src/services/neighborhoodAssessment/cohortRecordedCatalogReceiptV2.js';
 import { createCustomCohortV2ContinuationRepository }
   from '../src/services/neighborhoodAssessment/customCohortV2ContinuationRepository.js';
+import { CUSTOM_COHORT_ORIGINAL_ACCOUNT_OWNER_LIMITS as ORIGINAL_OWNER_LIMITS }
+  from '../src/services/neighborhoodAssessment/customCohortOriginalAccountOwnerBudget.js';
 import { getNeighborhoodOriginalRecordedGroupV2Profile }
   from '../src/services/neighborhoodAssessment/neighborhoodOriginalRecordedGroupV2.js';
 import { createCustomCohortContextCapture }
@@ -1815,6 +1817,12 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         if(fault==='catalog_group_count')row.member_count=0;
         if(fault==='catalog_group_count_after_first')row.member_count++;
         return {...result,rows:[row]};
+      }
+      if(config.text.includes('custom-cohort-group-workspace:read')&&refsFault==='catalog_owner_bytes_ending'){
+        refsFault='catalog_owner_bytes_after_first';return result;
+      }
+      if(config.text.includes('custom-cohort-group-workspace:read')&&refsFault==='catalog_owner_bytes_after_first'){
+        refsFault=null;return {...result,rows:result.rows.map(row=>({...row,synthetic_owner_transport_padding:'x'.repeat(32000001)}))};
       }
       if(config.text.includes('custom-cohort-group-workspace:read')&&refsFault?.startsWith('catalog_workspace_')){
         const fault=refsFault;
@@ -3841,9 +3849,13 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         assert.deepEqual(await readTargetHistory(),targetHistory);assert.deepEqual(await readTargetReport(),targetReport);
         assert.deepEqual(await readTargetWorkfile(),targetWorkfile);
       },targetFrom=refsCalls.length;
-    const targetA=await freshRefsOwner()[workspaceTargetMethod](refsInput,stockAccountOptions),
+    const targetA=await freshRefsOwner()[workspaceTargetMethod](refsInput,stockAccountOptions),targetBFrom=refsCalls.length,
       targetB=await freshRefsOwner()[workspaceTargetMethod](refsInput,{...stockAccountOptions,stockAccountPackagePage:{cursor:targetA.next_cursor}}),
+      targetEndFrom=refsCalls.length,
       targetEnd=await freshRefsOwner()[workspaceTargetMethod](refsInput,{...stockAccountOptions,stockAccountPackagePage:{cursor:targetB.next_cursor}});
+    const targetOwnerQueryCounts=[targetBFrom-targetFrom-3,targetEndFrom-targetBFrom-3,refsCalls.length-targetEndFrom-3];
+    for(const count of targetOwnerQueryCounts)assert.ok(count>0&&count<=ORIGINAL_OWNER_LIMITS.sql_queries,
+      'whole owner includes all authority/workspace/prerequisite/original/ending SQL, excluding only outer BEGIN/SET/COMMIT');
     assert.equal(refsCalls.slice(targetFrom).filter(sql=>sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,3);
     const targetWorkspaceReads=refsCalls.slice(targetFrom).flatMap((sql,i)=>sql.includes('custom-cohort-group-workspace:read')
       ?[{sql,values:refsQueryParameters[targetFrom+i]}]:[]);
@@ -3863,7 +3875,8 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       assert.ok(Object.isFrozen(actual.selection_workspace_target.workspace_checkpoint));assert.ok(Buffer.byteLength(JSON.stringify(actual))<=2100000);
     }
     assert.equal(targetEnd.end_of_accounts,true);await assertTargetUnchanged();
-    for(const [fault,reason] of [['catalog_workspace_revision_ending',/workspace_target_changed/],
+    for(const [fault,reason] of [['catalog_owner_bytes_ending',/original_account_owner_byte_limit/],
+      ['catalog_workspace_revision_ending',/workspace_target_changed/],
       ['catalog_workspace_pending_ending',/group_workspace_study_changed/],['catalog_workspace_missing_ending',/group_workspace_unavailable/],
       ['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],['subject',/subject_changed/],
       ['claim',/claim_lost/],['cancel',/cancelled/],['transaction_header',/cache_unavailable/],
@@ -3891,6 +3904,8 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     assertBoundedCohortAuthorityAggregates(targetQueries.map((text,index)=>({text,values:refsQueryParameters[targetFrom+index]})),
       {actorUserId:actor,organizationId:organization,assignmentFileId:assignment});
     console.info('[native-original-selection-workspace-target-v2]',{accounts:2,fresh_empty_probe:true,
+      whole_owner_sql_query_counts:targetOwnerQueryCounts,whole_owner_limits:ORIGINAL_OWNER_LIMITS,
+      whole_owner_ending_decoded_byte_overflow_refuses_without_budget_reset:true,
       actual_pending_job_period_discovery_private_review_fenced_before_original_io:true,actual_workspace_revision_and_pending_fenced_both_ends:true,
       exactly_one_whole_original_packet_per_call:true,current_ending_authority_and_original_cache_partition_catalog_group_fences:true,
       workspace_history_workfile_accepted_report_heads_roots_job_continuation_attempts_pins_unchanged:true,lost_commit_fresh_reopen:true,

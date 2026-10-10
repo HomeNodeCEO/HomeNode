@@ -1,5 +1,40 @@
 # Complete larger-area Custom neighborhood studies
 
+## Whole database-owner budget (2026-10-10, not activated)
+
+The two fixed completed-catalog account readers (original account replay and
+pending workspace target) now share ONE aggregate executor for their entire
+actual database-owner transaction body. Current actor/assignment/private draft,
+workspace/prior head, job request, retained subject, issued prerequisites, whole
+original/cache/partition/catalog/group and every ending SQL result all charge
+the same lifetime counter: at most 256 SQL attempts and 32,000,000 decoded-row
+UTF-8 bytes. The whole operation, including connection checkout, is limited to
+60 seconds and still honors earlier caller cancellation/deadlines. The existing
+5-second query limit and every stricter child limit remain unchanged, including
+the single-use original packet's separate 128-query cap. This new whole-owner
+ceiling does not replace or widen that child ceiling. BEGIN/connection settings,
+COMMIT and failure cleanup remain owned by the existing transaction wrapper.
+
+This closes the distinction between a reader-local budget and the complete
+owner's prerequisite/workspace/ending work. The executor has no reset, limit,
+clock or source adapter override. A failure poisons that operation so a fresh
+child reader cannot continue under a reset budget; actual transaction rollback
+and lost-COMMIT classification are unchanged. No original reconciliation or
+current source/actor/assignment/subject/claim/head fence is removed or reordered.
+
+Focused tests execute exact/one-over query and cumulative byte boundaries,
+shared initial/ending deadline/cancellation, malformed driver rows and original
+SQL failure preservation. Authored native assertions count ALL SQL in each
+actual A/B/empty workspace-target operation and inject an oversized ending
+transport row after original reconciliation; the whole operation must refuse
+with unchanged workspace/history/report and all durable roots. New-head native
+and full application CI are pending. This is a budget control, not complete
+catalog semantics, human intent, selected-union/statistics/publication authority,
+licensed acquisition or production-speed acceptance. No deployment, source
+grants, worker/route/default activation, pins, accepted reports, genuine Hardy
+choices or Apply changes. The remaining roadmap and included review/protected
+dependency-order gates remain unchanged; same heartbeat active.
+
 ## Current pending editor target in the original owner (2026-10-10, not activated)
 
 `readOriginalFrozenCaptureJobSelectionWorkspaceTargetReferencesV2` extends the

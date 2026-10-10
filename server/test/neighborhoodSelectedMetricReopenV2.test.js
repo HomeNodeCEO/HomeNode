@@ -47,6 +47,12 @@ test('actual owner only admits exact12 roots and reopens originals before presen
     compare=owner.indexOf('decision=resolveNeighborhoodOriginalAccountEligibilityV2',originals),
     result=owner.indexOf("status:'current_authorized_first_selected_metric_originals_reopened'",compare);
   assert.ok(firstRead>0&&originals>firstRead&&compare>originals&&result>compare);
+  const row=owner.indexOf('const metricRowCandidate=',compare),ending=owner.indexOf(
+    'if((progressingSelectedEvidence||readingSelectedMetricSource)&&!same(await evidenceStore.read(),evidenceAnchor))',row);
+  assert.ok(row>compare&&result>row&&ending>result);
+  for(const s of ['prepareCohortSelectedMetricRowV2','metric_row_candidate:metricRowCandidate,metric_row_retained:false',
+    'effective_date:context.effective_date,observation_period:input.observationPeriod,subject_housing:subjectHousing',
+    'housing_comparison:decision.housing.state'])assert.ok(owner.includes(s),s);
 });
 
 test('authored native metric coverage is tied to real DONE graph and preserves prior rows; not licensed acceptance',()=>{
@@ -57,5 +63,7 @@ test('authored native metric coverage is tied to real DONE graph and preserves p
     'metric.reported_comparison.metrics.reported_year_built.exact_value,null',
     "metric.reported_comparison.metrics.reported_site_area.exact_value,allSelected?'8000':'0'",
     'await evidenceUnchanged(completedEvidence)','metricQueries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries)',
+    'closed_first_metric_row_candidate_bound_to_native_parents_and_retained_dates:true',
+    'metric.metric_row_retained,false','row.metrics.reported_site_area.exact_value,allSelected?',
     'licensed_acquisition:false,production_speed:false,worker_activation:false'])assert.ok(fixture.includes(s),s);
 });

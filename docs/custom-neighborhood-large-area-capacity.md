@@ -1,5 +1,53 @@
 # Complete larger-area Custom neighborhood studies
 
+## Closed first-metric row candidate inside the actual owner (2026-10-10, authored)
+
+The bounded first-metric original-reopening owner now constructs a detached,
+closed row candidate from THIS call's freshly reconciled original/ENTIRE-cache
+comparison, exact native command/DONE union/fifth/sixth parents and native entry,
+retained effective date/observation period and subject housing. No caller row,
+callback, hash/count acknowledgement or sixth metadata supplies numerical or
+membership authority. All unchanged current and ending fences must pass before
+the candidate can be returned. Its closed DATA validator is not an authority.
+
+The four exact reported-value cells distinguish incomplete/null from genuine
+site zero, preserve decimal strings without rounding, require coherent housing
+comparison eligibility and keep market currency unsupported. Missing/invalid/
+conflicting values remain null. The candidate is capped at4096 UTF-8 bytes and
+the whole response still at16KB. It is explicitly `metric_row_retained:false`;
+EMPTY returns null. No durable metric ledger/head, thirteenth root, continuation,
+aggregate, complete population, publication, report or activation exists here.
+All previously verified SQL, twelve-root admission and whole-owner budgets are
+unchanged. This is preparation for a later actual bounded metric-ordinal owner,
+not a substitute for that owner or licensed/live acceptance.
+
+Eleven focused local files passed128 tests, zero failures/cancellations/skips
+(679.6513ms); owner/native-fixture syntax and diff checks passed. Added native
+B-only/EMPTY/both assertions bind the candidate to exact native parents, retained
+dates and independently expected fixture values, and require prior whole-state
+equality with no writes. These NEW assertions are AUTHORED, not yet cloud-run.
+Fresh exact-head cloud suites, actual protected-parent integration and actual
+included review remain required. All stages remain inactive.
+
+## First-metric original reopening passed native cloud suites (2026-10-10)
+
+This supersedes the older authored/pending first-metric notes below. Exact
+`df2f7ea450fa75c16f9b8837a17f82fb92615988` (#1273), foundation38088758000,
+native job114320674225 passed417migration/1subject/13index/1edge/2bootstrap
+tests with zero failures/cancellations/skips. Complete decoded native logs
+(2,411,827 characters) were inspected. All five available exact-head stacked
+checks passed, including frontend, full server, red-team and signed synthetic
+sales. This is NOT protected-main integration/security or actual review clearance.
+
+Independently issued B-only/EMPTY/both graphs reached the first-metric owner
+after actual DONE union/fifth/sixth parents. Fresh whole-original/ENTIRE-cache
+replay, current and ending authorization, literal native first-member binding,
+independent reported fixture cells and full prior-state equality all passed.
+Maximum whole-owner SQL counts were223/220/223 of the unchanged256 limit.
+No metric rows/heads/checkpoint/continuation/workspace/reports/choices/pins were
+written. These small native tests are not complete selected-union statistics,
+licensed>50k acquisition, retrospective economics or production-speed acceptance.
+
 ## First metric-source reopen after native DONE evidence (2026-10-10, authored)
 
 The new dormant `readOriginalFrozenCaptureJobFirstSelectedMetricReferencesV2`

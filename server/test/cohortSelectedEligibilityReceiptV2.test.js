@@ -90,4 +90,5 @@ test('additive migration preserves exact ten roots, terminal native ordinal, unk
     "OLD.phase='frozen_selected_eligibility_refs_v2' AND NEW.phase<>'frozen_selected_eligibility_refs_v2'",'BEFORE TRUNCATE'])assert.ok(sql.includes(s),s);
   for(const m of sql.matchAll(/CREATE (?:TABLE|FUNCTION|TRIGGER|INDEX|CONSTRAINT TRIGGER) (?:app\.)?([a-z0-9_]+)/g))assert.ok(Buffer.byteLength(m[1])<=63,m[1]);
   assert.doesNotMatch(sql,/DISABLE TRIGGER|DROP TABLE|DROP TRIGGER|UPDATE app\.report_files|ST_DWithin|array_agg|jsonb_agg/);
+  assert.doesNotMatch(sql,/body->'(subject_housing|eligible)'-ARRAY/); // PostgreSQL subtraction binds before ->
 });

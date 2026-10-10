@@ -86,7 +86,7 @@ BEGIN
       OR body->'subject_housing' IS DISTINCT FROM prior->'subject_housing')) THEN
     RAISE EXCEPTION 'neighborhood_selected_eligibility_v2_transition_conflict' USING ERRCODE='55000'; END IF;
   IF jsonb_typeof(body->'subject_housing') IS DISTINCT FROM 'object'
-    OR (body->'subject_housing'-ARRAY['state','category'])<>'{}'::jsonb
+    OR ((body->'subject_housing')-ARRAY['state','category'])<>'{}'::jsonb
     OR (SELECT count(*) FROM jsonb_object_keys(body->'subject_housing'))<>2
     OR body->'subject_housing'->>'state' IS NULL
     OR body->'subject_housing'->>'state' NOT IN ('observed','missing','unknown','partial','conflicting')
@@ -112,7 +112,7 @@ BEGIN
       SELECT 1 FROM app.neighborhood_custom_cohort_recorded_partition_v2_rows p WHERE p.operation_id=NEW.operation_id
         AND p.organization_id=NEW.organization_id AND p.account_id=member.account_id AND p.ordinal=member.partition_ordinal
         AND p.entry_reference=member.entry_reference) OR jsonb_typeof(body->'eligible') IS DISTINCT FROM 'object'
-      OR (body->'eligible'-ARRAY['reported_year_built','reported_residential_area','reported_site_area'])<>'{}'::jsonb
+      OR ((body->'eligible')-ARRAY['reported_year_built','reported_residential_area','reported_site_area'])<>'{}'::jsonb
       OR (SELECT count(*) FROM jsonb_object_keys(body->'eligible'))<>3 THEN
       RAISE EXCEPTION 'neighborhood_selected_eligibility_v2_member_conflict' USING ERRCODE='55000'; END IF;
     FOREACH metric IN ARRAY ARRAY['reported_year_built','reported_residential_area','reported_site_area'] LOOP

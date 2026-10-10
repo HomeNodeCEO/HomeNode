@@ -1,5 +1,44 @@
 # Complete larger-area Custom neighborhood studies
 
+## One subject/next-account original budget (2026-10-10, not activated)
+
+The actual native union-progress owner now resolves retained subject precedence
+on every step and uses ONE fixed original SQL packet for the next issued-cursor
+stock account plus the exact native job subject, ONLY if absent preferred inputs
+require CAD. At most two distinct accounts share ONE aggregate 250-original
+admission, 8MB transport / 2.1MB output and the existing single-use child / whole
+owner SQL, byte and deadline budgets. Same-account originals are deduplicated
+before counting or delivery, not reopened under a reset budget. An aggregate
+251 rows refuses the entire packet even if each account fits separately.
+Missing subject stock membership admits no original payload. Explicit null or
+other preferred observations do not request the separate subject packet.
+
+EVERY delivered original from BOTH accounts is recompiled and compared against
+its ENTIRE neutral cache. All outside parts, original full recorded labels,
+retained-date metric states and all housing/metric denominators remain distinct;
+the subject never fills the other account's missing county or housing. A fresh
+terminal next-account EMPTY is independent of a still-needed subject packet.
+The owner retains all current/end authorization and native graph/intent/
+partition/catalog/union/continuation fences and existing atomic progress. The
+returned subject observation is not persisted as semantic authority or a new
+eligibility receipt. Existing single-purpose reader shapes/bytes are unchanged.
+
+264 focused synthetic tests passed with zero failures/skips (1608.4365ms).
+Cloud-only native assertions are AUTHORED, NOT EXECUTED for this change: actual
+union progress exercises same-account deduplication, two-account replay,
+subject-only cache forgery while the next account remains correct, original
+and ending-fence faults, native DML rollback and lost real COMMIT acknowledgment.
+Separate TEMP SQL DATA assertions exercise four indexed cap+1 count loops,
+aggregate 250/251 admission, missing-subject zero payload and blocked fallback;
+those TEMP rows are NOT issued original/source authority.
+
+This is a shared-budget prerequisite, NOT issued housing/metric eligibility
+progress, complete selected-population statistics, coherent publication,
+licensed acquisition or live-speed acceptance. No new native phase, source
+right, route, worker, scheduler, generation pin, genuine choice, accepted report
+or Apply is activated. Protected integration, fresh exact-head required suites
+and ACTUAL included review remain required.
+
 ## Actual completed-union subject housing owner (2026-10-10, not activated)
 
 The new internal READ-ONLY owner reopens the ACTUAL completed tenth-root native
@@ -26,11 +65,17 @@ all ending fences precede the read-only result. No root/continuation is advanced
 They include whole-original/cache forgeries, missing stock,
 wrong subject, whole bounds/single-use/header changes, hostile entry-point input
 and parity with existing dense housing on actual retained material projections.
-Cloud-only native assertions are AUTHORED, NOT YET EXECUTED for this head: two
-independently issued complete graphs exercise conflicting outside-part fallback
+At #1261 head `3f839b49c2be09bb4a83db20ad4362c33fdb4c24`, cloud native job
+114245663960 PASSED: 417 migration / 12 index / 1 subject / 1 edge / 2 bootstrap
+tests, all zero failures/skips. Full server, frontend and bootstrap jobs passed.
+Two independently issued complete graphs exercised conflicting outside-part fallback
 and explicit-null preferred observation on an empty union, unfinished-union
 refusal, current/ending faults, read-only lost REAL COMMIT acknowledgment and
 unchanged jobs/heads/blobs/continuation/intent/pins/workspace/history/reports.
+Actual native subject-owner markers at 15:35:58Z and 15:37:15Z used at most
+206 and 171 whole-owner SQL queries respectively (limit256). These are small
+native protocol proofs, NOT licensed acquisition, whole-population eligibility
+or production speed. This later paired-reader change needs its own cloud proof.
 
 This resolves a subject-housing prerequisite, NOT issued eligibility progress,
 complete selected-union housing/metric eligibility, statistics, coherent

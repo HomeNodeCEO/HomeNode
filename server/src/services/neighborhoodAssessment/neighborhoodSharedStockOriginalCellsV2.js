@@ -134,6 +134,58 @@ export const NEIGHBORHOOD_STOCK_SUBJECT_HOUSING_PACKAGE_V2_SQL=NEIGHBORHOOD_STOC
     `account_id=(SELECT job.account_id FROM app.neighborhood_custom_cohort_capture_jobs job
       WHERE job.operation_id=$1::uuid AND job.account_id=$4::text) LIMIT 1`);
 
+// One lifetime, ONE aggregate 250-original admission, at most TWO distinct
+// native stock accounts. The actual owner supplies its issued next cursor and
+// decides whether retained-subject absence requires CAD. Same-account facts
+// are deduplicated before counts or payload reads; never open a second reader.
+export const NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL=`/* neighborhood-stock-subject-and-next-original-package-v2 */
+WITH next_account AS MATERIALIZED (
+  SELECT account_id,parcel_count FROM app.neighborhood_custom_cohort_stock_accounts
+  WHERE operation_id=$1::uuid AND account_id>$4::text COLLATE "C" ORDER BY account_id LIMIT 1
+), subject_account AS MATERIALIZED (
+  SELECT a.account_id,a.parcel_count FROM app.neighborhood_custom_cohort_capture_jobs job
+  JOIN app.neighborhood_custom_cohort_stock_accounts a USING(operation_id)
+  WHERE job.operation_id=$1::uuid AND a.account_id=job.account_id AND $10::boolean
+), chosen AS MATERIALIZED (
+  SELECT * FROM next_account UNION SELECT * FROM subject_account
+), totals AS MATERIALIZED (
+  SELECT a.account_id,k.kind,(SELECT count(*)::integer FROM (SELECT 1 FROM app.neighborhood_frozen_source_rows o
+    WHERE o.generation_id=$2::uuid AND o.kind=k.kind AND o.account_id=a.account_id
+    LIMIT ($5::integer+1)) bounded) AS n FROM chosen a CROSS JOIN (VALUES ('parcels'),('accounts')) k(kind)
+), members AS MATERIALIZED (
+  SELECT o.account_id,o.kind,o.row_key,t.row_key IS NULL OR t.account_id IS DISTINCT FROM o.account_id
+      OR t.source_record_id IS DISTINCT FROM o.source_record_id AS invalid,
+    octet_length(o.payload::text) AS original_bytes,octet_length(t.typed::text) AS typed_bytes,
+    jsonb_build_object('kind',o.kind,'row_key',o.row_key,'account_id',o.account_id,
+      'source_record_id',o.source_record_id::text,'original_text',o.payload::text,
+      'cached_account_id',t.account_id,'cached_source_record_id',t.source_record_id::text,
+      'original_payload_sha256',t.original_payload_sha256,'typed',t.typed)::text AS encoded
+  FROM chosen a CROSS JOIN (VALUES ('parcels'),('accounts')) k(kind)
+  CROSS JOIN LATERAL (SELECT o.kind,o.row_key,o.account_id,o.source_record_id,o.payload
+    FROM app.neighborhood_frozen_source_rows o WHERE o.generation_id=$2::uuid AND o.kind=k.kind AND o.account_id=a.account_id
+      AND (SELECT sum(n) FROM totals)<=$5::integer
+      AND (NOT $10::boolean OR EXISTS(SELECT 1 FROM subject_account)) OFFSET 0) o
+  LEFT JOIN LATERAL (SELECT t.row_key,t.account_id,t.source_record_id,t.original_payload_sha256,t.typed
+    FROM app.neighborhood_frozen_typed_v2_rows t WHERE t.generation_id=$2::uuid AND t.profile_sha256=$3
+      AND t.kind=o.kind AND t.row_key=o.row_key OFFSET 0) t ON true
+), sized AS MATERIALIZED (SELECT *,octet_length(encoded) AS bytes FROM members)
+SELECT (SELECT account_id FROM next_account) AS account_id,
+  (SELECT parcel_count::text FROM next_account) AS geographic_parcel_count,
+  (SELECT account_id FROM subject_account) AS subject_account_id,
+  (SELECT parcel_count::text FROM subject_account) AS subject_geographic_parcel_count,
+  coalesce((SELECT n FROM totals WHERE account_id=(SELECT account_id FROM next_account) AND kind='parcels'),0) AS next_parcels,
+  coalesce((SELECT n FROM totals WHERE account_id=(SELECT account_id FROM next_account) AND kind='accounts'),0) AS next_accounts,
+  coalesce((SELECT n FROM totals WHERE account_id=(SELECT account_id FROM subject_account) AND kind='parcels'),0) AS subject_parcels,
+  coalesce((SELECT n FROM totals WHERE account_id=(SELECT account_id FROM subject_account) AND kind='accounts'),0) AS subject_accounts,
+  coalesce((SELECT sum(n)::integer FROM totals),0) AS original_count,count(*)::integer AS page_count,
+  coalesce(sum(CASE WHEN invalid THEN 1 ELSE 0 END),0)::integer AS invalid_count,
+  coalesce(max(bytes),0)>$7::integer OR coalesce(max(original_bytes),0)>$8::integer
+    OR coalesce(sum(bytes+1),0)+2>$6::integer OR coalesce(sum(2*coalesce(typed_bytes,0)+1024),0)+2>$9::integer AS packet_oversize,
+  CASE WHEN coalesce(max(bytes),0)<=$7::integer AND coalesce(max(original_bytes),0)<=$8::integer
+    AND coalesce(sum(bytes+1),0)+2<=$6::integer AND coalesce(sum(2*coalesce(typed_bytes,0)+1024),0)+2<=$9::integer
+    THEN coalesce('['||string_agg(encoded,',' ORDER BY account_id COLLATE "C",kind COLLATE "C",row_key COLLATE "C")||']','[]') ELSE '[]' END AS page_json
+FROM sized`;
+
 const METRICS=Object.freeze({reported_year_built:'year',reported_residential_area:'reported_sqft',reported_site_area:'reported_sqft',reported_market_value:null});
 /** Compare canonical exact decimal literals; never round economic values. */
 function decimal(value){const [whole,fraction='']=value.split('.');return BigInt(whole)*1000000000000n+BigInt(fraction.padEnd(12,'0'));}
@@ -330,6 +382,73 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
         original_reconciliation:'every_package_original_recompiled',selected_union:'not_established',
         source_acquisition:'not_established',report_update:'none'});
   }
+  /** Both complete accounts share every original/transport/output/SQL bound.
+   * This is source DATA only; actual issued owner chooses the next cursor and
+   * independently fences the full native graph, intent and current authority. */
+  async function subjectAndNextPackage(rawPage,rawSubject){
+    const page=prepareNeighborhoodStockAccountPackagePageV2(rawPage),{includeSubject}=data(rawSubject,['includeSubject']);
+    if(typeof includeSubject!=='boolean')fail('invalid_input');
+    const context=await open(),{stock,source}=context,result=one(await execute(NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,
+      [stock.operation_id,stock.generation_id,TYPED.profile_ref.content_sha256,page.cursor,L.rows,L.page_utf8_bytes,
+        L.row_utf8_bytes,L.original_utf8_bytes,L.output_utf8_bytes,includeSubject]));
+    const keys=['next_parcels','next_accounts','subject_parcels','subject_accounts'];
+    if(!keys.every(k=>Number.isInteger(result[k])&&result[k]>=0&&result[k]<=L.rows+1)
+      ||!Number.isInteger(result.original_count)||result.original_count<0||result.original_count>4*(L.rows+1)
+      ||!Number.isInteger(result.page_count)||result.page_count<0||result.invalid_count!==0
+      ||typeof result.packet_oversize!=='boolean'||typeof result.page_json!=='string')fail('invalid_result');
+    if(includeSubject&&result.subject_account_id===null)fail('subject_not_in_issued_stock');
+    if(includeSubject?result.subject_account_id!==options.scope.account_id
+      :result.subject_account_id!==null||result.subject_geographic_parcel_count!==null||result.subject_parcels!==0||result.subject_accounts!==0)fail('invalid_result');
+    const nextCounts={parcels:result.next_parcels,accounts:result.next_accounts},subjectCounts={parcels:result.subject_parcels,accounts:result.subject_accounts},
+      duplicated=includeSubject&&result.account_id===result.subject_account_id;
+    if(duplicated&&!same(nextCounts,subjectCounts))fail('invalid_result');
+    const total=nextCounts.parcels+nextCounts.accounts+(duplicated?0:subjectCounts.parcels+subjectCounts.accounts);
+    if(result.original_count!==total)fail('invalid_result');
+    if(total>L.rows){if(result.page_count!==0||result.page_json!=='[]')fail('invalid_result');fail('account_package_row_limit');}
+    if(result.packet_oversize)fail('account_package_byte_limit');
+    if(result.page_count!==total||Buffer.byteLength(result.page_json)>L.page_utf8_bytes)fail('invalid_result');
+    function member(id,geographic,counts,subject=false){
+      if(id===null){if(geographic!==null||counts.parcels!==0||counts.accounts!==0)fail('invalid_result');return;}
+      cursor(id,'accounts');
+      if(!id||(subject?id!==options.scope.account_id:Buffer.compare(Buffer.from(id),Buffer.from(page.cursor))<=0)
+        ||!count(geographic,2000000)||geographic==='0'||BigInt(geographic)>BigInt(counts.parcels)||counts.accounts>1
+        ||counts.parcels>layers.parcels||counts.accounts>layers.accounts)fail('invalid_result');
+    }
+    member(result.account_id,result.geographic_parcel_count,nextCounts);
+    member(result.subject_account_id,result.subject_geographic_parcel_count,subjectCounts,true);
+    if(nextCounts.parcels+(duplicated?0:subjectCounts.parcels)>layers.parcels
+      ||nextCounts.accounts+(duplicated?0:subjectCounts.accounts)>layers.accounts)fail('invalid_result');
+    let encoded;try{encoded=JSON.parse(result.page_json);}catch{fail('invalid_result');}
+    if(!Array.isArray(encoded)||encoded.length!==total)fail('invalid_result');
+    const accounts=new Map();let previous=null;
+    for(const value of encoded){
+      const row=reconcile(value,true),key=`${row.account_id}\u0000${row.kind}\u0000${row.row_key}`;
+      if(![result.account_id,result.subject_account_id].includes(row.account_id)
+        ||previous!==null&&Buffer.compare(Buffer.from(key),Buffer.from(previous))<=0)fail('invalid_original');
+      if(!accounts.has(row.account_id))accounts.set(row.account_id,[]);accounts.get(row.account_id).push(row);previous=key;
+    }
+    function packageFor(id,geographic,counts){
+      if(id===null)return null;const rows=accounts.get(id)??[],seen={parcels:0,accounts:0};
+      rows.forEach(row=>seen[row.kind]++);if(!same(seen,counts))fail('invalid_result');
+      return {account_id:id,geographic_parcel_count:geographic,original_counts:counts,rows,observations:resolveAccount(rows),
+        recorded_housing:resolveNeighborhoodOriginalAccountHousingV2(rows,check),recorded_group:resolveNeighborhoodOriginalRecordedGroupV2(rows,check),
+        account_original_state:counts.accounts===1?'present':'absent'};
+    }
+    const next=packageFor(result.account_id,result.geographic_parcel_count,nextCounts),
+      subject=duplicated?next:packageFor(result.subject_account_id,result.subject_geographic_parcel_count,subjectCounts);
+    // Charge the ENTIRE outgoing envelope; duplicated facts are marked as an
+    // alias rather than serialized twice. Neither metadata nor the second
+    // account receives a reset output allowance.
+    const output={page_version:2,status:'reconciled_subject_and_next_stock_original_package',authority:'not_established',
+      coverage:'at_most_two_complete_distinct_accounts_one_aggregate_budget',graph,stock,source_metadata:source,typed_profile:TYPED,
+      package_profile:PACKAGE_PROFILE,effective_date:effective,cursor:page.cursor,account_id:result.account_id,
+      next_cursor:result.account_id??page.cursor,end_of_accounts:result.account_id===null,next,subject:duplicated?null:subject,
+      subject_included:includeSubject,subject_equals_next:duplicated,distinct_original_count:total,
+      original_reconciliation:'every_distinct_original_once_entire_neutral_cache',selected_union:'not_established',
+      eligibility:'not_established',source_acquisition:'not_established',report_update:'none'};
+    if(Buffer.byteLength(JSON.stringify(output))>L.output_utf8_bytes)fail('byte_limit');
+    await context.finish();return freeze(output);
+  }
   return Object.freeze({
     /** Reconcile one original-key prefix; a page end proves no earlier traversal. */
     async page(rawPage){
@@ -378,5 +497,8 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
     /** Exact native job subject only; absent stock refuses, never substitutes
      * the first member. No caller account, cursor, reader or reset budget. */
     subjectHousingAccountPackage(...args){if(args.length)fail('invalid_input');return accountPackage(null,true,false,true);},
+    /** Actual owner resolves preferred subject first; only absence requests
+     * native subject CAD. No second child reader or reset aggregate budget. */
+    subjectAndRecordedGroupHousingAccountPackage(...args){if(args.length!==2)fail('invalid_input');return subjectAndNextPackage(...args);},
   });
 }

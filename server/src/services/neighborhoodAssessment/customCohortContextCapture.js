@@ -2153,7 +2153,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       }
       let partitionStore=null,partitionAnchor=null,partitionResult=null,partitionReadCursor=null,partitionReadEntry=null,
         catalogStore=null,catalogAnchor=null,catalogCounts=null,catalogResult=null,catalogReadGroup=null,catalogReadGroupKey=null,
-        unionStore=null,unionAnchor=null,unionCounts=null,unionExpected=null,unionIssued=null,unionPlan=null,subjectHousingResult=null;
+        unionStore=null,unionAnchor=null,unionCounts=null,unionExpected=null,unionIssued=null,unionPlan=null,subjectHousingResult=null,unionSubjectHousing=null;
       if(partitioningRecordedGroups||readingRecordedPartition||catalogingRecordedGroups){
         const baseExpected={binding,source_reference:reference,root,graph_verification_reference:verificationReference,
           stock_verification_reference:stockVerificationReference,identity_verification_reference:identityVerificationReference,
@@ -2268,7 +2268,22 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         // every retained-date cell, full recorded label and housing state from
         // this ONE original/ENTIRE-neutral-cache reconciliation. No membership
         // or human intent is inferred from these account facts.
-        const packet=await accountOriginals[readingSelectionWorkspaceTarget||replayingSelectedUnion
+        let packet;
+        if(replayingSelectedUnion){
+          const preferred=resolveCustomCohortRetainedSubjectHousing(retained.subject.material,retained.subject.target,{check:budget.check}),
+            paired=await accountOriginals.subjectAndRecordedGroupHousingAccountPackage({cursor:before.after_account},{includeSubject:preferred===null}),
+            subjectPacket=paired.subject_equals_next?paired.next:paired.subject;
+          if(preferred===null&&(subjectPacket?.account_id!==scope.account_id
+            ||!same(subjectPacket.recorded_housing.retained_housing_interpretation,housingProfile)))fail('checkpoint_conflict');
+          unionSubjectHousing={subject:preferred??{state:subjectPacket.recorded_housing.state,
+            category:subjectPacket.recorded_housing.category,origin:'current_subject_cad'},
+          subject_original_fallback:preferred===null,subject_equals_next:paired.subject_equals_next,
+          distinct_original_count:paired.distinct_original_count,
+          shared_budget:'one_single_use_child_one_aggregate_original_transport_output_SQL_deadline_budget',
+          eligibility:'not_established'};
+          packet={...(paired.next??{account_id:null,recorded_housing:null,recorded_group:null}),
+            next_cursor:paired.next_cursor,end_of_accounts:paired.end_of_accounts};
+        }else packet=await accountOriginals[readingSelectionWorkspaceTarget
           ?'recordedGroupAndHousingAccountPackage':'recordedGroupAccountPackage']({cursor:before.after_account});
         if(replayingSelectedUnion&&packet.recorded_housing!==null
           &&!same(packet.recorded_housing.retained_housing_interpretation,housingProfile))fail('checkpoint_conflict');
@@ -2444,6 +2459,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           original_reconciliation:'independent_complete_original_all_outside_parts_full_labels_retained_date_states_entire_cache_and_partition_replay',
           membership:'immutable_explicit_group_IDs_only_unassigned_candidates_not_promoted',
           housing_and_metric_eligibility:'separate_not_established_unknown_conflicting_lineage_preserved',
+          current_subject_housing:unionSubjectHousing,
           statistics:'not_established',publication:'not_established',context_complete:false,pin_transfer:false,
           source_acquisition:'not_established',report_update:'none',continuation});
       }

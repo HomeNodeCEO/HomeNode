@@ -1,5 +1,37 @@
 # Complete larger-area Custom neighborhood studies
 
+## Original CAD raw-byte fix before protected review (2026-10-10)
+
+The integrated #1241 head 72f66b7f passed all 14 exact-head checks. Its full
+decoded native job 114296867789 passed 417 migration / 1 subject / 8 index /
+1 edge / 2 bootstrap tests with zero failures/skips; index duration was
+441081.248494 ms. An actual included review has NOT run for that integrated head.
+
+Before requesting review, this revision backports the already-native-tested
+standalone CAD raw-byte admission from the downstream raw-gate slice. The CAD
+query previously encoded all count-admitted payloads before byte refusal, the
+same memory-risk class found in the protected transaction review. It now retains
+only raw byte lengths under the whole 250-original count cap, then blocks JSON
+encoding on original/row/transport/output lower bounds. Exact encoded gates,
+all limits, current rights and full original/ENTIRE-cache reconciliation stay
+mandatory and unchanged. This is a scoped fix, not integration of unprotected
+descendant features or acceptance of their receipts as this new head's proof.
+
+Cloud-only TEMP assertions require over-limit 250 raw-size rows to encode zero
+members, count251 to read zero raw/member rows, per-original refusal and raw-fit/
+exact-encoding-over refusal. These assertions actually passed on downstream
+d9df38f4 native job 114294315209, but need fresh execution on THIS corrected
+integrated head, along with security/full-server/frontend checks and actual
+included review. The request gate remains 20:39:59 UTC AND fresh repository-wide
+actual-review activity. No early, paid, forced, quota or required-check bypass.
+
+The corrected integration passed 164 focused synthetic tests locally, zero
+failures/skips (1451.2995 ms), with source/helper syntax and diff checks passing.
+
+All internal stages remain inactive. No production, grant, worker/scheduler,
+pin, accepted report, genuine Hardy choice or Apply changed. TEMP DATA and small
+native owner protocols are not full licensed acquisition or live speed acceptance.
+
 ## Protected transaction merge and CAD integration (2026-10-10)
 
 PR #1240 exact 7b92505e passed all 14 fresh exact-head checks and actual included

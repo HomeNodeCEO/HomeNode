@@ -29,6 +29,10 @@ import { createNeighborhoodSharedStockOriginalCellsV2, prepareNeighborhoodStockO
   getNeighborhoodStockAccountPackageV2Profile,
   NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL, getNeighborhoodStockOriginalCellsV2Profile }
   from '../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
+import { getNeighborhoodOriginalAccountHousingV2Profile,resolveNeighborhoodOriginalAccountHousingV2 }
+  from '../src/services/neighborhoodAssessment/neighborhoodOriginalAccountHousingV2.js';
+import { getCustomCohortRecordedHousingInterpretation }
+  from '../src/services/neighborhoodAssessment/customCohortRecordedHousingProfiles.js';
 import { NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL, NEIGHBORHOOD_FROZEN_JOB_IDENTITY_COVERAGE_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourceClosurePages.js';
 import { createNeighborhoodSharedJobCadImprovementPages,prepareNeighborhoodSharedJobCadPage,NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_SQL,
@@ -1297,4 +1301,81 @@ test('account packages require fresh empty terminal probes and share single-use 
     {cursor:'',rowLimit:250},new Proxy({cursor:''},{}),{get cursor(){assert.fail('getter');}}])
     assert.throws(()=>prepareNeighborhoodStockAccountPackagePageV2(page),/invalid_/);
   assert.deepEqual(prepareNeighborhoodStockAccountPackagePageV2({cursor:'é'.repeat(64)}),{cursor:'é'.repeat(64)});
+});
+
+test('bounded original account housing uses the exact pinned whole-label dictionary and every outside parcel',async()=>{
+  const f=await stockOriginalCellFixture();f.rows.accounts=[stockOriginalCell('accounts','STOCK-A',{county:' Dallas County '})];
+  f.rows.parcels=f.rows.parcels.map((r,i)=>stockOriginalCell('parcels',String(i+1),{class_code:'A12',class_description:null,
+    use_description:null,structure_type:null,built_up:true}));
+  const p=await f.pages().housingAccountPackage({cursor:''}),h=p.recorded_housing;
+  assert.equal(p.status,'reconciled_stock_account_recorded_housing');assert.equal(h.state,'observed');assert.equal(h.category,'townhouse');
+  assert.equal(h.county_state,'observed');assert.equal(h.source_part_count,'2');assert.equal(h.part_states.observed,'2');
+  assert.equal(p.geographic_parcel_count,'1');assert.deepEqual(h.parts.map(r=>r.row_key),['1','2'],'outside part is not filtered out');
+  assert.deepEqual(h.profile,getNeighborhoodOriginalAccountHousingV2Profile());
+  assert.deepEqual(h.retained_housing_interpretation,getCustomCohortRecordedHousingInterpretation(5,2).profile_ref);
+  assert.equal(h.authority,'not_established');assert.equal(h.selected_union,'not_established');assert.equal(h.report_update,'none');
+  assert.equal(p.original_reconciliation,'every_package_original_recompiled');assert.equal(p.end_of_accounts,false);
+  assert.equal(p.rows[1].typed.observations.reported_year_built.exact_value,'2050');
+  assert.equal(p.rows[1].retained_observations.reported_year_built.state,'invalid');
+  const later=await f.pages('2050-01-01').housingAccountPackage({cursor:''});
+  assert.deepEqual(later.recorded_housing,h,'housing is current recorded evidence, not a historical year-built eligibility filter');
+  assert.deepEqual(later.rows[1].typed,p.rows[1].typed,'neutral original/cache bytes stay unchanged');
+  const legacy=await f.pages().accountPackage({cursor:''});assert.ok(!Object.hasOwn(legacy,'recorded_housing'));
+  assert.equal(legacy.status,'reconciled_stock_account_original_package');
+});
+
+test('original account housing preserves all five states, county and unknown literal reasons without majority or one-unit inference',async()=>{
+  const f=await stockOriginalCellFixture();
+  const set=(a,b)=>{f.rows.parcels=[stockOriginalCell('parcels','1',a),stockOriginalCell('parcels','2',b)];};
+  const read=async()=> (await f.pages().housingAccountPackage({cursor:''})).recorded_housing;
+  set({class_code:'A11'},{class_description:'SFR - TOWNHOUSES'});
+  assert.equal((await read()).state,'conflicting');assert.equal((await read()).category,null);
+  set({class_code:'A11'},{});let h=await read();assert.equal(h.state,'partial');assert.equal(h.category,null);
+  assert.deepEqual(h.part_states,{observed:'1',missing:'1',unknown:'0',partial:'0',conflicting:'0'});
+  set({},{});assert.equal((await read()).state,'missing');
+  set({class_code:'101',structure_type:'1'},{class_description:'Single Family',use_description:'one unit'});
+  assert.equal((await read()).state,'unknown');
+  set({class_code:'A11',structure_type:'CONDO / TOWNHOME'},{class_code:'A11',use_description:'CONDO/TOWNHOME'});
+  assert.equal((await read()).state,'unknown','explicit alternatives do not borrow known detached meaning');
+  for(const value of [101,{},true,'Townhouse '.repeat(20),'TOWNHOUSE\n']){
+    set({class_code:'A11',structure_type:value},{class_code:'A11',structure_type:value});
+    assert.equal((await read()).state,'unknown','unavailable/wrong-type diagnostics cannot borrow a supplementary known code');
+  }
+  set({class_code:'A11'},{class_code:'A11'});
+  for(const county of [null,'Tarrant','DALLAS-ish',123,'Dallas '.repeat(30)]){
+    f.rows.accounts=[stockOriginalCell('accounts','STOCK-A',{county})];h=await read();
+    assert.equal(h.state,'unknown');assert.equal(h.category,null);assert.notEqual(h.county_state,'observed');
+  }
+  f.rows.accounts=[];h=await read();assert.equal(h.state,'unknown');assert.equal(h.account_original_state,'absent');
+  assert.equal(h.source_part_count,'2');
+  for(const [code,category] of [['A20','mobile_home'],['B11','apartment'],['B12','duplex'],['A13','condominium']]){
+    f.rows.accounts=[stockOriginalCell('accounts','STOCK-A')];set({class_code:code},{class_code:code});assert.equal((await read()).category,category);
+  }
+  set({class_description:'MANUFACTURED HOME'},{structure_type:'MOBILE HOME'});assert.equal((await read()).state,'conflicting');
+});
+
+test('housing cannot bypass complete original replay, whole bounds, ending fences or reset the single-use budget',async()=>{
+  for(const change of [r=>r.typed.markers.class_code.value_text='A12',r=>r.original_text=r.original_text.replace('2050','1900'),
+    r=>r.original_payload_sha256='e'.repeat(64),r=>r.typed=null]){
+    const f=await stockOriginalCellFixture();f.rows.parcels[0]=structuredClone(f.rows.parcels[0]);change(f.rows.parcels[0]);
+    await assert.rejects(f.pages().housingAccountPackage({cursor:''}),/original_mismatch/);
+  }
+  for(const change of [{packet_oversize:true},{invalid_count:1},{original_counts:{parcels:251,accounts:0},page_count:0,page_json:'[]'}]){
+    const f=await stockOriginalCellFixture(({text,rows})=>text===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL?
+      result({account_id:'STOCK-A',geographic_parcel_count:'1',original_counts:{parcels:2,accounts:1},page_count:3,invalid_count:0,
+        packet_oversize:false,page_json:JSON.stringify([...rows.accounts,...rows.parcels]),...change}):null);
+    await assert.rejects(f.pages().housingAccountPackage({cursor:''}),/invalid_result|account_package_(?:byte|row)_limit/);
+  }
+  let headers=0;const ending=await stockOriginalCellFixture(({text,sharedHeader})=>text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read&&++headers===2?
+    result({...sharedHeader,status:'building'}):null);
+  await assert.rejects(ending.pages().housingAccountPackage({cursor:''}),/cache_unavailable/);
+  const f=await stockOriginalCellFixture(),reader=f.pages();await reader.housingAccountPackage({cursor:''});
+  await assert.rejects(reader.accountPackage({cursor:''}),/single_use/);await assert.rejects(reader.housingAccountPackage({cursor:''}),/single_use/);
+  await assert.rejects(reader.page({kind:'accounts',cursor:'',rowLimit:1}),/single_use/);
+  const old=f.pages();await old.accountPackage({cursor:''});await assert.rejects(old.housingAccountPackage({cursor:''}),/single_use/);
+  const end=await f.pages().housingAccountPackage({cursor:'STOCK-A'});
+  assert.equal(end.recorded_housing,null);assert.equal(end.end_of_accounts,true);assert.equal(end.next_cursor,'STOCK-A');
+  assert.deepEqual(end.rows,[]);
+  for(const value of [new Proxy([],{}),[,],{rows:[]},[{get kind(){assert.fail('getter');}}]])
+    assert.throws(()=>resolveNeighborhoodOriginalAccountHousingV2(value,()=>{}),/invalid_input/);
 });

@@ -1,5 +1,88 @@
 # Complete larger-area Custom neighborhood studies
 
+## Protected CAD merge integrated into bounded housing (2026-10-10)
+
+PR #1241 exact `291f287da655f7025ccde93c3d3abfb9c7e76616` passed all
+14 exact-head checks and actual included review
+`74e8fe1b-266b-4582-9a7d-9c4675d681f4`, finishing at 20:47:47 UTC with
+no actionable findings and exact-head coverage marked reviewed. The optional
+ast-grep tool timed out on the native test file; that complete changed-file diff
+was separately inspected, without a new finding. Full decoded native job
+114299602222 passed 417 migration / 1 subject / 8 index / 1 edge / 2 bootstrap
+tests, zero failures/skips. Fresh main/head/rules/checks/thread inspection
+preceded the normal expected-head protected merge at 20:48:32 UTC:
+`6b48eeea609007a0cc2a6c1f508bab370715bd15`. No activation or deployment.
+
+PR #1242 was retargeted to MAIN before synchronization with that actual protected
+parent. This integration preserves both the original housing owner and every
+protected raw-byte admission, transaction, CAD-rights and original-reconciliation
+fix. Older stacked proofs below are historical. Fresh integrated exact-head
+security/native/full-server/frontend checks and an actual included review are
+still required. The next conservative included-review gate is 21:52:47 UTC AND
+fresh repository-wide actual-review activity; no forced/paid/quota/check bypass.
+
+The merged working tree passed 352 focused synthetic tests locally, zero
+failures/cancellations/skips (5149.0808 ms), plus owner/native-test syntax and
+diff checks. Protected transaction and CAD raw-gate regressions were included.
+This is not a native/full-server/frontend or licensed/live acceptance result.
+
+All internal stages remain inactive. Small native protocols and synthetic tests
+are not licensed large-population acquisition or production-speed acceptance.
+
+## Original-reconciled bounded recorded housing (2026-10-10, not activated)
+
+`readOriginalFrozenCaptureJobAccountHousingReferencesV2` extends the actual
+bounded V2 stock owner, not the legacy dense 50,000-account preview. Only
+`stockAccountPackagePage: {cursor}` is accepted. The server selects one next
+stock account and replays EVERY original account/parcel part against its ENTIRE
+neutral cache before housing resolution. Outside-geometry parcel parts remain
+included. Original counts cap at 251 before whole-packet total250 admission;
+missing cache/overlimit account refuses, never a truncated population.
+
+The actual reopened subject intent pins the mapping5/housing2 interpretation
+(`custom-recorded-housing-v4`); the new result must match that exact choice.
+No browser profile, dictionary, category, county, account list, callback, date or
+count is authority. Existing Dallas/Dallas County whole-label/code meanings are
+reused, without changing their bytes or the old dense consumer. Numeric class/
+quality codes, one-unit/built-up flags and partial label substrings do not infer
+housing. Missing account/county or unavailable/wrong-type/control/oversize
+literals remain unresolved; all retained parcels contribute denominators.
+Recognized contradictions remain conflicting, known plus unresolved partial,
+all missing missing, unmapped unknown, all agreeing known observed. No majority,
+first parcel, area sum, mobile/manufactured equivalence or cross-source subject
+precedence is invented. Current recorded housing is not verified classification,
+historical stock, market eligibility or at-sale evidence.
+
+The new/old fixed methods share ONE single-use 32-MB all-nested-result,
+128-query, 60-second/five-second-query budget. Whole output is checked INCLUDING
+the housing result before delivery. Existing independent issued DONE original
+graph/geographic/identity, original stock and complete neutral-cache prerequisites
+and current DB actor/assignment/private draft/subject/source-purpose/claim/pin
+checks repeat at both ends. Every nonempty account needs a fresh empty terminal
+probe; that is still not complete selected-union traversal authority.
+
+235 focused tests passed, zero failed/skipped (4,707.8063 ms), including existing
+recorded-housing/retention/neutral-compiler regressions. Actual-compiler/owner-DATA
+tests cover all five states, outside conflicts,
+county/absence, exact labels, numeric/no-unit inference, hostile input, whole
+limits, original/full-cache tampering, neutral-byte preservation, shared single
+use and ending-cache refusal. Native actual-issued-owner tests are AUTHORED for
+two accounts/three parcel/two account originals, independently original-reconciled
+rows, pinned housing choice, outside contradiction, numeric unknown, unissued/
+corrupt prerequisites, both-end rights/cache/claim/cancellation, lost-COMMIT
+reopen and zero original copies/checkpoint/head writes. NEW native/full-suite
+execution remains pending, not established by local doubles.
+
+No phase, migration, public route/default, cache repair, worker, selection head,
+report write or activation is added. Full provider-economic/amenity resolution,
+server-owned complete original-reconciled selected-union ordinal statistics,
+exact medians/CODs/calendar quarters, coherent publication, durable finite
+workers and terminal pin transfer/retirement, licensed >50k/5-mile/10-mile/city/
+retrospective and live Hardy reload remain outstanding. Protected dependency
+integration, main retarget BEFORE synchronization, fresh security/native/full
+suites and actual included exact-head review remain mandatory. QA7-only future
+Apply, source rights, accepted reports and genuine Hardy choices are preserved.
+
 ## Original CAD raw-byte fix before protected review (2026-10-10)
 
 The integrated #1241 head 72f66b7f passed all 14 exact-head checks. Its full
@@ -91,13 +174,23 @@ a fresh empty terminal probe; a cursor/end alone does not prove traversal.
 compiler/companion/rights regressions, exact >2^53 values, primary absence, pool
 NULL/false, duplicate secondary numbers, whole250/251, bytes, unchanged-hash/count
 forgeries, hostile DATA, cancellation, shared single-use and ending-cache checks.
-Native tests are AUTHORED for both the rolled-back TEMP SQL admission/ordered
-index plans and the actual issued current-authorized owner (two stock accounts,
-two primary/three secondary originals, independent original/cache/native hash/
-byte reconciliation, partial/unissued/corrupt prerequisites, all both-end rights,
-cache tampering, lost-COMMIT reopening and zero checkpoint/head/payload writes).
-NEW native/full-suite execution is pending; synthetic DATA and small protocol
-fixtures are not licensed >50k acquisition or production-speed acceptance.
+Fresh exact `2d77d1f588f098f5a08bc045c65304c269bf3052` (#1241) foundation
+38030766873 and Sales38030766773 passed. Native114151046283 decoded 417 migration,
+8 index, 1 subject, 1 edge and 2 bootstrap tests, zero failures/skips; index suite
+284,463.114083 ms. The TEMP admission marker executed at06:25:43Z with both
+251 count maininputs/two loops/ordered account-index probes, whole250/251 and
+byte refusal, zero oversized payload delivery, missing cache/absent-primary/
+fresh empty probe. The fixture includes 20,000 unrelated original keys; this is
+rolled-back DATA plan coverage, not original/rights authority. Separately, the
+actual issued owner marker executed at06:30:12Z for two stock accounts/two primary/
+three secondary originals, independent full original/cache/native hash/byte
+reconciliation, duplicate numbers, partial/unissued/corrupt prerequisites, all
+both-end rights, cache/unchanged-hash-count tampering, lost-COMMIT reopening and
+zero checkpoint/head/payload writes. Frontend114151046304 passed 3959 tests,
+zero failures/skips (97,153.773698 ms), plus all checks; server114151046278 and
+redteam114151046174 passed. These INITIAL STACKED receipts are not future
+protected-parent-integrated readiness or actual review. Small protocol tests
+and synthetic DATA are not licensed >50k acquisition or production-speed acceptance.
 
 No migration, phase, default/public route, cache repair, worker, selected head,
 report write or activation is added. Protected-parent integration/main retarget

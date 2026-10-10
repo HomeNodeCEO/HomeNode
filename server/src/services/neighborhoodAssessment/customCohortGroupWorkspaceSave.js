@@ -50,6 +50,26 @@ async function checkPriorHead(client, scopeJson, checkpoint, checkBudget) {
   if (!same(selection_ref, checkpoint.active.selection_ref)) fail('selection_changed');
 }
 
+/** Read only the exact current pending editor target for a frozen V2 job. The
+ * actual owner holds the writable private-workfile and assignment locks and
+ * supplies the current DB job request, not caller workspace/choice authority.
+ * An old active head is preserved/checked as PRIOR intent, never carried into
+ * this new study. No group choice, source grant, union or write is issued. */
+export async function readCustomCohortFrozenSelectionWorkspaceTarget({ client, input, scopeJson, checkBudget }) {
+  if (typeof client?.query !== 'function' || typeof checkBudget !== 'function') fail('owner_required');
+  const restored = await readWorkspace(client, input, checkBudget), prior = restored.checkpoint;
+  const pending = prior.pending_capture;
+  if (prior.workspace_version !== 7 || pending === null
+    || pending.operation_id !== input.operationId || !same(pending.observation_period, input.observationPeriod)
+    || !same(pending.discovery ?? null, input.discovery ?? null)
+    || !same(pending.private_sales_import ?? null, input.privateSalesImport ?? null)
+    || prior.active?.context_ref.context_id === input.operationId) fail('study_changed');
+  await checkPriorHead(client, scopeJson, prior, checkBudget);
+  checkBudget();
+  return Object.freeze({ authority: 'prior_workspace_target_only_not_new_selection',
+    workspace_revision: restored.section_revision, workspace_checkpoint: prior });
+}
+
 /** Start/cancel only changes pending capture intent. An unavailable new study
  * never destroys the old active selection or applies statistics to a report.
  * Exact immediate-successor replay is read-only; a later edit cannot rewind.

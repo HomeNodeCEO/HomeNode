@@ -1816,6 +1816,16 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         if(fault==='catalog_group_count_after_first')row.member_count++;
         return {...result,rows:[row]};
       }
+      if(config.text.includes('custom-cohort-group-workspace:read')&&refsFault?.startsWith('catalog_workspace_')){
+        const fault=refsFault;
+        if(fault.endsWith('_ending')){refsFault=fault.replace('_ending','_after_first');return result;}
+        refsFault=null;
+        if(fault==='catalog_workspace_missing_after_first')return {rowCount:0,rows:[]};
+        const row=structuredClone(result.rows[0]);
+        if(fault==='catalog_workspace_revision_after_first')row.revision++;
+        if(fault==='catalog_workspace_pending_after_first')row.value.pending_capture.operation_id=randomUUID();
+        return {...result,rows:[row]};
+      }
       if(['partition_missing_blob','partition_corrupt_blob'].includes(refsFault)&&config.text.includes('neighborhood-cohort-blob:read */')
         &&config.values[1]===(await client.query("SELECT entry_reference->>'content_sha256' AS hash FROM app.neighborhood_custom_cohort_recorded_partition_v2_rows WHERE operation_id=$1 AND account_id='CLOSURE-A'",[refsOperation])).rows[0]?.hash){
         const fault=refsFault;refsFault=null;
@@ -3794,6 +3804,103 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       original_copies:0,job_typed_copies:0,checkpoint_head_entry_count_or_release_writes:0,pins_roots_retry_history_unchanged:true,
       complete_catalog_original_replay:false,genuine_selection_intent:false,selected_union:false,statistics:false,publication:false,
       licensed_acquisition:false,production_speed:false,worker_activation:false,report_update:false});
+    // Read the ACTUAL current pending editor target inside the same original
+    // account owner. This is not a new human group command, and an old active
+    // selection must never become this new study's membership by inference.
+    const workspaceTargetMethod='readOriginalFrozenCaptureJobSelectionWorkspaceTargetReferencesV2',
+      readTargetWorkspace=async()=>(await pool.query(`SELECT * FROM app.custom_appraisal_workfile_sections
+        WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`,[assignment])).rows,
+      readTargetHistory=async()=>(await pool.query(`SELECT * FROM app.custom_appraisal_workfile_section_history
+        WHERE assignment_file_id=$1 ORDER BY id`,[assignment])).rows,
+      readTargetReport=async()=>(await pool.query('SELECT * FROM app.report_files WHERE id=$1',[report])).rows,
+      readTargetWorkfile=async()=>(await pool.query('SELECT * FROM app.custom_appraisal_workfiles WHERE assignment_file_id=$1',[assignment])).rows;
+    assert.deepEqual(await readTargetWorkspace(),[],'this isolated synthetic assignment has no genuine saved workspace to replace');
+    const targetAbsentFrom=refsCalls.length;
+    await assert.rejects(freshRefsOwner()[workspaceTargetMethod](refsInput,stockAccountOptions),/group_workspace_unavailable/);
+    assert.ok(!refsCalls.slice(targetAbsentFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
+    const pendingTarget={workspace_version:7,active:null,pending_capture:{operation_id:refsOperation,
+      observation_period:refsInput.observationPeriod,discovery:refsInput.discovery}};
+    await pool.query(`INSERT INTO app.custom_appraisal_workfile_sections(assignment_file_id,section_key,section_value,revision,updated_by)
+      VALUES($1,'neighborhood_workspace',$2::jsonb,1,$3)`,[assignment,canonicalAssessmentJson(pendingTarget),actor]);
+    for(const badTarget of [{...pendingTarget,pending_capture:null},
+      {...pendingTarget,pending_capture:{...pendingTarget.pending_capture,operation_id:randomUUID()}},
+      {...pendingTarget,pending_capture:{...pendingTarget.pending_capture,observation_period:{start_date:'2024-01-01',end_date:'2026-10-07'}}},
+      {...pendingTarget,pending_capture:{...pendingTarget.pending_capture,discovery:{...discovery,radius_metres:'16093.44'}}},
+      {...pendingTarget,pending_capture:{...pendingTarget.pending_capture,private_sales_import:{batch_id:randomUUID(),expected_review_revision:1}}}]){
+      await pool.query(`UPDATE app.custom_appraisal_workfile_sections SET section_value=$2::jsonb
+        WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`,[assignment,canonicalAssessmentJson(badTarget)]);
+      const from=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[workspaceTargetMethod](refsInput,stockAccountOptions),/group_workspace_study_changed/);
+      assert.ok(!refsCalls.slice(from).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));await assertCatalogReadUnchanged();
+    }
+    await pool.query(`UPDATE app.custom_appraisal_workfile_sections SET section_value=$2::jsonb
+      WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`,[assignment,canonicalAssessmentJson(pendingTarget)]);
+    const targetWorkspace=await readTargetWorkspace(),targetHistory=await readTargetHistory(),targetReport=await readTargetReport(),
+      targetWorkfile=await readTargetWorkfile(),assertTargetUnchanged=async()=>{
+        await assertCatalogReadUnchanged();assert.deepEqual(await readTargetWorkspace(),targetWorkspace);
+        assert.deepEqual(await readTargetHistory(),targetHistory);assert.deepEqual(await readTargetReport(),targetReport);
+        assert.deepEqual(await readTargetWorkfile(),targetWorkfile);
+      },targetFrom=refsCalls.length;
+    const targetA=await freshRefsOwner()[workspaceTargetMethod](refsInput,stockAccountOptions),
+      targetB=await freshRefsOwner()[workspaceTargetMethod](refsInput,{...stockAccountOptions,stockAccountPackagePage:{cursor:targetA.next_cursor}}),
+      targetEnd=await freshRefsOwner()[workspaceTargetMethod](refsInput,{...stockAccountOptions,stockAccountPackagePage:{cursor:targetB.next_cursor}});
+    assert.equal(refsCalls.slice(targetFrom).filter(sql=>sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,3);
+    const targetWorkspaceReads=refsCalls.slice(targetFrom).flatMap((sql,i)=>sql.includes('custom-cohort-group-workspace:read')
+      ?[{sql,values:refsQueryParameters[targetFrom+i]}]:[]);
+    assert.equal(targetWorkspaceReads.length,6,'the same actual pending workspace is fenced at BOTH ends, including empty probe');
+    for(const {sql,values} of targetWorkspaceReads){assert.deepEqual(values,[assignment,'neighborhood_workspace',524288]);
+      assert.ok(sql.includes('FOR UPDATE NOWAIT'));assert.ok(!/array_agg|jsonb_agg|ST_DWithin/.test(sql));}
+    for(const [actual,original] of [[targetA,catalogReplayA],[targetB,catalogReplayB],[targetEnd,catalogReplayEnd]]){
+      assert.equal(actual.status,'original_reconciled_selection_workspace_target_account');
+      assert.deepEqual(actual.selection_workspace_target,{authority:'prior_workspace_target_only_not_new_selection',
+        workspace_revision:1,workspace_checkpoint:pendingTarget});
+      assert.deepEqual(actual.rows,original.rows);assert.deepEqual(actual.observations,original.observations);
+      assert.deepEqual(actual.recorded_group,original.recorded_group);assert.deepEqual(actual.catalog_reference,original.catalog_reference);
+      assert.equal(actual.prior_active_choice,'not_carried_into_new_study');assert.equal(actual.genuine_new_group_choice,'not_established');
+      assert.equal(actual.selection_intent,'not_established');assert.equal(actual.selected_union,'not_established');
+      assert.equal(actual.complete_catalog_original_replay,false);assert.equal(actual.statistics,'not_established');
+      assert.equal(actual.publication,'not_established');assert.equal(actual.report_update,'none');
+      assert.ok(Object.isFrozen(actual.selection_workspace_target.workspace_checkpoint));assert.ok(Buffer.byteLength(JSON.stringify(actual))<=2100000);
+    }
+    assert.equal(targetEnd.end_of_accounts,true);await assertTargetUnchanged();
+    for(const [fault,reason] of [['catalog_workspace_revision_ending',/workspace_target_changed/],
+      ['catalog_workspace_pending_ending',/group_workspace_study_changed/],['catalog_workspace_missing_ending',/group_workspace_unavailable/],
+      ['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],['subject',/subject_changed/],
+      ['claim',/claim_lost/],['cancel',/cancelled/],['transaction_header',/cache_unavailable/],
+      ['stock_cells_mismatch',/original_mismatch/],['partition_entry_ending',/partition_original_mismatch/],
+      ['catalog_read_counts_ending',/catalog_original_mismatch/],['catalog_group_ending_missing',/catalog_original_mismatch/]]){
+      refsFault=fault;refsAbort=new AbortController();const from=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[workspaceTargetMethod](refsInput,{...stockAccountOptions,signal:refsAbort.signal}),reason);
+      assert.equal(refsFault,null);assert.equal(refsCalls.slice(from).filter(sql=>sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,1);
+      await assertTargetUnchanged();
+      if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+      if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    }
+    for(const fault of ['missing_receipt','corrupt_receipt','missing_geo_receipt','corrupt_geo_receipt','missing_identity_receipt','corrupt_identity_receipt',
+      'missing_traversal_receipt','corrupt_traversal_receipt','missing_partition_receipt','corrupt_partition_receipt','missing_catalog_receipt','corrupt_catalog_receipt']){
+      refsFault=fault;const from=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[workspaceTargetMethod](refsInput,stockAccountOptions),/checkpoint_conflict|storage_conflict|invalid_receipt/);
+      assert.equal(refsFault,null);assert.ok(!refsCalls.slice(from).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));await assertTargetUnchanged();
+    }
+    refsFault='commit';await assert.rejects(freshRefsOwner()[workspaceTargetMethod](refsInput,stockAccountOptions),e=>e.outcome_unknown===true);
+    assert.deepEqual((await freshRefsOwner()[workspaceTargetMethod](refsInput,stockAccountOptions)).selection_workspace_target,targetA.selection_workspace_target);
+    await assert.rejects(freshRefsOwner()[workspaceTargetMethod](sourceInput,{...stockAccountOptions,captureJobClaim:sourceClaim}),/group_workspace_study_changed/);
+    await assertTargetUnchanged();
+    const targetQueries=refsCalls.slice(targetFrom);
+    assert.ok(!targetQueries.some(sql=>/ST_DWithin|checkpoint-save|anchor-(?:advance|insert)|:entry-insert|:contribute|INSERT INTO|UPDATE app\./.test(sql)));
+    assertBoundedCohortAuthorityAggregates(targetQueries.map((text,index)=>({text,values:refsQueryParameters[targetFrom+index]})),
+      {actorUserId:actor,organizationId:organization,assignmentFileId:assignment});
+    console.info('[native-original-selection-workspace-target-v2]',{accounts:2,fresh_empty_probe:true,
+      actual_pending_job_period_discovery_private_review_fenced_before_original_io:true,actual_workspace_revision_and_pending_fenced_both_ends:true,
+      exactly_one_whole_original_packet_per_call:true,current_ending_authority_and_original_cache_partition_catalog_group_fences:true,
+      workspace_history_workfile_accepted_report_heads_roots_job_continuation_attempts_pins_unchanged:true,lost_commit_fresh_reopen:true,
+      native_prior_active_head_case:false,focused_prior_active_head_case:true,genuine_new_group_command:false,old_choice_carried:false,
+      complete_catalog_original_replay:false,selected_union:false,statistics:false,publication:false,licensed_acquisition:false,production_speed:false});
+    // Remove ONLY the synthetic fixture row just inserted above; preserve the
+    // pre-existing absence expected by the rest of this isolated cloud fixture.
+    await pool.query(`DELETE FROM app.custom_appraisal_workfile_sections
+      WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace' AND updated_by=$2`,[assignment,actor]);
+    assert.deepEqual(await readTargetWorkspace(),[]);assert.deepEqual(await readTargetHistory(),targetHistory);
     for(const table of ['neighborhood_custom_cohort_recorded_catalog_v2_groups','neighborhood_custom_cohort_recorded_catalog_v2_heads'])
       for(const sql of [`DELETE FROM app.${table} WHERE operation_id=$1`,`UPDATE app.${table} SET organization_id=organization_id WHERE operation_id=$1`,`TRUNCATE app.${table}`])
         await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql,sql.includes('$1')?[refsOperation]:[])),/immutable|transition_conflict|prefix_conflict/);

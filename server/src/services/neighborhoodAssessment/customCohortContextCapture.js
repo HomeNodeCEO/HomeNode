@@ -56,6 +56,8 @@ import { createCustomCohortGeographicV2AnchorRepository } from './customCohortGe
 import { prepareCohortGeographicOriginalReceiptV2 } from './cohortGeographicOriginalReceiptV2.js';
 import { createCustomCohortIdentityV2AnchorRepository } from './customCohortIdentityV2AnchorRepository.js';
 import { prepareCohortSourceIdentityReceiptV2 } from './cohortSourceIdentityReceiptV2.js';
+import { prepareCohortStockTraversalReceiptV2 } from './cohortStockTraversalReceiptV2.js';
+import { createCustomCohortStockTraversalV2AnchorRepository } from './customCohortStockTraversalV2AnchorRepository.js';
 import { createCustomCohortRecordedGroupSelectionOwner,
   reopenCustomCohortRecordedGroupSelectionOriginal } from './customCohortRecordedGroupSelectionOwner.js';
 import { createCustomCohortPreparedCatalogOwner } from './customCohortPreparedCatalogOwner.js';
@@ -178,6 +180,8 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingStockAccountPackages: true, allowedPhases: ['frozen_identity_refs_v2'] },
   original_account_housing_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingStockAccountPackages: true, resolvingStockAccountHousing: true, allowedPhases: ['frozen_identity_refs_v2'] },
+  original_stock_traversal_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    traversingStock: true, allowedPhases: ['frozen_identity_refs_v2', 'frozen_stock_traversal_refs_v2'] },
 });
 function fail(reason, detail, captureCounts) {
   const error = Object.assign(new Error(`custom_cohort_capture_${reason}`), {
@@ -1611,7 +1615,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,
-      resolvingStockAccountHousing=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
+      resolvingStockAccountHousing=false,traversingStock=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     if(referencesV2){
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
       const descriptors=Object.getOwnPropertyDescriptors(options),keys=Reflect.ownKeys(descriptors);
@@ -1658,7 +1662,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(!same(await jobs.readRequest(claim,jobOptions),requested)) fail('operation_conflict');
       const checkpoint=await jobs.readCheckpoint(claim,jobOptions);
       if(!checkpoint || !allowedPhases.includes(checkpoint.phase)
-        ||checkpoint.evidence_refs.length!==({frozen_stock_v1:2,frozen_source_v1:3,frozen_source_refs_v2:3,frozen_verify_refs_v2:4,frozen_geo_verify_refs_v2:5,frozen_identity_refs_v2:6,frozen_verify_v1:4,frozen_geo_verify_v1:5,frozen_identity_v1:6,frozen_typed_v1:7}[checkpoint.phase]))
+        ||checkpoint.evidence_refs.length!==({frozen_stock_v1:2,frozen_source_v1:3,frozen_source_refs_v2:3,frozen_verify_refs_v2:4,frozen_geo_verify_refs_v2:5,frozen_identity_refs_v2:6,frozen_stock_traversal_refs_v2:7,frozen_verify_v1:4,frozen_geo_verify_v1:5,frozen_identity_v1:6,frozen_typed_v1:7}[checkpoint.phase]))
         fail('checkpoint_conflict');
       const subjects=createCustomCohortSubjectRepository(client,canonicalAssessmentJson(scope));
       const blobs=createNeighborhoodCohortBlobRepository(client,scope.organization_id);
@@ -1877,7 +1881,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           issued=prepareCohortSourceIdentityReceiptV2(issued,expected);
           if(issued.sequence!==identityAnchor.sequence)fail('checkpoint_conflict');
         }
-        if((readingSharedStockMetrics||readingCadPages||readingTransactionPages||readingTransactionPackages||readingStockOriginalCells||readingStockAccountPackages)
+        if((readingSharedStockMetrics||readingCadPages||readingTransactionPages||readingTransactionPackages||readingStockOriginalCells||readingStockAccountPackages||traversingStock)
           &&issued?.after.kind_index!==COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.length)
           fail('unfinished_identity_verification');
         // Keep the original exact all-date one-hop identity SQL unchanged.
@@ -2000,6 +2004,55 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         if(resolvingStockAccountHousing&&stockMetricResult.recorded_housing!==null
           &&!same(stockMetricResult.recorded_housing.retained_housing_interpretation,housingProfile))fail('checkpoint_conflict');
       }
+      let traversalAnchorStore=null,traversalAnchor=null,traversalResult=null;
+      if(traversingStock){
+        const expected={binding,source_reference:reference,root,graph_verification_reference:verificationReference,
+          stock_verification_reference:stockVerificationReference,identity_verification_reference:identityVerificationReference,
+          stock_reference:stockReference,effective_date:context.effective_date,stock_account_count:stock.population.account_count};
+        traversalAnchorStore=createCustomCohortStockTraversalV2AnchorRepository({client,claim,scope,actorUserId:input.auth.userId,
+          source_reference:reference,root_reference:root,graph_reference:verificationReference,
+          geographic_reference:stockVerificationReference,identity_reference:identityVerificationReference,stock_reference:stockReference});
+        traversalAnchor=await traversalAnchorStore.read();
+        if(checkpoint.phase==='frozen_identity_refs_v2'?traversalAnchor!==null
+          :traversalAnchor===null||!same(traversalAnchor.receipt_reference,checkpoint.evidence_refs[6]))fail('checkpoint_conflict');
+        let issued=null;
+        if(traversalAnchor){
+          const text=await blobs.get(traversalAnchor.receipt_reference.content_sha256,traversalAnchor.receipt_reference.canonical_utf8_bytes);
+          if(text===null||Buffer.byteLength(text)>16000)fail('checkpoint_conflict');
+          try{issued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
+          issued=prepareCohortStockTraversalReceiptV2(issued,expected);
+          if(issued.sequence!==traversalAnchor.sequence)fail('checkpoint_conflict');
+        }
+        // ONLY the independent issued head chooses this next account. There is
+        // no caller cursor, count, cell/profile callback, dense roster or DONE.
+        // One same-budget original reader replays the WHOLE account, including
+        // outside parts, against the ENTIRE neutral cache before progress DML.
+        const before=issued?.after??{after_account:'',account_count:0,done:false},
+          graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
+        const packet=await createNeighborhoodSharedStockOriginalCellsV2(client,stockOptions,graph,context.effective_date)
+          .housingAccountPackage({cursor:before.after_account});
+        if(packet.recorded_housing!==null&&!same(packet.recorded_housing.retained_housing_interpretation,housingProfile))fail('checkpoint_conflict');
+        if(before.done&&!packet.end_of_accounts)fail('checkpoint_conflict');
+        let receipt=issued,advanced=false;
+        if(!before.done){
+          const after={after_account:packet.next_cursor,account_count:before.account_count+(packet.account_id===null?0:1),done:packet.end_of_accounts};
+          receipt=prepareCohortStockTraversalReceiptV2({format:'cohort_stock_traversal_receipt_v2',...expected,
+            sequence:(traversalAnchor?.sequence??0)+1,previous:traversalAnchor?.receipt_reference??null,before,after},expected);
+          const receiptReference=await blobs.put(canonicalAssessmentJson(receipt));
+          traversalAnchor=await traversalAnchorStore.advance(traversalAnchor,receiptReference);
+          await jobs.saveCheckpoint(claim,jobOptions,{phase:'frozen_stock_traversal_refs_v2',evidence_refs:[retained.intent.reference,
+            stockReference,reference,verificationReference,stockVerificationReference,identityVerificationReference,receiptReference]});
+          advanced=true;
+        }
+        traversalResult={status:'original_stock_traversal_progress_retained',operation_id:input.operationId,advanced,
+          traversal_reference:traversalAnchor.receipt_reference,progress:receipt.after,stock_reference:stockReference,
+          source_reference:reference,verification_reference:verificationReference,stock_verification_reference:stockVerificationReference,
+          identity_verification_reference:identityVerificationReference,generation_id:stock.generation_id,
+          retained_effective_date:context.effective_date,retained_observation_period:input.observationPeriod,
+          original_reconciliation:'every_traversed_whole_account_original_and_entire_neutral_cache_replayed',
+          current_authorized_owner:'V2_issued_graph_geography_identity_and_current_original_source_rights',
+          selected_union:'not_established',statistics:'not_established',source_acquisition:'not_established',report_update:'none'};
+      }
       input=freeze({...input,auth:await loadCurrentCustomCohortJobActor(client,input.auth.userId,scope.organization_id)});
       assertTarget(await resolveTarget(client,input,true),target);
       privateDraft(await privateCaptureWorkfile(client,input));
@@ -2014,7 +2067,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(graphAnchorStore&&!same(await graphAnchorStore.read(),graphAnchor))fail('checkpoint_conflict');
       if(geographicAnchorStore&&!same(await geographicAnchorStore.read(),geographicAnchor))fail('checkpoint_conflict');
       if(identityAnchorStore&&!same(await identityAnchorStore.read(),identityAnchor))fail('checkpoint_conflict');
+      if(traversalAnchorStore&&!same(await traversalAnchorStore.read(),traversalAnchor))fail('checkpoint_conflict');
       budget.check();
+      if(traversingStock)return freeze(traversalResult);
       if(readingStockMetrics||readingSharedStockMetrics||readingCadPages||readingTransactionPages||readingTransactionPackages||readingStockOriginalCells||readingStockAccountPackages) return freeze({...stockMetricResult,
         ...(readingStockMetrics?{typed_original_reference:typedReference}:{}),
         ...(readingCadPages?{CAD_source_authorization:{purpose:cadPurpose,decision:cadDecision},stock_reference:stockReference,
@@ -2263,6 +2318,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * report fact, source grant, new phase or large-area acceptance. */
     readOriginalFrozenCaptureJobAccountHousingReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_account_housing_refs_v2'),
+    /** Commit one server-owned original traversal step with independent issued
+     * CAS head and retention-root checkpoint. No caller continuation, selected
+     * union/statistic, public route, scheduler activation or report update. */
+    advanceOriginalFrozenCaptureJobStockTraversalReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'original_stock_traversal_refs_v2'),
     async capture(value, options = {}) {
     if (!options || Object.getPrototypeOf(options) !== Object.prototype)
       fail('invalid_options');

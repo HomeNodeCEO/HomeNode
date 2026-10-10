@@ -42,6 +42,8 @@ import { createCustomCohortGeographicV2AnchorRepository }
   from '../src/services/neighborhoodAssessment/customCohortGeographicV2AnchorRepository.js';
 import { createCustomCohortIdentityV2AnchorRepository }
   from '../src/services/neighborhoodAssessment/customCohortIdentityV2AnchorRepository.js';
+import { createCustomCohortStockTraversalV2AnchorRepository }
+  from '../src/services/neighborhoodAssessment/customCohortStockTraversalV2AnchorRepository.js';
 import { createCustomCohortContextCapture }
   from '../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { createNeighborhoodFrozenJobStock }
@@ -1748,6 +1750,11 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         const fault=refsFault;refsFault=null;
         return fault==='missing_identity_receipt'?{rowCount:0,rows:[]}:{...result,rows:result.rows.map(row=>({...row,canonical_utf8:'{}'}))};
       }
+      if(['missing_traversal_receipt','corrupt_traversal_receipt'].includes(refsFault)&&config.text.includes('neighborhood-cohort-blob:read */')
+        &&config.values[1]===(await client.query('SELECT receipt_reference->>\'content_sha256\' AS hash FROM app.neighborhood_custom_cohort_stock_traversal_v2_anchors WHERE operation_id=$1',[refsOperation])).rows[0]?.hash){
+        const fault=refsFault;refsFault=null;
+        return fault==='missing_traversal_receipt'?{rowCount:0,rows:[]}:{...result,rows:result.rows.map(row=>({...row,canonical_utf8:'{}'}))};
+      }
       if(config.text.includes('neighborhood-frozen-job-closure:parcels')||config.text.includes('neighborhood-frozen-stock-originals:page')
         ||config.text.includes('neighborhood-frozen-job-identity:parcels')||config.text.includes('shared-v2-stock-metrics:page')
         ||config.text===NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_SQL||config.text===NEIGHBORHOOD_SHARED_JOB_CAD_ACCOUNT_PAGE_SQL
@@ -3107,6 +3114,92 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       unchanged_hash_count_forgeries_refused:true,lost_commit_reopen:true,fresh_empty_probe:true,
       original_payload_copies:0,job_typed_copies:0,checkpoint_or_head_writes:0,
       full_amenity_resolution:false,selected_union:false,licensed_acquisition:false,report_update:false,production_speed:false});
+    // Durable traversal owns its cursor and completion in the actual database,
+    // not in caller DATA. Run only after all old read-only assertions above.
+    const traversalMethod='advanceOriginalFrozenCaptureJobStockTraversalReferencesV2',traversalFrom=refsCalls.length,
+      traversalBeforeBlobs=await refsBlobCount();
+    const readTraversalAnchor=async()=>((await pool.query(`SELECT source_reference,root_reference,graph_reference,
+      geographic_reference,identity_reference,stock_reference,receipt_reference,sequence
+      FROM app.neighborhood_custom_cohort_stock_traversal_v2_anchors WHERE operation_id=$1`,[refsOperation])).rows[0]??null);
+    const traversalInitial=async()=>{assert.equal(await readTraversalAnchor(),null);
+      assert.deepEqual(await readRefsCheckpoint(),identityCommitted);assert.equal(await refsBlobCount(),traversalBeforeBlobs);};
+    await traversalInitial();
+    // Valid retained hashes/counts and a shape-valid receipt still cannot skip
+    // the first original stock account or invent a terminal empty probe.
+    const identityBody=await withCustomCohortJobTransaction(pool,async client=>JSON.parse(await createNeighborhoodCohortBlobRepository(client,organization)
+      .get(identityIssued.receipt_reference.content_sha256,identityIssued.receipt_reference.canonical_utf8_bytes)));
+    const traversalBindings={source_reference:identityBody.source_reference,root_reference:identityBody.root,
+      graph_reference:identityBody.graph_verification_reference,geographic_reference:identityBody.stock_verification_reference,
+      identity_reference:identityIssued.receipt_reference,stock_reference:identityBody.stock_reference};
+    for(const after of [{after_account:'CLOSURE-B',account_count:1,done:false},{after_account:'CLOSURE-B',account_count:2,done:true}]){
+      await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
+        const body={format:'cohort_stock_traversal_receipt_v2',binding:identityBody.binding,source_reference:identityBody.source_reference,
+          root:identityBody.root,graph_verification_reference:identityBody.graph_verification_reference,
+          stock_verification_reference:identityBody.stock_verification_reference,identity_verification_reference:identityIssued.receipt_reference,
+          stock_reference:identityBody.stock_reference,effective_date:'2026-10-07',stock_account_count:'2',sequence:1,previous:null,
+          before:{after_account:'',account_count:0,done:false},after};
+        const ref=await createNeighborhoodCohortBlobRepository(client,organization).put(canonicalAssessmentJson(body));
+        return createCustomCohortStockTraversalV2AnchorRepository({client,claim:refsClaim,scope,actorUserId:actor,...traversalBindings}).advance(null,ref);
+      }),/neighborhood_stock_traversal_v2_anchor_prefix_conflict/);
+      await traversalInitial();
+    }
+    await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+    const traversalDeniedFrom=refsCalls.length;
+    await assert.rejects(freshRefsOwner()[traversalMethod](refsInput,refsOptions),/market_data_access_denied/);
+    assert.ok(!refsCalls.slice(traversalDeniedFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));
+    for(const fault of ['stock_cells_mismatch','stock_cells_missing','stock_cells_original']){
+      refsFault=fault;await assert.rejects(freshRefsOwner()[traversalMethod](refsInput,refsOptions),/original_mismatch/);
+      assert.equal(refsFault,null);await traversalInitial();
+    }
+    for(const [fault,reason] of [['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],
+      ['subject',/subject_changed/],['claim',/claim_lost/],['cancel',/cancelled/],['transaction_header',/cache_unavailable/]]){
+      refsFault=fault;refsAbort=new AbortController();
+      await assert.rejects(freshRefsOwner()[traversalMethod](refsInput,{...refsOptions,signal:refsAbort.signal}),reason);
+      assert.equal(refsFault,null);await traversalInitial();
+      if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+      if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    }
+    for(const fault of ['missing_receipt','corrupt_receipt','missing_geo_receipt','corrupt_geo_receipt','missing_identity_receipt','corrupt_identity_receipt']){
+      refsFault=fault;const from=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[traversalMethod](refsInput,refsOptions),/checkpoint_conflict|storage_conflict|invalid_receipt/);
+      assert.equal(refsFault,null);assert.ok(!refsCalls.slice(from).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));await traversalInitial();
+    }
+    await assert.rejects(freshRefsOwner()[traversalMethod](sourceInput,{...refsOptions,captureJobClaim:sourceClaim}),/checkpoint_conflict/);
+    refsFault='commit';await assert.rejects(freshRefsOwner()[traversalMethod](refsInput,refsOptions),e=>e.outcome_unknown===true);
+    const traversalFirst=await readTraversalAnchor(),traversalFirstCheckpoint=await readRefsCheckpoint();
+    assert.equal(traversalFirst.sequence,1);assert.equal(traversalFirstCheckpoint.phase,'frozen_stock_traversal_refs_v2');
+    assert.deepEqual(traversalFirstCheckpoint.evidence_refs.slice(0,6),identityCommitted.evidence_refs);
+    assert.deepEqual(traversalFirstCheckpoint.evidence_refs[6],traversalFirst.receipt_reference);
+    for(const fault of ['missing_traversal_receipt','corrupt_traversal_receipt']){
+      refsFault=fault;const from=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[traversalMethod](refsInput,refsOptions),/checkpoint_conflict|storage_conflict|invalid_receipt/);
+      assert.equal(refsFault,null);assert.ok(!refsCalls.slice(from).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
+      assert.deepEqual(await readTraversalAnchor(),traversalFirst);assert.deepEqual(await readRefsCheckpoint(),traversalFirstCheckpoint);
+    }
+    const traversalSecond=await freshRefsOwner()[traversalMethod](refsInput,refsOptions);
+    assert.deepEqual(traversalSecond.progress,{after_account:'CLOSURE-B',account_count:2,done:false},'lost COMMIT reopens at B, never repeats A or skips to DONE');
+    const traversalEnd=await freshRefsOwner()[traversalMethod](refsInput,refsOptions),traversalFinal=await readTraversalAnchor();
+    assert.equal(traversalEnd.progress.done,true);assert.equal(traversalFinal.sequence,3);
+    assert.equal(traversalEnd.selected_union,'not_established');assert.equal(traversalEnd.statistics,'not_established');
+    assert.equal(traversalEnd.report_update,'none');assert.equal(traversalEnd.retained_effective_date,'2026-10-07');
+    const traversalDoneBlobs=await refsBlobCount(),traversalDoneCheckpoint=await readRefsCheckpoint(),doneFrom=refsCalls.length;
+    const reopenedTraversal=await freshRefsOwner()[traversalMethod](refsInput,refsOptions);
+    assert.equal(reopenedTraversal.advanced,false);assert.deepEqual(reopenedTraversal.progress,traversalEnd.progress);
+    assert.ok(refsCalls.slice(doneFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL),'completed reopen rechecks the empty source/cache probe');
+    assert.deepEqual(await readTraversalAnchor(),traversalFinal);assert.deepEqual(await readRefsCheckpoint(),traversalDoneCheckpoint);
+    assert.equal(await refsBlobCount(),traversalDoneBlobs);assert.equal(traversalDoneBlobs-traversalBeforeBlobs,3,'exactly three metadata-only receipt blobs');
+    for(const sql of ['DELETE FROM app.neighborhood_custom_cohort_stock_traversal_v2_anchors WHERE operation_id=$1',
+      'TRUNCATE app.neighborhood_custom_cohort_stock_traversal_v2_anchors'])
+      await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql,sql.includes('$1')?[refsOperation]:[])),/immutable/);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_custom_cohort_typed_original_rows WHERE operation_id=$1',[refsOperation])).rows[0].n,0);
+    assert.ok(!refsCalls.slice(traversalFrom).some(sql=>/ST_DWithin|shared-typed-v2:(?:page|begin|rows|progress)|job-typed:/.test(sql)));
+    console.info('[native-original-stock-traversal-issued-owner-v2]',{accounts:2,parcel_originals:3,account_originals:2,issued_steps:3,
+      exact_server_owned_cursor:true,native_skip_free_DONE_refused:true,every_whole_account_original_entire_cache_replayed:true,
+      both_end_current_rights_claim_subject_cache_refusal:true,partial_unissued_corrupt_heads_refused:true,unchanged_hash_count_forgeries_refused:true,
+      ending_failure_rolls_back_receipt_anchor_checkpoint:true,lost_commit_resumes_next_account:true,fresh_empty_terminal_and_completed_reopen:true,
+      metadata_receipts_only:true,original_payload_copies:0,job_typed_copies:0,complete_selected_union:false,statistics:false,
+      source_acquisition:false,licensed_large_area:false,production_speed:false,worker_activation:false,report_update:false});
     }
     for(const [kind,keys] of Object.entries(expected)){
       let position=null;const seen=[];

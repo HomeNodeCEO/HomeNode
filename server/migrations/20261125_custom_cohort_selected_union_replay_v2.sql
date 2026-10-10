@@ -33,7 +33,7 @@ RETURNS boolean LANGUAGE sql STABLE AS $$
     WHERE c.operation_id=op AND c.organization_id=org AND h.command_id=c.command_id
       AND cp->>'phase'='frozen_selected_union_refs_v2' AND jsonb_array_length(cp->'evidence_refs')=10
       AND (cp-'phase'-'evidence_refs')='{}'::jsonb
-      AND (cp->'evidence_refs'-9)=c.checkpoint->'evidence_refs'
+      AND ((cp->'evidence_refs')-9)=c.checkpoint->'evidence_refs'
       AND cp->'evidence_refs'->9=h.receipt_reference),false)
 $$;
 
@@ -353,7 +353,11 @@ BEGIN
       OR NEW.issued_attempts<OLD.issued_attempts OR NEW.progress_reference=OLD.progress_reference
       OR (OLD.phase='frozen_recorded_partition_refs_v2' AND NEW.phase='frozen_stock_traversal_refs_v2')
       OR (OLD.phase='frozen_recorded_catalog_refs_v2' AND NEW.phase NOT IN ('frozen_recorded_catalog_refs_v2','frozen_selected_union_refs_v2'))
-      OR (OLD.phase='frozen_recorded_catalog_refs_v2' AND NEW.phase='frozen_selected_union_refs_v2' AND actual_sequence<>1)
+      OR (NEW.phase='frozen_selected_union_refs_v2' AND OLD.phase NOT IN ('frozen_recorded_catalog_refs_v2','frozen_selected_union_refs_v2'))
+      OR (OLD.phase='frozen_recorded_catalog_refs_v2' AND NEW.phase='frozen_selected_union_refs_v2'
+        AND (actual_sequence<>1 OR NOT EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_v2_selection_intents command
+          WHERE command.operation_id=NEW.operation_id AND command.organization_id=NEW.organization_id
+            AND command.checkpoint->'evidence_refs'->8=OLD.progress_reference)))
       OR (OLD.phase='frozen_selected_union_refs_v2' AND NEW.phase<>'frozen_selected_union_refs_v2') THEN
       RAISE EXCEPTION 'neighborhood_v2_continuation_transition_conflict' USING ERRCODE='55000'; END IF;
   END IF;

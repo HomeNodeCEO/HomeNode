@@ -1739,7 +1739,13 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty']) t
       refsCalls.push(config.text);
       refsQueryParameters.push(config.values);
       if(config.text.includes('neighborhood-cohort-blob:insert */'))refsBlobPuts.push(config.values[3]);
+      const orphanUnionYield=refsFault==='union_orphan_commit'&&config.text.includes('custom-cohort-v2-continuation:yield');
+      // Negative native guard test: execute the REAL yield, then roll back ONLY
+      // that statement. The earlier real group/head/root writes remain pending;
+      // REAL COMMIT must reject orphan progress. No fabricated SQL result.
+      if(orphanUnionYield)await client.query('SAVEPOINT synthetic_union_yield');
       const result=await client.query(config);
+      if(orphanUnionYield){await client.query('ROLLBACK TO SAVEPOINT synthetic_union_yield');refsFault=null;}
       for(const [fault,tag] of [['union_group_rollback','custom-cohort-selected-union-v2:group-contribute'],
         ['union_head_rollback','custom-cohort-selected-union-v2:head-insert'],
         ['union_yield_rollback','custom-cohort-v2-continuation:yield']]){
@@ -4321,7 +4327,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty']) t
             ['catalog_read_counts_ending',/catalog_original_mismatch/],['catalog_read_head_ending',/checkpoint_conflict|catalog_original_mismatch/],
             ['stock_cells_mismatch',/original_mismatch/],['stock_cells_missing',/original_mismatch/],['stock_cells_original',/original_mismatch/],
             ['union_group_rollback',/actual union_group_rollback/],['union_head_rollback',/actual union_head_rollback/],
-            ['union_yield_rollback',/actual union_yield_rollback/]]){
+            ['union_yield_rollback',/actual union_yield_rollback/],['union_orphan_commit',/neighborhood_selected_union_v2_orphan_progress/]]){
             refsFault=fault;refsAbort=new AbortController();
             await assert.rejects(freshRefsOwner()[method](refsInput,{captureJobClaim:liveClaim,signal:refsAbort.signal}),reason);
             assert.equal(refsFault,null);await unionUnchanged();

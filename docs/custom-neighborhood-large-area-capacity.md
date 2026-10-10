@@ -35,7 +35,8 @@ mark the distinct selected STOCK union complete. Partial counts never mean
 complete selection, eligibility, publication or an accepted report.
 
 163 focused closed-grammar/storage/owner tests pass, zero failures/skips
-(2702.9998ms); source/native-fixture syntax and diff checks pass. These SQL
+(721.1522ms after the first cloud migration repair); source/native-fixture
+syntax and diff checks pass. These SQL
 doubles prove mechanics ONLY. Cloud native assertions are AUTHORED, not yet
 executed: two independently BUILT actual graphs cover nonempty and explicit
 empty choices, all current ending faults, REAL provisional DML rollback, exact
@@ -43,6 +44,13 @@ first human bridge, fresh same-attempt continuation, real higher-attempt
 failure/reclaim, lost REAL COMMIT acknowledgment without duplicate recapture,
 unknown housing retention, terminal complete-catalog reconciliation, unchanged
 original roots/intent/pins/workspace/history/reports and native cancellation.
+The first cloud head failed before executing this stage: PostgreSQL bound
+subtraction before JSON extraction in the nine-root predicate. The extraction
+is now parenthesized; forward transitions also require the actual completed
+catalog root, and cannot skip earlier phases. A native negative test executes
+the REAL yield then rolls back only that statement, requiring REAL COMMIT to
+reject the still-pending orphan group/head/root writes. Fresh exact-head cloud
+execution remains required; the failed head is not native acceptance.
 
 The finite 8,000,004 success ceiling covers THESE FOUR fixed stock passes only;
 it is NOT a whole-roadmap runtime or production-SLA claim. No HTTP/default

@@ -80,12 +80,15 @@ test('registered fourth-pass guards preserve nine roots, exact first human bridg
   const name='20261125_custom_cohort_selected_union_replay_v2.sql',sql=readFileSync(new URL(`../migrations/${name}`,import.meta.url),'utf8'),
     registry=readFileSync(new URL('../src/database/mobileMigrations.js',import.meta.url),'utf8');
   assert.ok(registry.indexOf(name)>registry.indexOf('20261124_custom_cohort_selection_intent_v2.sql'));
-  for(const s of ["(cp->'evidence_refs'-9)=c.checkpoint->'evidence_refs'",'PRIMARY KEY(operation_id,account_id)',
+  for(const s of ["((cp->'evidence_refs')-9)=c.checkpoint->'evidence_refs'",'PRIMARY KEY(operation_id,account_id)',
     'UNIQUE(operation_id,ordinal)','UNIQUE(operation_id,partition_ordinal)','DEFERRABLE INITIALLY DEFERRED','orphan_progress',
     'FULL JOIN app.neighborhood_custom_cohort_selected_union_v2_groups','g.member_count IS DISTINCT FROM r.member_count',
     'g.last_ordinal IS DISTINCT FROM r.last_ordinal','CHECK(sequence BETWEEN 1 AND 8000004)',
     'command.resume_claim_token=NEW.issued_claim_token','actual_sequence=1','AND NOT first_union_bridge',
+    "NEW.phase='frozen_selected_union_refs_v2' AND OLD.phase NOT IN ('frozen_recorded_catalog_refs_v2','frozen_selected_union_refs_v2')",
+    "command.checkpoint->'evidence_refs'->8=OLD.progress_reference",
     "OLD.phase='frozen_selected_union_refs_v2' AND NEW.phase<>'frozen_selected_union_refs_v2'",'BEFORE TRUNCATE'])assert.ok(sql.includes(s),s);
   for(const m of sql.matchAll(/CREATE (?:TABLE|FUNCTION|TRIGGER|INDEX|CONSTRAINT TRIGGER) (?:app\.)?([a-z0-9_]+)/g))assert.ok(Buffer.byteLength(m[1])<=63,m[1]);
   assert.doesNotMatch(sql,/DISABLE TRIGGER|DROP TABLE|DROP TRIGGER|UPDATE app\.report_files|ST_DWithin|array_agg|jsonb_agg/);
+  assert.doesNotMatch(sql,/cp->'evidence_refs'-9/); // subtraction binds before -> in PostgreSQL
 });

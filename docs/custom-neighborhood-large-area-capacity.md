@@ -1,5 +1,44 @@
 # Complete larger-area Custom neighborhood studies
 
+## Current pending editor target in the original owner (2026-10-10, not activated)
+
+`readOriginalFrozenCaptureJobSelectionWorkspaceTargetReferencesV2` extends the
+SAME completed-catalog original-account database owner. After current database
+actor, assignment, private draft and actual job-request admission, it locks and
+reads the real `neighborhood_workspace` section, with the existing bounded
+section reader and V7 parser. The actual pending operation, observation dates,
+discovery and private review identity must match this job. An old active context
+is checked against its actual scoped current selection head, not opened for
+source facts or carried into this new study. Absent, legacy, stale or mismatched
+targets refuse before original packet I/O. After all existing source, subject,
+claim, original/cache/partition/catalog/head/group/count fences, the workspace
+and prior head are checked again, including the exact actual section revision.
+
+The same ONE original packet supplies every original-derived account cell and
+group identity; there is no second reader, per-metric budget reset, population
+array, caller callback or caller-supplied workspace authority. The whole returned
+envelope still has the 2,100,000-byte cap. No workspace/history/report/job/head/
+checkpoint/continuation/pin write occurs. This stage establishes only a current
+pending editor TARGET. It does not establish a genuine new human group command,
+complete catalog semantics, selected union, statistic or coherent publication.
+A worker claim is not authenticated human selection intent. Prior genuine
+choices remain unchanged and are never inferred to apply to the new study.
+
+Focused tests cover exact pending identity, detached immutable target output,
+the metadata-only prior active head, missing/changed heads, hostile options and
+same-owner interruption. Authored native assertions use an isolated synthetic
+empty-prior-active V7 workspace: A/B/fresh-empty replay, both-end section reads,
+wrong pending identity before originals, ending revision/pending disappearance,
+existing current authority/original/prerequisite refusals, lost COMMIT/fresh
+reopen and unchanged workspace/history/workfile/report and all durable roots.
+The nonempty prior active head is focused-tested, not yet executed natively in
+this fixture. New-head native/full execution is pending. No heavy local suite,
+route/worker/default/activation/source grant/report/genuine Hardy choice/Apply
+mutation; QA assignment 7 only for future Apply. Protected parents in order,
+fresh integrated security/native/full suites and actual included review remain
+mandatory. Licensed >50k/5-mile/10-mile/city/retrospective and live acceptance
+remain incomplete; same heartbeat active.
+
 ## Original-derived native catalog group identity (2026-10-10, not activated)
 
 The actual completed-catalog account reader now reconciles the native catalog
@@ -26,12 +65,19 @@ malformed identities/counts/ordinals and the exact 512-byte label boundary.
 Native assertions now require both-end original-derived assigned/unassigned
 row reads, no group read for the fresh empty probe, and refusal for missing or
 changed group ID/county/label/ordinal/count/ending rows with unchanged durable
-state. New-head native/full cloud execution remains pending; no heavy local
-suite ran. UNPROTECTED parent #1251 at `8b01575a` independently passed native
+state. Exact UNPROTECTED #1252 `e44b2972` now passed Foundation 38045670573,
+all four jobs, plus Sales 38045670570. Independently decoded native job
+114194582715 passed 417 migration / 8 index / 1 subject / 1 edge / 2 bootstrap
+tests, zero failures/skips; migration 156506.026699ms and index 491407.871801ms.
+Its new native marker at 10:50:36Z confirms the original-derived group and
+ending-row refusal assertions. Frontend 114194582844 passed 3959 tests with
+zero failures/skips (64293.779802ms), plus type/lint/source/build checks;
+server 114194582836 and redteam 114194582845 succeeded. No heavy local suite
+ran. UNPROTECTED parent #1251 at `8b01575a` independently passed native
 417 migration / 8 index / 1 subject / 1 edge / 2 bootstrap tests with zero
 failures/skips, plus frontend 3959 tests and server/redteam/Sales checks. Its
-small original-account marker ran at 10:36:48Z; that receipt does not verify
-this newer extension. Protected dependency-order integration, fresh exact-head
+small original-account marker ran at 10:36:48Z. Neither initial stack receipt
+is protected-parent merge acceptance. Protected dependency-order integration, fresh exact-head
 security/native/full suites and actual included review remain required. No
 route/default/worker/activation/source grant/report/genuine Hardy choice/Apply
 mutation; QA assignment 7 only for future Apply tests. Roadmap incomplete,

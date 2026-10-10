@@ -315,7 +315,8 @@ test(`${method} admits only the live claim and bounded operation, not caller con
 
 for(const method of ['readSharedFrozenCaptureJobStockAccountPackagesReferencesV2','readOriginalFrozenCaptureJobAccountHousingReferencesV2',
   'readOriginalFrozenCaptureJobAccountRecordedGroupReferencesV2','readOriginalFrozenCaptureJobRecordedPartitionAccountReferencesV2',
-  'readOriginalFrozenCaptureJobRecordedCatalogAccountReferencesV2'])
+  'readOriginalFrozenCaptureJobRecordedCatalogAccountReferencesV2',
+  'readOriginalFrozenCaptureJobSelectionWorkspaceTargetReferencesV2'])
 test(`${method} admits only a cursor, never caller account/value/date/count/housing authority`,async()=>{
   const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
     claim={operation_id:base.operationId,claim_token:'70000000-0000-4000-8000-000000000002',attempts:1};
@@ -324,7 +325,8 @@ test(`${method} admits only a cursor, never caller account/value/date/count/hous
     authorizeMarketData:()=>assert.fail('must not authorize')});
   await assert.rejects(setup()[method](base,opts),/frozen_source_profile_unsupported/);
   for(const key of ['effective_date','profile','housingProfile','housingInterpretation','county','category','sourceGrant','originals','count','selectedAccounts','issuedHead','readOriginal','stockOriginalCellPage',
-    'catalogReference','catalogCounts','includedRecordedGroupIds','originalCellAtOrdinal','done','phase'])
+    'catalogReference','catalogCounts','includedRecordedGroupIds','originalCellAtOrdinal','done','phase',
+    'expectedWorkspaceRevision','expectedWorkspaceCheckpoint','workspace','selectionIntent','readWorkspace'])
     await assert.rejects(service[method](base,{...opts,[key]:()=>assert.fail('caller callback')}),/invalid_options/);
   for(const page of [undefined,{cursor:' A'},{cursor:'',account_id:'A'},{cursor:'',rowLimit:1},new Proxy({cursor:''},{}),
     {get cursor(){assert.fail('getter');}}])

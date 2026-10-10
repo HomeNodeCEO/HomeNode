@@ -39,6 +39,16 @@ hashed terminal receipts, fresh EMPTY, strict old readers and unchanged all prio
 heads/union/intent/pins/workspace/history/reports. Native/full-server/frontend
 verification remains cloud-only; these authored assertions are NOT acceptance.
 
+Additional native assertions now independently build an explicit-both-group
+study, selecting unassigned A and assigned B only by immutable chosen IDs.
+They exercise selected ordinal1 with subject A deduplicated, ordinal2 with
+distinct A+B originals, second-member UPDATE/yield/orphan rollback, a second
+lost REAL COMMIT acknowledgment and fresh terminal EMPTY at ordinal2. No roots
+or originals are copied/rebound. Unknown housing remains ineligible; this is
+AUTHORED NOT EXECUTED, not positive known-value or licensed-population proof.
+The TRUNCATE negative test includes the new eligibility FK child so it can
+reach unchanged immutable guards without removing any FK or trigger.
+
 Bits/counts are audit DATA, NOT original, economic/historical eligibility or
 statistics authority. Every future semantic consumer must reopen originals again.
 Market-value currency, verified GLA, one economic unit, historical housing,
@@ -50,9 +60,13 @@ schedule/source-grant/Render/report/Apply activation is added.
 
 Parent #1264 ad1a9019 native CI correctly refused a forged catalog label at the
 earlier closed storage validator, but its test expected only the later owner
-error. The assertion was corrected in625f413a without changing validation; fresh
-cloud CI is pending. Its initial server/frontend/bootstrap passed. This is a
-test expectation repair, not a successful native acceptance claim or rerun bypass.
+error. The assertion was corrected in625f413a without changing validation.
+Fresh exact-head native job114261300266 has now passed417 migration /12 index /
+1 subject /1 edge /2 bootstrap tests, all zero failures or skips; index
+781479.217869ms. Both selected B/partition2 and explicit-empty first-read markers
+ran, with maximum211/208 whole-owner SQL queries of256. Server/frontend/bootstrap
+also passed. This is bounded native protocol evidence for #1264, NOT #1265
+execution, licensed acquisition, complete selected eligibility or live acceptance.
 
 ## First native selected-ordinal original eligibility admission (2026-10-10, not activated)
 

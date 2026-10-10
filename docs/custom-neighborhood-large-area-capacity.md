@@ -1,5 +1,68 @@
 # Complete larger-area Custom neighborhood studies
 
+## Original-reconciled local CAD amenity evidence (2026-10-10, not activated)
+
+`readOriginalFrozenCaptureJobCadAmenityEvidenceReferencesV2` extends the actual
+bounded owner with the same closed `cadAccountPackagePage: {cursor}` input.
+The server chooses one complete stock account, admits all original counts
+before payloads, and recompiles EVERY primary/secondary original against its
+ENTIRE neutral cache before this fixed interpretation runs. The old typed-only
+and original-package outputs/profiles remain unchanged. All three fixed reader
+methods share ONE single-use 32-MB all-nested-result/48-query/60-second budget,
+with five-second query timeouts. The complete new output INCLUDING amenity
+evidence must fit 2.1 MB before ending cache/stock checks and delivery.
+
+Native local reported pool true, false and NULL stay distinct. A missing primary
+original remains missing, not a negative pool assertion. Reported true/false
+does not establish verified pool presence/absence, current field freshness,
+historical or at-sale amenities, or complete provider acquisition. Every native
+secondary row ID survives, including duplicate improvement numbers, exact
+reported areas and bounded type diagnostics. Garage area/spaces, outbuilding
+area and semantic improvement types remain explicitly unsupported: no official
+retained enumeration/disjointness contract has yet been established. No alias,
+substring, numeric quality, primary-pool inference, row deduplication, area sum
+or zero from an empty secondary inventory is substituted for that contract.
+
+The official DCAD annual reference layout distinguishes taxable objects,
+primary/additional improvements, living/main area totals, full/half baths, pool
+indicator and additional description/area fields. This does NOT by itself
+establish the missing type enumeration, source area unit/disjointness, garage
+spaces or verified GLA. The installed importer may retain old non-null primary
+cells, skip unparseable additional rows and coerce number/area text. Those are
+code observations, not measured production frequencies. Existing frozen CAD
+profile1 authenticates its exact LOCAL database originals, not omitted provider
+tokens, taxable-object identity, description/year/unit or field revision. A
+future versioned retained companion and coherent same-snapshot acquisition is
+required to establish those facts; completed originals are not backfilled.
+Reference documents remain local and are not published with this implementation.
+
+Actual issued DONE V2 graph/geographic/identity, original stock, complete neutral
+cache and separately authorized same-snapshot CAD companion remain mandatory.
+Current DB actor/assignment/private draft/retained subject, BOTH legacy and CAD
+source-purpose decisions, live claim/pin and ending cache/stock checks remain.
+No caller callbacks, dictionary, facts, count/hash claims or profile is authority.
+166 focused tests passed, zero failures/skips (1,733.6397 ms), including
+existing companion/source-policy/compiler/original-owner regressions, exact
+large values, hostile input, whole250 bounds, no inference, single-use and
+ending-cache/cancellation checks. The first local 250-row test fixture supplied
+numeric instead of native C-text order; its fixture was corrected, with the
+actual original-order guard unchanged.
+Native tests are authored for actual issued-owner replay, all secondary IDs,
+NULL/report distinctions, unchanged-hash/count forgeries, partial/unissued/corrupt
+heads, both-end rights/cache/claim/cancel refusal, lost-COMMIT reopen and fresh
+empty terminal probe. Their cloud execution is pending, not established by local
+doubles. This is partial retained evidence resolution, NOT full amenity resolution.
+
+No migration/phase, HTTP/default, cache repair, worker, selected head, report,
+accepted-report/genuine Hardy choice or production activation is changed.
+Complete original-reconciled selected-union ordinal authority/statistics/exact
+medians/CODs/calendar quarters, coherent publication, finite durable workers,
+terminal pin transfer/retirement, licensed >50k/5-mile/10-mile/city/retrospective
+and live Hardy reload remain outstanding. QA7 only for future Apply. Protected
+dependency integration/main retarget BEFORE synchronization, fresh required
+security/native/full-suite checks and actual included exact-head review remain
+mandatory; no paid/forced review or required-check bypass.
+
 ## Original-reconciled bounded recorded housing (2026-10-10, not activated)
 
 `readOriginalFrozenCaptureJobAccountHousingReferencesV2` extends the actual
@@ -37,12 +100,18 @@ recorded-housing/retention/neutral-compiler regressions. Actual-compiler/owner-D
 tests cover all five states, outside conflicts,
 county/absence, exact labels, numeric/no-unit inference, hostile input, whole
 limits, original/full-cache tampering, neutral-byte preservation, shared single
-use and ending-cache refusal. Native actual-issued-owner tests are AUTHORED for
+use and ending-cache refusal. Initial stacked exact `e3754016128e2ce0a982ec82d36496cb838cfaef`
+(#1242) foundation38031620887/Sales38031620913 passed. Native114153578077 decoded
+417 migration/8 index/1 subject/1 edge/2 bootstrap, zero failures/skips;
+index452,150.023458 ms. Actual issued-owner housing marker executed at06:48:15Z:
 two accounts/three parcel/two account originals, independently original-reconciled
 rows, pinned housing choice, outside contradiction, numeric unknown, unissued/
 corrupt prerequisites, both-end rights/cache/claim/cancellation, lost-COMMIT
-reopen and zero original copies/checkpoint/head writes. NEW native/full-suite
-execution remains pending, not established by local doubles.
+reopen and zero original copies/checkpoint/head writes. Frontend114153578146
+passed3959 tests, zero failures/skips (72,063.664472 ms), plus all checks;
+server114153578182/redteam114153578191 passed. These INITIAL STACKED receipts
+are not this later head or future protected-parent-integrated readiness, actual
+review, licensed acquisition or production speed acceptance.
 
 No phase, migration, public route/default, cache repair, worker, selection head,
 report write or activation is added. Full provider-economic/amenity resolution,

@@ -614,25 +614,47 @@ test('original CAD account reader uses complete original replay, retains absent 
   assert.doesNotMatch(JSON.stringify(a.rows),/original_text|cached_account_id/);
 });
 
-test('original CAD and old typed methods share single-use lifetime budgets and both ending source/cache/claim checks',async()=>{
-  for(const first of ['page','originalAccountPackage']){
+test('original CAD amenity evidence resolves only after complete replay and includes missing-primary accounts and fresh empty probe',async()=>{
+  const f=await sharedCadFixture(),reader=()=>createNeighborhoodSharedJobCadAccountPages(f.client,options,f.graph,'2026-10-07');
+  const a=await reader().originalAmenityEvidence({cursor:''});
+  assert.equal(a.status,'original_reconciled_CAD_amenity_evidence');assert.equal(a.amenity_evidence.reported_pool.state,'missing');
+  assert.equal(a.amenity_evidence.reported_pool.reason,'raw_value_missing');
+  assert.equal(a.amenity_evidence.reported_pool.source_original.row_key,'STOCK-A');
+  assert.equal(a.amenity_evidence.garage_area.state,'unsupported');
+  assert.equal(a.amenity_evidence.provider_fidelity,'not_established');
+  const b=await reader().originalAmenityEvidence({cursor:a.next_cursor});
+  assert.equal(b.amenity_evidence.reported_pool.source_original,null);
+  assert.equal(b.amenity_evidence.reported_pool.reason,'primary_original_absent');
+  const end=await reader().originalAmenityEvidence({cursor:b.next_cursor});
+  assert.equal(end.end_of_accounts,true);assert.equal(end.amenity_evidence,null);
+  assert.ok(Buffer.byteLength(JSON.stringify(a))<=2100000);
+  assert.doesNotMatch(JSON.stringify(a.amenity_evidence),/original_text|cached_account_id/);
+});
+
+test('original CAD/amenity and old typed methods share single-use lifetime budgets and both ending source/cache/claim checks',async()=>{
+  for(const first of ['page','originalAccountPackage','originalAmenityEvidence']){
     const f=await sharedCadFixture(),reader=createNeighborhoodSharedJobCadAccountPages(f.client,options,f.graph,'2026-10-07');
     await reader[first](first==='page'?{cursor:'',rowLimit:250}:{cursor:''});
-    for(const second of ['page','originalAccountPackage'])await assert.rejects(reader[second](second==='page'?{cursor:'',rowLimit:250}:{cursor:''}),/single_use/);
+    for(const second of ['page','originalAccountPackage','originalAmenityEvidence'])await assert.rejects(reader[second](second==='page'?{cursor:'',rowLimit:250}:{cursor:''}),/single_use/);
   }
+  for(const method of ['originalAccountPackage','originalAmenityEvidence']){
   let reads=0;const changed=await sharedCadFixture(({text,header})=>text===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read&&++reads===2?result({...header,status:'building'}):null);
-  await assert.rejects(createNeighborhoodSharedJobCadAccountPages(changed.client,options,changed.graph,'2026-10-07').originalAccountPackage({cursor:''}),/cache_unavailable/);
+  await assert.rejects(createNeighborhoodSharedJobCadAccountPages(changed.client,options,changed.graph,'2026-10-07')[method]({cursor:''}),/cache_unavailable/);
   const cancelled=await sharedCadFixture(),from=cancelled.calls.length;
-  await assert.rejects(createNeighborhoodSharedJobCadAccountPages(cancelled.client,{...options,checkBudget(){throw Error('cancelled');}},cancelled.graph,'2026-10-07').originalAccountPackage({cursor:''}),/cancelled/);
+  await assert.rejects(createNeighborhoodSharedJobCadAccountPages(cancelled.client,{...options,checkBudget(){throw Error('cancelled');}},cancelled.graph,'2026-10-07')[method]({cursor:''}),/cancelled/);
   assert.equal(cancelled.calls.length,from);
   assert.equal(createNeighborhoodSharedJobCadImprovementPages(cancelled.client,options,cancelled.graph).originalAccountPackage,undefined);
+  assert.equal(createNeighborhoodSharedJobCadImprovementPages(cancelled.client,options,cancelled.graph).originalAmenityEvidence,undefined);
+  }
 });
 
 test('original CAD owner DATA cannot launder changed cells or payload with unchanged hashes/counts',async()=>{
+  for(const method of ['originalAccountPackage','originalAmenityEvidence']){
   for(const mutate of [rows=>rows[0].typed.observations.reported_baths.exact_value='3',
     (rows,texts)=>texts.set(rows[0].original_payload_sha256,texts.get(rows[0].original_payload_sha256).replace('2050','2040'))]){
     const f=await sharedCadFixture();f.rows[0]=structuredClone(f.rows[0]);mutate(f.rows,f.originalTexts);
-    await assert.rejects(createNeighborhoodSharedJobCadAccountPages(f.client,options,f.graph,'2026-10-07').originalAccountPackage({cursor:''}),/original_mismatch/);
+    await assert.rejects(createNeighborhoodSharedJobCadAccountPages(f.client,options,f.graph,'2026-10-07')[method]({cursor:''}),/original_mismatch/);
+  }
   }
 });
 

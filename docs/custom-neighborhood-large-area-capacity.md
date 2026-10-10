@@ -76,10 +76,16 @@ resume, fresh terminal/reopen and unchanged prerequisite rows/pins. NEW native
 and full cloud execution is PENDING. Initial exact 510666ff native cloud reached
 the catalog assertions but FAILED the query-shape assertion: its broad
 `array_agg` ban also rejected the mandatory current actor's bounded role list.
-The repaired assertion permits ONLY that existing exact role aggregate, requires
-both-end actor reads and still refuses population/original/extra aggregates;
-production implementation and authorization are unchanged. Fresh cloud execution
-of the repaired head is required; the failed run is not acceptance.
+The first repair (e9a30862) still FAILED: its broad `jsonb_agg` ban rejected the
+mandatory bounded subject-section witness. The corrected test now independently
+checks the ENTIRE SQL and bound values of the ONLY two permitted aggregates:
+the exact current actor/organization role read and the exact assignment's three
+fixed material sections under the existing 1,500,000-byte cap. Both-end reads
+remain mandatory. Focused regression tests refuse spoofed tags, changed SQL,
+additional aggregates, expanded sections/caps, foreign scope and missing end
+reads. Population/original aggregates and spatial/job-typed paths still refuse.
+Production implementation and authorization are unchanged. Fresh cloud execution
+of the corrected head is required; neither failed run is acceptance.
 The small two-account fixture does not
 execute the 2048-group boundary, repeated assigned-group updates, licensed
 >50k/5-mile/10-mile/city/retrospective acquisition or production latency. These

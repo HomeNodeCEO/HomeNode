@@ -73,7 +73,14 @@ actual PostgreSQL assertions are authored for outside conflicts, original/cache/
 partition corruption, ending authority/cache/count failures and atomic rollback,
 native skipped/orphan contribution and head-without-root refusal, lost-COMMIT
 resume, fresh terminal/reopen and unchanged prerequisite rows/pins. NEW native
-and full cloud execution is PENDING. The small two-account fixture does not
+and full cloud execution is PENDING. Initial exact 510666ff native cloud reached
+the catalog assertions but FAILED the query-shape assertion: its broad
+`array_agg` ban also rejected the mandatory current actor's bounded role list.
+The repaired assertion permits ONLY that existing exact role aggregate, requires
+both-end actor reads and still refuses population/original/extra aggregates;
+production implementation and authorization are unchanged. Fresh cloud execution
+of the repaired head is required; the failed run is not acceptance.
+The small two-account fixture does not
 execute the 2048-group boundary, repeated assigned-group updates, licensed
 >50k/5-mile/10-mile/city/retrospective acquisition or production latency. These
 remain acceptance work, as do genuine current-authenticated selection, exact

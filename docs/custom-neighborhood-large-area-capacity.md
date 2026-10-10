@@ -1,5 +1,62 @@
 # Complete larger-area Custom neighborhood studies
 
+## Durable original-backed recorded-label partition (2026-10-10, not activated)
+
+`advanceOriginalFrozenCaptureJobRecordedPartitionReferencesV2` accepts ONLY an
+actual live claim and the operation budget. It requires the independently
+issued DONE original graph/geography/identity/stock traversal, reopens those
+actual heads, and derives its next account solely from its own native CAS head.
+The previous traversal is NOT group authority: each step replays EVERY complete
+account/parcel original, including outside parts, against the ENTIRE neutral
+cache again before fixed512-byte original recorded-group resolution.
+
+One whole-account result produces one bounded derived-label blob and immutable
+native account/ordinal row. Conflicting/unassigned accounts and ALL candidate
+groups remain in the denominator; they never silently disappear or become
+selected merely because they mention a candidate. The derived row, small
+previous-linked progress receipt, independently issued head and eight-reference
+retention-root checkpoint commit in the SAME current-authorized owner TX. The
+additive registered20261119 native guards require the exact next C-text stock
+key/contiguous ordinal and refuse skipped accounts, free DONE, orphan rows,
+changed prerequisite bindings, overwrites, deletion and truncation. Deferred
+constraints require the matching issued head AND root checkpoint at commit.
+Completion requires a distinct fresh empty original/cache probe; completed
+reopen repeats that empty probe without new rows, blobs or progress writes.
+
+All nested reads/writes share the existing ONE single-use32MB/128-query/60-second/
+five-second-query owner budget; no dense population or per-account budget loop
+is introduced. Current DB actor/assignment/private draft/retained subject/source
+purpose/live claim/pin/original-stock/issued-head/cache checks remain at BOTH
+ends. Ending failure rolls back every derived blob/row/receipt/head/checkpoint;
+lost commit acknowledgement resumes from the actual committed next ordinal.
+Original payloads and job-typed rows are NOT copied. Old phases/profiles/legacy
+selection/report semantics remain unchanged; this is a distinct internal stage.
+
+207 focused DATA/repository/input/old-profile/whole-original tests PASS0fail0skip,
+1496.8941ms; source/native fixture syntax and diff checks pass. NEW native/full cloud execution for
+this partition is PENDING. Actual native assertions are AUTHORED for two
+accounts (one assigned, one conflicting/unassigned),512-byte authentic labels,
+outside candidates, exact independent original result equality, every current
+and ending authorization/cache/cancel fence, malformed/partial/unissued heads,
+same-hash/count original forgeries, native skipped-first/free-DONE/orphan refusal,
+immutable rows, atomic rollback, lost-ACK next-account recovery and fresh empty
+terminal/reopen. These tests are small protocol fixtures, NOT licensed >50k
+acquisition, complete catalog/selected-union authority or production speed.
+
+The stored partition is a derived index, NOT an original/source-rights
+capability. Every later semantic catalog/selected-union consumer MUST reopen and
+reconcile each entire original account/result under current authority and one
+aggregate budget before using it; a valid count/hash/ordinal/DONE cannot replace
+that. Bounded catalog grouping and original-backed exact selected-union ordinal/
+metric runs remain next. Do not widen the legacy dense50k selector. Coherent
+publication, finite workers with separate successful-continuation accounting,
+terminal pin transfer/retirement and licensed/live Hardy acceptance remain OPEN.
+No HTTP/default/worker/scheduler/selection/report/Hardy/Apply/production activation;
+QA7 only future Apply. Integrate actual protected parents dependency order,
+retarget main BEFORE synchronization, then fresh required security/native/full
+suites and ACTUAL included exact-head review. Automatic skipped review is not
+review; no paid/forced quota or required-check bypass.
+
 ## Original recorded-group account resolution (2026-10-10, not activated)
 
 `readOriginalFrozenCaptureJobAccountRecordedGroupReferencesV2` is a distinct
@@ -40,7 +97,15 @@ Actual native owner tests are AUTHORED for two accounts/three parcel/two account
 originals,512-byte original labels with oversize neutral markers, outside-part
 conflict, all original/cache replay, both-end rights/role/claim/subject/cache/
 cancel, partial/unissued/corrupt heads, lost-COMMIT reopen and zero payload/job
-copies/checkpoint/head writes. NEW native/full cloud execution is PENDING.
+copies/checkpoint/head writes. Initial stacked #1245 exact8e5fb0a4 now passed
+Foundation38036838670 allfour jobs and Sales38036838706. Native114168917858
+independently decoded417migration153946.175811ms/8index462569.959939ms/1subject/
+1edge/2bootstrap, all PASS0fail0skip. The new original-recorded-group marker
+executed08:18:37Z with every authored original/current-authorized assertion above.
+Frontend114168917718 independently decoded3959PASS0fail0skip97908.222632ms
+plus all checks; server114168917615/redteam114168917707 SUCCESS. These are initial
+stacked receipts, NOT fresh protected integrated security/review/licensed/live
+acceptance. The new durable partition above has NOT yet executed natively.
 SQL doubles and pure DATA helpers do not establish current source authority.
 
 This is ONE original-reconciled account's recorded-label resolution, NOT a

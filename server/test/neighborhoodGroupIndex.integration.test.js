@@ -44,6 +44,10 @@ import { createCustomCohortIdentityV2AnchorRepository }
   from '../src/services/neighborhoodAssessment/customCohortIdentityV2AnchorRepository.js';
 import { createCustomCohortStockTraversalV2AnchorRepository }
   from '../src/services/neighborhoodAssessment/customCohortStockTraversalV2AnchorRepository.js';
+import { createCustomCohortRecordedPartitionV2Repository }
+  from '../src/services/neighborhoodAssessment/customCohortRecordedPartitionV2Repository.js';
+import { getNeighborhoodOriginalRecordedGroupV2Profile }
+  from '../src/services/neighborhoodAssessment/neighborhoodOriginalRecordedGroupV2.js';
 import { createCustomCohortContextCapture }
   from '../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { createNeighborhoodFrozenJobStock }
@@ -1761,6 +1765,11 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         const fault=refsFault;refsFault=null;
         return fault==='missing_traversal_receipt'?{rowCount:0,rows:[]}:{...result,rows:result.rows.map(row=>({...row,canonical_utf8:'{}'}))};
       }
+      if(['missing_partition_receipt','corrupt_partition_receipt'].includes(refsFault)&&config.text.includes('neighborhood-cohort-blob:read */')
+        &&config.values[1]===(await client.query('SELECT receipt_reference->>\'content_sha256\' AS hash FROM app.neighborhood_custom_cohort_recorded_partition_v2_heads WHERE operation_id=$1',[refsOperation])).rows[0]?.hash){
+        const fault=refsFault;refsFault=null;
+        return fault==='missing_partition_receipt'?{rowCount:0,rows:[]}:{...result,rows:result.rows.map(row=>({...row,canonical_utf8:'{}'}))};
+      }
       if(config.text.includes('neighborhood-frozen-job-closure:parcels')||config.text.includes('neighborhood-frozen-stock-originals:page')
         ||config.text.includes('neighborhood-frozen-job-identity:parcels')||config.text.includes('shared-v2-stock-metrics:page')
         ||config.text===NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_SQL||config.text===NEIGHBORHOOD_SHARED_JOB_CAD_ACCOUNT_PAGE_SQL
@@ -3185,6 +3194,8 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     // not in caller DATA. Run only after all old read-only assertions above.
     const traversalMethod='advanceOriginalFrozenCaptureJobStockTraversalReferencesV2',traversalFrom=refsCalls.length,
       traversalBeforeBlobs=await refsBlobCount();
+    const partitionMethod='advanceOriginalFrozenCaptureJobRecordedPartitionReferencesV2';
+    await assert.rejects(freshRefsOwner()[partitionMethod](refsInput,refsOptions),/checkpoint_conflict/,'identity alone is not an issued complete traversal');
     const readTraversalAnchor=async()=>((await pool.query(`SELECT source_reference,root_reference,graph_reference,
       geographic_reference,identity_reference,stock_reference,receipt_reference,sequence
       FROM app.neighborhood_custom_cohort_stock_traversal_v2_anchors WHERE operation_id=$1`,[refsOperation])).rows[0]??null);
@@ -3238,6 +3249,9 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     assert.equal(traversalFirst.sequence,1);assert.equal(traversalFirstCheckpoint.phase,'frozen_stock_traversal_refs_v2');
     assert.deepEqual(traversalFirstCheckpoint.evidence_refs.slice(0,6),identityCommitted.evidence_refs);
     assert.deepEqual(traversalFirstCheckpoint.evidence_refs[6],traversalFirst.receipt_reference);
+    const partialPartitionFrom=refsCalls.length;
+    await assert.rejects(freshRefsOwner()[partitionMethod](refsInput,refsOptions),/unfinished_stock_traversal/);
+    assert.ok(!refsCalls.slice(partialPartitionFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
     for(const fault of ['missing_traversal_receipt','corrupt_traversal_receipt']){
       refsFault=fault;const from=refsCalls.length;
       await assert.rejects(freshRefsOwner()[traversalMethod](refsInput,refsOptions),/checkpoint_conflict|storage_conflict|invalid_receipt/);
@@ -3267,6 +3281,131 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       ending_failure_rolls_back_receipt_anchor_checkpoint:true,lost_commit_resumes_next_account:true,fresh_empty_terminal_and_completed_reopen:true,
       metadata_receipts_only:true,original_payload_copies:0,job_typed_copies:0,complete_selected_union:false,statistics:false,
       source_acquisition:false,licensed_large_area:false,production_speed:false,worker_activation:false,report_update:false});
+
+    // Complete ORIGINAL-backed recorded-label partition. The prior traversal
+    // is only a prerequisite: every whole account is replayed again before a
+    // derived row, ordinal, receipt, head and checkpoint commit together.
+    const partitionFrom=refsCalls.length,partitionBeforeBlobs=await refsBlobCount(),
+      partitionProfile=getNeighborhoodOriginalRecordedGroupV2Profile();
+    const readPartitionHead=async()=>((await pool.query(`SELECT source_reference,root_reference,graph_reference,geographic_reference,
+      identity_reference,stock_reference,traversal_reference,profile_reference,receipt_reference,sequence
+      FROM app.neighborhood_custom_cohort_recorded_partition_v2_heads WHERE operation_id=$1`,[refsOperation])).rows[0]??null);
+    const readPartitionRows=async()=>(await pool.query(`SELECT account_id,ordinal,state,assigned_group_id,entry_reference
+      FROM app.neighborhood_custom_cohort_recorded_partition_v2_rows WHERE operation_id=$1 ORDER BY ordinal`,[refsOperation])).rows;
+    const partitionInitial=async()=>{assert.equal(await readPartitionHead(),null);assert.deepEqual(await readPartitionRows(),[]);
+      assert.deepEqual(await readRefsCheckpoint(),traversalDoneCheckpoint);assert.equal(await refsBlobCount(),partitionBeforeBlobs);};
+    await partitionInitial();
+    const partitionBindings={...traversalBindings,traversal_reference:traversalFinal.receipt_reference,profile_reference:partitionProfile.definition_blob.ref};
+    // Native guard, not shape/hash/count DATA, chooses exact next original key.
+    for(const skip of [true,false]){
+      await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
+        const blobs=createNeighborhoodCohortBlobRepository(client,organization),group=groupB.recorded_group;
+        const body={format:'cohort_recorded_group_partition_entry_v2',account_id:'CLOSURE-B',ordinal:1,recorded_group:group};
+        const entryRef=skip?await blobs.put(canonicalAssessmentJson(body)):null;
+        const receipt={format:'cohort_recorded_group_partition_receipt_v2',binding:identityBody.binding,source_reference:identityBody.source_reference,
+          root:identityBody.root,graph_verification_reference:identityBody.graph_verification_reference,
+          stock_verification_reference:identityBody.stock_verification_reference,identity_verification_reference:identityIssued.receipt_reference,
+          stock_reference:identityBody.stock_reference,traversal_reference:traversalFinal.receipt_reference,profile_reference:partitionProfile.definition_blob.ref,
+          effective_date:'2026-10-07',stock_account_count:'2',sequence:1,previous:null,before:{after_account:'',account_count:0,done:false},
+          after:skip?{after_account:'CLOSURE-B',account_count:1,done:false}:{after_account:'CLOSURE-B',account_count:2,done:true},entry_reference:entryRef};
+        const ref=await blobs.put(canonicalAssessmentJson(receipt));
+        return createCustomCohortRecordedPartitionV2Repository({client,claim:refsClaim,scope,actorUserId:actor,...partitionBindings})
+          .advance(null,ref,skip?{account_id:'CLOSURE-B',ordinal:1,entry_reference:entryRef,state:group.state,assigned_group_id:group.assigned_group_id}:null);
+      }),/neighborhood_recorded_partition_v2_prefix_conflict/);await partitionInitial();
+    }
+    // A valid next ordinal row alone must fail at COMMIT without an issued head
+    // and matching retention-root checkpoint. Its blob also rolls back.
+    await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
+      const ref=await createNeighborhoodCohortBlobRepository(client,organization).put(canonicalAssessmentJson({
+        format:'cohort_recorded_group_partition_entry_v2',account_id:'CLOSURE-A',ordinal:1,recorded_group:groupA.recorded_group}));
+      await client.query(`INSERT INTO app.neighborhood_custom_cohort_recorded_partition_v2_rows
+        (operation_id,organization_id,account_id,ordinal,entry_reference,state,assigned_group_id) VALUES($1,$2,'CLOSURE-A',1,$3,'unassigned',NULL)`,
+      [refsOperation,organization,canonicalAssessmentJson(ref)]);
+    }),/query returned no rows|commit_conflict/);await partitionInitial();
+    await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
+      const blobs=createNeighborhoodCohortBlobRepository(client,organization),entryRef=await blobs.put(canonicalAssessmentJson({
+        format:'cohort_recorded_group_partition_entry_v2',account_id:'CLOSURE-A',ordinal:1,recorded_group:groupA.recorded_group}));
+      const receipt={format:'cohort_recorded_group_partition_receipt_v2',binding:identityBody.binding,source_reference:identityBody.source_reference,
+        root:identityBody.root,graph_verification_reference:identityBody.graph_verification_reference,
+        stock_verification_reference:identityBody.stock_verification_reference,identity_verification_reference:identityIssued.receipt_reference,
+        stock_reference:identityBody.stock_reference,traversal_reference:traversalFinal.receipt_reference,profile_reference:partitionProfile.definition_blob.ref,
+        effective_date:'2026-10-07',stock_account_count:'2',sequence:1,previous:null,before:{after_account:'',account_count:0,done:false},
+        after:{after_account:'CLOSURE-A',account_count:1,done:false},entry_reference:entryRef};
+      const receiptRef=await blobs.put(canonicalAssessmentJson(receipt));
+      await createCustomCohortRecordedPartitionV2Repository({client,claim:refsClaim,scope,actorUserId:actor,...partitionBindings})
+        .advance(null,receiptRef,{account_id:'CLOSURE-A',ordinal:1,entry_reference:entryRef,state:'unassigned',assigned_group_id:null});
+      // Deliberately omit the root checkpoint: even a matching row/head cannot
+      // commit as a free durable result outside its owner's retention lineage.
+    }),/commit_conflict/);await partitionInitial();
+    await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+    const deniedPartitionFrom=refsCalls.length;
+    await assert.rejects(freshRefsOwner()[partitionMethod](refsInput,refsOptions),/market_data_access_denied/);
+    assert.ok(!refsCalls.slice(deniedPartitionFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));await partitionInitial();
+    for(const fault of ['stock_cells_mismatch','stock_cells_missing','stock_cells_original']){
+      refsFault=fault;await assert.rejects(freshRefsOwner()[partitionMethod](refsInput,refsOptions),/original_mismatch/);
+      assert.equal(refsFault,null);await partitionInitial();
+    }
+    for(const [fault,reason] of [['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],['subject',/subject_changed/],
+      ['claim',/claim_lost/],['cancel',/cancelled/],['transaction_header',/cache_unavailable/]]){
+      refsFault=fault;refsAbort=new AbortController();
+      await assert.rejects(freshRefsOwner()[partitionMethod](refsInput,{...refsOptions,signal:refsAbort.signal}),reason);
+      assert.equal(refsFault,null);await partitionInitial();
+      if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+      if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    }
+    for(const fault of ['missing_receipt','corrupt_receipt','missing_geo_receipt','corrupt_geo_receipt','missing_identity_receipt','corrupt_identity_receipt',
+      'missing_traversal_receipt','corrupt_traversal_receipt']){
+      refsFault=fault;const from=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[partitionMethod](refsInput,refsOptions),/checkpoint_conflict|storage_conflict|invalid_receipt/);
+      assert.equal(refsFault,null);assert.ok(!refsCalls.slice(from).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));await partitionInitial();
+    }
+    await assert.rejects(freshRefsOwner()[partitionMethod](sourceInput,{...refsOptions,captureJobClaim:sourceClaim}),/checkpoint_conflict/);
+    refsFault='commit';await assert.rejects(freshRefsOwner()[partitionMethod](refsInput,refsOptions),e=>e.outcome_unknown===true);
+    const partitionFirst=await readPartitionHead(),partitionFirstCheckpoint=await readRefsCheckpoint();
+    assert.equal(partitionFirst.sequence,1);assert.equal(partitionFirstCheckpoint.phase,'frozen_recorded_partition_refs_v2');
+    assert.deepEqual(partitionFirstCheckpoint.evidence_refs.slice(0,7),traversalDoneCheckpoint.evidence_refs);
+    assert.deepEqual((await readPartitionRows()).map(r=>[r.account_id,r.ordinal,r.state,r.assigned_group_id]),[['CLOSURE-A',1,'unassigned',null]]);
+    for(const fault of ['missing_partition_receipt','corrupt_partition_receipt']){
+      refsFault=fault;const from=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[partitionMethod](refsInput,refsOptions),/checkpoint_conflict|storage_conflict|invalid_receipt/);
+      assert.equal(refsFault,null);assert.ok(!refsCalls.slice(from).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
+      assert.deepEqual(await readPartitionHead(),partitionFirst);assert.deepEqual(await readRefsCheckpoint(),partitionFirstCheckpoint);
+    }
+    const partitionSecond=await freshRefsOwner()[partitionMethod](refsInput,refsOptions);
+    assert.deepEqual(partitionSecond.progress,{after_account:'CLOSURE-B',account_count:2,done:false});
+    const partitionEnd=await freshRefsOwner()[partitionMethod](refsInput,refsOptions),partitionFinal=await readPartitionHead(),partitionRows=await readPartitionRows();
+    assert.equal(partitionEnd.progress.done,true);assert.equal(partitionFinal.sequence,3);assert.equal(partitionRows.length,2);
+    assert.equal(partitionRows[0].state,'unassigned');assert.equal(partitionRows[1].state,'assigned');
+    assert.equal(partitionRows[1].assigned_group_id,groupB.recorded_group.assigned_group_id);
+    for(const [i,group] of [groupA.recorded_group,groupB.recorded_group].entries()){
+      const body=await withCustomCohortJobTransaction(pool,async client=>JSON.parse(await createNeighborhoodCohortBlobRepository(client,organization)
+        .get(partitionRows[i].entry_reference.content_sha256,partitionRows[i].entry_reference.canonical_utf8_bytes)));
+      assert.deepEqual(body,{format:'cohort_recorded_group_partition_entry_v2',account_id:group.account_id,ordinal:i+1,recorded_group:group},
+        'entire persisted result exactly equals independently original-replayed account, including all outside/unassigned candidates and 512byte literals');
+      assert.ok(!Object.hasOwn(body,'payload_text')&&!Object.hasOwn(body,'rows'));
+    }
+    const partitionDoneBlobs=await refsBlobCount(),partitionDoneCheckpoint=await readRefsCheckpoint(),partitionDoneFrom=refsCalls.length,
+      partitionReopen=await freshRefsOwner()[partitionMethod](refsInput,refsOptions);
+    assert.equal(partitionReopen.advanced,false);assert.deepEqual(partitionReopen.progress,partitionEnd.progress);
+    assert.ok(refsCalls.slice(partitionDoneFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL),'completed reopen is a fresh original/cache empty probe');
+    assert.equal(await refsBlobCount(),partitionDoneBlobs);assert.deepEqual(await readPartitionHead(),partitionFinal);
+    assert.deepEqual(await readPartitionRows(),partitionRows);assert.deepEqual(await readRefsCheckpoint(),partitionDoneCheckpoint);
+    for(const table of ['neighborhood_custom_cohort_recorded_partition_v2_rows','neighborhood_custom_cohort_recorded_partition_v2_heads'])
+      for(const sql of [`DELETE FROM app.${table} WHERE operation_id=$1`,`UPDATE app.${table} SET organization_id=organization_id WHERE operation_id=$1`,`TRUNCATE app.${table}`])
+        await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql,sql.includes('$1')?[refsOperation]:[])),
+          sql.startsWith('UPDATE')&&table.endsWith('_heads')?/transition_conflict/:/immutable/);
+    assert.deepEqual(await readTraversalAnchor(),traversalFinal,'partition cannot rewrite its independent completed prerequisite');
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_custom_cohort_typed_original_rows WHERE operation_id=$1',[refsOperation])).rows[0].n,0);
+    assert.ok(!refsCalls.slice(partitionFrom).some(sql=>/ST_DWithin|shared-typed-v2:(?:page|begin|rows|progress)|job-typed:/.test(sql)));
+    console.info('[native-original-recorded-partition-issued-owner-v2]',{accounts:2,assigned:1,unassigned:1,ordinals:2,issued_steps:3,
+      every_whole_account_original_entire_cache_replayed:true,outside_conflicts_and_512byte_literals_retained:true,
+      native_skip_free_DONE_orphan_row_refused:true,immutable_rows_head:true,all_issued_prerequisites_reopened:true,
+      both_end_current_rights_role_subject_claim_cache_cancel_refusal:true,unchanged_hash_count_forgeries_refused:true,
+      ending_failure_rolls_back_entry_blob_row_receipt_head_checkpoint:true,lost_commit_resumes_next_account:true,
+      fresh_empty_terminal_completed_reopen:true,original_payload_copies:0,job_typed_copies:0,
+      later_consumer_requires_full_original_reconciliation:true,selected_union:false,statistics:false,coherent_publication:false,
+      licensed_large_area:false,production_speed:false,worker_activation:false,report_update:false});
     }
     for(const [kind,keys] of Object.entries(expected)){
       let position=null;const seen=[];

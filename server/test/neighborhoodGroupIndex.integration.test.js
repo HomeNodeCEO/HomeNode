@@ -73,6 +73,8 @@ import { runNeighborhoodStockOriginalCellDatabaseChecks }
   from './helpers/neighborhoodStockOriginalCellDatabaseChecks.js';
 import { runNeighborhoodOriginalTransactionPackageDatabaseChecks }
   from './helpers/neighborhoodOriginalTransactionPackageDatabaseChecks.js';
+import { runNeighborhoodOriginalCadAccountPackageDatabaseChecks }
+  from './helpers/neighborhoodOriginalCadAccountPackageDatabaseChecks.js';
 import { createCustomNeighborhoodCadImprovementSourcePolicy,CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_RIGHTS_KEY as CAD_RIGHTS_KEY,
   CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_PURPOSE as CAD_PURPOSE,CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_DATASET as CAD_DATASET }
   from '../src/security/customNeighborhoodCadImprovementSourcePolicy.js';
@@ -85,6 +87,8 @@ import { NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSharedTransactionPackagesV1.js';
 import { NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodOriginalTransactionPackagesV2.js';
+import { NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL }
+  from '../src/services/neighborhoodAssessment/neighborhoodOriginalCadAccountPackagesV2.js';
 import { runNeighborhoodTransactionPackageDatabaseChecks }
   from './helpers/neighborhoodTransactionPackageDatabaseChecks.js';
 
@@ -160,6 +164,7 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
       await runNeighborhoodTransactionPackageDatabaseChecks(policyClient);
       await runNeighborhoodStockOriginalCellDatabaseChecks(policyClient);
       await runNeighborhoodOriginalTransactionPackageDatabaseChecks(policyClient);
+      await runNeighborhoodOriginalCadAccountPackageDatabaseChecks(policyClient);
     }finally {policyClient.release();}
     await pool.query(NEIGHBORHOOD_CACHED_SOURCE_SCHEMA);
     // The isolated UAD fixture has bedroom/bath and secondary rows but omits
@@ -1699,6 +1704,15 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       refsCalls.push(config.text);
       if(config.text.includes('neighborhood-cohort-blob:insert */'))refsBlobPuts.push(config.values[3]);
       const result=await client.query(config);
+      if(config.text===NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL
+        &&['cad_original_cell','cad_original_missing','cad_original_text','cad_original_bytes'].includes(refsFault)){
+        const fault=refsFault;refsFault=null;const rows=JSON.parse(result.rows[0].packet_json),row=rows.find(r=>r.kind==='primary');
+        if(fault==='cad_original_cell')row.typed.observations.reported_baths.exact_value='3';
+        if(fault==='cad_original_missing')row.typed=null;
+        if(fault==='cad_original_text')row.original_text=JSON.stringify({...JSON.parse(row.original_text),year_built:'1900'});
+        if(fault==='cad_original_bytes')row.payload_utf8_bytes='1';
+        return {...result,rows:[{...result.rows[0],packet_json:JSON.stringify(rows)}]};
+      }
       if(Object.values(NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL).includes(config.text)
         &&['tx_original_mismatch','tx_original_missing','tx_original_text'].includes(refsFault)){
         const fault=refsFault;refsFault=null;const rows=JSON.parse(result.rows[0].packet_json);
@@ -1737,6 +1751,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       if(config.text.includes('neighborhood-frozen-job-closure:parcels')||config.text.includes('neighborhood-frozen-stock-originals:page')
         ||config.text.includes('neighborhood-frozen-job-identity:parcels')||config.text.includes('shared-v2-stock-metrics:page')
         ||config.text===NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_SQL||config.text===NEIGHBORHOOD_SHARED_JOB_CAD_ACCOUNT_PAGE_SQL
+        ||config.text===NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL
         ||config.text===NEIGHBORHOOD_SHARED_JOB_TRANSACTION_V2_PAGE_SQL||config.text===NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL
         ||config.text===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL
         ||Object.values(NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL).includes(config.text)
@@ -1777,6 +1792,8 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       cadImprovementPage:{kind:'primary',cursor:{account_id:'',row_key:''},rowLimit:1}};
     const cadAccountMethod='readSharedFrozenCaptureJobCadAccountsReferencesV2',cadAccountOptions={...refsOptions,
       cadAccountPage:{cursor:'',rowLimit:250}};
+    const originalCadMethod='readOriginalFrozenCaptureJobCadAccountPackagesReferencesV2',originalCadOptions={...refsOptions,
+      cadAccountPackagePage:{cursor:''}};
     const transactionMethod='readSharedFrozenCaptureJobTransactionsReferencesV2',transactionOptions={...refsOptions,
       transactionPage:{kind:'source_records',cursor:'',rowLimit:1}};
     const temporalMethod='readSharedFrozenCaptureJobTransactionTemporalReferencesV2';
@@ -2241,6 +2258,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await assert.rejects(freshRefsOwner()[metricV2Method](refsInput,metricV2Options),/checkpoint_conflict/);
     await assert.rejects(cadOwner()[cadOwnerMethod](refsInput,cadOwnerOptions),/checkpoint_conflict/);
     await assert.rejects(cadOwner()[cadAccountMethod](refsInput,cadAccountOptions),/checkpoint_conflict/);
+    await assert.rejects(cadOwner()[originalCadMethod](refsInput,originalCadOptions),/checkpoint_conflict/);
     await assert.rejects(freshRefsOwner()[transactionMethod](refsInput,transactionOptions),/checkpoint_conflict/);
     await assert.rejects(freshRefsOwner()[temporalMethod](refsInput,transactionOptions),/checkpoint_conflict/);
     await assert.rejects(freshRefsOwner()[packageMethod](refsInput,packageOptions),/checkpoint_conflict/);
@@ -2289,6 +2307,8 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await assert.rejects(freshRefsOwner()[metricV2Method](refsInput,metricV2Options),/unfinished_identity_verification/);
     await assert.rejects(cadOwner()[cadOwnerMethod](refsInput,cadOwnerOptions),/unfinished_identity_verification/);
     await assert.rejects(cadOwner()[cadAccountMethod](refsInput,cadAccountOptions),/unfinished_identity_verification/);
+    await assert.rejects(cadOwner()[originalCadMethod](refsInput,originalCadOptions),/unfinished_identity_verification/);
+    assert.ok(!refsCalls.slice(partialIdentityFrom).includes(NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL));
     await assert.rejects(freshRefsOwner()[transactionMethod](refsInput,transactionOptions),/unfinished_identity_verification/);
     await assert.rejects(freshRefsOwner()[temporalMethod](refsInput,transactionOptions),/unfinished_identity_verification/);
     await assert.rejects(freshRefsOwner()[packageMethod](refsInput,packageOptions),/unfinished_identity_verification/);
@@ -2811,19 +2831,24 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     // The additional synthetic CAD grant never provisions production rights.
     const cadBeforeBlobs=await refsBlobCount(),cadInitialFrom=refsCalls.length;
     await assert.rejects(freshRefsOwner()[cadOwnerMethod](refsInput,cadOwnerOptions),/CAD_source_policy_required/);
+    await assert.rejects(freshRefsOwner()[originalCadMethod](refsInput,originalCadOptions),/CAD_source_policy_required/);
     await pool.query('UPDATE app_auth.organizations SET metadata=metadata-$2::text WHERE id=$1',[organization,CAD_RIGHTS_KEY]);
     await assert.rejects(cadOwner()[cadOwnerMethod](refsInput,cadOwnerOptions),/market_data_access_denied/);
+    await assert.rejects(cadOwner()[originalCadMethod](refsInput,originalCadOptions),/market_data_access_denied/);
     const legacyCadOwner=createCustomCohortContextCapture({pool:refsPool,sourceMode:'combined-witness2-v1',
       authorizeMarketData:fixturePolicy(),authorizeCadImprovementData:fixturePolicy()});
     await assert.rejects(legacyCadOwner[cadOwnerMethod](refsInput,cadOwnerOptions),/market_data_access_denied/,
       'the actual old seven-layer source policy must cross-deny the CAD companion purpose');
+    await assert.rejects(legacyCadOwner[originalCadMethod](refsInput,originalCadOptions),/market_data_access_denied/);
     await setCadFixtureGrant(pool,organization,cadGrant);
     const wrongRevisionOwner=createCustomCohortContextCapture({pool:refsPool,sourceMode:'combined-witness2-v1',
       authorizeMarketData:fixturePolicy(),authorizeCadImprovementData:async()=>({allowed:true,decision_id:'synthetic',policy_revision:'old-seven-layer'})});
     await assert.rejects(wrongRevisionOwner[cadOwnerMethod](refsInput,cadOwnerOptions),/CAD_source_policy_required/);
+    await assert.rejects(wrongRevisionOwner[originalCadMethod](refsInput,originalCadOptions),/CAD_source_policy_required/);
     assert.ok(!refsCalls.slice(cadInitialFrom).some(sql=>sql===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.source||sql===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read
-      ||sql===NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_SQL),'ungranted/legacy/misconfigured CAD policy refuses before any companion source/cache query');
+      ||sql===NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_SQL||sql===NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL),'ungranted/legacy/misconfigured CAD policy refuses before any companion source/cache query');
     await assert.rejects(cadOwner()[cadOwnerMethod](refsInput,cadOwnerOptions),/invalid_result/,'no cache-miss preparation by current user');
+    await assert.rejects(cadOwner()[originalCadMethod](refsInput,originalCadOptions),/invalid_result/,'original account reader cannot prepare a missing cache');
     let cadProgress=null,cadComplete;
     for(let i=0;i<5;i++){
       cadComplete=await withCustomCohortJobTransaction(pool,async client=>{
@@ -2922,6 +2947,73 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       actual_retained_date_and_issued_prerequisites:true,partial_unissued_and_corrupt_heads_refused:true,separate_current_rights_both_ends:true,missing_pool_not_false:true,
       no_secondary_type_or_housing_inference:true,lost_commit_reopen:true,original_payload_reads:0,job_typed_copies:0,
       checkpoint_or_head_writes:0,source_acquisition:false,report_update:false,production_latency:false});
+    // This distinct consumer reads EVERY actual native CAD original, rather
+    // than treating the previous literal-cache reader as original reconciliation.
+    const originalCadFrom=refsCalls.length;
+    const originalCadA=await cadOwner()[originalCadMethod](refsInput,originalCadOptions);
+    const originalCadB=await cadOwner()[originalCadMethod](refsInput,{...originalCadOptions,
+      cadAccountPackagePage:{cursor:originalCadA.next_cursor}});
+    const originalCadEnd=await cadOwner()[originalCadMethod](refsInput,{...originalCadOptions,
+      cadAccountPackagePage:{cursor:originalCadB.next_cursor}});
+    assert.equal(originalCadA.end_of_accounts,false);assert.equal(originalCadB.end_of_accounts,false);
+    assert.equal(originalCadEnd.end_of_accounts,true);assert.deepEqual(originalCadEnd.rows,[]);
+    const originalCadAccounts=[originalCadA.rows[0],originalCadB.rows[0]];
+    assert.deepEqual(originalCadAccounts.map(a=>a.account_id),['CLOSURE-A','CLOSURE-B']);
+    assert.deepEqual(originalCadAccounts.map(a=>a.secondary_original_count),['2','1']);
+    assert.deepEqual(originalCadAccounts.flatMap(a=>a.secondary_originals.map(r=>r.row_key)),['1','3','2']);
+    assert.equal(originalCadAccounts[0].observations.reported_baths.unit,'CAD_reported_baths');
+    assert.equal(originalCadAccounts[1].observations.reported_pool_flag.state,'missing');
+    assert.equal(originalCadA.effective_date,metricA.effective_date);
+    const independentCad=(await pool.query(`SELECT o.kind,o.row_key,o.account_id,o.payload::text AS original_text,
+      o.payload_sha256,o.payload_utf8_bytes::text FROM app.neighborhood_frozen_cad_improvement_rows o
+      JOIN app.neighborhood_custom_cohort_stock_accounts a ON a.account_id=o.account_id AND a.operation_id=$1::uuid
+      WHERE o.generation_id=$2::uuid ORDER BY o.account_id,o.kind,o.row_key`,[refsOperation,frozen.generationId])).rows;
+    assert.equal(independentCad.length,5);
+    const deliveredCad=originalCadAccounts.flatMap(a=>[a.primary,...a.secondary_originals].filter(Boolean));
+    for(const o of independentCad){
+      const delivered=deliveredCad.find(r=>r.kind===o.kind&&r.row_key===o.row_key);
+      const replay=compileNeighborhoodFrozenTypedCadImprovementV1({kind:o.kind,row_key:o.row_key,payload_text:o.original_text});
+      assert.deepEqual(delivered.typed,replay);assert.equal(delivered.original_payload_sha256,o.payload_sha256);
+      assert.equal(String(replay.original.payload_utf8_bytes),o.payload_utf8_bytes);
+    }
+    for(const result of [originalCadA,originalCadB,originalCadEnd]){
+      assert.equal(result.current_authorized_owner,'V2_issued_graph_geography_identity_and_separate_CAD_rights');
+      assert.deepEqual(result.identity_verification_reference,identityCommitted.evidence_refs[5]);
+      assert.equal(result.original_reconciliation,'every_original_and_entire_cache_before_projection');
+      assert.equal(result.source_acquisition,'not_established');assert.equal(result.report_update,'none');
+      assert.doesNotMatch(JSON.stringify(result.rows),/original_text|cached_account_id/);
+    }
+    await assertCadUnchanged();
+    for(const fault of ['cad_original_cell','cad_original_missing','cad_original_text','cad_original_bytes']){
+      refsFault=fault;await assert.rejects(cadOwner()[originalCadMethod](refsInput,originalCadOptions),/original_mismatch/);
+      assert.equal(refsFault,null);await assertCadUnchanged();
+    }
+    for(const [fault,reason] of [['cad_license',/market_data_access_denied/],['cad_expiry',/market_data_access_denied/],
+      ['cad_revision',/CAD_source_policy_changed/],['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],
+      ['subject',/subject_changed/],['claim',/claim_lost/],['cancel',/cancelled/],['cad_header',/cache_unavailable/]]){
+      refsFault=fault;refsAbort=new AbortController();const from=refsCalls.length;
+      await assert.rejects(cadOwner()[originalCadMethod](refsInput,{...originalCadOptions,signal:refsAbort.signal}),reason,`original CAD ending ${fault}`);
+      assert.equal(refsFault,null);assert.ok(refsCalls.slice(from).includes(NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL));await assertCadUnchanged();
+      if(fault.startsWith('cad_'))await setCadFixtureGrant(pool,organization,cadGrant);
+      if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+      if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    }
+    refsFault='commit';await assert.rejects(cadOwner()[originalCadMethod](refsInput,originalCadOptions),e=>e.outcome_unknown===true);
+    assert.equal(refsFault,null);assert.deepEqual((await cadOwner()[originalCadMethod](refsInput,originalCadOptions)).rows,originalCadA.rows);await assertCadUnchanged();
+    for(const fault of ['missing_receipt','corrupt_receipt','missing_geo_receipt','corrupt_geo_receipt','missing_identity_receipt','corrupt_identity_receipt']){
+      refsFault=fault;const from=refsCalls.length;
+      await assert.rejects(cadOwner()[originalCadMethod](refsInput,originalCadOptions),/checkpoint_conflict|storage_conflict|invalid_receipt/);
+      assert.equal(refsFault,null);assert.ok(!refsCalls.slice(from).includes(NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL));await assertCadUnchanged();
+    }
+    await assert.rejects(cadOwner()[originalCadMethod](sourceInput,{...originalCadOptions,captureJobClaim:sourceClaim}),/checkpoint_conflict/);
+    assert.ok(!refsCalls.slice(originalCadFrom).some(sql=>/ST_DWithin|shared-typed-CAD:(?:page|begin|rows|progress)|checkpoint-save|anchor-(?:advance|insert)/.test(sql)));
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_custom_cohort_typed_original_rows WHERE operation_id=$1',[refsOperation])).rows[0].n,0);
+    console.info('[native-original-reconciled-CAD-account-owner-v2]',{stock_accounts:2,primary_originals:2,secondary_originals:3,
+      every_original_and_entire_cache_replayed:true,native_ids_hash_bytes_independently_reconciled:true,duplicate_secondary_numbers_retained:true,
+      owner_retained_date:true,missing_pool_not_false:true,separate_current_CAD_rights_and_legacy_rights_both_ends:true,
+      partial_unissued_corrupt_prerequisites_refused:true,ending_cache_guard:true,unchanged_hash_count_forgeries_refused:true,
+      lost_commit_reopen:true,fresh_empty_probe:true,original_payload_copies:0,job_typed_copies:0,checkpoint_or_head_writes:0,
+      secondary_type_housing_or_verified_GLA_inference:false,selected_union:false,source_acquisition:false,report_update:false,production_speed:false});
     }
     for(const [kind,keys] of Object.entries(expected)){
       let position=null;const seen=[];

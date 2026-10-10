@@ -1,5 +1,52 @@
 # Complete larger-area Custom neighborhood studies
 
+## Issued-progress successful continuations (2026-10-10, not activated)
+
+The dormant traversal/recorded-partition `continueOriginalFrozenCaptureJob...ReferencesV2`
+methods extend the SAME bounded original-reconciling database owner. They run
+every original/cache read and BOTH-end current actor/assignment/private-draft/
+retained-subject/source-purpose/claim/pin/head/cache fence before releasing a
+success continuation in that SAME transaction. No caller supplies a checkpoint,
+phase, progress reference, count, DONE, retry count, token or source callback.
+
+Registered additive20261120 retains a separate successful-continuation sequence
+and the actual independently issued native head/root checkpoint. A progress
+reference can yield only once; free/unissued checkpoints, orphan progress without
+job release, changed scope/study, duplicate DONE and attempts regression refuse.
+One bounded SKIP LOCKED consume installs a fresh native claim token without
+incrementing OR resetting attempts or clearing the prior error. Ordinary claims
+exclude pending successes. Actual failed/expired claims retain the five-attempt
+limit; no failure history is refunded. Pending cancellation remains effective.
+
+An internal DONE stage is NOT a succeeded context, coherent publication, accepted
+report or terminal pin transfer. All issued roots and pins remain retained. The
+existing legacy worker is NOT switched to this path: fixed V2 worker dispatch,
+the remaining original-backed catalog/selection/metric/publication stages and
+terminal retention handoff must be implemented and verified before activation.
+
+109 focused tests PASS0fail0skip587.5861ms, including closed admission, fifth-
+attempt preservation, autocommit refusal before writes, fresh-token/bounded-claim
+mechanics, unchanged old profiles and registered native/deferred guards. Actual
+PostgreSQL assertions are AUTHORED for original/current-ending refusals, same-TX
+orphan refusal, lost-COMMIT pending recovery, stale claim, concurrent single
+consume, duplicate DONE refusal, unchanged heads/root/pins and actual failure
+claims reaching the unchanged fifth-claim terminal. NEW native/full cloud
+execution is PENDING; SQL doubles are not database/source authority. No local
+heavy suite, source acquisition, selector/report/Apply/production change or
+Indexer operation. QA7 only future Apply. Protected integration, exact-head
+security/native/full suites and ACTUAL included review remain required.
+
+Initial UNPROTECTED parent-stack receipts are now independently decoded:
+#1246 exact47f6b1b5 Foundation38037824246 all four jobs and Sales/Mobile/GSE PASS;
+native114171849912417migration/8index/1subject/1edge/2bootstrap PASS0fail0skip,
+issued-partition marker08:35:54Z, frontend3959PASS0fail0skip. #1247 exactc93e2a27
+Foundation38038180592 all four/Sales38038180558 PASS; native114172914125 same
+417/8/1/1/2 PASS0fail0skip with new whole-original/ENTIRE-derived-entry consumer
+marker08:42:16Z, frontend3959PASS0fail0skip. These SMALL protocol fixtures do not
+establish licensed >50k/5-mile/10-mile/city/retrospective acquisition, a current
+complete selected union, protected integrated readiness or production speed.
+Older pending statements below describe their original publication time.
+
 ## Original-reconciled recorded-partition consumer (2026-10-10, not activated)
 
 `readOriginalFrozenCaptureJobRecordedPartitionAccountReferencesV2` accepts only

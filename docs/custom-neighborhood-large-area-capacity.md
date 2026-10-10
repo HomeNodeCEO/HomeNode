@@ -2,6 +2,17 @@
 
 ## Original-backed first selected CAD amenities (2026-10-10, not activated)
 
+The initial exact `a785f7fd5965174cb1332c140ba87408680f0bb5` cloud native job
+`114273219334` failed two nonempty-selection fixtures at the unchanged 16 KB
+owner response cap; the explicit-empty case passed. Migration 417 and subject
+one passed; index 11 passed/two failed, zero skips. This is a real result-envelope
+failure, not an incident cancellation or successful native acceptance. The fix
+compacts repeated installed source/typing/amenity definition text to exact
+metadata references ONLY AFTER full original/cache replay. All observations,
+native secondary IDs, source metadata and separate both-end rights remain;
+the 16 KB owner, 2.1 MB child output and every original/SQL/transport/deadline
+limit are unchanged. New exact-head cloud verification remains required.
+
 The separate read-only internal method
 `readOriginalFrozenCaptureJobFirstSelectedAmenitiesReferencesV2` admits only the
 actual ten-root DONE selected union, immutable human command and current scoped

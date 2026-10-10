@@ -4688,6 +4688,11 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           await firstUnchanged();await setCadFixtureGrant(pool,organization,cadGrant);
           const amenityFrom=refsCalls.length,firstAmenity=await amenityRead(),amenityCalls=refsCalls.slice(amenityFrom);
           assert.equal(firstAmenity.status,'current_authorized_first_selected_original_amenities_reopened');
+          assert.ok(Buffer.byteLength(JSON.stringify(firstAmenity))<=16000,'unchanged whole owner response cap');
+          assert.equal(firstAmenity.selected_CAD.typed_profile.definition_blob.canonical_json,undefined);
+          assert.equal(firstAmenity.selected_CAD.source_metadata.source_definition_json,undefined);
+          assert.equal(firstAmenity.selected_CAD.source_metadata.source_definition_reference.content_sha256,
+            firstAmenity.selected_CAD.source_metadata.source_profile_sha256);
           assert.deepEqual(firstAmenity.subject,firstEligibility.subject);assert.deepEqual(firstAmenity.selected_entry,firstEligibility.selected_entry);
           assert.deepEqual(firstAmenity.decision,firstEligibility.decision);
           assert.equal(firstAmenity.read_only,true);assert.equal(firstAmenity.complete_selected_union_amenities,false);
@@ -4701,6 +4706,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             assert.deepEqual(selectedCad.original_counts,{primary:0,secondary:0});
           }else{
             assert.equal(selectedCad.account_id,allSelected?'CLOSURE-A':'CLOSURE-B');
+            assert.equal(selectedCad.amenity_evidence.profile.definition_blob.canonical_json,undefined);
             assert.deepEqual(selectedCad.original_counts,{primary:1,secondary:allSelected?2:1});
             assert.equal(selectedCad.amenity_evidence.reported_pool.state,allSelected?'observed':'missing');
             assert.equal(selectedCad.amenity_evidence.reported_pool.exact_value,allSelected?true:null);

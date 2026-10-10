@@ -16,7 +16,7 @@ import { captureAssignmentSalesCsv, recheckAssignmentSalesCsvCapture } from '../
 import { buildCustomCohortPrivateSalesObservations, presentCustomCohortPrivateSalesObservations } from './customCohortPrivateSales.js';
 import { authorizePublicCadastralCatalogRead } from '../../security/publicCadastralCatalog.js';
 import { assessmentDate, assessmentEvidenceDigest, canonicalAssessmentJson } from './contract.js';
-import { createNeighborhoodCohortBlobRepository } from './cohortEvidenceBlobRepository.js';
+import { createNeighborhoodCohortBlobRepository, prepareNeighborhoodCohortBlob } from './cohortEvidenceBlobRepository.js';
 import { createCustomCohortSubjectRepository } from './customCohortSubjectRepository.js';
 import { createCustomCohortContextRepository } from './customCohortContextRepository.js';
 import { createCustomCohortCaptureJobRepository, prepareCustomCohortCaptureJobClaim } from './customCohortCaptureJobRepository.js';
@@ -2317,6 +2317,19 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
               before_counts:eligibilityCounts,after_counts:Object.fromEntries(SELECTED_RECORDED_ELIGIBILITY_METRICS
                 .map(k=>[k,eligibilityCounts[k]+Number(eligible?.[k]??false)]))},eligibilityExpected);
           }
+          // Presentation only, AFTER every original/ENTIRE cache and separate
+          // source fence has passed. Repeating installed definition text in
+          // the result exceeded the existing16KB owner cap even for one native
+          // account. Keep exact metadata/profile references and ALL observations
+          // without widening any budget or using references as replay authority.
+          let selectedCadResult=null;
+          if(readingSelectedUnionFirstAmenities){
+            const cad=paired.selected_CAD,{source_definition_json,...metadata}=cad.source_metadata,
+              compactProfile=p=>({profile_ref:p.profile_ref,definition_blob:p.definition_blob.ref});
+            selectedCadResult={...cad,source_metadata:{...metadata,source_definition_reference:prepareNeighborhoodCohortBlob(source_definition_json)},
+              typed_profile:compactProfile(cad.typed_profile),amenity_evidence:cad.amenity_evidence===null?null:
+                {...cad.amenity_evidence,profile:compactProfile(cad.amenity_evidence.profile)}};
+          }
           subjectHousingResult={status:readingSelectedUnionFirstAmenities?'current_authorized_first_selected_original_amenities_reopened'
             :'current_authorized_first_selected_original_recorded_eligibility_reopened',operation_id:input.operationId,
             command_id:issuedSelectionIntent.command_id,union_reference:unionAnchor.receipt_reference,catalog_reference:catalogAnchor.receipt_reference,
@@ -2327,7 +2340,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             subject,subject_original_fallback:preferred===null,subject_equals_selected:paired.subject_equals_next,
             distinct_original_count:paired.distinct_original_count,
             ...(readingSelectedUnionFirstAmenities?{CAD_source_authorization:{purpose:cadPurpose,decision:cadDecision},
-              selected_CAD:paired.selected_CAD,complete_selected_union_amenities:false,
+              selected_CAD:selectedCadResult,complete_selected_union_amenities:false,
               amenity_scope:'current_retained_local_reported_pool_and_unresolved_secondary_inventory_not_verified_dictionary_or_historical'}:{}),
             selected_entry:firstSelectedEntry,decision,empty_selected_union:firstSelectedEntry===null,
             coverage:'fixed_first_native_selected_ordinal_only_not_complete_eligibility',

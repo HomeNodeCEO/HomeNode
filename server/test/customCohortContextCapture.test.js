@@ -311,7 +311,7 @@ test(`${method} admits only the live claim and bounded operation, not caller con
 });
 
 for(const method of ['readSharedFrozenCaptureJobStockAccountPackagesReferencesV2','readOriginalFrozenCaptureJobAccountHousingReferencesV2',
-  'readOriginalFrozenCaptureJobAccountRecordedGroupReferencesV2'])
+  'readOriginalFrozenCaptureJobAccountRecordedGroupReferencesV2','readOriginalFrozenCaptureJobRecordedPartitionAccountReferencesV2'])
 test(`${method} admits only a cursor, never caller account/value/date/count/housing authority`,async()=>{
   const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
     claim={operation_id:base.operationId,claim_token:'70000000-0000-4000-8000-000000000002',attempts:1};

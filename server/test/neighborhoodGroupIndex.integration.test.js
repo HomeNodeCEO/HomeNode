@@ -1770,6 +1770,22 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         const fault=refsFault;refsFault=null;
         return fault==='missing_partition_receipt'?{rowCount:0,rows:[]}:{...result,rows:result.rows.map(row=>({...row,canonical_utf8:'{}'}))};
       }
+      if(config.text.includes('custom-cohort-recorded-partition-v2:entry-read')&&refsFault?.startsWith('partition_entry_')){
+        const fault=refsFault;refsFault=null;
+        if(fault==='partition_entry_ending'){refsFault='partition_entry_missing';return result;}
+        if(fault==='partition_entry_missing')return {...result,rows:[Object.fromEntries(Object.keys(result.rows[0]).map(k=>[k,null]))]};
+        if(fault==='partition_entry_ordinal')return {...result,rows:[{...result.rows[0],ordinal:2}]};
+        if(fault==='partition_entry_state')return {...result,rows:[{...result.rows[0],state:'assigned',assigned_group_id:'recorded-cad:'+'a'.repeat(64)}]};
+        if(fault==='partition_entry_ref'){
+          const other=(await client.query("SELECT entry_reference FROM app.neighborhood_custom_cohort_recorded_partition_v2_rows WHERE operation_id=$1 AND account_id='CLOSURE-B'",[refsOperation])).rows[0].entry_reference;
+          return {...result,rows:[{...result.rows[0],entry_reference:other}]};
+        }
+      }
+      if(['partition_missing_blob','partition_corrupt_blob'].includes(refsFault)&&config.text.includes('neighborhood-cohort-blob:read */')
+        &&config.values[1]===(await client.query("SELECT entry_reference->>'content_sha256' AS hash FROM app.neighborhood_custom_cohort_recorded_partition_v2_rows WHERE operation_id=$1 AND account_id='CLOSURE-A'",[refsOperation])).rows[0]?.hash){
+        const fault=refsFault;refsFault=null;
+        return fault==='partition_missing_blob'?{rowCount:0,rows:[]}:{...result,rows:result.rows.map(row=>({...row,canonical_utf8:'{}'}))};
+      }
       if(config.text.includes('neighborhood-frozen-job-closure:parcels')||config.text.includes('neighborhood-frozen-stock-originals:page')
         ||config.text.includes('neighborhood-frozen-job-identity:parcels')||config.text.includes('shared-v2-stock-metrics:page')
         ||config.text===NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_SQL||config.text===NEIGHBORHOOD_SHARED_JOB_CAD_ACCOUNT_PAGE_SQL
@@ -1780,7 +1796,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         ||Object.values(NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL).includes(config.text)){
         // The ending-header fault is consumed by the later second metadata
         // read, not by the page query. Keep it armed like the COMMIT fault.
-        const fault=refsFault;if(!['commit','cad_header','transaction_header'].includes(fault))refsFault=null;
+        const fault=refsFault;if(!['commit','cad_header','transaction_header'].includes(fault)&&!fault?.startsWith('partition_'))refsFault=null;
         if(fault==='license')await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
         if(fault==='role')await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);
         if(fault==='subject')await client.query("UPDATE app.appraisal_subject_snapshots SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2000') WHERE id=$1",[sourceSnapshot]);
@@ -3195,6 +3211,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     const traversalMethod='advanceOriginalFrozenCaptureJobStockTraversalReferencesV2',traversalFrom=refsCalls.length,
       traversalBeforeBlobs=await refsBlobCount();
     const partitionMethod='advanceOriginalFrozenCaptureJobRecordedPartitionReferencesV2';
+    const partitionReadMethod='readOriginalFrozenCaptureJobRecordedPartitionAccountReferencesV2';
     await assert.rejects(freshRefsOwner()[partitionMethod](refsInput,refsOptions),/checkpoint_conflict/,'identity alone is not an issued complete traversal');
     const readTraversalAnchor=async()=>((await pool.query(`SELECT source_reference,root_reference,graph_reference,
       geographic_reference,identity_reference,stock_reference,receipt_reference,sequence
@@ -3366,6 +3383,9 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     assert.equal(partitionFirst.sequence,1);assert.equal(partitionFirstCheckpoint.phase,'frozen_recorded_partition_refs_v2');
     assert.deepEqual(partitionFirstCheckpoint.evidence_refs.slice(0,7),traversalDoneCheckpoint.evidence_refs);
     assert.deepEqual((await readPartitionRows()).map(r=>[r.account_id,r.ordinal,r.state,r.assigned_group_id]),[['CLOSURE-A',1,'unassigned',null]]);
+    const unfinishedReadFrom=refsCalls.length;
+    await assert.rejects(freshRefsOwner()[partitionReadMethod](refsInput,stockAccountOptions),/unfinished_recorded_partition/);
+    assert.ok(!refsCalls.slice(unfinishedReadFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
     for(const fault of ['missing_partition_receipt','corrupt_partition_receipt']){
       refsFault=fault;const from=refsCalls.length;
       await assert.rejects(freshRefsOwner()[partitionMethod](refsInput,refsOptions),/checkpoint_conflict|storage_conflict|invalid_receipt/);
@@ -3406,6 +3426,62 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       fresh_empty_terminal_completed_reopen:true,original_payload_copies:0,job_typed_copies:0,
       later_consumer_requires_full_original_reconciliation:true,selected_union:false,statistics:false,coherent_publication:false,
       licensed_large_area:false,production_speed:false,worker_activation:false,report_update:false});
+
+    // Stored derived labels never replace actual whole-original replay. Each
+    // bounded consumer reads one original account first, compares the ENTIRE
+    // entry and rechecks the same immutable ordinal at the current ending fence.
+    const partitionReadFrom=refsCalls.length,partitionReadBlobs=await refsBlobCount();
+    const assertPartitionUnchanged=async()=>{assert.deepEqual(await readPartitionRows(),partitionRows);
+      assert.deepEqual(await readPartitionHead(),partitionFinal);assert.deepEqual(await readRefsCheckpoint(),partitionDoneCheckpoint);
+      assert.equal(await refsBlobCount(),partitionReadBlobs);};
+    const replayA=await freshRefsOwner()[partitionReadMethod](refsInput,stockAccountOptions),
+      replayB=await freshRefsOwner()[partitionReadMethod](refsInput,{...stockAccountOptions,stockAccountPackagePage:{cursor:replayA.next_cursor}}),
+      replayEnd=await freshRefsOwner()[partitionReadMethod](refsInput,{...stockAccountOptions,stockAccountPackagePage:{cursor:replayB.next_cursor}});
+    assert.equal(replayA.partition_ordinal,1);assert.equal(replayB.partition_ordinal,2);assert.equal(replayEnd.partition_ordinal,null);
+    assert.equal(replayEnd.end_of_accounts,true);assert.deepEqual(replayEnd.rows,[]);assert.equal(replayEnd.recorded_group,null);
+    assert.deepEqual(replayA.recorded_group,groupA.recorded_group);assert.deepEqual(replayB.recorded_group,groupB.recorded_group);
+    assert.deepEqual(replayA.rows,groupA.rows);assert.deepEqual(replayB.rows,groupB.rows);
+    assert.equal(replayA.coverage,'one_original_reconciled_partition_account_only');assert.equal(replayA.selected_union,'not_established');
+    assert.equal(replayA.statistics,'not_established');assert.equal(replayA.report_update,'none');await assertPartitionUnchanged();
+    for(const fault of ['stock_cells_mismatch','stock_cells_missing','stock_cells_original']){
+      refsFault=fault;await assert.rejects(freshRefsOwner()[partitionReadMethod](refsInput,stockAccountOptions),/original_mismatch/);
+      assert.equal(refsFault,null);await assertPartitionUnchanged();
+    }
+    for(const fault of ['partition_entry_missing','partition_entry_ordinal','partition_entry_ref','partition_entry_state','partition_entry_ending',
+      'partition_missing_blob','partition_corrupt_blob']){
+      refsFault=fault;await assert.rejects(freshRefsOwner()[partitionReadMethod](refsInput,stockAccountOptions),/partition_original_mismatch|storage_conflict/);
+      assert.equal(refsFault,null);await assertPartitionUnchanged();
+    }
+    await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+    const partitionReadDeniedFrom=refsCalls.length;
+    await assert.rejects(freshRefsOwner()[partitionReadMethod](refsInput,stockAccountOptions),/market_data_access_denied/);
+    assert.ok(!refsCalls.slice(partitionReadDeniedFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));
+    for(const [fault,reason] of [['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],['subject',/subject_changed/],
+      ['claim',/claim_lost/],['cancel',/cancelled/],['transaction_header',/cache_unavailable/]]){
+      refsFault=fault;refsAbort=new AbortController();
+      await assert.rejects(freshRefsOwner()[partitionReadMethod](refsInput,{...stockAccountOptions,signal:refsAbort.signal}),reason);
+      assert.equal(refsFault,null);await assertPartitionUnchanged();
+      if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+      if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    }
+    for(const fault of ['missing_receipt','corrupt_receipt','missing_geo_receipt','corrupt_geo_receipt','missing_identity_receipt','corrupt_identity_receipt',
+      'missing_traversal_receipt','corrupt_traversal_receipt','missing_partition_receipt','corrupt_partition_receipt']){
+      refsFault=fault;const from=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[partitionReadMethod](refsInput,stockAccountOptions),/checkpoint_conflict|storage_conflict|invalid_receipt/);
+      assert.equal(refsFault,null);assert.ok(!refsCalls.slice(from).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));await assertPartitionUnchanged();
+    }
+    refsFault='commit';await assert.rejects(freshRefsOwner()[partitionReadMethod](refsInput,stockAccountOptions),e=>e.outcome_unknown===true);
+    assert.deepEqual((await freshRefsOwner()[partitionReadMethod](refsInput,stockAccountOptions)).recorded_group,groupA.recorded_group);await assertPartitionUnchanged();
+    await assert.rejects(freshRefsOwner()[partitionReadMethod](sourceInput,{...stockAccountOptions,captureJobClaim:sourceClaim}),/checkpoint_conflict/);
+    assert.ok(!refsCalls.slice(partitionReadFrom).some(sql=>/ST_DWithin|checkpoint-save|anchor-(?:advance|insert)|:entry-insert/.test(sql)));
+    console.info('[native-original-recorded-partition-replayed-consumer-v2]',{accounts:2,assigned:1,unassigned:1,original512byte_labels:true,
+      every_whole_original_entire_neutral_cache_and_entire_derived_entry_replayed:true,outside_conflicts_all_candidates_preserved:true,
+      one_fixed_indexed_entry_and_ending_recheck:true,unavailable_swapped_forged_and_ending_ordinal_metadata_refused:true,
+      corrupt_missing_entry_blob_refused:true,current_and_ending_rights_actor_assignment_subject_claim_cache_cancel:true,
+      all_issued_partial_unissued_corrupt_prerequisites_refused:true,lost_commit_reopen:true,fresh_original_and_partition_empty_probe:true,
+      original_payload_copies:0,job_typed_copies:0,checkpoint_head_entry_writes:0,complete_selected_union:false,statistics:false,
+      licensed_acquisition:false,production_speed:false,report_update:false});
     }
     for(const [kind,keys] of Object.entries(expected)){
       let position=null;const seen=[];

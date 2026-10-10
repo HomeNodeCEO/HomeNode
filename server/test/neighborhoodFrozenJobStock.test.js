@@ -1262,7 +1262,7 @@ test('combined source admission refuses total251 before payload decode, never250
   await assert.rejects(f.pages().subjectAndFirstSelectedCombinedAccountPackage({includeSubject:true},selectedPeriod),/account_package_row_limit/);
   const sql=NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL;
   assert.match(sql,/SELECT n FROM stock_totals UNION ALL SELECT n FROM transaction_totals UNION ALL SELECT n FROM cad_totals/);
-  assert.equal((sql.match(/SELECT coalesce\(sum\(n\),0\) FROM all_totals/g)??[]).length,3);
+  assert.equal((sql.match(/SELECT coalesce\(sum\(n\),0\) FROM all_totals/g)??[]).length,6);
   assert.match(sql,/profile_sha256=\$11/);assert.match(sql,/r\.ordinal=1/);
   assert.doesNotMatch(sql,/effective_date|close_date|closing_date|array_agg|FROM core\.|INSERT|UPDATE|DELETE/);
 });
@@ -1275,6 +1275,29 @@ test('combined original replay refuses every stock CAD or transaction whole-cach
     if(layer==='CAD'){row.typed.observations.reported_living_area.exact_value='1';f.cadRows[0]=row;}
     if(layer==='transaction'){row.typed.observations.normalized_current_price.exact_value='1';f.transactionRows[0]=row;}
     await assert.rejects(f.pages().subjectAndFirstSelectedCombinedAccountPackage({includeSubject:true},selectedPeriod),/original_mismatch/);
+  }
+});
+
+test('selected transaction and combined plans gate every source family before encoding',async()=>{
+  for(const [sql,families] of [[NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL,2],
+    [NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,3]]){
+    const sizes=sql.indexOf('raw_sizes AS MATERIALIZED'),gate=sql.indexOf('raw_gate AS MATERIALIZED'),members=sql.indexOf('members AS MATERIALIZED'),
+      raw=sql.slice(sizes,gate),encoded=sql.slice(members);
+    assert.ok(sizes>0&&gate>sizes&&members>gate);
+    assert.doesNotMatch(raw,/jsonb_build_object|string_agg|array_agg| AS encoded/);
+    assert.equal((raw.match(/octet_length\(o\.payload::text\)/g)??[]).length,families);
+    assert.equal((raw.match(/SELECT coalesce\(sum\(n\),0\) FROM all_totals/g)??[]).length,families);
+    assert.equal((raw.match(/NOT \$10::boolean OR EXISTS\(SELECT 1 FROM subject_account\)/g)??[]).length,families);
+    assert.equal((encoded.match(/AND NOT \(SELECT oversize FROM raw_gate\) OFFSET 0/g)??[]).length,families);
+    assert.match(sql,/sum\(original_bytes::bigint\+coalesce\(typed_bytes,0\)\+1\)/);
+    assert.match(encoded,/\(SELECT oversize FROM raw_gate\) OR coalesce\(max\(bytes\),0\)>\$7/);
+    assert.match(encoded,/CASE WHEN NOT \(SELECT oversize FROM raw_gate\)[\s\S]*sum\(bytes\+1\)[\s\S]*ELSE '\[\]' END AS page_json/);
+    const f=await selectedTransactionFixture(({text})=>text===sql?result({account_id:'STOCK-B',geographic_parcel_count:'1',
+      subject_account_id:'STOCK-A',subject_geographic_parcel_count:'1',next_parcels:1,next_accounts:0,subject_parcels:2,subject_accounts:1,
+      ...(families===3?{cad_primary:1,cad_secondary:0}:{}),anchor_count:2,transaction_original_count:4,package_count:2,
+      original_count:families===3?9:8,page_count:0,invalid_count:0,packet_oversize:true,page_json:'[]'}):null);
+    await assert.rejects(f.pages()[families===3?'subjectAndFirstSelectedCombinedAccountPackage':'subjectAndFirstSelectedTransactionAccountPackage']
+      ({includeSubject:true},selectedPeriod),/account_package_byte_limit/);
   }
 });
 
@@ -1350,7 +1373,7 @@ test('selected transaction anchors and whole source packages refuse aggregate ov
   const sql=NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL;
   assert.match(sql,/r\.ordinal=1/);assert.match(sql,/original_source_rows o|frozen_source_rows o/);
   assert.match(sql,/ORDER BY o\.row_key COLLATE "C" LIMIT \(\$5::integer\+1\)/);
-  assert.equal((sql.match(/SELECT coalesce\(sum\(n\),0\) FROM all_totals/g)??[]).length,2);
+  assert.equal((sql.match(/SELECT coalesce\(sum\(n\),0\) FROM all_totals/g)??[]).length,4);
   assert.doesNotMatch(sql,/close_date|closing_date|effective_date|FROM core\.|array_agg|INSERT|UPDATE|DELETE/);
 });
 

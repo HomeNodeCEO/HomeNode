@@ -4,7 +4,11 @@
 // or cached membership. Each whole source package includes outside/unresolved
 // rows; source-less sales retain their own native ID. All required stock and
 // transaction originals share ONE250 cap BEFORE any payload materialization.
-function sql(withCad){return `/* neighborhood-first-selected-${withCad?'combined-evidence':'transaction'}-original-package-v2 */
+function sql(withCad){
+  const admission=`(SELECT count(*) FROM anchors)<=$5::integer AND (SELECT coalesce(sum(n),0) FROM all_totals)<=$5::integer
+      AND (NOT $10::boolean OR EXISTS(SELECT 1 FROM subject_account))`;
+  const encodingAdmission=`${admission} AND NOT (SELECT oversize FROM raw_gate)`;
+  return `/* neighborhood-first-selected-${withCad?'combined-evidence':'transaction'}-original-package-v2 */
 WITH next_account AS MATERIALIZED (
   SELECT a.account_id,a.parcel_count FROM app.neighborhood_custom_cohort_capture_jobs job
   JOIN app.neighborhood_custom_cohort_selected_union_v2_heads head USING(operation_id,organization_id)
@@ -52,6 +56,40 @@ WITH next_account AS MATERIALIZED (
     LIMIT ($5::integer+1)) bounded) AS n FROM next_account a CROSS JOIN (VALUES ('primary'),('secondary')) k(kind)
 )`:''}, all_totals AS MATERIALIZED (
   SELECT n FROM stock_totals UNION ALL SELECT n FROM transaction_totals${withCad?' UNION ALL SELECT n FROM cad_totals':''}
+), raw_sizes AS MATERIALIZED (
+  -- Retain only byte lengths, never raw payload strings or encoded envelopes.
+  -- All source families share the SAME count/byte admission before encoding.
+  SELECT octet_length(o.payload::text) AS original_bytes,octet_length(t.typed::text) AS typed_bytes
+  FROM chosen a CROSS JOIN (VALUES ('parcels'),('accounts')) k(kind)
+  CROSS JOIN LATERAL (SELECT o.kind,o.row_key,o.payload FROM app.neighborhood_frozen_source_rows o
+    WHERE o.generation_id=$2::uuid AND o.kind=k.kind AND o.account_id=a.account_id
+      AND ${admission} OFFSET 0) o
+  LEFT JOIN LATERAL (SELECT t.typed FROM app.neighborhood_frozen_typed_v2_rows t
+    WHERE t.generation_id=$2::uuid AND t.profile_sha256=$3 AND t.kind=o.kind AND t.row_key=o.row_key OFFSET 0) t ON true
+  UNION ALL
+  SELECT octet_length(o.payload::text),octet_length(t.typed::text)
+  FROM packages p CROSS JOIN (VALUES ('source_records'),('sales'),('sale_links')) k(kind)
+  CROSS JOIN LATERAL (SELECT o.kind,o.row_key,o.payload FROM app.neighborhood_frozen_source_rows o
+    WHERE o.generation_id=$2::uuid AND o.kind=k.kind
+      AND (p.package_kind='source_record' AND o.source_record_id=p.package_key::bigint
+        OR p.package_kind='legacy_sale' AND o.kind='sales' AND o.source_record_id IS NULL AND o.row_key=p.package_key)
+      AND ${admission} OFFSET 0) o
+  LEFT JOIN LATERAL (SELECT t.typed FROM app.neighborhood_frozen_typed_v2_rows t
+    WHERE t.generation_id=$2::uuid AND t.profile_sha256=$3 AND t.kind=o.kind AND t.row_key=o.row_key OFFSET 0) t ON true
+${withCad?`  UNION ALL
+  SELECT octet_length(o.payload::text),octet_length(t.typed::text)
+  FROM next_account a CROSS JOIN (VALUES ('primary'),('secondary')) k(kind)
+  CROSS JOIN LATERAL (SELECT o.kind,o.row_key,o.payload FROM app.neighborhood_frozen_cad_improvement_rows o
+    WHERE o.generation_id=$2::uuid AND o.kind=k.kind AND o.account_id=a.account_id
+      AND ${admission} OFFSET 0) o
+  LEFT JOIN LATERAL (SELECT t.typed FROM app.neighborhood_frozen_typed_cad_rows t
+    WHERE t.generation_id=$2::uuid AND t.profile_sha256=$11 AND t.kind=o.kind AND t.row_key=o.row_key OFFSET 0) t ON true
+`:''}), raw_gate AS MATERIALIZED (
+  SELECT coalesce(max(original_bytes),0)>$8::integer
+    OR coalesce(max(original_bytes::bigint+coalesce(typed_bytes,0)),0)>$7::integer
+    OR coalesce(sum(original_bytes::bigint+coalesce(typed_bytes,0)+1),0)+2>$6::integer
+    OR coalesce(sum(2::bigint*coalesce(typed_bytes,0)+1024),0)+2>$9::integer AS oversize
+  FROM raw_sizes
 ), members AS MATERIALIZED (
   SELECT o.kind,o.row_key,o.account_id,NULL::text AS package_kind,NULL::text AS package_key,
     t.row_key IS NULL OR t.account_id IS DISTINCT FROM o.account_id OR t.source_record_id IS DISTINCT FROM o.source_record_id AS invalid,
@@ -63,8 +101,7 @@ WITH next_account AS MATERIALIZED (
   FROM chosen a CROSS JOIN (VALUES ('parcels'),('accounts')) k(kind)
   CROSS JOIN LATERAL (SELECT o.kind,o.row_key,o.account_id,o.source_record_id,o.payload FROM app.neighborhood_frozen_source_rows o
     WHERE o.generation_id=$2::uuid AND o.kind=k.kind AND o.account_id=a.account_id
-      AND (SELECT count(*) FROM anchors)<=$5::integer AND (SELECT coalesce(sum(n),0) FROM all_totals)<=$5::integer
-      AND (NOT $10::boolean OR EXISTS(SELECT 1 FROM subject_account)) OFFSET 0) o
+      AND ${encodingAdmission} OFFSET 0) o
   LEFT JOIN LATERAL (SELECT t.row_key,t.account_id,t.source_record_id,t.original_payload_sha256,t.typed FROM app.neighborhood_frozen_typed_v2_rows t
     WHERE t.generation_id=$2::uuid AND t.profile_sha256=$3 AND t.kind=o.kind AND t.row_key=o.row_key OFFSET 0) t ON true
   UNION ALL
@@ -82,8 +119,7 @@ WITH next_account AS MATERIALIZED (
     WHERE o.generation_id=$2::uuid AND o.kind=k.kind
       AND (p.package_kind='source_record' AND o.source_record_id=p.package_key::bigint
         OR p.package_kind='legacy_sale' AND o.kind='sales' AND o.source_record_id IS NULL AND o.row_key=p.package_key)
-      AND (SELECT count(*) FROM anchors)<=$5::integer AND (SELECT coalesce(sum(n),0) FROM all_totals)<=$5::integer
-      AND (NOT $10::boolean OR EXISTS(SELECT 1 FROM subject_account)) OFFSET 0) o
+      AND ${encodingAdmission} OFFSET 0) o
   LEFT JOIN LATERAL (SELECT t.row_key,t.account_id,t.source_record_id,t.original_payload_sha256,t.typed FROM app.neighborhood_frozen_typed_v2_rows t
     WHERE t.generation_id=$2::uuid AND t.profile_sha256=$3 AND t.kind=o.kind AND t.row_key=o.row_key OFFSET 0) t ON true
 ${withCad?`  UNION ALL
@@ -96,8 +132,7 @@ ${withCad?`  UNION ALL
   FROM next_account a CROSS JOIN (VALUES ('primary'),('secondary')) k(kind)
   CROSS JOIN LATERAL (SELECT o.kind,o.row_key,o.account_id,o.payload,o.payload_sha256,o.payload_utf8_bytes
     FROM app.neighborhood_frozen_cad_improvement_rows o WHERE o.generation_id=$2::uuid AND o.kind=k.kind AND o.account_id=a.account_id
-      AND (SELECT count(*) FROM anchors)<=$5::integer AND (SELECT coalesce(sum(n),0) FROM all_totals)<=$5::integer
-      AND (NOT $10::boolean OR EXISTS(SELECT 1 FROM subject_account)) OFFSET 0) o
+      AND ${encodingAdmission} OFFSET 0) o
   LEFT JOIN LATERAL (SELECT t.row_key,t.account_id,t.original_payload_sha256,t.typed
     FROM app.neighborhood_frozen_typed_cad_rows t WHERE t.generation_id=$2::uuid AND t.profile_sha256=$11
       AND t.kind=o.kind AND t.row_key=o.row_key OFFSET 0) t ON true
@@ -115,9 +150,9 @@ ${withCad?`  coalesce((SELECT n FROM cad_totals WHERE kind='primary'),0) AS cad_
   (SELECT count(*)::integer FROM packages) AS package_count,
   coalesce((SELECT sum(n)::integer FROM all_totals),0) AS original_count,count(*)::integer AS page_count,
   coalesce(sum(CASE WHEN invalid THEN 1 ELSE 0 END),0)::integer AS invalid_count,
-  coalesce(max(bytes),0)>$7::integer OR coalesce(max(original_bytes),0)>$8::integer
+  (SELECT oversize FROM raw_gate) OR coalesce(max(bytes),0)>$7::integer OR coalesce(max(original_bytes),0)>$8::integer
     OR coalesce(sum(bytes+1),0)+2>$6::integer OR coalesce(sum(2*coalesce(typed_bytes,0)+1024),0)+2>$9::integer AS packet_oversize,
-  CASE WHEN coalesce(max(bytes),0)<=$7::integer AND coalesce(max(original_bytes),0)<=$8::integer
+  CASE WHEN NOT (SELECT oversize FROM raw_gate) AND coalesce(max(bytes),0)<=$7::integer AND coalesce(max(original_bytes),0)<=$8::integer
     AND coalesce(sum(bytes+1),0)+2<=$6::integer AND coalesce(sum(2*coalesce(typed_bytes,0)+1024),0)+2<=$9::integer
     THEN coalesce('['||string_agg(encoded,',' ORDER BY account_id COLLATE "C",kind COLLATE "C",row_key COLLATE "C")||']','[]') ELSE '[]' END AS page_json
 FROM sized`;}

@@ -95,6 +95,8 @@ import { runNeighborhoodOriginalTransactionPackageDatabaseChecks }
   from './helpers/neighborhoodOriginalTransactionPackageDatabaseChecks.js';
 import { runNeighborhoodOriginalCadAccountPackageDatabaseChecks }
   from './helpers/neighborhoodOriginalCadAccountPackageDatabaseChecks.js';
+import { runNeighborhoodSelectedPacketByteGateDatabaseChecks }
+  from './helpers/neighborhoodSelectedPacketByteGateDatabaseChecks.js';
 import { createCustomNeighborhoodCadImprovementSourcePolicy,CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_RIGHTS_KEY as CAD_RIGHTS_KEY,
   CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_PURPOSE as CAD_PURPOSE,CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_DATASET as CAD_DATASET }
   from '../src/security/customNeighborhoodCadImprovementSourcePolicy.js';
@@ -184,6 +186,7 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
       await runNeighborhoodStockOriginalCellDatabaseChecks(policyClient);
       await runNeighborhoodOriginalTransactionPackageDatabaseChecks(policyClient);
       await runNeighborhoodOriginalCadAccountPackageDatabaseChecks(policyClient);
+      await runNeighborhoodSelectedPacketByteGateDatabaseChecks(policyClient);
     }finally {policyClient.release();}
     await pool.query(NEIGHBORHOOD_CACHED_SOURCE_SCHEMA);
     // The isolated UAD fixture has bedroom/bath and secondary rows but omits

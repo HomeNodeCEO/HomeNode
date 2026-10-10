@@ -1,5 +1,30 @@
 # Complete larger-area Custom neighborhood studies
 
+## Selected packet raw-byte gates (2026-10-10, not activated)
+
+Inspection after the actual #1240 review found the same encode-before-byte-refusal
+pattern in the separate fixed selected-transaction and combined stock/CAD/
+transaction plans. Both now materialize ONLY original/cache byte lengths under
+the existing shared original-count/required-subject admission. One raw-byte gate
+then blocks encoding in EVERY source family before any `jsonb_build_object`.
+The exact encoded-row/transport/output checks still run for admitted raw sizes;
+lower bounds cannot replace them. Profiles, current/ending rights, complete
+original reconciliation, single-use and all existing limits are unchanged.
+
+189 focused synthetic tests pass, zero failures/skips (1620.3239 ms); syntax
+and diff checks pass. A new rolled-back cloud-only TEMP plan fixture is AUTHORED
+NOT EXECUTED: both fixed plans, mixed-source total 250 versus 251, raw-over-8-MB
+with zero encoded members, per-original 1-MB refusal, raw-fit/exact-encoding-over
+refusal, missing-cache retention, missing-subject zero payload and fresh EMPTY.
+Its substituted TEMP checkpoint predicate is deliberately NOT authority proof.
+The separate actual issued-owner fixtures still reopen the complete native
+original graph, partition/catalog/selection and current/ending authorization.
+Fresh cloud verification is required. This fixes bounded admission, not complete
+selected-union replay/statistics, licensed acquisition or production speed.
+
+All internal stages remain inactive. No source rights, worker, scheduler, pin,
+accepted report, genuine Hardy choice, production or Apply changes are made.
+
 ## One aggregate selected stock/CAD/transaction packet (2026-10-10, not activated)
 
 The separate INACTIVE read-only actual owner method

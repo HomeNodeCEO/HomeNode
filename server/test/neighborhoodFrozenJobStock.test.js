@@ -32,6 +32,7 @@ import { createNeighborhoodSharedStockOriginalCellsV2, prepareNeighborhoodStockO
   from '../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
 import { getNeighborhoodOriginalAccountHousingV2Profile,resolveNeighborhoodOriginalAccountHousingV2 }
   from '../src/services/neighborhoodAssessment/neighborhoodOriginalAccountHousingV2.js';
+import { resolveNeighborhoodOriginalAccountEligibilityV2 } from '../src/services/neighborhoodAssessment/neighborhoodOriginalAccountEligibilityV2.js';
 import { getCustomCohortRecordedHousingInterpretation }
   from '../src/services/neighborhoodAssessment/customCohortRecordedHousingProfiles.js';
 import { NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL, NEIGHBORHOOD_FROZEN_JOB_IDENTITY_COVERAGE_SQL }
@@ -1382,6 +1383,25 @@ test('whole stock account resolves all original parts after retained-year replay
   assert.equal(future.observations.reported_year_built.state,'conflicting');
   assert.deepEqual(future.observations.reported_year_built.conflict_values,['1960','2050']);
   assert.deepEqual(future.rows[1].typed,packet.rows[1].typed,'date-neutral cache is unchanged');
+});
+
+test('recorded eligibility consumes original-recompiled housing and every retained-date metric denominator',async()=>{
+  const f=await stockOriginalCellFixture();
+  for(let i=0;i<2;i++)f.rows.parcels[i]=stockOriginalCell('parcels',String(i+1),
+    {class_code:'A12',residential_year_built:i===0?2050:1960,current_market_value:'12345'});
+  f.rows.accounts=[stockOriginalCell('accounts','STOCK-A',{county:'DALLAS'})];
+  const p=await f.pages().recordedGroupAndHousingAccountPackage({cursor:''}),h=p.recorded_housing,
+    r=resolveNeighborhoodOriginalAccountEligibilityV2({subject:{state:'observed',category:'townhouse'},
+      housing:{state:h.state,category:h.category,county_state:h.county_state,source_part_count:h.source_part_count,part_states:h.part_states},
+      original_counts:p.original_counts,observations:p.observations});
+  assert.equal(h.state,'observed');assert.equal(r.housing.matches_subject,true);
+  assert.equal(p.observations.reported_year_built.state,'observed');
+  assert.equal(r.metrics.reported_year_built.recorded_comparison_eligible,false,'one future outside-part value is invalid before resolution');
+  assert.deepEqual(r.metrics.reported_year_built.reasons,['invalid_parts']);
+  assert.equal(r.metrics.reported_residential_area.recorded_comparison_eligible,true);
+  assert.equal(r.metrics.reported_market_value.recorded_comparison_eligible,false);
+  assert.ok(p.rows.every(row=>!Object.hasOwn(row,'original_text')));
+  assert.equal(r.complete_selected_union_eligibility,false,'compiler replay DATA is not native selected population authority');
 });
 
 test('whole stock account retains exact conflicts and missing/invalid/unsupported part denominators, without fabricating account originals',async()=>{

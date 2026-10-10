@@ -174,6 +174,8 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingStockOriginalCells: true, allowedPhases: ['frozen_identity_refs_v2'] },
   shared_stock_account_packages_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingStockAccountPackages: true, allowedPhases: ['frozen_identity_refs_v2'] },
+  original_account_housing_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    readingStockAccountPackages: true, resolvingStockAccountHousing: true, allowedPhases: ['frozen_identity_refs_v2'] },
 });
 function fail(reason, detail, captureCounts) {
   const error = Object.assign(new Error(`custom_cohort_capture_${reason}`), {
@@ -1606,7 +1608,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     const {referencesV2=false,verifying=false,stockVerifying=false,identityVerifying=false,
       typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,readingTransactionPages=false,projectingTransactionTemporal=false,
-      readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
+      readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,
+      resolvingStockAccountHousing=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     if(referencesV2){
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
       const descriptors=Object.getOwnPropertyDescriptors(options),keys=Reflect.ownKeys(descriptors);
@@ -1986,7 +1989,13 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(readingStockOriginalCells||readingStockAccountPackages){
         const graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
         const originals=createNeighborhoodSharedStockOriginalCellsV2(client,stockOptions,graph,context.effective_date);
-        stockMetricResult=await (readingStockOriginalCells?originals.page(originalCellInput):originals.accountPackage(stockAccountInput));
+        stockMetricResult=await (readingStockOriginalCells?originals.page(originalCellInput)
+          :resolvingStockAccountHousing?originals.housingAccountPackage(stockAccountInput):originals.accountPackage(stockAccountInput));
+        // resumeCustomCohortSubjectCheckpoint already matched the original
+        // immutable intent's housing marker, never a caller/current default
+        // upgrade. Bind the bounded result to that EXACT retained choice too.
+        if(resolvingStockAccountHousing&&stockMetricResult.recorded_housing!==null
+          &&!same(stockMetricResult.recorded_housing.retained_housing_interpretation,housingProfile))fail('checkpoint_conflict');
       }
       input=freeze({...input,auth:await loadCurrentCustomCohortJobActor(client,input.auth.userId,scope.organization_id)});
       assertTarget(await resolveTarget(client,input,true),target);
@@ -2242,6 +2251,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * stock account before exact five-state resolution; never a selected union. */
     readSharedFrozenCaptureJobStockAccountPackagesReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'shared_stock_account_packages_refs_v2'),
+    /** Resolve the retained housing choice only AFTER all account originals
+     * are reconciled under issued V2/current rights. Internal, not a selector,
+     * report fact, source grant, new phase or large-area acceptance. */
+    readOriginalFrozenCaptureJobAccountHousingReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'original_account_housing_refs_v2'),
     async capture(value, options = {}) {
     if (!options || Object.getPrototypeOf(options) !== Object.prototype)
       fail('invalid_options');

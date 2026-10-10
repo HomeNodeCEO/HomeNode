@@ -5206,7 +5206,10 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           assert.equal(done.status,'original_selected_evidence_traversal_progress_retained');
           assert.deepEqual(done.progress,{selected_ordinal:selectedCount,done:true});assert.equal(done.selected_entry,null);
           assert.equal(done.complete_selected_original_evidence_traversal,true);assert.equal(done.complete_selected_union_eligibility,false);
-          assert.equal(done.empty_selected_union,selectedCount===0);assert.equal(done.distinct_original_count,observedHousingFixture?0:3);
+          assert.equal(done.empty_selected_union,selectedCount===0);
+          assert.equal(done.subject_original_fallback,selectionWaitFixture!=='union-empty'&&!observedHousingFixture,
+            'explicit-null or observed retained subject blocks unneeded original fallback at fresh EMPTY');
+          assert.equal(done.distinct_original_count,selectionWaitFixture==='union-empty'||observedHousingFixture?0:3);
           assert.equal(done.context_complete,false);assert.equal(done.pin_transfer,false);assert.ok(Buffer.byteLength(JSON.stringify(done))<=16000);
           assert.equal(terminalCalls.filter(sql=>sql===NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL).length,1);
           assert.ok(!terminalCalls.some(sql=>sql===NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL

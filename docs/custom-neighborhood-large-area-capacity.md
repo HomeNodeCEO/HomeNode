@@ -1,5 +1,53 @@
 # Complete larger-area Custom neighborhood studies
 
+## Durable original-backed stock traversal (2026-10-10, not activated)
+
+`advanceOriginalFrozenCaptureJobStockTraversalReferencesV2` accepts ONLY the live
+claim and operation budget, no caller cursor, roster, values, count, DONE or
+original callback. An independent database-issued CAS head chooses each next
+exact stock account in native C-text order. The actual current-authorized V2
+owner replays EVERY original account/parcel part against its ENTIRE neutral
+cache, including outside-geometry parts, before the fixed retained-year/housing
+interpretation and any progress write. The unchanged single-use whole250,
+32-MB/128-query/60-second/five-second-query reader budget applies once per step;
+no nested reader loop or per-page budget reset is introduced.
+
+Additive migration20261118 independently guards the actual issued DONE graph,
+geography and identity heads, immutable stock, retained effective date and the
+exact next native stock key. It rejects a skipped account and free DONE even
+with valid hashes/counts. A distinct fresh empty probe is mandatory after the
+last nonempty account; completed reopening rechecks the empty probe and full
+cache metadata without adding another receipt. Small metadata-only receipts,
+CAS head and seven-reference `frozen_stock_traversal_refs_v2` retention-root
+checkpoint commit in ONE actual owner transaction. Ending actor/assignment/
+private draft/subject/source-purpose/claim/pin or cache refusal rolls everything
+back. Lost COMMIT acknowledgement reopens the actual committed head, not a
+caller continuation. Previous receipt links retain traversal lineage; no
+original payload or job-typed copies are stored. Existing stages/profiles and
+their six-reference checkpoints remain unchanged and cannot silently resume
+this new phase as an old read-only stage.
+
+152 focused tests passed, zero failures/skips (1,413.2143 ms), including
+migration registration and existing issued-head regressions. Native actual-owner tests are authored for
+two accounts/three parcel/two account originals, independent next-key/free-DONE
+refusal, original/full-cache forgeries, current and ending rights/claim/subject/
+cache/cancellation, partial/unissued/corrupt prerequisites, same-TX rollback,
+lost-COMMIT continuation, terminal/reopen probes and zero original copies.
+NEW native/full cloud execution is pending, not established by SQL doubles.
+
+This is durable traversal of the ORIGINAL stock, not a complete selected-union
+cell/ordinal index, selector, statistic, licensed acquisition or source grant.
+Later selection/statistical consumers must reconcile their complete originals;
+this head/count/receipt is not a substitute. One-account checkpoint throughput
+is not production-speed acceptance and will require bounded worker measurement
+and optimization before activation. No scheduler, HTTP/default, selected head,
+report, accepted report, Hardy choice or terminal pin transfer/deletion is
+activated. Exact medians/CODs/calendar quarters, coherent publication, finite
+large-area workers/terminal retention handoff, licensed >50k/5-mile/10-mile/city/
+retrospective and live Hardy reload remain open. QA7 only for future Apply.
+Protected dependency integration/main retarget BEFORE synchronization, fresh
+security/native/full suites and actual included exact-head review are mandatory.
+
 ## Original-reconciled local CAD amenity evidence (2026-10-10, not activated)
 
 `readOriginalFrozenCaptureJobCadAmenityEvidenceReferencesV2` extends the actual
@@ -47,11 +95,18 @@ large values, hostile input, whole250 bounds, no inference, single-use and
 ending-cache/cancellation checks. The first local 250-row test fixture supplied
 numeric instead of native C-text order; its fixture was corrected, with the
 actual original-order guard unchanged.
-Native tests are authored for actual issued-owner replay, all secondary IDs,
-NULL/report distinctions, unchanged-hash/count forgeries, partial/unissued/corrupt
-heads, both-end rights/cache/claim/cancel refusal, lost-COMMIT reopen and fresh
-empty terminal probe. Their cloud execution is pending, not established by local
-doubles. This is partial retained evidence resolution, NOT full amenity resolution.
+Initial stacked exact `079fff88ed113225925d853f20b0eccd2b0fa98c` (#1243)
+foundation38033803939 passed all four jobs. Native114159967284 decoded417
+migration/8 index/1 subject/1 edge/2 bootstrap, zero failures/skips;
+index398,870.899696 ms. New native amenity marker executed at07:24:35Z for
+actual issued-owner replay, all secondary IDs, NULL/report distinctions,
+unchanged-hash/count forgeries, partial/unissued/corrupt heads, both-end
+rights/cache/claim/cancel refusal, lost-COMMIT reopen and fresh empty probe.
+Frontend114159967410 passed3959 tests, zero failures/skips (88,466.891091 ms),
+plus all checks; server114159967448/redteam114159967428 passed. These INITIAL
+STACKED receipts are not this later head/future protected integrated readiness,
+actual review, licensed acquisition or production speed. This is partial retained
+evidence resolution, NOT full amenity resolution.
 
 No migration/phase, HTTP/default, cache repair, worker, selected head, report,
 accepted-report/genuine Hardy choice or production activation is changed.

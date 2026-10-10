@@ -4190,7 +4190,13 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty']) t
           'DELETE FROM app.neighborhood_custom_cohort_v2_selection_intents WHERE operation_id=$1'])
           await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql,[refsOperation])),/selection_intent_immutable/);
         await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query('TRUNCATE app.neighborhood_custom_cohort_v2_selection_intents')),
-          /selection_intent_immutable/);
+          /cannot truncate a table referenced in a foreign key constraint/);
+        // The new union-head FK refuses the single-table command before row
+        // triggers. Include BOTH tables to exercise the native immutable guards
+        // too, never remove the FK or disable a trigger to reach them.
+        await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
+          'TRUNCATE app.neighborhood_custom_cohort_v2_selection_intents, app.neighborhood_custom_cohort_selected_union_v2_heads')),
+        /selection_intent_immutable|custom_cohort_context_immutable/);
         for(const set of ["status='awaiting_selection',claim_token=NULL,lease_expires_at=NULL",'checkpoint=NULL',
           "status='succeeded',context_sha256=repeat('a',64)"])
           await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(

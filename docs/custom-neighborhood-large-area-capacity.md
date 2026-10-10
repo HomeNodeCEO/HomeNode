@@ -51,6 +51,13 @@ catalog root, and cannot skip earlier phases. A native negative test executes
 the REAL yield then rolls back only that statement, requiring REAL COMMIT to
 reject the still-pending orphan group/head/root writes. Fresh exact-head cloud
 execution remains required; the failed head is not native acceptance.
+The repaired head passes bootstrap, full server and frontend checks, but native
+CI stopped at an older single-table intent-TRUNCATE assertion: the new union
+head foreign key correctly refuses before the expected trigger. The fixture
+now asserts that FK refusal and separately attempts both linked tables to
+exercise immutable triggers as well. No FK or trigger was weakened. This
+failed fixture did not reach the new union protocol and is not acceptance;
+fresh exact-head native execution remains required.
 
 The finite 8,000,004 success ceiling covers THESE FOUR fixed stock passes only;
 it is NOT a whole-roadmap runtime or production-SLA claim. No HTTP/default

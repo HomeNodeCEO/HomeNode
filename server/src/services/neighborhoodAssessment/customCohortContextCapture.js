@@ -189,6 +189,8 @@ const FROZEN_SOURCE_STAGES = freeze({
     traversingStock: true, allowedPhases: ['frozen_identity_refs_v2', 'frozen_stock_traversal_refs_v2'] },
   original_recorded_partition_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     partitioningRecordedGroups: true, allowedPhases: ['frozen_stock_traversal_refs_v2', 'frozen_recorded_partition_refs_v2'] },
+  original_recorded_partition_account_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    readingStockAccountPackages: true, readingRecordedPartition: true, allowedPhases: ['frozen_recorded_partition_refs_v2'] },
 });
 function fail(reason, detail, captureCounts) {
   const error = Object.assign(new Error(`custom_cohort_capture_${reason}`), {
@@ -1622,7 +1624,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,
-      resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,partitioningRecordedGroups=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
+      resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,partitioningRecordedGroups=false,
+      readingRecordedPartition=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     if(referencesV2){
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
       const descriptors=Object.getOwnPropertyDescriptors(options),keys=Reflect.ownKeys(descriptors);
@@ -2000,7 +2003,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const packages=createNeighborhoodSharedTransactionPackagesV1(client,stockOptions,graph,context.effective_date,input.observationPeriod);
         stockMetricResult=await (reconcilingTransactionPackages?packages.originalPage(packageInput):packages.page(packageInput));
       }
-      if(readingStockOriginalCells||readingStockAccountPackages){
+      if((readingStockOriginalCells||readingStockAccountPackages)&&!readingRecordedPartition){
         const graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
         const originals=createNeighborhoodSharedStockOriginalCellsV2(client,stockOptions,graph,context.effective_date);
         stockMetricResult=await (readingStockOriginalCells?originals.page(originalCellInput)
@@ -2061,8 +2064,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           current_authorized_owner:'V2_issued_graph_geography_identity_and_current_original_source_rights',
           selected_union:'not_established',statistics:'not_established',source_acquisition:'not_established',report_update:'none'};
       }
-      let partitionStore=null,partitionAnchor=null,partitionResult=null;
-      if(partitioningRecordedGroups){
+      let partitionStore=null,partitionAnchor=null,partitionResult=null,partitionReadCursor=null,partitionReadEntry=null;
+      if(partitioningRecordedGroups||readingRecordedPartition){
         const baseExpected={binding,source_reference:reference,root,graph_verification_reference:verificationReference,
           stock_verification_reference:stockVerificationReference,identity_verification_reference:identityVerificationReference,
           stock_reference:stockReference,effective_date:context.effective_date,stock_account_count:stock.population.account_count};
@@ -2091,15 +2094,16 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           try{issued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
           issued=prepareCohortRecordedGroupPartitionReceiptV2(issued,expected);
           if(issued.sequence!==partitionAnchor.sequence)fail('checkpoint_conflict');}
+        if(readingRecordedPartition&&issued?.after.done!==true)fail('unfinished_recorded_partition');
         // No caller cursor, free group body or traversal-only authority. Replay
         // EVERY original of ONE exact next account against its ENTIRE cache.
-        const before=issued?.after??{after_account:'',account_count:0,done:false},
+        const before=readingRecordedPartition?{after_account:stockAccountInput.cursor}:issued?.after??{after_account:'',account_count:0,done:false},
           graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
         const packet=await createNeighborhoodSharedStockOriginalCellsV2(client,stockOptions,graph,context.effective_date)
           .recordedGroupAccountPackage({cursor:before.after_account});
         if(before.done&&!packet.end_of_accounts)fail('checkpoint_conflict');
         let receipt=issued,advanced=false;
-        if(!before.done){
+        if(!readingRecordedPartition&&!before.done){
           const ordinal=before.account_count+1,after={after_account:packet.next_cursor,
             account_count:before.account_count+(packet.account_id===null?0:1),done:packet.end_of_accounts};
           if(!same(await blobs.put(profile.definition_blob.canonical_json),profile.definition_blob.ref))fail('checkpoint_conflict');
@@ -2129,6 +2133,26 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           membership_basis:'current_recorded_labels_including_outside_parts_and_unassigned_denominator',
           later_semantic_consumer:'must_reopen_every_original_and_compare_entire_partition_entry',
           selected_union:'not_established',statistics:'not_established',source_acquisition:'not_established',report_update:'none'};
+        if(readingRecordedPartition){
+          partitionReadCursor=stockAccountInput.cursor;partitionReadEntry=await partitionStore.readNextEntry(partitionReadCursor);
+          if(packet.account_id!==partitionReadEntry?.account_id&&!(packet.account_id===null&&partitionReadEntry===null))fail('partition_original_mismatch');
+          if(partitionReadEntry){
+            const text=await blobs.get(partitionReadEntry.entry_reference.content_sha256,partitionReadEntry.entry_reference.canonical_utf8_bytes);
+            if(text===null||Buffer.byteLength(text)>1000000
+              ||text!==canonicalAssessmentJson({format:'cohort_recorded_group_partition_entry_v2',account_id:packet.account_id,
+                ordinal:partitionReadEntry.ordinal,recorded_group:packet.recorded_group})
+              ||partitionReadEntry.state!==packet.recorded_group.state||partitionReadEntry.assigned_group_id!==packet.recorded_group.assigned_group_id)
+              fail('partition_original_mismatch');
+          }
+          partitionResult={...packet,status:'original_reconciled_recorded_partition_account',coverage:'one_original_reconciled_partition_account_only',
+            partition_reference:partitionAnchor.receipt_reference,partition_ordinal:partitionReadEntry?.ordinal??null,
+            traversal_reference:traversalAnchor.receipt_reference,source_reference:reference,verification_reference:verificationReference,
+            stock_verification_reference:stockVerificationReference,identity_verification_reference:identityVerificationReference,
+            retained_effective_date:context.effective_date,retained_observation_period:input.observationPeriod,
+            current_authorized_owner:'V2_issued_graph_geography_identity_traversal_partition_and_current_original_source_rights',
+            partition_reconciliation:'entire_derived_entry_compared_to_every_current_authorized_original_and_entire_neutral_cache',
+            selected_union:'not_established',statistics:'not_established',report_update:'none'};
+        }
       }
       input=freeze({...input,auth:await loadCurrentCustomCohortJobActor(client,input.auth.userId,scope.organization_id)});
       assertTarget(await resolveTarget(client,input,true),target);
@@ -2146,8 +2170,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(identityAnchorStore&&!same(await identityAnchorStore.read(),identityAnchor))fail('checkpoint_conflict');
       if(traversalAnchorStore&&!same(await traversalAnchorStore.read(),traversalAnchor))fail('checkpoint_conflict');
       if(partitionStore&&!same(await partitionStore.read(),partitionAnchor))fail('checkpoint_conflict');
+      if(readingRecordedPartition&&!same(await partitionStore.readNextEntry(partitionReadCursor),partitionReadEntry))fail('partition_original_mismatch');
       budget.check();
-      if(partitioningRecordedGroups)return freeze(partitionResult);
+      if(partitioningRecordedGroups||readingRecordedPartition)return freeze(partitionResult);
       if(traversingStock)return freeze(traversalResult);
       if(readingStockMetrics||readingSharedStockMetrics||readingCadPages||readingTransactionPages||readingTransactionPackages||readingStockOriginalCells||readingStockAccountPackages) return freeze({...stockMetricResult,
         ...(readingStockMetrics?{typed_original_reference:typedReference}:{}),
@@ -2411,6 +2436,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     /** One original-backed recorded-group ordinal, not a selected member list. */
     advanceOriginalFrozenCaptureJobRecordedPartitionReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_recorded_partition_refs_v2'),
+    /** Reconcile one indexed derived partition entry against EVERY original,
+     * not a selected-union capability or a hash/count-only group reader. */
+    readOriginalFrozenCaptureJobRecordedPartitionAccountReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'original_recorded_partition_account_refs_v2'),
     async capture(value, options = {}) {
     if (!options || Object.getPrototypeOf(options) !== Object.prototype)
       fail('invalid_options');

@@ -56,7 +56,22 @@ export function createCustomCohortRecordedPartitionV2Repository(raw){
     const anchor=anchorOf(row);if(!BINDINGS.every(k=>same(anchor[k],frozen[k])))fail('binding_changed');return anchor;};
   const txid=async()=>{const id=one(await client.query('/* custom-cohort-recorded-partition-v2:transaction */ SELECT txid_current()::text AS transaction_id')).transaction_id;
     if(typeof id!=='string'||!/^[1-9][0-9]{0,19}$/.test(id))fail('caller_transaction_required');return id;};
-  return Object.freeze({read,async advance(rawExpected,rawReceipt,rawEntry){
+  /** One immutable indexed prefix row, not a complete roster or membership
+   * capability. Its actual owner must reconcile the entire original result. */
+  const readNextEntry=async after=>{
+    if(typeof after!=='string'||after.length>64||!after.isWellFormed()||after.trim()!==after||/[\u0000-\u001f\u007f]/.test(after))fail('invalid_cursor');
+    const row=one(await client.query(`/* custom-cohort-recorded-partition-v2:entry-read */
+      SELECT entry.account_id,entry.ordinal,entry.entry_reference,entry.state,entry.assigned_group_id
+      FROM app.neighborhood_custom_cohort_capture_jobs job LEFT JOIN LATERAL (
+        SELECT account_id,ordinal,entry_reference,state,assigned_group_id
+        FROM app.neighborhood_custom_cohort_recorded_partition_v2_rows
+        WHERE operation_id=job.operation_id AND organization_id=job.organization_id AND account_id>$9 COLLATE "C"
+        ORDER BY account_id LIMIT 1
+      ) entry ON true WHERE ${FENCE}`,[...values,after]));
+    if(['account_id','ordinal','entry_reference','state','assigned_group_id'].every(k=>row[k]===null))return null;
+    return entryOf(row);
+  };
+  return Object.freeze({read,readNextEntry,async advance(rawExpected,rawReceipt,rawEntry){
     const expected=anchorOf(rawExpected),receipt=ref(rawReceipt),entry=entryOf(rawEntry),sequence=(expected?.sequence??0)+1;
     if(sequence>2000001||entry&&entry.ordinal!==sequence||expected&&!BINDINGS.every(k=>same(expected[k],frozen[k])))fail('binding_changed');
     const started=await txid();if(await txid()!==started)fail('caller_transaction_required');

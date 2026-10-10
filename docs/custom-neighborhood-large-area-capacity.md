@@ -1,5 +1,53 @@
 # Complete larger-area Custom neighborhood studies
 
+## Original-reconciled recorded-partition consumer (2026-10-10, not activated)
+
+`readOriginalFrozenCaptureJobRecordedPartitionAccountReferencesV2` accepts only
+the live claim/budget and a closed account cursor. The cursor is a one-account
+page locator, NOT a verified earlier prefix or a selected-member roster. The
+actual owner reopens all independently issued DONE graph/geography/identity/
+stock-traversal/partition heads, retained stock/date and current source purpose.
+An unfinished or free/unissued/corrupt partition cannot begin original reads.
+
+Before touching derived membership, the existing single-use whole-account
+reader recompiles EVERY original/ENTIRE neutral cache row (including outside
+parts) and derives the fixed512-byte recorded-label result. One indexed native
+partition row must match that exact next stock account, and its authenticated
+bounded blob must equal the ENTIRE newly original-reconciled result, not merely
+its ID/count/hash. Missing, swapped, corrupt, forged-state/ordinal and changed
+ending rows refuse the whole result. A separate native partition empty probe
+must agree with the fresh original/cache empty probe. Current DB actor/assignment/
+private draft/subject/source-purpose/claim/pin/heads/cache fences and an exact
+ending row reread share ONE aggregate32MB/128-query/60s/5s-query budget.
+
+No head/row/checkpoint/blob/cache is written or repaired. The output is only
+ONE original-reconciled partition account (or explicit empty probe), preserving
+all unassigned/candidate/variant/partial evidence; it establishes neither a
+complete selected union nor current authority for previously returned accounts.
+A caller cursor/DATA loop cannot reset the future selected-union owner's total
+budget or substitute this per-account result for complete original reconciliation.
+No source acquisition, metric/eligibility/historical inference or report readiness.
+
+209 focused tests PASS0fail0skip1466.8196ms; source/native syntax and diff checks
+pass. New native assertions AUTHORED for two original-backed accounts/one
+assigned/one conflicting,512-byte labels and entire derived/original equality,
+native metadata/ending row/blob/original-cache forgeries, all current/ending
+authority/cache/cancel fences, partial/unissued/corrupt heads, fresh dual empty
+probe, lost-ACK reopen and zero row/head/checkpoint/payload copies. New native/
+full cloud execution is PENDING. The parent durable partition #1246 exact47f6b1b5
+also awaits its initial native/full cloud result; no parent receipt is reused
+as this new head's acceptance. No heavy local suite or Indexer operation.
+
+Bounded complete catalog grouping, server-owned exact distinct selected union/
+metric ordinals, original-reconciled medians/COD/calendar quarters, economic/
+amenity/transaction completeness, coherent publication, durable finite workers,
+terminal retention handoff and licensed/live acceptance remain OPEN. No dense50k
+legacy-selector change, HTTP/default/worker/scheduler/selection/report/Hardy/Apply/
+production activation. QA7 only future Apply. Actual protected-parent integration
+in dependency order/main retarget BEFORE push/fresh required security/native/full
+CI/ACTUAL included exact-head review remain mandatory, without paid/forced quota
+or required-check bypass. Automatic skipped review is not an actual review.
+
 ## Durable original-backed recorded-label partition (2026-10-10, not activated)
 
 `advanceOriginalFrozenCaptureJobRecordedPartitionReferencesV2` accepts ONLY an

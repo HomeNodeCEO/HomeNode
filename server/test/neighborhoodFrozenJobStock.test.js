@@ -51,7 +51,7 @@ import { NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL }
 import { NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSelectedAmenityOriginalPackageV2.js';
 import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL,
-  NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL }
+  NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSelectedTransactionOriginalPackageV2.js';
 
 const id='70000000-0000-4000-8000-000000000001',date='2026-10-07T00:00:00.000000Z';
@@ -1131,13 +1131,14 @@ async function stockOriginalCellFixture(hook=()=>{},transactionCounts={}){
     if(call.text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read)return result(structuredClone(sharedHeader));
     if(call.text===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.source)return result(cadSource);
     if(call.text===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read)return result(structuredClone(cadHeader));
-    if([NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL].includes(call.text)){
+    if([NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,
+      NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL].includes(call.text)){
       const originals=Object.values(rows).flat(),ids=[...new Set(originals.map(r=>r.account_id))].sort(),next=ids.at(-1)??null,
         subject=call.values[9]&&ids.includes(options.scope.account_id)?options.scope.account_id:null,
         anchors=next===null?[]:transactionRows.filter(r=>r.account_id===next),sourceIds=new Set(anchors.map(r=>r.source_record_id).filter(id=>id!==null)),
         transactions=transactionRows.filter(r=>r.source_record_id===null?r.kind==='sales'&&r.account_id===next:sourceIds.has(r.source_record_id))
           .map(r=>({...r,stock_member:r.account_id===null?null:ids.includes(r.account_id)})),
-        combined=call.text===NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,
+        combined=[NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL].includes(call.text),
         cad=combined?cadRows.filter(r=>r.account_id===next):[],
         packet=[...originals.filter(r=>r.account_id===next||r.account_id===subject),...transactions,...cad]
           .sort((a,b)=>Buffer.compare(Buffer.from(`${a.account_id}\u0000${a.kind}\u0000${a.row_key}`),Buffer.from(`${b.account_id}\u0000${b.kind}\u0000${b.row_key}`))),
@@ -1231,6 +1232,41 @@ async function selectedTransactionFixture(hook=()=>{}){
     selectedTransactionOriginal('source_records','11'));
   return f;
 }
+
+test('first metric child uses one combined original/ENTIRE-cache packet and one shared single-use budget, DATA only',async()=>{
+  const f=await selectedTransactionFixture();f.cadRows.push(selectedCadOriginal('primary','STOCK-B'));
+  const reader=f.pages(),from=f.calls.length,p=await reader.subjectAndFirstSelectedMetricAccountPackage({includeSubject:true},selectedPeriod);
+  assert.equal(p.account_id,'STOCK-B');assert.equal(p.subject.account_id,'STOCK-A');assert.equal(p.distinct_original_count,9);
+  assert.equal(p.selected_transactions.original_count,4);assert.deepEqual(p.selected_CAD.original_counts,{primary:1,secondary:0});
+  assert.equal(f.calls.slice(from).filter(c=>c.text===NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL).length,1);
+  assert.ok(!f.calls.slice(from).some(c=>c.text===NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL
+    ||c.text===NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL||/INSERT|UPDATE|DELETE|FROM core\.|ST_DWithin/.test(c.text)));
+  await assert.rejects(reader.subjectAndFirstSelectedMetricAccountPackage({includeSubject:true},selectedPeriod),/single_use/);
+  await assert.rejects(reader.subjectAndFirstSelectedCombinedAccountPackage({includeSubject:true},selectedPeriod),/single_use/);
+  for(const layer of ['stock','CAD','transaction']){
+    const corrupt=await selectedTransactionFixture();corrupt.cadRows.push(selectedCadOriginal('primary','STOCK-B'));
+    const row=structuredClone(layer==='stock'?corrupt.rows.parcels[0]:layer==='CAD'?corrupt.cadRows[0]:corrupt.transactionRows[0]);
+    if(layer==='stock'){row.typed.observations.reported_year_built.exact_value='1';corrupt.rows.parcels[0]=row;}
+    if(layer==='CAD'){row.typed.observations.reported_living_area.exact_value='1';corrupt.cadRows[0]=row;}
+    if(layer==='transaction'){row.typed.observations.normalized_current_price.exact_value='1';corrupt.transactionRows[0]=row;}
+    await assert.rejects(corrupt.pages().subjectAndFirstSelectedMetricAccountPackage({includeSubject:true},selectedPeriod),/original_mismatch/);
+  }
+});
+
+test('first metric child refuses251 before decode and caller account/cursor/period or authority before SQL',async()=>{
+  const f=await selectedTransactionFixture(({text})=>text===NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL?result({
+    account_id:'STOCK-B',geographic_parcel_count:'1',subject_account_id:'STOCK-A',subject_geographic_parcel_count:'1',
+    next_parcels:1,next_accounts:0,subject_parcels:2,subject_accounts:1,cad_primary:1,cad_secondary:242,
+    anchor_count:2,transaction_original_count:4,package_count:2,original_count:251,page_count:0,
+    invalid_count:0,packet_oversize:false,page_json:'[]'}):null);
+  await assert.rejects(f.pages().subjectAndFirstSelectedMetricAccountPackage({includeSubject:true},selectedPeriod),/account_package_row_limit/);
+  const from=f.calls.length;
+  for(const args of [[{includeSubject:true,account_id:'STOCK-A'},selectedPeriod],[{includeSubject:true,cursor:''},selectedPeriod],
+    [{includeSubject:true},selectedPeriod,'extra'],[{includeSubject:true},new Proxy(selectedPeriod,{})],
+    [{includeSubject:true},{...selectedPeriod,end_date:'2027-01-01'}]])
+    await assert.rejects(f.pages().subjectAndFirstSelectedMetricAccountPackage(...args),/invalid_input|invalid_period|future_or_reversed_period/);
+  assert.equal(f.calls.length,from);
+});
 
 test('combined selected stock CAD and whole transaction originals use one packet and one single-use executor',async()=>{
   const f=await selectedTransactionFixture();f.cadRows.push(selectedCadOriginal('primary','STOCK-B'),

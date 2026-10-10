@@ -116,7 +116,7 @@ import { NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSelectedAmenityOriginalPackageV2.js';
 import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL,
   NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,
-  NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL }
+  NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSelectedTransactionOriginalPackageV2.js';
 import { expandCohortDiagnosticCompressedJsonV1 } from './helpers/expandCohortDiagnosticCompressedJsonV1.js';
 
@@ -1778,6 +1778,14 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         if(fault==='evidence_draft_ending')await client.query(
           "UPDATE app.custom_appraisal_workfiles SET status='archived' WHERE assignment_file_id=$1",[assignment]);
       }
+      if(config.text===NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL
+        &&['metric_assignment_ending','metric_draft_ending'].includes(refsFault)){
+        const fault=refsFault;refsFault=null;
+        if(fault==='metric_assignment_ending')await client.query(
+          'UPDATE app.assignment_files SET assigned_appraiser_user_id=NULL WHERE id=$1',[assignment]);
+        if(fault==='metric_draft_ending')await client.query(
+          "UPDATE app.custom_appraisal_workfiles SET status='archived' WHERE assignment_file_id=$1",[assignment]);
+      }
       if(refsFault==='union_delta_count'&&config.text.includes('custom-cohort-selected-union-v2:member-insert'))
         refsFault='union_delta_after_member';
       if(refsFault==='union_delta_after_member'&&config.text.includes('custom-cohort-selected-union-v2:counts')){
@@ -1810,7 +1818,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         refsFault=null;throw Error('synthetic actual selection intent resume rollback');
       }
       if([NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL,
-        NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
+        NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,
+        NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
         &&['cad_original_cell','cad_original_missing','cad_original_text','cad_original_bytes'].includes(refsFault)){
         const fault=refsFault;refsFault=null;const key=config.text===NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL?'packet_json':'page_json',
           rows=JSON.parse(result.rows[0][key]),row=rows.find(r=>r.kind==='primary');
@@ -1822,7 +1831,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       }
       if((Object.values(NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL).includes(config.text)
         ||[NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,
-          NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL].includes(config.text))
+          NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL].includes(config.text))
         &&['tx_original_mismatch','tx_original_missing','tx_original_text'].includes(refsFault)){
         const fault=refsFault,key=Object.values(NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL).includes(config.text)?'packet_json':'page_json';
         refsFault=null;const rows=JSON.parse(result.rows[0][key]);
@@ -1836,7 +1845,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         NEIGHBORHOOD_STOCK_SUBJECT_HOUSING_PACKAGE_V2_SQL,NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,
         NEIGHBORHOOD_STOCK_SUBJECT_AND_FIRST_SELECTED_PACKAGE_V2_SQL,NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_ELIGIBILITY_PACKAGE_V2_SQL,
         NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL,
-        NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
+        NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,
+        NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
         &&['stock_cells_mismatch','stock_cells_missing','stock_cells_original'].includes(refsFault)){
         // Corrupt only the transient transport, never the immutable original or
         // installed cache. Correct hashes/counts cannot launder changed cells.
@@ -1872,7 +1882,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
               ?{...r,partition_ordinal:r.partition_ordinal+1}:{...r,account_id:r.account_id==='CLOSURE-A'?'CLOSURE-B':'CLOSURE-A'})};
         }
       }
-      if(config.text.includes('custom-cohort-selected-eligibility-v2:next-selected-entry')||config.text.includes('custom-cohort-selected-evidence-v2:next-selected-entry')){
+      if(config.text.includes('custom-cohort-selected-eligibility-v2:next-selected-entry')||config.text.includes('custom-cohort-selected-evidence-v2:next-selected-entry')
+        ||config.text.includes('custom-cohort-selected-evidence-v2:first-metric-entry')){
         if(refsFault==='eligibility_entry_ending'){refsFault='eligibility_entry_after_first';return result;}
         if(['eligibility_entry_wrong','eligibility_entry_after_first','eligibility_entry_partition','eligibility_entry_missing'].includes(refsFault)){
           const fault=refsFault;refsFault=null;return {...result,rows:result.rows.map(r=>fault==='eligibility_entry_missing'
@@ -2000,13 +2011,14 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         ||config.text===NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL
         ||config.text===NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL
         ||config.text===NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL
+        ||config.text===NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL
         ||Object.values(NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL).includes(config.text)
         ||Object.values(NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL).includes(config.text)){
         // The ending-header fault is consumed by the later second metadata
         // read, not by the page query. Keep it armed like the COMMIT fault.
         const fault=refsFault;if(!['commit','cad_header','transaction_header','wait_release_rollback','intent_resume_rollback'].includes(fault)
           &&!fault?.startsWith('partition_')&&!fault?.startsWith('catalog_')&&!fault?.startsWith('union_')&&!fault?.startsWith('eligibility_')
-          &&!fault?.startsWith('evidence_'))refsFault=null;
+          &&!fault?.startsWith('evidence_')&&!fault?.startsWith('metric_'))refsFault=null;
         if(fault==='license')await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
         if(fault==='role')await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);
         if(fault==='subject')await client.query("UPDATE app.appraisal_subject_snapshots SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2000') WHERE id=$1",[sourceSnapshot]);
@@ -4929,6 +4941,10 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           const evidenceMethod='progressOriginalFrozenCaptureJobSelectedEvidenceReferencesV2',earlyEvidenceFrom=refsCalls.length;
           await assert.rejects(cadOwner()[evidenceMethod](refsInput,{captureJobClaim:liveClaim}),/checkpoint_conflict|checkpoint_changed/);
           assert.ok(!refsCalls.slice(earlyEvidenceFrom).includes(NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL));
+          const metricMethod='readOriginalFrozenCaptureJobFirstSelectedMetricReferencesV2',metricRead=()=>cadOwner()[metricMethod](refsInput,{captureJobClaim:liveClaim}),
+            earlyMetricFrom=refsCalls.length;
+          await assert.rejects(metricRead(),/checkpoint_conflict|checkpoint_changed/);
+          assert.ok(!refsCalls.slice(earlyMetricFrom).includes(NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL));
           for(const [fault,reason] of [['eligibility_insert_rollback',/actual eligibility_insert_rollback/],
             ['eligibility_yield_rollback',/actual eligibility_yield_rollback/],['eligibility_orphan_commit',/orphan_progress/],
             ['eligibility_head_ending',/invalid_|corrupt|checkpoint_conflict/],
@@ -5167,6 +5183,9 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             await stablePrior();assert.deepEqual(await readEligibility(),completedEligibility.heads);
             await assert.rejects(evidenceStep(),/claim_lost/);await evidenceUnchanged(state);
             liveClaim=await consume();assert.equal(liveClaim.attempts,state.job.attempts);
+            const pendingMetricSnapshot=await evidenceSnapshot(),pendingMetricFrom=refsCalls.length;
+            await assert.rejects(metricRead(),/unfinished_selected_evidence/);await evidenceUnchanged(pendingMetricSnapshot);
+            assert.ok(!refsCalls.slice(pendingMetricFrom).includes(NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL));
             await assert.rejects(eligibilityStep(),/checkpoint_conflict/);await assert.rejects(firstRead(),/checkpoint_conflict/);
             visited.push(body.selected_entry.account_id);previous=state.heads[0].receipt_reference;
           }
@@ -5222,6 +5241,64 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
             'TRUNCATE app.neighborhood_custom_cohort_selected_evidence_v2_heads')),/immutable|mutation|not permitted/);
           await evidenceUnchanged(completedEvidence);assert.equal(new Set(visited).size,selectedCount);
+          // Fresh read-only metric input after actual DONE sixth. No values
+          // come from the sixth ACK: reopen the whole graph and one combined
+          // original/ENTIRE-cache packet, then all ending authority fences.
+          const metricQueries=[],checkedMetricRead=async()=>{const from=refsCalls.length;
+            try{return await metricRead();}finally{metricQueries.push(refsCalls.length-from-3);}},
+            authorityBeforeMetric=await readEvidenceAuthority();
+          await assert.rejects(freshRefsOwner()[metricMethod](refsInput,{captureJobClaim:liveClaim}),/CAD_source_policy_required/);
+          await setCadFixtureGrant(pool,organization,{...cadGrant,revoked_at:cadGrant.valid_from});
+          const metricCadDeniedFrom=refsCalls.length;await assert.rejects(checkedMetricRead(),/market_data_access_denied/);
+          assert.ok(!refsCalls.slice(metricCadDeniedFrom).includes(NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL));
+          await evidenceUnchanged(completedEvidence);await setCadFixtureGrant(pool,organization,cadGrant);
+          await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+          const metricMarketDeniedFrom=refsCalls.length;await assert.rejects(checkedMetricRead(),/market_data_access_denied/);
+          assert.ok(!refsCalls.slice(metricMarketDeniedFrom).some(sql=>sql.includes('selection-intent:evidence-read')
+            ||sql.includes('custom-cohort-selected-evidence-v2:')||sql===NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL));
+          await evidenceUnchanged(completedEvidence);await setFixtureGrant(pool,organization,fixtureGrant(organization));
+          for(const [fault,reason] of [['metric_assignment_ending',/assignment_access_denied/],
+            ['metric_draft_ending',/private_source_read_only/],['evidence_head_ending',/invalid_|corrupt|checkpoint_conflict/],
+            ['eligibility_head_ending',/checkpoint_conflict/],['cad_header',/CAD_cache_unavailable/],['transaction_header',/cache_unavailable/]]){
+            refsFault=fault;await assert.rejects(checkedMetricRead(),reason);assert.equal(refsFault,null);
+            await evidenceUnchanged(completedEvidence);assert.deepEqual(await readEvidenceAuthority(),authorityBeforeMetric);
+          }
+          if(selectedCount)for(const [fault,reason] of [['cad_original_cell',/original_mismatch/],['tx_original_mismatch',/original_mismatch/],
+            ['stock_cells_mismatch',/original_mismatch/],['eligibility_entry_wrong',/selected_union_original_mismatch/],
+            ['eligibility_entry_missing',/selected_union_original_mismatch/],['eligibility_entry_ending',/selected_union_original_mismatch/]]){
+            refsFault=fault;await assert.rejects(checkedMetricRead(),reason);assert.equal(refsFault,null);await evidenceUnchanged(completedEvidence);
+          }
+          const metricFrom=refsCalls.length,metric=await checkedMetricRead(),metricCalls=refsCalls.slice(metricFrom);
+          assert.equal(metric.status,'current_authorized_first_selected_metric_originals_reopened');
+          assert.equal(metric.read_only,true);assert.equal(metric.lease_extended,false);assert.equal(metric.complete_selected_union_metric_population,false);
+          assert.equal(metric.statistics,'not_established');assert.equal(metric.publication,'not_established');assert.equal(metric.report_update,'none');
+          assert.equal(metric.empty_selected_union,selectedCount===0);assert.deepEqual(metric.evidence_reference,completedEvidence.heads[0].receipt_reference);
+          assert.equal(metric.selected_entry?.account_id??null,selectedCount?(allSelected?'CLOSURE-A':'CLOSURE-B'):null);
+          assert.equal(metric.selected_entry?.ordinal??null,selectedCount?1:null);
+          assert.equal(metric.selected_entry?.partition_ordinal??null,selectedCount?(allSelected?1:2):null);
+          assert.equal(metric.reported_comparison?.metrics.reported_market_value.exact_value??null,null);
+          assert.equal(metric.reported_comparison?.metrics.reported_market_value.recorded_comparison_eligible??false,false);
+          if(selectedCount){
+            assert.equal(metric.reported_comparison.authority,'not_established');
+            assert.equal(metric.reported_comparison.economic_unit,'not_established');
+            // A retains an outside part with missing year and conflicting area;
+            // B retains invalid future year/zero residential area. Equal site
+            // values remain exact reported 8000 or genuine zero, never sums.
+            assert.equal(metric.reported_comparison.metrics.reported_year_built.exact_value,null);
+            assert.equal(metric.reported_comparison.metrics.reported_residential_area.exact_value,null);
+            assert.equal(metric.reported_comparison.metrics.reported_site_area.exact_value,allSelected?'8000':'0');
+          }else assert.equal(metric.reported_comparison,null);
+          assert.equal(metricCalls.filter(sql=>sql===NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL).length,1);
+          assert.ok(!metricCalls.some(sql=>sql===NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL
+            ||/custom-cohort-selected-evidence-v2:head-(?:insert|advance)|custom-cohort-job:checkpoint-save|custom-cohort-v2-continuation:yield/.test(sql)));
+          assert.ok(metricQueries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries));
+          assert.ok(Buffer.byteLength(JSON.stringify(metric))<=16000);await evidenceUnchanged(completedEvidence);
+          console.info('[native-first-selected-metric-original-reopen-owner-v2]',{actual_DONE_union_fifth_sixth:true,
+            fresh_fixed_native_first_not_sixth_ACK_or_caller_cells:true,explicit_empty:selectedCount===0,
+            whole_original_graph_and_every_required_original_entire_cache:true,current_and_ending_assignment_draft_source_fences:true,
+            first_reported_comparison_only_not_complete_distribution:true,maximum_whole_owner_sql_queries:Math.max(...metricQueries),
+            no_metric_rows_heads_checkpoint_continuation_workspace_reports_choices_or_pins_written:true,
+            licensed_acquisition:false,production_speed:false,worker_activation:false});
           assert.ok(evidenceQueries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries));
           console.info('[native-selected-combined-evidence-traversal-owner-v2]',{independently_issued_complete_original_graph_DONE_union_DONE_fifth:true,
             explicit_empty:selectedCount===0,selected_ordinals:selectedCount,native_B_partition2_not_first_A:!allSelected&&selectedCount>0,

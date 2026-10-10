@@ -130,7 +130,7 @@ test('additive sixth native guard binds exact12 roots/BOTH DONE parents/native n
   assert.ok(sql.includes("OLD.checkpoint->>'phase'='frozen_selected_union_refs_v2' AND NEW.checkpoint->>'phase' NOT IN ('frozen_selected_union_refs_v2','frozen_selected_eligibility_refs_v2')"));
   assert.ok(sql.includes("OLD.phase='frozen_selected_union_refs_v2' AND NEW.phase NOT IN ('frozen_selected_union_refs_v2','frozen_selected_eligibility_refs_v2')"));
   assert.ok(sql.includes("NEW.phase='frozen_selected_eligibility_refs_v2' AND OLD.phase NOT IN ('frozen_selected_union_refs_v2','frozen_selected_eligibility_refs_v2')"));
-  for(const s of ["progressingSelectedEvidence?'readForEvidence'","'subjectAndNextSelectedCombinedAccountPackage'",
+  for(const s of ["progressingSelectedEvidence||readingSelectedMetricSource?'readForEvidence'","'subjectAndNextSelectedCombinedAccountPackage'",
     'prepareCohortSelectedEvidenceReceiptV2','evidenceStore.advance','checkpoint.evidence_refs.slice(0,11)',
     'progressOriginalFrozenCaptureJobSelectedEvidenceReferencesV2'])assert.ok(owner.includes(s),s);
   assert.doesNotMatch(sql,/DISABLE TRIGGER|DROP TABLE|DROP TRIGGER|DELETE FROM|UPDATE app\.report|SET attempts=0|ST_DWithin/);

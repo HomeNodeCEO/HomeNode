@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL as TRANSACTION,
   NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL as COMBINED,
-  NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL as NEXT_COMBINED }
+  NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL as NEXT_COMBINED,
+  NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL as FIRST_METRIC }
   from '../../src/services/neighborhoodAssessment/neighborhoodSelectedTransactionOriginalPackageV2.js';
 import { NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL as AMENITY }
   from '../../src/services/neighborhoodAssessment/neighborhoodSelectedAmenityOriginalPackageV2.js';
@@ -68,11 +69,23 @@ export async function runNeighborhoodSelectedPacketByteGateDatabaseChecks(client
     await client.query('INSERT INTO pg_temp.selected_gate_blobs VALUES($1,$2,$3,$4)',[organization,profile,bytes,body]);
     await client.query('INSERT INTO pg_temp.selected_gate_blobs VALUES($1,$2,$3,$4)',[organization,fifthRef.content_sha256,fifthBytes,fifthBody]);
     await client.query("INSERT INTO pg_temp.selected_gate_union VALUES($1,$2,'B',1)",[operation,organization]);
-    for(const {withCad,transactions,statement} of [
+    for(const {withCad,transactions,statement,completed=false} of [
       {withCad:false,transactions:true,statement:TRANSACTION},
       {withCad:true,transactions:true,statement:COMBINED},
       {withCad:true,transactions:true,statement:NEXT_COMBINED},
+      {withCad:true,transactions:true,statement:FIRST_METRIC,completed:true},
       {withCad:true,transactions:false,statement:AMENITY}]){
+      await client.query('DELETE FROM pg_temp.selected_gate_sixth');
+      await client.query('DELETE FROM pg_temp.selected_gate_blobs WHERE content_sha256=$1',['d'.repeat(64)]);
+      if(completed){
+        const sixthBody=JSON.stringify({format:'cohort_selected_evidence_receipt_v2',sequence:2,selected_stock_count:1,
+          after:{selected_ordinal:1,done:true}}),sixthBytes=Buffer.byteLength(sixthBody),
+          sixthRef={content_sha256:'d'.repeat(64),canonical_utf8_bytes:String(sixthBytes)};
+        await client.query('INSERT INTO pg_temp.selected_gate_sixth VALUES($1,$2,$3,$4,$5,$6,2)',
+          [operation,organization,command,JSON.stringify(unionRef),JSON.stringify(fifthRef),JSON.stringify(sixthRef)]);
+        await client.query('INSERT INTO pg_temp.selected_gate_blobs VALUES($1,$2,$3,$4)',
+          [organization,sixthRef.content_sha256,sixthBytes,sixthBody]);
+      }
       for(const name of ['selected_gate_originals','selected_gate_typed','selected_gate_cad','selected_gate_cad_typed'])
         await client.query(`DELETE FROM pg_temp.${name}`);
       await client.query(`INSERT INTO pg_temp.selected_gate_originals
@@ -134,7 +147,7 @@ export async function runNeighborhoodSelectedPacketByteGateDatabaseChecks(client
       assert.equal(empty.page_count,0);assert.equal(empty.packet_oversize,false);assert.equal(empty.page_json,'[]');
     }
     console.info('[native-selected-transaction-combined-raw-byte-gate-DATA-v2]',{both_fixed_plans:true,
-      separate_selected_amenity_fixed_plan:true,next_selected_combined_fixed_plan:true,total_fixed_plans:4,original_cap:250,
+      separate_selected_amenity_fixed_plan:true,next_selected_combined_fixed_plan:true,first_completed_metric_fixed_plan:true,total_fixed_plans:5,original_cap:250,
       mixed_families_share_one_byte_gate:true,actual_raw_size_rows:250,actual_raw_over_limit_encoded_rows:0,
       count_251_reads_zero_raw_sizes_and_zero_encoded_members:true,original_1MB_gate:true,
       raw_fit_exact_encoding_over_refused:true,missing_cache_not_skipped:true,missing_subject_zero_payload:true,

@@ -85,6 +85,36 @@ export function createCustomCohortSelectedEvidenceV2Repository(raw){
       ||!['assigned','unassigned'].includes(r.state)||(r.state==='assigned'?typeof r.assigned_group_id!=='string'
         ||!/^recorded-cad:[a-f0-9]{64}$/.test(r.assigned_group_id):r.assigned_group_id!==null))fail('corrupt');
     return Object.freeze({...r,entry_reference:ref(r.entry_reference,1000000)});
+  },async readFirstMetricEntry(...args){
+    if(args.length)fail('invalid_input');
+    const r=data(one(await client.query(`/* custom-cohort-selected-evidence-v2:first-metric-entry */
+      SELECT r.account_id,r.ordinal,r.partition_ordinal,r.entry_reference,entry.state,entry.assigned_group_id
+      ${PARENTS}
+      JOIN app.neighborhood_custom_cohort_selected_evidence_v2_heads h ON h.operation_id=job.operation_id AND h.organization_id=job.organization_id
+      JOIN app.neighborhood_cohort_evidence_blobs evidence_body ON evidence_body.organization_id=h.organization_id
+        AND evidence_body.content_sha256=h.receipt_reference->>'content_sha256'
+        AND evidence_body.canonical_utf8_bytes::text=h.receipt_reference->>'canonical_utf8_bytes' AND evidence_body.canonical_utf8_bytes<=16000
+      LEFT JOIN app.neighborhood_custom_cohort_selected_union_v2_rows r ON r.operation_id=job.operation_id
+        AND r.organization_id=job.organization_id AND r.ordinal=1
+      LEFT JOIN app.neighborhood_custom_cohort_recorded_partition_v2_rows entry ON entry.operation_id=r.operation_id
+        AND entry.organization_id=r.organization_id AND entry.account_id=r.account_id AND entry.ordinal=r.partition_ordinal
+        AND entry.entry_reference=r.entry_reference
+      WHERE ${FENCE} AND ${DONE}
+        AND h.command_id=$9::uuid AND h.union_reference=$10::jsonb AND h.eligibility_reference=$11::jsonb
+        AND app.neighborhood_selected_evidence_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)
+        AND evidence_body.canonical_utf8::jsonb->>'format'='cohort_selected_evidence_receipt_v2'
+        AND evidence_body.canonical_utf8::jsonb->>'sequence'=h.sequence::text
+        AND evidence_body.canonical_utf8::jsonb->'after'->>'done'='true'
+        AND evidence_body.canonical_utf8::jsonb->'after'->'selected_ordinal'=union_body.canonical_utf8::jsonb->'after_selected_count'
+        AND evidence_body.canonical_utf8::jsonb->'selected_stock_count'=union_body.canonical_utf8::jsonb->'after_selected_count'`,bound)),
+      ['account_id','ordinal','partition_ordinal','entry_reference','state','assigned_group_id']);
+    if(Object.values(r).every(v=>v===null))return null;
+    if(typeof r.account_id!=='string'||!r.account_id||r.account_id.length>64||!r.account_id.isWellFormed()||r.account_id.trim()!==r.account_id
+      ||/[\u0000-\u001f\u007f]/.test(r.account_id)||r.ordinal!==1||!Number.isInteger(r.partition_ordinal)
+      ||r.partition_ordinal<1||r.partition_ordinal>2000000||!['assigned','unassigned'].includes(r.state)
+      ||(r.state==='assigned'?typeof r.assigned_group_id!=='string'||!/^recorded-cad:[a-f0-9]{64}$/.test(r.assigned_group_id)
+        :r.assigned_group_id!==null))fail('corrupt');
+    return Object.freeze({...r,entry_reference:ref(r.entry_reference,1000000)});
   },async advance(...args){
     if(args.length!==2)fail('invalid_input');
     const expected=anchor(args[0]),receipt=ref(args[1]),sequence=(expected?.sequence??0)+1,started=await tx();

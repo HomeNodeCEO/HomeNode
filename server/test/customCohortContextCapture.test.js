@@ -257,6 +257,24 @@ test('native transaction package owner admits only the closed cursor, never call
   await assert.rejects(service[method](base,{captureJobClaim:claim,get transactionPackagePage(){assert.fail('getter');}}),/invalid_options/);
 });
 
+test('stock original cells owner accepts no caller originals, dates, selection, counts, callbacks or issued head',async()=>{
+  const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
+    claim={operation_id:base.operationId,claim_token:'70000000-0000-4000-8000-000000000002',attempts:1};
+  const method='readSharedFrozenCaptureJobStockOriginalCellsReferencesV2',opts={captureJobClaim:claim,
+    stockOriginalCellPage:{kind:'parcels',cursor:'',rowLimit:250}};
+  const service=createCustomCohortContextCapture({pool:{connect(){assert.fail('must not connect');}},sourceMode:'combined-witness2-v1',
+    authorizeMarketData:()=>assert.fail('must not authorize')});
+  await assert.rejects(setup()[method](base,opts),/frozen_source_profile_unsupported/);
+  for(const key of ['effective_date','observationPeriod','profile','sourceGrant','originals','count','selectedAccounts','issuedHead','readOriginal','stockMetricPage'])
+    await assert.rejects(service[method](base,{...opts,[key]:()=>assert.fail('caller callback')}),/invalid_options/);
+  for(const page of [undefined,{kind:'sales',cursor:'',rowLimit:1},{kind:'parcels',cursor:'',rowLimit:251},
+    {...opts.stockOriginalCellPage,observations:[]},new Proxy(opts.stockOriginalCellPage,{}),
+    {kind:'parcels',get cursor(){assert.fail('getter');},rowLimit:1}])
+    await assert.rejects(service[method](base,{...opts,stockOriginalCellPage:page}),/invalid_/);
+  await assert.rejects(service[method](base,{captureJobClaim:claim,get stockOriginalCellPage(){assert.fail('getter');}}),/invalid_options/);
+  await assert.rejects(service[method]({...base,operationId:claim.claim_token},opts),/operation_conflict/);
+});
+
 test('recorded-group selection refreshes current roles before retained facts or head reads/writes', async () => {
   const base = input(), organization = '11111111-1111-4111-8111-111111111111';
   const report = '22222222-2222-4222-8222-222222222222';

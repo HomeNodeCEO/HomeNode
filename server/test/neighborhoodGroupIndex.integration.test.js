@@ -57,6 +57,8 @@ import { createNeighborhoodFrozenJobStockMetricPages }
 import { createNeighborhoodSharedJobStockMetricPages, createNeighborhoodSharedJobStockMetricPagesV2,
   NEIGHBORHOOD_SHARED_STOCK_METRIC_V2_PAGE_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStockMetricPages.js';
+import { NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL }
+  from '../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
 import { createNeighborhoodSharedTypedGeneration, createNeighborhoodSharedTypedGenerationV2, NEIGHBORHOOD_SHARED_TYPED_V2_SQL,
   createNeighborhoodSharedTypedCadGenerationV1,NEIGHBORHOOD_SHARED_TYPED_CAD_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSharedTypedGeneration.js';
@@ -67,6 +69,8 @@ import { createCustomNeighborhoodWitness2SourcePolicy, CUSTOM_NEIGHBORHOOD_WITNE
 import { CUSTOM_NEIGHBORHOOD_SOURCE_DATASET } from '../src/security/customNeighborhoodSourcePolicy.js';
 import { runCustomNeighborhoodCadImprovementPolicyDatabaseChecks }
   from './helpers/customNeighborhoodCadImprovementPolicyDatabaseChecks.js';
+import { runNeighborhoodStockOriginalCellDatabaseChecks }
+  from './helpers/neighborhoodStockOriginalCellDatabaseChecks.js';
 import { createCustomNeighborhoodCadImprovementSourcePolicy,CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_RIGHTS_KEY as CAD_RIGHTS_KEY,
   CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_PURPOSE as CAD_PURPOSE,CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_DATASET as CAD_DATASET }
   from '../src/security/customNeighborhoodCadImprovementSourcePolicy.js';
@@ -150,6 +154,7 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     try {
       await runCustomNeighborhoodCadImprovementPolicyDatabaseChecks(policyClient);
       await runNeighborhoodTransactionPackageDatabaseChecks(policyClient);
+      await runNeighborhoodStockOriginalCellDatabaseChecks(policyClient);
     }finally {policyClient.release();}
     await pool.query(NEIGHBORHOOD_CACHED_SOURCE_SCHEMA);
     // The isolated UAD fixture has bedroom/bath and secondary rows but omits
@@ -1689,6 +1694,16 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       refsCalls.push(config.text);
       if(config.text.includes('neighborhood-cohort-blob:insert */'))refsBlobPuts.push(config.values[3]);
       const result=await client.query(config);
+      if(config.text===NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL
+        &&['stock_cells_mismatch','stock_cells_missing','stock_cells_original'].includes(refsFault)){
+        // Corrupt only the transient transport, never the immutable original or
+        // installed cache. Correct hashes/counts cannot launder changed cells.
+        const fault=refsFault;refsFault=null;const rows=JSON.parse(result.rows[0].page_json);
+        if(fault==='stock_cells_missing')rows[0].typed=null;
+        if(fault==='stock_cells_mismatch')rows[0].typed.observations.reported_year_built.exact_value='1900';
+        if(fault==='stock_cells_original')rows[0].original_text=rows[0].original_text.replace('1960','1950');
+        return {...result,rows:[{...result.rows[0],page_json:JSON.stringify(rows)}]};
+      }
       if(['missing_receipt','corrupt_receipt'].includes(refsFault)&&config.text.includes('neighborhood-cohort-blob:read */')
         &&config.values[1]===(await client.query('SELECT receipt_reference->>\'content_sha256\' AS hash FROM app.neighborhood_custom_cohort_graph_v2_anchors WHERE operation_id=$1',[refsOperation])).rows[0]?.hash){
         const fault=refsFault;refsFault=null;
@@ -1707,7 +1722,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       if(config.text.includes('neighborhood-frozen-job-closure:parcels')||config.text.includes('neighborhood-frozen-stock-originals:page')
         ||config.text.includes('neighborhood-frozen-job-identity:parcels')||config.text.includes('shared-v2-stock-metrics:page')
         ||config.text===NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_SQL||config.text===NEIGHBORHOOD_SHARED_JOB_CAD_ACCOUNT_PAGE_SQL
-        ||config.text===NEIGHBORHOOD_SHARED_JOB_TRANSACTION_V2_PAGE_SQL
+        ||config.text===NEIGHBORHOOD_SHARED_JOB_TRANSACTION_V2_PAGE_SQL||config.text===NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL
         ||Object.values(NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL).includes(config.text)){
         // The ending-header fault is consumed by the later second metadata
         // read, not by the page query. Keep it armed like the COMMIT fault.
@@ -1750,6 +1765,8 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     const temporalMethod='readSharedFrozenCaptureJobTransactionTemporalReferencesV2';
     const packageMethod='readSharedFrozenCaptureJobTransactionPackagesReferencesV2',packageOptions={...refsOptions,
       transactionPackagePage:{kind:'source_record',cursor:''}};
+    const stockCellsMethod='readSharedFrozenCaptureJobStockOriginalCellsReferencesV2',stockCellsOptions={...refsOptions,
+      stockOriginalCellPage:{kind:'parcels',cursor:'',rowLimit:1}};
     await refsOwner.prepareFrozenCaptureJobStock(refsInput,refsOptions);
     const readRefsCheckpoint=async()=>(await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[refsOperation])).rows[0].checkpoint;
     const refsStockCheckpoint=await readRefsCheckpoint();
@@ -2207,6 +2224,8 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await assert.rejects(freshRefsOwner()[transactionMethod](refsInput,transactionOptions),/checkpoint_conflict/);
     await assert.rejects(freshRefsOwner()[temporalMethod](refsInput,transactionOptions),/checkpoint_conflict/);
     await assert.rejects(freshRefsOwner()[packageMethod](refsInput,packageOptions),/checkpoint_conflict/);
+    await assert.rejects(freshRefsOwner()[stockCellsMethod](refsInput,stockCellsOptions),/checkpoint_conflict/);
+    assert.ok(!refsCalls.slice(identityFrom).includes(NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL));
     assert.ok(!refsCalls.slice(identityFrom).some(sql=>/neighborhood-frozen-job-identity:|stock-originals:|neighborhood-frozen-job-closure:/.test(sql)));
     assert.ok(!refsCalls.slice(identityFrom).some(sql=>/shared-typed-v2:|shared-v2-stock-metrics:page|shared-job-transactions-v2:page/.test(sql)),
       'an unissued DONE receipt refuses before any shared cache header or metric SQL');
@@ -2250,6 +2269,8 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await assert.rejects(freshRefsOwner()[transactionMethod](refsInput,transactionOptions),/unfinished_identity_verification/);
     await assert.rejects(freshRefsOwner()[temporalMethod](refsInput,transactionOptions),/unfinished_identity_verification/);
     await assert.rejects(freshRefsOwner()[packageMethod](refsInput,packageOptions),/unfinished_identity_verification/);
+    await assert.rejects(freshRefsOwner()[stockCellsMethod](refsInput,stockCellsOptions),/unfinished_identity_verification/);
+    assert.ok(!refsCalls.slice(partialIdentityFrom).includes(NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL));
     assert.deepEqual(await readRefsCheckpoint(),identityFirst);assert.deepEqual(await readIdentityAnchor(),identityFirstAnchor);
     assert.ok(!refsCalls.slice(partialIdentityFrom).some(sql=>/neighborhood-frozen-job-identity:|shared-typed-v2:|shared-v2-stock-metrics:page|shared-job-transactions-v2:page|checkpoint-save|anchor-advance/.test(sql)),
       'metric reads cannot advance a real partial identity head or silently finish its verification');
@@ -2331,6 +2352,8 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await assert.rejects(freshRefsOwner()[metricV2Method](refsInput,metricV2Options),/invalid_result/);
     await assert.rejects(freshRefsOwner()[transactionMethod](refsInput,transactionOptions),/invalid_result/);
     await assert.rejects(freshRefsOwner()[temporalMethod](refsInput,transactionOptions),/invalid_result/);
+    await assert.rejects(freshRefsOwner()[stockCellsMethod](refsInput,stockCellsOptions),/invalid_result/);
+    assert.ok(!refsCalls.slice(noCacheFrom).includes(NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL));
     assert.ok(!refsCalls.slice(noCacheFrom).some(sql=>/shared-typed-v2:begin|shared-typed-v2:rows|shared-v2-stock-metrics:page|checkpoint-save/.test(sql)));
     const neutralPrepared=await sharedTypedV2Complete(pool,frozen.generationId);
     assert.equal(neutralPrepared.all_layers_typed,true);
@@ -2563,6 +2586,74 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       partial_unissued_corrupt_prerequisites_refused:true,ending_current_authorization_cache_refusal:true,lost_commit_reopen:true,
       original_payload_reads:0,typed_copies:0,checkpoint_or_head_writes:0,provider_parcel_completeness:false,
       economic_equivalence:false,transaction_eligibility:false,licensed_population:false,report_update:false,production_speed:false});
+    // New real owner page: replay EACH retained original payload, not cached
+    // cells plus matching hashes/counts. This small native fixture does not
+    // materialize a complete selected-union cell index or establish large-area QA.
+    const stockCellsFrom=refsCalls.length,stockCellsRows={};
+    for(const kind of ['parcels','accounts']){
+      const originalKeys=(await pool.query('SELECT row_key FROM app.neighborhood_frozen_source_rows WHERE generation_id=$1 AND kind=$2 ORDER BY row_key',
+        [frozen.generationId,kind])).rows.map(r=>r.row_key);
+      let cursor='',ended=false,steps=0,scanned=0;const rows=[];
+      while(!ended){
+        const page=await freshRefsOwner()[stockCellsMethod](refsInput,{...stockCellsOptions,stockOriginalCellPage:{kind,cursor,rowLimit:1}});
+        assert.equal(page.status,'reconciled_stock_original_cells_page');assert.equal(page.coverage,'one_kind_page_only');
+        assert.equal(page.original_reconciliation,'every_delivered_original_recompiled');assert.equal(page.selected_union,'not_established');
+        assert.deepEqual(page.identity_verification_reference,identityIssued.receipt_reference);
+        assert.equal(page.retained_effective_date,'2026-10-07');assert.equal(page.source_acquisition,'not_established');
+        assert.ok(page.rows.every(r=>!Object.hasOwn(r,'original_text')&&!Object.hasOwn(r,'payload_text')));
+        scanned+=page.scanned_original_count;rows.push(...page.rows);cursor=page.next_cursor;ended=page.end_of_kind;assert.ok(++steps<=16);
+      }
+      assert.deepEqual(rows.map(r=>r.row_key),expected[kind],'every original stock-account part matches the issued identity graph');
+      assert.equal(scanned,originalKeys.length,'the raw native key scan includes excluded and unassociated prefixes, never payload delivery');
+      assert.equal(steps,originalKeys.length+1,'the full one-key tail requires a fresh empty original probe');stockCellsRows[kind]=rows;
+      const originals=(await pool.query(`SELECT row_key,payload::text AS text FROM app.neighborhood_frozen_source_rows
+        WHERE generation_id=$1 AND kind=$2 AND row_key=ANY($3::text[]) ORDER BY row_key`,
+      [frozen.generationId,kind,expected[kind]])).rows;
+      for(const row of rows){const original=originals.find(o=>o.row_key===row.row_key);
+        assert.equal(row.original_payload_sha256,createHash('sha256').update(original.text).digest('hex'));
+        assert.equal(row.typed.original.payload_utf8_bytes,Buffer.byteLength(original.text));}
+    }
+    const stockCellsFirst=stockCellsRows.parcels[0];
+    assert.equal(stockCellsFirst.retained_observations.reported_market_value.exact_value,'9007199254740993');
+    const futureStockCell=stockCellsRows.parcels.find(r=>r.typed.observations.reported_year_built.exact_value==='2050');
+    assert.ok(futureStockCell);assert.equal(futureStockCell.retained_observations.reported_year_built.state,'invalid');
+    assert.equal(futureStockCell.retained_observations.reported_year_built.exact_value,null);
+    for(const fault of ['stock_cells_mismatch','stock_cells_missing','stock_cells_original']){
+      refsFault=fault;const from=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[stockCellsMethod](refsInput,stockCellsOptions),/original_mismatch/);
+      assert.equal(refsFault,null);assert.ok(refsCalls.slice(from).includes(NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL));
+      await assertTransactionUnchanged();
+    }
+    const stockCellsDeniedFrom=refsCalls.length;
+    await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+    await assert.rejects(freshRefsOwner()[stockCellsMethod](refsInput,stockCellsOptions),/market_data_access_denied/);
+    assert.ok(!refsCalls.slice(stockCellsDeniedFrom).includes(NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL));
+    await setFixtureGrant(pool,organization,fixtureGrant(organization));
+    for(const [fault,reason] of [['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],
+      ['subject',/subject_changed/],['claim',/claim_lost/],['cancel',/cancelled/],['transaction_header',/cache_unavailable/]]){
+      refsAbort=new AbortController();refsFault=fault;const from=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[stockCellsMethod](refsInput,{...stockCellsOptions,signal:refsAbort.signal}),reason,`stock original ending ${fault}`);
+      assert.equal(refsFault,null);assert.ok(refsCalls.slice(from).includes(NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL));
+      await assertTransactionUnchanged();
+      if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+      if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    }
+    refsFault='commit';await assert.rejects(freshRefsOwner()[stockCellsMethod](refsInput,stockCellsOptions),e=>e.outcome_unknown===true);
+    await assertTransactionUnchanged();assert.deepEqual((await freshRefsOwner()[stockCellsMethod](refsInput,stockCellsOptions)).rows,[stockCellsFirst]);
+    for(const fault of ['missing_receipt','corrupt_receipt','missing_geo_receipt','corrupt_geo_receipt','missing_identity_receipt','corrupt_identity_receipt']){
+      refsFault=fault;const from=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[stockCellsMethod](refsInput,stockCellsOptions),/checkpoint_conflict|storage_conflict|invalid_receipt/);
+      assert.equal(refsFault,null);assert.ok(!refsCalls.slice(from).includes(NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL));await assertTransactionUnchanged();
+    }
+    await assert.rejects(freshRefsOwner()[stockCellsMethod](sourceInput,{...stockCellsOptions,captureJobClaim:sourceClaim}),/checkpoint_conflict/);
+    assert.ok(!refsCalls.slice(stockCellsFrom).some(sql=>/ST_DWithin|neighborhood-frozen-job-closure:|shared-typed-v2:(?:page|begin|rows|progress)|checkpoint-save|anchor-(?:advance|insert)/.test(sql)));
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_custom_cohort_typed_original_rows WHERE operation_id=$1',[refsOperation])).rows[0].n,0);
+    console.info('[native-reconciled-stock-original-cells-owner-v2]',{parcels:3,accounts:2,
+      every_original_recompiled:true,full_cache_row_compared:true,retained_year_before_resolution:true,original_text_not_delivered:true,
+      current_issued_graph_geography_identity_required:true,partial_unissued_corrupt_heads_refused:true,
+      ending_current_authorization_cache_refusal:true,corrupt_cells_with_unchanged_hash_counts_refused:true,lost_commit_reopen:true,
+      fresh_empty_terminal_probes:true,original_payload_copies:0,job_typed_copies:0,checkpoint_or_head_writes:0,
+      complete_selected_union:false,licensed_acquisition:false,statistics:false,production_speed:false});
     // Actual current-authorized companion consumer, not a DATA-only raw reader.
     // The additional synthetic CAD grant never provisions production rights.
     const cadBeforeBlobs=await refsBlobCount(),cadInitialFrom=refsCalls.length;

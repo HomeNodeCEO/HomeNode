@@ -22,6 +22,9 @@ import { createNeighborhoodSharedJobTransactionPagesV2,prepareNeighborhoodShared
   from '../src/services/neighborhoodAssessment/neighborhoodSharedJobTransactionPagesV2.js';
 import { createNeighborhoodSharedTransactionPackagesV1, NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSharedTransactionPackagesV1.js';
+import { createNeighborhoodSharedStockOriginalCellsV2, prepareNeighborhoodStockOriginalCellPageV2,
+  NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL, getNeighborhoodStockOriginalCellsV2Profile }
+  from '../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
 import { NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL, NEIGHBORHOOD_FROZEN_JOB_IDENTITY_COVERAGE_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourceClosurePages.js';
 import { createNeighborhoodSharedJobCadImprovementPages,prepareNeighborhoodSharedJobCadPage,NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_SQL,
@@ -988,4 +991,130 @@ test('typed continuation detaches primitives and refuses getters, proxies, cance
   const from=f.calls.length;await assert.rejects(cancelled.step(null),/cancelled/);assert.equal(f.calls.length,from);
   const lost=typedFixture(({text})=>text.includes('generation-fence')?{rowCount:0,rows:[]}:null);
   await assert.rejects(lost.typed().step(null),/claim_lost/);
+});
+
+/** Compile synthetic ORIGINAL payloads with the actual fixed neutral compiler. */
+function stockOriginalCell(kind='parcels',key='1',changes={}){
+  const original_text=JSON.stringify({...(kind==='parcels'?{object_id:key,account_id:'STOCK-A',residential_year_built:2050,
+    residential_area_sqft:'9007199254740993.01',parcel_area_sqft:'0',current_market_value:null,subdivision_name:'Literal only'}
+    :{account_id:key,county:'Dallas',subdivision:'Literal only'}),...changes});
+  const typed=compileNeighborhoodFrozenTypedOriginalV2({kind,row_key:key,payload_text:original_text});
+  return {kind,row_key:key,account_id:typed.account_id,source_record_id:null,original_text,
+    cached_account_id:typed.account_id,cached_source_record_id:null,original_payload_sha256:typed.original.payload_sha256,typed};
+}
+/** DATA-only SQL double. It issues no graph, stock, rights or selected-union receipt. */
+async function stockOriginalCellFixture(hook=()=>{}){
+  let source,sharedHeader;const rows={parcels:[stockOriginalCell(),stockOriginalCell('parcels','2',{residential_year_built:1960})],
+    accounts:[stockOriginalCell('accounts','STOCK-A')]};
+  const f=fixture(async call=>{
+    const supplied=await hook({...call,source,sharedHeader,rows});if(supplied)return supplied;
+    if(call.text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.source)return result(source);
+    if(call.text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read)return result(structuredClone(sharedHeader));
+    if(call.text===NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL){
+      const candidates=rows[call.values[3]].filter(r=>Buffer.compare(Buffer.from(r.row_key),Buffer.from(call.values[4]))>0).slice(0,call.values[5]);
+      return result({page_json:JSON.stringify(candidates),page_count:candidates.length,candidate_count:candidates.length,
+        scan_count:candidates.length,scan_cursor:candidates.at(-1)?.row_key??null,
+        invalid_count:0,oversized_count:0,next_cursor:candidates.at(-1)?.row_key??null});
+    }
+  },true,{accounts:1});
+  const stock=await f.store.read(),o=stock.original,profile=getNeighborhoodFrozenTypedOriginalV2Profile();
+  source={generation_id:o.generation_id,format_version:o.source_format_version,status:'complete',source_snapshot:o.source_snapshot,
+    started_at:o.source_transaction_started_at,completed_at:o.completed_at,layer_counts:o.layer_counts,row_count:o.row_count,payload_utf8_bytes:o.payload_utf8_bytes};
+  const binding=assessmentEvidenceDigest({source,profile});
+  sharedHeader={binding_sha256:binding,source_metadata:source,definition_json:profile.definition_blob.canonical_json,
+    progress:{format:'shared_frozen_typed_progress_v2',binding_sha256:binding,kind_index:7,after:'',layer_rows:0,
+      typed_rows:source.row_count,typed_utf8_bytes:'12000400'},status:'complete',completed_at:date};
+  const graph={root:{content_sha256:'c'.repeat(64),canonical_utf8_bytes:'100'},layer_counts:{parcels:60001,accounts:1,
+    source_records:0,sales:0,sale_links:0,sync_state:0,sync_runs:0}};
+  return {...f,source,sharedHeader,rows,graph,pages:(effective='2026-10-07')=>
+    createNeighborhoodSharedStockOriginalCellsV2(f.client,options,graph,effective)};
+}
+
+test('stock original cells replay complete originals before retained-year projection without rounding, fallback or raw delivery',async()=>{
+  const f=await stockOriginalCellFixture(),from=f.calls.length;
+  const p=await f.pages().page({kind:'parcels',cursor:'',rowLimit:250});
+  assert.equal(p.status,'reconciled_stock_original_cells_page');assert.equal(p.coverage,'one_kind_page_only');
+  assert.equal(p.original_reconciliation,'every_delivered_original_recompiled');assert.equal(p.selected_union,'not_established');
+  assert.equal(p.source_acquisition,'not_established');assert.equal(p.report_update,'none');
+  assert.deepEqual(p.page_profile,getNeighborhoodStockOriginalCellsV2Profile());
+  assert.equal(p.rows[0].typed.observations.reported_year_built.exact_value,'2050');
+  assert.deepEqual({...p.rows[0].retained_observations.reported_year_built,raw:null},
+    {state:'invalid',exact_value:null,unit:null,reason:'year_after_retained_effective_year',raw:null});
+  assert.equal(p.rows[0].retained_observations.reported_residential_area.exact_value,'9007199254740993.01');
+  assert.equal(p.rows[0].retained_observations.reported_site_area.exact_value,'0');
+  assert.equal(p.rows[0].retained_observations.reported_market_value.state,'missing');
+  assert.equal(p.rows[1].retained_observations.reported_year_built.exact_value,'1960');
+  assert.ok(p.rows.every(r=>!Object.hasOwn(r,'original_text')&&!Object.hasOwn(r,'payload_text')&&Object.isFrozen(r.typed)));
+  const later=await f.pages('2050-01-01').page({kind:'parcels',cursor:'',rowLimit:250});
+  assert.equal(later.rows[0].retained_observations.reported_year_built.exact_value,'2050');
+  assert.deepEqual(later.typed_profile,p.typed_profile);assert.deepEqual(later.rows[0].typed,p.rows[0].typed);
+  const account=await f.pages().page({kind:'accounts',cursor:'',rowLimit:250});
+  assert.deepEqual(account.rows[0].retained_observations,{});assert.equal(account.rows[0].typed.markers.county.value_text,'Dallas');
+  assert.ok(f.calls.slice(from).every(c=>c.query_timeout===5000));
+  assert.ok(!f.calls.slice(from).some(c=>/INSERT|UPDATE|DELETE|ST_DWithin|FROM core\.|shared-typed-v2:(?:begin|rows|page)/.test(c.text)));
+});
+
+test('stock original reconciliation cannot be replaced by a matching hash, count or plausible cached observation',async()=>{
+  for(const mutate of [r=>r.typed.observations.reported_residential_area.exact_value='1',
+    r=>r.typed.markers.subdivision_name.value_text='Changed',r=>r.typed.original.payload_utf8_bytes++,
+    r=>r.original_text=r.original_text.replace('2050','2040'),r=>r.original_payload_sha256='e'.repeat(64),
+    r=>r.cached_account_id='OUTSIDE',r=>r.account_id='OUTSIDE',r=>r.typed=null,r=>r.cached_source_record_id='1',
+    r=>r.typed.effective_date='2020-01-01']){
+    const f=await stockOriginalCellFixture();f.rows.parcels[0]=structuredClone(f.rows.parcels[0]);mutate(f.rows.parcels[0]);
+    await assert.rejects(f.pages().page({kind:'parcels',cursor:'',rowLimit:250}),/original_mismatch/);
+  }
+  const sql=NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL;
+  assert.match(sql,/WITH scan_keys AS MATERIALIZED[\s\S]+ORDER BY o\.row_key LIMIT \$6::integer\s+\), candidates AS MATERIALIZED/);
+  assert.match(sql,/CROSS JOIN LATERAL \(SELECT o[\s\S]+FROM app\.neighborhood_frozen_source_rows o[\s\S]+LEFT JOIN LATERAL/);
+  assert.match(sql,/FROM app\.neighborhood_frozen_typed_v2_rows t[\s\S]+t\.row_key=k\.row_key OFFSET 0/);
+  assert.match(sql,/a\.operation_id=\$1::uuid AND a\.account_id=k\.account_id/);
+  assert.match(sql,/t\.row_key IS NULL/);assert.match(sql,/output_cumulative\+1<=\$10::integer/);
+  assert.doesNotMatch(sql,/ST_DWithin|array_agg|FROM core\.|effective_date|INSERT|UPDATE|DELETE/);
+});
+
+test('stock original page keysets retain partial/full/empty semantics and single-use aggregate fences',async()=>{
+  const f=await stockOriginalCellFixture(),reader=f.pages(),from=f.calls.length;
+  const a=await reader.page({kind:'parcels',cursor:'',rowLimit:2});assert.equal(a.end_of_kind,false);assert.equal(a.next_cursor,'2');
+  await assert.rejects(reader.page({kind:'parcels',cursor:'',rowLimit:1}),/single_use/);
+  const end=await f.pages().page({kind:'parcels',cursor:'2',rowLimit:2});assert.deepEqual(end.rows,[]);
+  assert.equal(end.end_of_kind,true);assert.equal(end.next_cursor,'2');assert.ok(f.calls.length-from<=128*2);
+  const partial=await stockOriginalCellFixture(({text,rows})=>text===NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL?
+    result({page_json:JSON.stringify(rows.parcels.slice(0,1)),page_count:1,candidate_count:2,scan_count:2,scan_cursor:'2',invalid_count:0,oversized_count:0,next_cursor:'1'}):null);
+  assert.equal((await partial.pages().page({kind:'parcels',cursor:'',rowLimit:250})).end_of_kind,false);
+  const sparse=await stockOriginalCellFixture(({text})=>text===NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL?
+    result({page_json:'[]',page_count:0,candidate_count:0,scan_count:2,scan_cursor:'4',invalid_count:0,oversized_count:0,next_cursor:'4'}):null);
+  const scanned=await sparse.pages().page({kind:'parcels',cursor:'2',rowLimit:2});
+  assert.deepEqual(scanned.rows,[]);assert.equal(scanned.end_of_kind,false);assert.equal(scanned.next_cursor,'4');
+  assert.equal(scanned.scanned_original_count,2);assert.equal(scanned.scoped_candidate_count,0);
+  for(const change of [{invalid_count:1},{oversized_count:1},{candidate_count:251},{page_count:0,candidate_count:1},
+    {scan_count:251},{scan_count:0},{scan_cursor:'0'},
+    {next_cursor:'2'},{page_json:'not JSON'}]){
+    const bad=await stockOriginalCellFixture(({text,rows})=>text===NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL?
+      result({page_json:JSON.stringify(rows.parcels.slice(0,1)),page_count:1,candidate_count:1,scan_count:1,scan_cursor:'1',invalid_count:0,oversized_count:0,next_cursor:'1',...change}):null);
+    await assert.rejects(bad.pages().page({kind:'parcels',cursor:'',rowLimit:250}),/invalid_result/);
+  }
+  const cancelled=createNeighborhoodSharedStockOriginalCellsV2(f.client,{...options,checkBudget(){throw Error('synthetic cancelled');}},f.graph,'2026-10-07');
+  const before=f.calls.length;await assert.rejects(cancelled.page({kind:'parcels',cursor:'',rowLimit:1}),/synthetic cancelled/);assert.equal(f.calls.length,before);
+});
+
+test('stock originals refuse unavailable or changed headers and every caller fact/profile/callback extension',async()=>{
+  assert.equal(prepareNeighborhoodStockOriginalCellPageV2({kind:'accounts',cursor:'é'.repeat(64),rowLimit:1}).cursor,'é'.repeat(64),
+    'preserve the existing native 64-character account identity contract, not a narrower ASCII byte limit');
+  for(const mutate of [h=>h.status='building',h=>h.progress.kind_index=6,h=>h.definition_json='{}',h=>h.binding_sha256='e'.repeat(64),
+    h=>h.progress.typed_rows='1',h=>h.source_metadata.source_snapshot='2:3:']){
+    const f=await stockOriginalCellFixture(({text,sharedHeader})=>{if(text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read){
+      const h=structuredClone(sharedHeader);mutate(h);return result(h);}});
+    await assert.rejects(f.pages().page({kind:'parcels',cursor:'',rowLimit:1}),/cache_unavailable/);
+    assert.ok(!f.calls.some(c=>c.text===NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL));
+  }
+  let headers=0;const ending=await stockOriginalCellFixture(({text,sharedHeader})=>text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read&&++headers===2?
+    result({...sharedHeader,status:'building'}):null);
+  await assert.rejects(ending.pages().page({kind:'parcels',cursor:'',rowLimit:1}),/cache_unavailable/);
+  for(const page of [undefined,{kind:'sales',cursor:'',rowLimit:1},{kind:'parcels',cursor:'-1',rowLimit:1},
+    {kind:'parcels',cursor:'9223372036854775808',rowLimit:1},{kind:'accounts',cursor:' A',rowLimit:1},
+    {kind:'accounts',cursor:'',rowLimit:251},{kind:'accounts',cursor:'',rowLimit:1,complete:true},
+    new Proxy({kind:'accounts',cursor:'',rowLimit:1},{}),{kind:'accounts',get cursor(){assert.fail('getter');},rowLimit:1}])
+    assert.throws(()=>prepareNeighborhoodStockOriginalCellPageV2(page),/invalid_/);
+  for(const o of [{...options,readOriginal:()=>{}},{...options,selectedAccounts:[]},{...options,sourceGrant:{allowed:true}},new Proxy(options,{})])
+    assert.throws(()=>createNeighborhoodSharedStockOriginalCellsV2(ending.client,o,ending.graph,'2026-10-07'),/invalid_input/);
 });

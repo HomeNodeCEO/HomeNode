@@ -1,5 +1,28 @@
 # Complete larger-area Custom neighborhood studies
 
+## Protected account-package merge / transaction integration (2026-10-10)
+
+PR #1239 exactc7a43142 passed all14 fresh exact-head checks and ACTUAL included
+review edabdc0e-c0af-474d-882f-dce00283a6da of all seven changed files against
+protectedd2930c13. Review finished15:56:51 UTC with no actionable comments;
+exact coverage was `reviewed`, not an automatic skip. Fresh strict ruleset,
+main/head/CI and unresolved-thread checks preceded normal expected-head merge
+at15:58:06, actual protected merge244c1fd97fcec9b3c143b23273632c5408e876c0.
+
+PR #1240 was retargeted to MAIN at15:58:20 BEFORE synchronization. Its actual
+protected parent244c1fd9 was merged locally ase498a467; the sole test-import
+conflict kept BOTH independent original-admission and transaction-plan checks.
+124 focused tests passed, zero failures/skips (1412.5138ms). Fresh integrated
+required security/native/full-suite cloud checks and actual included review
+remain required; older stacked0ddddc43 proofs are historical, not integrated
+acceptance. Last actual included review finished15:56:51; next conservative
+request gate is NOT BEFORE17:01:51 UTC AND a fresh repository-wide actual
+review-activity preflight. No early, paid, forced or required-check bypass.
+
+All internal stages remain inactive. No production deployment, grant, worker,
+scheduler, generation pin, accepted report, genuine Hardy choice or Apply was
+changed. Native protocol checks are not licensed acquisition or live acceptance.
+
 ## Original-reconciled native transaction packages (2026-10-10, not activated)
 
 `readOriginalFrozenCaptureJobTransactionPackagesReferencesV2` extends the actual

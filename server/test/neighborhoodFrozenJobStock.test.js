@@ -26,7 +26,7 @@ import { NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodOriginalTransactionPackagesV2.js';
 import { createNeighborhoodSharedStockOriginalCellsV2, prepareNeighborhoodStockOriginalCellPageV2,
   prepareNeighborhoodStockAccountPackagePageV2, NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL, NEIGHBORHOOD_STOCK_SUBJECT_HOUSING_PACKAGE_V2_SQL,
-  NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,
+  NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,NEIGHBORHOOD_STOCK_SUBJECT_AND_FIRST_SELECTED_PACKAGE_V2_SQL,
   getNeighborhoodStockAccountPackageV2Profile,
   NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL, getNeighborhoodStockOriginalCellsV2Profile }
   from '../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
@@ -1123,9 +1123,10 @@ async function stockOriginalCellFixture(hook=()=>{}){
     const supplied=await hook({...call,source,sharedHeader,rows});if(supplied)return supplied;
     if(call.text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.source)return result(source);
     if(call.text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read)return result(structuredClone(sharedHeader));
-    if(call.text===NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL){
+    if([NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,NEIGHBORHOOD_STOCK_SUBJECT_AND_FIRST_SELECTED_PACKAGE_V2_SQL].includes(call.text)){
       const originals=Object.values(rows).flat(),ids=[...new Set(originals.map(r=>r.account_id))].sort((a,b)=>Buffer.compare(Buffer.from(a),Buffer.from(b))),
-        next=ids.find(id=>Buffer.compare(Buffer.from(id),Buffer.from(call.values[3]))>0)??null,
+        next=call.text===NEIGHBORHOOD_STOCK_SUBJECT_AND_FIRST_SELECTED_PACKAGE_V2_SQL?ids.at(-1)??null
+          :ids.find(id=>Buffer.compare(Buffer.from(id),Buffer.from(call.values[3]))>0)??null,
         subject=call.values[9]&&ids.includes(options.scope.account_id)?options.scope.account_id:null,
         packet=originals.filter(r=>r.account_id===next||r.account_id===subject).sort((a,b)=>
           Buffer.compare(Buffer.from(`${a.account_id}\u0000${a.kind}\u0000${a.row_key}`),Buffer.from(`${b.account_id}\u0000${b.kind}\u0000${b.row_key}`))),
@@ -1304,6 +1305,31 @@ test('paired subject and next originals deduplicate the same account under one l
     ()=>reader.subjectAndRecordedGroupHousingAccountPackage({cursor:''},{includeSubject:true})])await assert.rejects(run(),/single_use/);
 });
 
+test('fixed first-selected original reader shares the aggregate packet, deduplicates subject and accepts no cursor/ordinal',async()=>{
+  const f=await stockOriginalCellFixture(),same=await f.pages().subjectAndFirstSelectedRecordedGroupHousingAccountPackage({includeSubject:true});
+  assert.equal(same.subject_equals_next,true);assert.equal(same.distinct_original_count,3);assert.equal(same.subject,null);
+  f.rows.parcels.push(stockOriginalCell('parcels','3',{account_id:'STOCK-B',residential_year_built:1960}));
+  const reader=f.pages(),from=f.calls.length,p=await reader.subjectAndFirstSelectedRecordedGroupHousingAccountPackage({includeSubject:true});
+  assert.equal(p.status,'reconciled_subject_and_first_selected_stock_original_package');
+  assert.equal(p.account_id,'STOCK-B');assert.equal(p.subject.account_id,'STOCK-A');assert.equal(p.distinct_original_count,4);
+  assert.equal(p.next.recorded_housing.state,'unknown','subject county cannot fill the selected account');
+  const queries=f.calls.slice(from),packets=queries.filter(c=>c.text===NEIGHBORHOOD_STOCK_SUBJECT_AND_FIRST_SELECTED_PACKAGE_V2_SQL);
+  assert.equal(packets.length,1);assert.equal(packets[0].values[3],'');assert.equal(packets[0].values[4],250);
+  assert.ok(!queries.some(c=>c.text===NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL));
+  await assert.rejects(reader.subjectAndFirstSelectedRecordedGroupHousingAccountPackage({includeSubject:true}),/single_use/);
+  for(const bad of [{includeSubject:true,cursor:''},{includeSubject:true,ordinal:1},{includeSubject:true,account_id:'STOCK-A'},
+    new Proxy({includeSubject:true},{}),{get includeSubject(){assert.fail('getter');}}]){
+    const before=f.calls.length;await assert.rejects(f.pages().subjectAndFirstSelectedRecordedGroupHousingAccountPackage(bad),/invalid_input/);
+    assert.equal(f.calls.length,before);
+  }
+  assert.throws(()=>f.pages().subjectAndFirstSelectedRecordedGroupHousingAccountPackage({includeSubject:true},()=>{}),/invalid_input/);
+  const sql=NEIGHBORHOOD_STOCK_SUBJECT_AND_FIRST_SELECTED_PACKAGE_V2_SQL;
+  for(const expected of ['r.ordinal=1',"AND $4::text=''",'neighborhood_selected_union_v2_checkpoint_matches',
+    "body.canonical_utf8::jsonb->'after'->>'done'='true'",'SELECT * FROM next_account UNION SELECT * FROM subject_account',
+    'LIMIT ($5::integer+1)','(SELECT sum(n) FROM totals)<=$5::integer'])assert.ok(sql.includes(expected));
+  assert.doesNotMatch(sql,/FROM core\.|array_agg|jsonb_agg|ST_DWithin|INSERT|UPDATE|DELETE/);
+});
+
 test('paired originals reconcile two different accounts, omit blocked fallback and keep a fresh empty next probe',async()=>{
   const f=await stockOriginalCellFixture();
   f.rows.parcels[0]=stockOriginalCell('parcels','1',{class_code:'A11'});
@@ -1334,9 +1360,13 @@ test('paired original guards refuse aggregate overflow, absent/wrong subject, fo
     [{packet_oversize:true},/account_package_byte_limit/],
     [{account_id:'STOCK-B',next_parcels:125,next_accounts:1,subject_parcels:124,subject_accounts:1,original_count:251,page_count:0,page_json:'[]'},/account_package_row_limit/],
     [{next_parcels:251,next_accounts:0,subject_parcels:251,subject_accounts:0,original_count:251,page_count:0,page_json:'[]'},/account_package_row_limit/]]){
-    const f=await stockOriginalCellFixture(({text,rows})=>text===NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL
-      ?result({...valid,page_json:JSON.stringify([...rows.accounts,...rows.parcels]),...changes}):null);
-    await assert.rejects(f.pages().subjectAndRecordedGroupHousingAccountPackage({cursor:''},{includeSubject:true}),reason);
+    for(const sql of [NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,NEIGHBORHOOD_STOCK_SUBJECT_AND_FIRST_SELECTED_PACKAGE_V2_SQL]){
+      const f=await stockOriginalCellFixture(({text,rows})=>text===sql
+        ?result({...valid,page_json:JSON.stringify([...rows.accounts,...rows.parcels]),...changes}):null),reader=f.pages();
+      await assert.rejects(sql===NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL
+        ?reader.subjectAndRecordedGroupHousingAccountPackage({cursor:''},{includeSubject:true})
+        :reader.subjectAndFirstSelectedRecordedGroupHousingAccountPackage({includeSubject:true}),reason);
+    }
   }
   for(const mutate of [r=>r.typed=null,r=>r.typed.observations.reported_site_area.exact_value='2',
     r=>r.original_text=r.original_text.replace('2050','2040')]){

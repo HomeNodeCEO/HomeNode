@@ -138,11 +138,7 @@ export const NEIGHBORHOOD_STOCK_SUBJECT_HOUSING_PACKAGE_V2_SQL=NEIGHBORHOOD_STOC
 // native stock accounts. The actual owner supplies its issued next cursor and
 // decides whether retained-subject absence requires CAD. Same-account facts
 // are deduplicated before counts or payload reads; never open a second reader.
-export const NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL=`/* neighborhood-stock-subject-and-next-original-package-v2 */
-WITH next_account AS MATERIALIZED (
-  SELECT account_id,parcel_count FROM app.neighborhood_custom_cohort_stock_accounts
-  WHERE operation_id=$1::uuid AND account_id>$4::text COLLATE "C" ORDER BY account_id LIMIT 1
-), subject_account AS MATERIALIZED (
+const SUBJECT_AND_CHOSEN_PACKAGE_V2_SQL=`), subject_account AS MATERIALIZED (
   SELECT a.account_id,a.parcel_count FROM app.neighborhood_custom_cohort_capture_jobs job
   JOIN app.neighborhood_custom_cohort_stock_accounts a USING(operation_id)
   WHERE job.operation_id=$1::uuid AND a.account_id=job.account_id AND $10::boolean
@@ -185,6 +181,31 @@ SELECT (SELECT account_id FROM next_account) AS account_id,
     AND coalesce(sum(bytes+1),0)+2<=$6::integer AND coalesce(sum(2*coalesce(typed_bytes,0)+1024),0)+2<=$9::integer
     THEN coalesce('['||string_agg(encoded,',' ORDER BY account_id COLLATE "C",kind COLLATE "C",row_key COLLATE "C")||']','[]') ELSE '[]' END AS page_json
 FROM sized`;
+
+export const NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL=`/* neighborhood-stock-subject-and-next-original-package-v2 */
+WITH next_account AS MATERIALIZED (
+  SELECT account_id,parcel_count FROM app.neighborhood_custom_cohort_stock_accounts
+  WHERE operation_id=$1::uuid AND account_id>$4::text COLLATE "C" ORDER BY account_id LIMIT 1
+${SUBJECT_AND_CHOSEN_PACKAGE_V2_SQL}`;
+
+// Distinct fixed read-only admission: ordinal1 of the ACTUAL completed union,
+// not first C-sorted stock, a caller account/cursor or a count-derived roster.
+// Both consumers use the identical aggregate original/transport/output bounds.
+export const NEIGHBORHOOD_STOCK_SUBJECT_AND_FIRST_SELECTED_PACKAGE_V2_SQL=`/* neighborhood-stock-subject-and-first-selected-original-package-v2 */
+WITH next_account AS MATERIALIZED (
+  SELECT a.account_id,a.parcel_count FROM app.neighborhood_custom_cohort_capture_jobs job
+  JOIN app.neighborhood_custom_cohort_selected_union_v2_heads head USING(operation_id,organization_id)
+  JOIN app.neighborhood_cohort_evidence_blobs body ON body.organization_id=head.organization_id
+    AND body.content_sha256=head.receipt_reference->>'content_sha256'
+    AND body.canonical_utf8_bytes::text=head.receipt_reference->>'canonical_utf8_bytes' AND body.canonical_utf8_bytes<=16000
+  JOIN app.neighborhood_custom_cohort_selected_union_v2_rows r
+    ON r.operation_id=job.operation_id AND r.organization_id=job.organization_id
+  JOIN app.neighborhood_custom_cohort_stock_accounts a ON a.operation_id=r.operation_id AND a.account_id=r.account_id
+  WHERE job.operation_id=$1::uuid AND r.ordinal=1 AND $4::text=''
+    AND app.neighborhood_selected_union_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)
+    AND body.canonical_utf8::jsonb->>'format'='cohort_selected_union_receipt_v2'
+    AND body.canonical_utf8::jsonb->'after'->>'done'='true'
+${SUBJECT_AND_CHOSEN_PACKAGE_V2_SQL}`;
 
 const METRICS=Object.freeze({reported_year_built:'year',reported_residential_area:'reported_sqft',reported_site_area:'reported_sqft',reported_market_value:null});
 /** Compare canonical exact decimal literals; never round economic values. */
@@ -385,10 +406,11 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
   /** Both complete accounts share every original/transport/output/SQL bound.
    * This is source DATA only; actual issued owner chooses the next cursor and
    * independently fences the full native graph, intent and current authority. */
-  async function subjectAndNextPackage(rawPage,rawSubject){
+  async function subjectAndNextPackage(rawPage,rawSubject,firstSelected=false){
     const page=prepareNeighborhoodStockAccountPackagePageV2(rawPage),{includeSubject}=data(rawSubject,['includeSubject']);
     if(typeof includeSubject!=='boolean')fail('invalid_input');
-    const context=await open(),{stock,source}=context,result=one(await execute(NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,
+    const context=await open(),{stock,source}=context,result=one(await execute(firstSelected
+      ?NEIGHBORHOOD_STOCK_SUBJECT_AND_FIRST_SELECTED_PACKAGE_V2_SQL:NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,
       [stock.operation_id,stock.generation_id,TYPED.profile_ref.content_sha256,page.cursor,L.rows,L.page_utf8_bytes,
         L.row_utf8_bytes,L.original_utf8_bytes,L.output_utf8_bytes,includeSubject]));
     const keys=['next_parcels','next_accounts','subject_parcels','subject_accounts'];
@@ -439,7 +461,8 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
     // Charge the ENTIRE outgoing envelope; duplicated facts are marked as an
     // alias rather than serialized twice. Neither metadata nor the second
     // account receives a reset output allowance.
-    const output={page_version:2,status:'reconciled_subject_and_next_stock_original_package',authority:'not_established',
+    const output={page_version:2,status:firstSelected?'reconciled_subject_and_first_selected_stock_original_package'
+      :'reconciled_subject_and_next_stock_original_package',authority:'not_established',
       coverage:'at_most_two_complete_distinct_accounts_one_aggregate_budget',graph,stock,source_metadata:source,typed_profile:TYPED,
       package_profile:PACKAGE_PROFILE,effective_date:effective,cursor:page.cursor,account_id:result.account_id,
       next_cursor:result.account_id??page.cursor,end_of_accounts:result.account_id===null,next,subject:duplicated?null:subject,
@@ -500,5 +523,11 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
     /** Actual owner resolves preferred subject first; only absence requests
      * native subject CAD. No second child reader or reset aggregate budget. */
     subjectAndRecordedGroupHousingAccountPackage(...args){if(args.length!==2)fail('invalid_input');return subjectAndNextPackage(...args);},
+    /** Fixed ordinal1 only; no source account, ordinal, cursor or callback input.
+     * Actual owner MUST also replay the complete union/partition/catalog and
+     * immutable intent/current authorization. This reader issues no progress. */
+    subjectAndFirstSelectedRecordedGroupHousingAccountPackage(...args){
+      if(args.length!==1)fail('invalid_input');return subjectAndNextPackage({cursor:''},args[0],true);
+    },
   });
 }

@@ -228,6 +228,10 @@ const FROZEN_SOURCE_STAGES = freeze({
   original_selected_union_subject_housing_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true, readingSelectedUnionSubjectHousing: true,
     allowedPhases: ['frozen_selected_union_refs_v2'] },
+  original_selected_union_first_eligibility_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
+    readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true,
+    allowedPhases: ['frozen_selected_union_refs_v2'] },
 });
 function fail(reason, detail, captureCounts) {
   const error = Object.assign(new Error(`custom_cohort_capture_${reason}`), {
@@ -1662,7 +1666,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,
       resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,partitioningRecordedGroups=false,
-      readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
+      readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,readingSelectedUnionFirstEligibility=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     if(referencesV2){
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
       const descriptors=Object.getOwnPropertyDescriptors(options),keys=Reflect.ownKeys(descriptors);
@@ -2155,7 +2159,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       let partitionStore=null,partitionAnchor=null,partitionResult=null,partitionReadCursor=null,partitionReadEntry=null,
         catalogStore=null,catalogAnchor=null,catalogCounts=null,catalogResult=null,catalogReadGroup=null,catalogReadGroupKey=null,
         unionStore=null,unionAnchor=null,unionCounts=null,unionExpected=null,unionIssued=null,unionPlan=null,subjectHousingResult=null,unionSubjectHousing=null,
-        unionAccountEligibility=null,unionExpectedSelected=false;
+        unionAccountEligibility=null,unionExpectedSelected=false,firstSelectedEntry=null;
       if(partitioningRecordedGroups||readingRecordedPartition||catalogingRecordedGroups){
         const baseExpected={binding,source_reference:reference,root,graph_verification_reference:verificationReference,
           stock_verification_reference:stockVerificationReference,identity_verification_reference:identityVerificationReference,
@@ -2225,7 +2229,63 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           if(!same(unionCounts,{...(unionIssued?.after_counts??{assigned_accounts:0,unassigned_accounts:0,assigned_groups:0}),
             selected_count:unionIssued?.after_selected_count??0}))fail('selected_union_original_mismatch');
         }
-        if(readingSelectedUnionSubjectHousing){
+        if(readingSelectedUnionFirstEligibility){
+          // Read-only fixed ordinal1 admission BEFORE the later durable fifth
+          // pass. The native union picks membership; neither caller DATA nor
+          // first C-sorted stock may pick a comparison account. Subject and
+          // selected account share ONE whole-original/ENTIRE-cache packet.
+          firstSelectedEntry=await unionStore.readFirstSelectedEntry();
+          if((firstSelectedEntry===null)!==(unionCounts.selected_count===0))fail('selected_union_original_mismatch');
+          const preferred=resolveCustomCohortRetainedSubjectHousing(retained.subject.material,retained.subject.target,{check:budget.check}),
+            graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))},
+            paired=await createNeighborhoodSharedStockOriginalCellsV2(client,stockOptions,graph,context.effective_date)
+              .subjectAndFirstSelectedRecordedGroupHousingAccountPackage({includeSubject:preferred===null}),
+            packet=paired.next,subjectPacket=paired.subject_equals_next?packet:paired.subject;
+          if((packet?.account_id??null)!==(firstSelectedEntry?.account_id??null))fail('selected_union_original_mismatch');
+          if(preferred===null&&(subjectPacket?.account_id!==scope.account_id
+            ||!same(subjectPacket.recorded_housing.retained_housing_interpretation,housingProfile)))fail('checkpoint_conflict');
+          const subject=preferred??{state:subjectPacket.recorded_housing.state,category:subjectPacket.recorded_housing.category,origin:'current_subject_cad'};
+          let decision=null;
+          if(packet!==null){
+            const housing=packet.recorded_housing,group=packet.recorded_group,candidate=group.state==='assigned'?group.candidate_groups[0]:null;
+            if(!same(housing.retained_housing_interpretation,housingProfile))fail('checkpoint_conflict');
+            if(group.state==='assigned'&&group.candidate_groups.length!==1)fail('catalog_original_mismatch');
+            const text=await blobs.get(firstSelectedEntry.entry_reference.content_sha256,firstSelectedEntry.entry_reference.canonical_utf8_bytes);
+            if(text===null||Buffer.byteLength(text)>1000000
+              ||text!==canonicalAssessmentJson({format:'cohort_recorded_group_partition_entry_v2',account_id:packet.account_id,
+                ordinal:firstSelectedEntry.partition_ordinal,recorded_group:group})
+              ||firstSelectedEntry.state!==group.state||firstSelectedEntry.assigned_group_id!==group.assigned_group_id)
+              fail('partition_original_mismatch');
+            catalogReadGroupKey={group_id:group.assigned_group_id??'discovery:unassigned'};
+            if(!issuedSelectionIntent.included_recorded_group_ids.includes(catalogReadGroupKey.group_id))fail('selected_union_original_mismatch');
+            catalogReadGroup=await catalogStore.readGroup(catalogReadGroupKey);
+            if(catalogReadGroup===null||catalogReadGroup.normalized_county!==(candidate?.normalized_county??null)
+              ||catalogReadGroup.normalized_label!==(candidate?.normalized_label??null)
+              ||catalogReadGroup.last_ordinal<firstSelectedEntry.partition_ordinal
+              ||catalogReadGroup.last_ordinal>Number(stock.population.account_count)
+              ||catalogReadGroup.member_count>Number(stock.population.account_count))fail('catalog_original_mismatch');
+            decision=resolveNeighborhoodOriginalAccountEligibilityV2({subject:{state:subject.state,category:subject.category},
+              housing:{state:housing.state,category:housing.category,county_state:housing.county_state,
+                source_part_count:housing.source_part_count,part_states:housing.part_states},
+              original_counts:packet.original_counts,observations:packet.observations});
+          }
+          subjectHousingResult={status:'current_authorized_first_selected_original_recorded_eligibility_reopened',operation_id:input.operationId,
+            command_id:issuedSelectionIntent.command_id,union_reference:unionAnchor.receipt_reference,catalog_reference:catalogAnchor.receipt_reference,
+            partition_reference:partitionAnchor.receipt_reference,subject_reference:retained.subjectReference,
+            subject_intent_reference:retained.intent.reference,stock_reference:stockReference,source_reference:reference,graph_reference:root,
+            verification_reference:verificationReference,stock_verification_reference:stockVerificationReference,
+            identity_verification_reference:identityVerificationReference,retained_effective_date:context.effective_date,
+            subject,subject_original_fallback:preferred===null,subject_equals_selected:paired.subject_equals_next,
+            distinct_original_count:paired.distinct_original_count,
+            selected_entry:firstSelectedEntry,decision,empty_selected_union:firstSelectedEntry===null,
+            coverage:'fixed_first_native_selected_ordinal_only_not_complete_eligibility',
+            original_reconciliation:'every_selected_and_required_subject_original_all_outside_parts_entire_neutral_cache_full_partition_and_catalog_literals',
+            shared_budget:'one_single_use_child_one_aggregate_original_transport_output_SQL_deadline_budget',
+            authority:'not_established',read_only:true,lease_extended:false,issued_eligibility_progress:false,
+            complete_selected_union_eligibility:false,statistics:'not_established',publication:'not_established',
+            context_complete:false,pin_transfer:false,source_acquisition:'not_established',report_update:'none'};
+          if(Buffer.byteLength(JSON.stringify(subjectHousingResult))>16000)fail('byte_limit');
+        }else if(readingSelectedUnionSubjectHousing){
           // Retained subject material already passed exact native intent and
           // current comparison above. Only genuinely absent preferred inputs
           // permit original CAD fallback; no current defaults or workspace
@@ -2455,6 +2515,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           {...jobOptions,workspaceTarget:selectionWorkspaceTarget});
         if(!same(ending,issuedSelectionIntent)||!same(await unionStore.read(),unionAnchor)
           ||!same(await unionStore.counts(),unionCounts))fail('selected_union_original_mismatch');
+        if(readingSelectedUnionFirstEligibility&&!same(await unionStore.readFirstSelectedEntry(),firstSelectedEntry))
+          fail('selected_union_original_mismatch');
         budget.check();
         if(readingSelectedUnionSubjectHousing)return freeze(subjectHousingResult);
         const beforeCounts=unionCounts,{selected_count:beforeSelected,...beforeGroupCounts}=beforeCounts;
@@ -2834,6 +2896,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       frozenCaptureJobSourceStage(value, options, 'original_selected_union_replay_refs_v2'),
     readOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_selected_union_subject_housing_refs_v2'),
+    // Inactive read-only ordinal1 original admission, NOT the fifth issued pass.
+    // No caller account/ordinal/cursor/decision, lease, new head or continuation.
+    readOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'original_selected_union_first_eligibility_refs_v2'),
     async capture(value, options = {}) {
     if (!options || Object.getPrototypeOf(options) !== Object.prototype)
       fail('invalid_options');

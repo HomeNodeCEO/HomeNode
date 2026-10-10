@@ -51,35 +51,42 @@ DB-gated skips; frontend113870625545 passed3959, failed/skipped0,97873.019653ms
 plus typecheck/lint/source-quality/build; redteam113870625778 and Sales37945516908
 passed. These historical receipts are not the protected-parent-integrated head.
 
-On2026-10-10, #1234 was normally protected-merged as
-`13586d3670411ddf31460c0a099f02ada8b2e92e` after exacta052 all14 checks and
-actual included review3e45a7e8-1bf2-41df-bef3-8704caccd2b7, no actionable
-comments, completed06:44:20Z. Its bounded-count correction and actual parent
-fixes were integrated here as34129a8edc5c4c2083f02b959a5673a98cc3a5c5 without
+On 2026-10-10, #1234 was normally protected-merged as
+`13586d3670411ddf31460c0a099f02ada8b2e92e` after exact a052 passed all 14 checks and
+actual included review 3e45a7e8-1bf2-41df-bef3-8704caccd2b7, no actionable
+comments, completed 06:44:20Z. Its bounded-count correction and actual parent
+fixes were integrated here as 34129a8edc5c4c2083f02b959a5673a98cc3a5c5 without
 conflicts. #1235 was retargeted to MAIN BEFORE any synchronize push. Exact
 decimal implementation semantics are unchanged.
 111 focused integrated kernel/transaction-plan/package/stock/current-owner
 tests passed, zero failed/skipped (1384.1753ms); no heavy suite ran locally.
-Source/native fixture syntax and diff checks passed. Exact integratedf1269036
-passed all14 required/security/native/full-suite checks; native114155863245
-passed417migration/8index/1subject/1edge/2bootstrap0fail0skip,index443617.344804ms;
-frontend114155863252 passed3959,0fail0skip,96954.670416ms plus all checks.
-Actual included reviewb2005cfb-3cb1-4235-9ad8-2e7d130fca27 coveredf1269036,
-completed07:52:44Z, and found4236925906: the public deviation field did not name
+Source/native fixture syntax and diff checks passed. Exact integrated f1269036
+passed all 14 required/security/native/full-suite checks; native 114155863245
+passed 417 migration / 8 index / 1 subject / 1 edge / 2 bootstrap tests, 0 failures
+and 0 skips, index 443617.344804ms; frontend 114155863252 passed 3959 tests,
+0 failures and 0 skips, 96954.670416ms plus all checks.
+Actual included review b2005cfb-3cb1-4235-9ad8-2e7d130fca27 covered f1269036,
+completed 07:52:44Z, and found 4236925906: the public deviation field did not name
 its center. This correction explicitly names the exact median in the exposed
 field AND content-addressed definition; the BigInt calculation is unchanged.
-For the asymmetric1/2/4 regression (median2, mean7/3), mean absolute deviation
-from the median is1, not the10/9 deviation from the mean. It checks absence of
-the ambiguous alias and independently
-reconciles the median-deviation rational over all existing odd/even/page oracles.
+For the asymmetric 1/2/4 regression (median 2, mean 7/3), mean absolute deviation
+from the median is 1, not the 10/9 deviation from the mean. It checks absence of
+the ambiguous alias and independently reconciles the median-deviation rational
+over all existing odd/even/page oracles.
 No installed consumer/accepted report or legacy Number field is renamed.
-All122 focused corrected-head kernel/transaction-plan/package/stock/current-owner
-tests passed,0fail0skip,1359.9381ms; no heavy suite ran locally. Diff checks passed.
+All 122 focused corrected-head kernel/transaction-plan/package/stock/current-owner
+tests passed, 0 failures and 0 skips, 1359.9381ms; no heavy suite ran locally.
+Diff checks passed.
 Fresh corrected-head required security/native/full-suite gates and ACTUAL included
 review remain mandatory before normal expected-head protected merge; the previous
 head's green checks/review and automatic review SKIP are not new-head authority.
-Next ordinary included request is conservatively not before08:58Z plus fresh
-repository-wide invocation/allowance preflight; newer actual reviews move it later.
+The ordinary included request after the conservative 08:58Z allowance gate
+produced actual review 9f836df3-afa2-4cf5-9936-850ab141edb1 of c6ce7972, finished
+09:02:19Z. It found documentation spacing issue 4237112764, corrected here without
+changing the reported values or implementation. This new head still requires
+fresh checks and actual review; the next ordinary request is conservatively not
+before 10:07Z plus fresh repository-wide invocation/allowance preflight. Newer
+actual reviews move it later.
 No paid/forced quota or required-check bypass. No route/default/deploy, source grant, worker,
 pin, report, genuine Hardy choice or Apply change. Full roadmap/live acceptance
 remains incomplete; QA assignment 7 only for future Apply tests.

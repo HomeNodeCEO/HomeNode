@@ -66,6 +66,7 @@ import { createCustomCohortSelectedUnionV2Repository } from './customCohortSelec
 import { prepareCohortSelectedUnionReceiptV2 } from './cohortSelectedUnionReceiptV2.js';
 import { createCustomCohortSelectedEligibilityV2Repository } from './customCohortSelectedEligibilityV2Repository.js';
 import { prepareCohortSelectedEligibilityReceiptV2, SELECTED_RECORDED_ELIGIBILITY_METRICS } from './cohortSelectedEligibilityReceiptV2.js';
+import { encodeCohortDiagnosticFieldTuplesV1 } from './cohortDiagnosticFieldTuplesV1.js';
 import { createCustomCohortV2ContinuationRepository } from './customCohortV2ContinuationRepository.js';
 import { createCustomCohortV2SelectionWaitRepository } from './customCohortV2SelectionWaitRepository.js';
 import { createCustomCohortV2SelectionIntentRepository, prepareCustomCohortV2SelectionIntent } from './customCohortV2SelectionIntentRepository.js';
@@ -2381,6 +2382,15 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             authority:'not_established',read_only:true,lease_extended:false,issued_eligibility_progress:false,
             complete_selected_union_eligibility:false,statistics:'not_established',publication:'not_established',
             context_complete:false,pin_transfer:false,source_acquisition:'not_established',report_update:'none'};
+          if(readingSelectedUnionFirstTransactions&&readingSelectedUnionFirstAmenities){
+            // Lossless JSON presentation after complete original/cache replay.
+            // Repeated object-key shapes are declared once, not observations
+            // omitted or replaced by hashes. The separate source methods stay
+            // unchanged; the combined consumer explicitly declares its format.
+            subjectHousingResult={...subjectHousingResult,combined_diagnostic_encoding:'cohort_diagnostic_field_tuples_v1',
+              selected_CAD:encodeCohortDiagnosticFieldTuplesV1(selectedCadResult),
+              selected_transactions:encodeCohortDiagnosticFieldTuplesV1(selectedTransactions)};
+          }
           if(Buffer.byteLength(JSON.stringify(subjectHousingResult))>16000)fail('byte_limit');
         }else if(readingSelectedUnionSubjectHousing){
           // Retained subject material already passed exact native intent and

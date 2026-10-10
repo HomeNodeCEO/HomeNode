@@ -27,6 +27,22 @@ accepted report, genuine Hardy choice, production or Apply changes are made.
 
 ## One aggregate selected stock/CAD/transaction packet (2026-10-10, not activated)
 
+The initial d84923c0 native run FAILED two nonempty selections at the existing
+16 KB owner response cap; EMPTY passed. Foundation 38075596792 / native job
+114281786272: 417 migration and one subject test passed; index 11 passed/two
+failed, zero skips (875665.931058 ms). This is a real combined-response failure,
+not a GitHub incident or native acceptance. Only the combined owner's CAD and
+transaction diagnostics now use the declared `cohort_diagnostic_field_tuples_v1`
+presentation: ordered object-key shapes occur once; every scalar, exact numeric
+string, observation, marker, date, native ID and array position stays lossless.
+Separate source responses remain unchanged. The encoder has fixed JSON/node/
+depth/shape bounds and rejects executable/non-JSON input. No source, query,
+transport, child-output or 16 KB owner cap is widened. 191 focused tests pass,
+zero failures/skips (1704.4026 ms), including complete JSON round-trip and hostile
+DATA tests. Native assertions now expand BOTH combined diagnostics and compare
+them exactly with the independently original-reconciled source responses. The
+new native assertions are AUTHORED NOT EXECUTED; fresh cloud checks are required.
+
 The separate INACTIVE read-only actual owner method
 `readOriginalFrozenCaptureJobFirstSelectedCombinedEvidenceReferencesV2` reopens
 the complete independently issued ten-root original graph, native DONE union,

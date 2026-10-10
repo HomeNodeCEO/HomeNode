@@ -1,5 +1,44 @@
 # Complete larger-area Custom neighborhood studies
 
+## Actual completed-union subject housing owner (2026-10-10, not activated)
+
+The new internal READ-ONLY owner reopens the ACTUAL completed tenth-root native
+selected STOCK union, immutable command and current pending workspace. It uses
+the exact retained subject material, not caller/current-default housing, a
+worker choice, first stock account or selected group. Saved subject observations
+take precedence over retained-public observations; ONLY absence allows CAD
+fallback. Explicit null/blank/unknown/unmapped/conflicting preferred values block
+fallback. Generic Single Family still requires explicit Detached. Mobile and
+manufactured housing remain distinct; secondary style cannot repair an unmapped
+primary. The existing dense interpretation and retained profile are unchanged.
+
+Fallback chooses the exact native JOB SUBJECT in the issued stock. It recompiles
+EVERY original, including all outside-geometry parts, compares the ENTIRE neutral
+cache and preserves full housing states/part denominators. Missing subject stock
+membership REFUSES rather than borrowing the first member or fabricating missing
+housing. Original cap+1 admission, complete 250-row packet, single-use child
+budget and the actual 256-query / 32MB / 60s whole owner remain unchanged. Current
+actor/assignment/private draft/subject/source rights, graph/geography/identity,
+traversal/partition/catalog/union heads and counts, exact intent/workspace and
+all ending fences precede the read-only result. No root/continuation is advanced.
+
+261 focused synthetic tests passed with zero failures/skips (1605.003ms).
+They include whole-original/cache forgeries, missing stock,
+wrong subject, whole bounds/single-use/header changes, hostile entry-point input
+and parity with existing dense housing on actual retained material projections.
+Cloud-only native assertions are AUTHORED, NOT YET EXECUTED for this head: two
+independently issued complete graphs exercise conflicting outside-part fallback
+and explicit-null preferred observation on an empty union, unfinished-union
+refusal, current/ending faults, read-only lost REAL COMMIT acknowledgment and
+unchanged jobs/heads/blobs/continuation/intent/pins/workspace/history/reports.
+
+This resolves a subject-housing prerequisite, NOT issued eligibility progress,
+complete selected-union housing/metric eligibility, statistics, coherent
+publication, licensed acquisition or production-speed/live acceptance. No HTTP
+route, worker/scheduler, source grant, pin transfer, report, genuine choice or
+Apply is activated. Protected-parent integration, fresh exact-head security/
+native/full suites and actual included review remain required before merge.
+
 ## Shared capture-claim DATA boundary (2026-10-10, not activated)
 
 The shared job-claim validator now rejects active, transparent and revoked

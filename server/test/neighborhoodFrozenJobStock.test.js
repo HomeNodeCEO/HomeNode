@@ -1466,11 +1466,24 @@ test('stock plus CAD originals refuse as ONE aggregate 250-row packet before pay
   const sql=NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL;
   assert.match(sql,/r\.ordinal=1/);assert.match(sql,/selected_union_v2_checkpoint_matches/);
   assert.match(sql,/SELECT \* FROM next_account UNION SELECT \* FROM subject_account/);
-  assert.equal((sql.match(/SELECT sum\(n\) FROM totals/g)??[]).length,2);
+  assert.equal((sql.match(/SELECT sum\(n\) FROM totals/g)??[]).length,4);
   assert.match(sql,/frozen_cad_improvement_rows o[\s\S]+frozen_typed_cad_rows t/);
   assert.match(sql,/sum\(bytes\+1\)/);assert.match(sql,/sum\(2\*coalesce\(typed_bytes,0\)\+1024\)/);
   assert.doesNotMatch(sql,/FROM core\.|ST_DWithin|array_agg|INSERT|UPDATE|DELETE/);
 });
+test('selected amenity raw byte lengths share stock-subject/CAD admission before either family encodes',()=>{
+  const sql=NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL,
+    raw=sql.split('), raw_sizes AS MATERIALIZED (')[1].split('), raw_gate AS MATERIALIZED (')[0],
+    members=sql.split('), members AS MATERIALIZED (')[1].split('), sized AS MATERIALIZED')[0];
+  assert.equal((raw.match(/SELECT sum\(n\) FROM totals/g)??[]).length,2);
+  assert.equal((raw.match(/NOT \$10::boolean OR EXISTS\(SELECT 1 FROM subject_account\)/g)??[]).length,2);
+  assert.match(raw,/frozen_source_rows o/);assert.match(raw,/frozen_cad_improvement_rows o/);
+  assert.doesNotMatch(raw,/jsonb_build_object|AS encoded|string_agg/);
+  assert.equal((members.match(/AND NOT \(SELECT oversize FROM raw_gate\) OFFSET 0/g)??[]).length,2);
+  assert.match(sql,/\(SELECT oversize FROM raw_gate\) OR coalesce\(max\(bytes\),0\)>\$7::integer/);
+  assert.match(sql,/CASE WHEN NOT \(SELECT oversize FROM raw_gate\)[\s\S]+sum\(bytes\+1\)[\s\S]+ELSE '\[\]'/);
+});
+
 test('selected amenity cache prerequisites and ending metadata share stock child budgets and refuse changes',async()=>{
   for(const fault of ['initial','ending','metadata']){
     let reads=0;const f=await stockOriginalCellFixture(({text,cadHeader,cadSource})=>{
@@ -1520,12 +1533,24 @@ test('stock original reconciliation cannot be replaced by a matching hash, count
     await assert.rejects(f.pages().page({kind:'parcels',cursor:'',rowLimit:250}),/original_mismatch/);
   }
   const sql=NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL;
-  assert.match(sql,/WITH scan_keys AS MATERIALIZED[\s\S]+ORDER BY o\.row_key LIMIT \$6::integer\s+\), candidates AS MATERIALIZED/);
+  assert.match(sql,/WITH scan_keys AS MATERIALIZED[\s\S]+ORDER BY o\.row_key LIMIT \$6::integer\s+\), raw_sizes AS MATERIALIZED/);
   assert.match(sql,/CROSS JOIN LATERAL \(SELECT o[\s\S]+FROM app\.neighborhood_frozen_source_rows o[\s\S]+LEFT JOIN LATERAL/);
   assert.match(sql,/FROM app\.neighborhood_frozen_typed_v2_rows t[\s\S]+t\.row_key=k\.row_key OFFSET 0/);
   assert.match(sql,/a\.operation_id=\$1::uuid AND a\.account_id=k\.account_id/);
   assert.match(sql,/t\.row_key IS NULL/);assert.match(sql,/output_cumulative\+1<=\$10::integer/);
   assert.doesNotMatch(sql,/ST_DWithin|array_agg|FROM core\.|effective_date|INSERT|UPDATE|DELETE/);
+});
+
+test('original-key page raw admission bounds encoding without shrinking candidate/invalid counts or forging an end',()=>{
+  const sql=NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL,
+    raw=sql.split('), raw_sizes AS MATERIALIZED (')[1].split('), raw_prefix AS MATERIALIZED (')[0];
+  assert.doesNotMatch(raw,/AS original_text|jsonb_build_object|AS encoded|string_agg/);
+  assert.match(sql,/FROM raw_admitted k/);assert.match(sql,/raw_cumulative\+1<=\$7::integer/);
+  assert.match(sql,/raw_output_cumulative\+1<=\$10::integer/);
+  assert.match(sql,/NOT EXISTS\(SELECT 1 FROM raw_sizes WHERE original_bytes>\$9::integer/);
+  assert.match(sql,/FROM raw_sizes\) AS candidate_count/);assert.match(sql,/FROM raw_sizes WHERE invalid/);
+  assert.match(sql,/CASE WHEN count\(\*\)=\(SELECT count\(\*\) FROM raw_sizes\)/);
+  assert.match(sql,/cumulative\+1<=\$7::integer/);assert.match(sql,/bytes<=\$8::integer/);
 });
 
 test('stock original page keysets retain partial/full/empty semantics and single-use aggregate fences',async()=>{
@@ -1669,6 +1694,21 @@ test('next eligibility original reader uses native head ordinal and exactly the 
     "body.canonical_utf8::jsonb->'after'->>'done'='true'",'SELECT * FROM next_account UNION SELECT * FROM subject_account',
     '(SELECT sum(n) FROM totals)<=$5::integer','LIMIT ($5::integer+1)'])assert.ok(sql.includes(s),s);
   assert.doesNotMatch(sql,/FROM core\.|array_agg|jsonb_agg|ST_DWithin|INSERT|UPDATE|DELETE/);
+});
+
+test('all five whole-stock packet plans gate raw byte lengths before encoding and preserve exact byte admission',()=>{
+  for(const sql of [NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL,NEIGHBORHOOD_STOCK_SUBJECT_HOUSING_PACKAGE_V2_SQL,
+    NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,NEIGHBORHOOD_STOCK_SUBJECT_AND_FIRST_SELECTED_PACKAGE_V2_SQL,
+    NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_ELIGIBILITY_PACKAGE_V2_SQL]){
+    const raw=sql.split('), raw_sizes AS MATERIALIZED (')[1].split('), raw_gate AS MATERIALIZED (')[0],
+      members=sql.split('), members AS MATERIALIZED (')[1].split('), sized AS MATERIALIZED')[0];
+    assert.match(raw,/octet_length\(o\.payload::text\)/);assert.match(raw,/octet_length\(t\.typed::text\)/);
+    assert.match(raw,/\(SELECT sum\(n\) FROM totals\)<=\$5::integer/);assert.doesNotMatch(raw,/jsonb_build_object|AS encoded|string_agg/);
+    assert.match(members,/AND NOT \(SELECT oversize FROM raw_gate\) OFFSET 0/);
+    assert.match(sql,/\(SELECT oversize FROM raw_gate\) OR coalesce\(max\(bytes\),0\)>\$7::integer/);
+    assert.match(sql,/CASE WHEN NOT \(SELECT oversize FROM raw_gate\)[\s\S]+sum\(bytes\+1\)[\s\S]+ELSE '\[\]'/);
+    if(sql.includes('subject_account AS MATERIALIZED'))assert.match(raw,/NOT \$10::boolean OR EXISTS\(SELECT 1 FROM subject_account\)/);
+  }
 });
 
 test('paired originals reconcile two different accounts, omit blocked fallback and keep a fresh empty next probe',async()=>{

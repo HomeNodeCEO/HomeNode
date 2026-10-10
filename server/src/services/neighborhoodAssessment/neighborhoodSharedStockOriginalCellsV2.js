@@ -107,6 +107,21 @@ WITH chosen AS MATERIALIZED (
   SELECT kind,(SELECT count(*)::integer FROM (SELECT 1 FROM app.neighborhood_frozen_source_rows o
     WHERE o.generation_id=$2::uuid AND o.kind=k.kind AND o.account_id=(SELECT account_id FROM chosen)
     LIMIT ($5::integer+1)) bounded) AS n FROM (VALUES ('parcels'),('accounts')) k(kind)
+), raw_sizes AS MATERIALIZED (
+  SELECT octet_length(o.payload::text) AS original_bytes,octet_length(t.typed::text) AS typed_bytes
+  FROM chosen a CROSS JOIN (VALUES ('parcels'),('accounts')) k(kind)
+  CROSS JOIN LATERAL (SELECT o.kind,o.row_key,o.payload
+    FROM app.neighborhood_frozen_source_rows o WHERE o.generation_id=$2::uuid AND o.kind=k.kind AND o.account_id=a.account_id
+      AND (SELECT sum(n) FROM totals)<=$5::integer OFFSET 0) o
+  LEFT JOIN LATERAL (SELECT t.typed FROM app.neighborhood_frozen_typed_v2_rows t
+    WHERE t.generation_id=$2::uuid AND t.profile_sha256=$3
+      AND t.kind=o.kind AND t.row_key=o.row_key OFFSET 0) t ON true
+), raw_gate AS MATERIALIZED (
+  SELECT coalesce(max(original_bytes),0)>$8::integer
+    OR coalesce(max(original_bytes::bigint+coalesce(typed_bytes,0)),0)>$7::integer
+    OR coalesce(sum(original_bytes::bigint+coalesce(typed_bytes,0)+1),0)+2>$6::integer
+    OR coalesce(sum(2::bigint*coalesce(typed_bytes,0)+1024),0)+2>$9::integer AS oversize
+  FROM raw_sizes
 ), members AS MATERIALIZED (
   SELECT o.kind,o.row_key,t.row_key IS NULL OR t.account_id IS DISTINCT FROM o.account_id
       OR t.source_record_id IS DISTINCT FROM o.source_record_id AS invalid,
@@ -118,7 +133,7 @@ WITH chosen AS MATERIALIZED (
   FROM chosen a CROSS JOIN (VALUES ('parcels'),('accounts')) k(kind)
   CROSS JOIN LATERAL (SELECT o.kind,o.row_key,o.account_id,o.source_record_id,o.payload
     FROM app.neighborhood_frozen_source_rows o WHERE o.generation_id=$2::uuid AND o.kind=k.kind AND o.account_id=a.account_id
-      AND (SELECT sum(n) FROM totals)<=$5::integer OFFSET 0) o
+      AND (SELECT sum(n) FROM totals)<=$5::integer AND NOT (SELECT oversize FROM raw_gate) OFFSET 0) o
   LEFT JOIN LATERAL (SELECT t.row_key,t.account_id,t.source_record_id,t.original_payload_sha256,t.typed
     FROM app.neighborhood_frozen_typed_v2_rows t WHERE t.generation_id=$2::uuid AND t.profile_sha256=$3
       AND t.kind=o.kind AND t.row_key=o.row_key OFFSET 0) t ON true
@@ -126,9 +141,9 @@ WITH chosen AS MATERIALIZED (
 SELECT (SELECT account_id FROM chosen) AS account_id,(SELECT parcel_count::text FROM chosen) AS geographic_parcel_count,
   (SELECT jsonb_object_agg(kind,n) FROM totals) AS original_counts,count(*)::integer AS page_count,
   coalesce(sum(CASE WHEN invalid THEN 1 ELSE 0 END),0)::integer AS invalid_count,
-  coalesce(max(bytes),0)>$7::integer OR coalesce(max(original_bytes),0)>$8::integer
+  (SELECT oversize FROM raw_gate) OR coalesce(max(bytes),0)>$7::integer OR coalesce(max(original_bytes),0)>$8::integer
     OR coalesce(sum(bytes+1),0)+2>$6::integer OR coalesce(sum(2*coalesce(typed_bytes,0)+1024),0)+2>$9::integer AS packet_oversize,
-  CASE WHEN coalesce(max(bytes),0)<=$7::integer AND coalesce(max(original_bytes),0)<=$8::integer
+  CASE WHEN NOT (SELECT oversize FROM raw_gate) AND coalesce(max(bytes),0)<=$7::integer AND coalesce(max(original_bytes),0)<=$8::integer
     AND coalesce(sum(bytes+1),0)+2<=$6::integer AND coalesce(sum(2*coalesce(typed_bytes,0)+1024),0)+2<=$9::integer
     THEN coalesce('['||string_agg(encoded,',' ORDER BY kind COLLATE "C",row_key COLLATE "C")||']','[]') ELSE '[]' END AS page_json
 FROM sized`;
@@ -159,6 +174,24 @@ const SUBJECT_AND_CHOSEN_PACKAGE_V2_SQL=`), subject_account AS MATERIALIZED (
   SELECT a.account_id,k.kind,(SELECT count(*)::integer FROM (SELECT 1 FROM app.neighborhood_frozen_source_rows o
     WHERE o.generation_id=$2::uuid AND o.kind=k.kind AND o.account_id=a.account_id
     LIMIT ($5::integer+1)) bounded) AS n FROM chosen a CROSS JOIN (VALUES ('parcels'),('accounts')) k(kind)
+), raw_sizes AS MATERIALIZED (
+  -- Same-account facts deduplicate before raw byte admission too. Required
+  -- subject absence blocks every raw/encoded row; never retain payload text.
+  SELECT octet_length(o.payload::text) AS original_bytes,octet_length(t.typed::text) AS typed_bytes
+  FROM chosen a CROSS JOIN (VALUES ('parcels'),('accounts')) k(kind)
+  CROSS JOIN LATERAL (SELECT o.kind,o.row_key,o.payload
+    FROM app.neighborhood_frozen_source_rows o WHERE o.generation_id=$2::uuid AND o.kind=k.kind AND o.account_id=a.account_id
+      AND (SELECT sum(n) FROM totals)<=$5::integer
+      AND (NOT $10::boolean OR EXISTS(SELECT 1 FROM subject_account)) OFFSET 0) o
+  LEFT JOIN LATERAL (SELECT t.typed FROM app.neighborhood_frozen_typed_v2_rows t
+    WHERE t.generation_id=$2::uuid AND t.profile_sha256=$3
+      AND t.kind=o.kind AND t.row_key=o.row_key OFFSET 0) t ON true
+), raw_gate AS MATERIALIZED (
+  SELECT coalesce(max(original_bytes),0)>$8::integer
+    OR coalesce(max(original_bytes::bigint+coalesce(typed_bytes,0)),0)>$7::integer
+    OR coalesce(sum(original_bytes::bigint+coalesce(typed_bytes,0)+1),0)+2>$6::integer
+    OR coalesce(sum(2::bigint*coalesce(typed_bytes,0)+1024),0)+2>$9::integer AS oversize
+  FROM raw_sizes
 ), members AS MATERIALIZED (
   SELECT o.account_id,o.kind,o.row_key,t.row_key IS NULL OR t.account_id IS DISTINCT FROM o.account_id
       OR t.source_record_id IS DISTINCT FROM o.source_record_id AS invalid,
@@ -171,7 +204,8 @@ const SUBJECT_AND_CHOSEN_PACKAGE_V2_SQL=`), subject_account AS MATERIALIZED (
   CROSS JOIN LATERAL (SELECT o.kind,o.row_key,o.account_id,o.source_record_id,o.payload
     FROM app.neighborhood_frozen_source_rows o WHERE o.generation_id=$2::uuid AND o.kind=k.kind AND o.account_id=a.account_id
       AND (SELECT sum(n) FROM totals)<=$5::integer
-      AND (NOT $10::boolean OR EXISTS(SELECT 1 FROM subject_account)) OFFSET 0) o
+      AND (NOT $10::boolean OR EXISTS(SELECT 1 FROM subject_account))
+      AND NOT (SELECT oversize FROM raw_gate) OFFSET 0) o
   LEFT JOIN LATERAL (SELECT t.row_key,t.account_id,t.source_record_id,t.original_payload_sha256,t.typed
     FROM app.neighborhood_frozen_typed_v2_rows t WHERE t.generation_id=$2::uuid AND t.profile_sha256=$3
       AND t.kind=o.kind AND t.row_key=o.row_key OFFSET 0) t ON true
@@ -186,9 +220,9 @@ SELECT (SELECT account_id FROM next_account) AS account_id,
   coalesce((SELECT n FROM totals WHERE account_id=(SELECT account_id FROM subject_account) AND kind='accounts'),0) AS subject_accounts,
   coalesce((SELECT sum(n)::integer FROM totals),0) AS original_count,count(*)::integer AS page_count,
   coalesce(sum(CASE WHEN invalid THEN 1 ELSE 0 END),0)::integer AS invalid_count,
-  coalesce(max(bytes),0)>$7::integer OR coalesce(max(original_bytes),0)>$8::integer
+  (SELECT oversize FROM raw_gate) OR coalesce(max(bytes),0)>$7::integer OR coalesce(max(original_bytes),0)>$8::integer
     OR coalesce(sum(bytes+1),0)+2>$6::integer OR coalesce(sum(2*coalesce(typed_bytes,0)+1024),0)+2>$9::integer AS packet_oversize,
-  CASE WHEN coalesce(max(bytes),0)<=$7::integer AND coalesce(max(original_bytes),0)<=$8::integer
+  CASE WHEN NOT (SELECT oversize FROM raw_gate) AND coalesce(max(bytes),0)<=$7::integer AND coalesce(max(original_bytes),0)<=$8::integer
     AND coalesce(sum(bytes+1),0)+2<=$6::integer AND coalesce(sum(2*coalesce(typed_bytes,0)+1024),0)+2<=$9::integer
     THEN coalesce('['||string_agg(encoded,',' ORDER BY account_id COLLATE "C",kind COLLATE "C",row_key COLLATE "C")||']','[]') ELSE '[]' END AS page_json
 FROM sized`;
@@ -273,6 +307,28 @@ WITH scan_keys AS MATERIALIZED (
   SELECT o.row_key,o.account_id FROM app.neighborhood_frozen_source_rows o
   WHERE o.generation_id=$2::uuid AND o.kind=$4 AND o.row_key>$5::text COLLATE "C"
   ORDER BY o.row_key LIMIT $6::integer
+), raw_sizes AS MATERIALIZED (
+  -- Keep only identity/byte counts for the bounded original-key prefix.
+  -- In particular, do not retain 250 original strings before prefix admission.
+  SELECT o.row_key,octet_length(o.payload::text) AS original_bytes,octet_length(t.typed::text) AS typed_bytes,
+    t.row_key IS NULL OR t.account_id IS DISTINCT FROM o.account_id
+      OR t.source_record_id IS DISTINCT FROM o.source_record_id AS invalid
+  FROM scan_keys k
+  CROSS JOIN LATERAL (SELECT a.account_id FROM app.neighborhood_custom_cohort_stock_accounts a
+    WHERE a.operation_id=$1::uuid AND a.account_id=k.account_id OFFSET 0) a
+  CROSS JOIN LATERAL (SELECT o.kind,o.row_key,o.account_id,o.source_record_id,o.payload FROM app.neighborhood_frozen_source_rows o
+    WHERE o.generation_id=$2::uuid AND o.kind=$4 AND o.row_key=k.row_key OFFSET 0) o
+  LEFT JOIN LATERAL (SELECT t.row_key,t.account_id,t.source_record_id,t.typed
+    FROM app.neighborhood_frozen_typed_v2_rows t WHERE t.generation_id=$2::uuid
+    AND t.profile_sha256=$3 AND t.kind=$4 AND t.row_key=k.row_key OFFSET 0) t ON true
+), raw_prefix AS MATERIALIZED (
+  SELECT *,sum(original_bytes::bigint+coalesce(typed_bytes,0)+1) OVER(ORDER BY row_key) AS raw_cumulative,
+    sum(2::bigint*coalesce(typed_bytes,0)+1024) OVER(ORDER BY row_key) AS raw_output_cumulative
+  FROM raw_sizes
+), raw_admitted AS MATERIALIZED (
+  SELECT row_key FROM raw_prefix WHERE raw_cumulative+1<=$7::integer AND raw_output_cumulative+1<=$10::integer
+    AND NOT EXISTS(SELECT 1 FROM raw_sizes WHERE original_bytes>$9::integer
+      OR original_bytes::bigint+coalesce(typed_bytes,0)>$8::integer)
 ), candidates AS MATERIALIZED (
   SELECT o.row_key,o.payload::text AS original_text,t.typed,
     jsonb_build_object('kind',o.kind,'row_key',o.row_key,'account_id',o.account_id,
@@ -281,9 +337,10 @@ WITH scan_keys AS MATERIALIZED (
       'original_payload_sha256',t.original_payload_sha256,'typed',t.typed)::text AS encoded,
     t.row_key IS NULL OR t.account_id IS DISTINCT FROM o.account_id
       OR t.source_record_id IS DISTINCT FROM o.source_record_id AS invalid
-  FROM scan_keys k
+  FROM raw_admitted k
+  JOIN scan_keys original_key USING(row_key)
   CROSS JOIN LATERAL (SELECT a.account_id FROM app.neighborhood_custom_cohort_stock_accounts a
-    WHERE a.operation_id=$1::uuid AND a.account_id=k.account_id OFFSET 0) a
+    WHERE a.operation_id=$1::uuid AND a.account_id=original_key.account_id OFFSET 0) a
   CROSS JOIN LATERAL (SELECT o.kind,o.row_key,o.account_id,o.source_record_id,o.payload FROM app.neighborhood_frozen_source_rows o
     WHERE o.generation_id=$2::uuid AND o.kind=$4 AND o.row_key=k.row_key OFFSET 0) o
   LEFT JOIN LATERAL (SELECT t.row_key,t.account_id,t.source_record_id,t.original_payload_sha256,t.typed
@@ -298,11 +355,13 @@ WITH scan_keys AS MATERIALIZED (
 ), admitted AS (SELECT * FROM sized WHERE bytes<=$8::integer AND original_bytes<=$9::integer
     AND cumulative+1<=$7::integer AND output_cumulative+1<=$10::integer)
 SELECT coalesce('['||string_agg(encoded,',' ORDER BY row_key)||']','[]') AS page_json,
-  count(*)::integer AS page_count,(SELECT count(*)::integer FROM candidates) AS candidate_count,
+  count(*)::integer AS page_count,(SELECT count(*)::integer FROM raw_sizes) AS candidate_count,
   (SELECT count(*)::integer FROM scan_keys) AS scan_count,(SELECT max(row_key) FROM scan_keys) AS scan_cursor,
-  (SELECT count(*)::integer FROM sized WHERE invalid) AS invalid_count,
-  (SELECT count(*)::integer FROM sized WHERE bytes>$8::integer OR original_bytes>$9::integer) AS oversized_count,
-  CASE WHEN count(*)=(SELECT count(*) FROM candidates) THEN (SELECT max(row_key) FROM scan_keys)
+  (SELECT count(*)::integer FROM raw_sizes WHERE invalid) AS invalid_count,
+  (SELECT count(*)::integer FROM raw_sizes WHERE original_bytes>$9::integer
+      OR original_bytes::bigint+coalesce(typed_bytes,0)>$8::integer)
+    +(SELECT count(*)::integer FROM sized WHERE bytes>$8::integer) AS oversized_count,
+  CASE WHEN count(*)=(SELECT count(*) FROM raw_sizes) THEN (SELECT max(row_key) FROM scan_keys)
     ELSE max(row_key) END AS next_cursor FROM admitted`;
 
 /** One single-use read under the actual current-authorized V2 capture owner.

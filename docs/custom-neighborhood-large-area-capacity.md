@@ -1,5 +1,41 @@
 # Complete larger-area Custom neighborhood studies
 
+## Standalone CAD and selected-amenity raw-byte gates (2026-10-10, not activated)
+
+The same fix now also covers the two whole-stock SQL stems: standalone account
+and exact-subject housing, plus paired-next, fixed-first-selected and native
+next-eligibility plans. All five retain only raw byte lengths under the existing
+count/subject admission before encoding; exact encoded gates still run. The
+cloud-only stock TEMP fixture now authors raw-over-8-MB/zero-members, per-original
+1-MB, raw-fit/exact-over and count-over/zero-raw-members assertions for standalone,
+exact-subject and paired admissions; existing issued selected/fifth-pass owners
+remain required. These NEW assertions are AUTHORED NOT EXECUTED.
+
+The original-key-prefix page query now also computes only raw byte lengths for
+its bounded 250-key stock-filtered prefix before encoding a byte-admissible
+prefix. Candidate/invalid/oversize counts still describe ALL scoped original
+keys; a partial byte prefix advances only to the last actually delivered key,
+never its unencoded tail. Per-original raw oversize blocks ALL encoding. Exact
+encoded-prefix gates still run. New cloud-only TEMP assertions author bounded
+raw/encoded plan rows, exact delivered cursor/no-duplicate continuation and
+zero encoding for one oversized original. They are AUTHORED NOT EXECUTED and do
+not establish original/selection authority, full population or speed acceptance.
+
+The same encode-before-byte-refusal risk also existed in the actual standalone
+CAD account and fixed selected-amenity SQL plans. Both now retain ONLY byte
+lengths under their unchanged complete-original count admission, then refuse
+raw-over-limit packets before either source family builds JSON envelopes. The
+selected-amenity plan keeps ONE aggregate subject/selected stock/CAD budget and
+the required-subject gate. Exact encoded-byte checks remain mandatory after raw
+admission; counts, profiles, source rights and full original/cache reconciliation
+are unchanged. 108 focused synthetic tests pass, zero failures/skips (1564.172 ms).
+Cloud-only rolled-back TEMP plan assertions are AUTHORED NOT EXECUTED for these
+changes: 250 raw-size rows/zero encoded rows over 8 MB, per-original 1 MB refusal,
+raw-fit/exact-encoding-over refusal, 251 originals reading zero raw/encoded rows,
+missing cache/subject and fresh EMPTY. TEMP substitution is not authority proof;
+the existing full issued-original-owner tests remain required. These changes do
+not activate internal stages or establish licensed acquisition/live acceptance.
+
 ## Selected packet raw-byte gates (2026-10-10, not activated)
 
 Inspection after the actual #1240 review found the same encode-before-byte-refusal

@@ -238,6 +238,10 @@ const FROZEN_SOURCE_STAGES = freeze({
     catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
     readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true, readingSelectedUnionFirstAmenities: true,
     allowedPhases: ['frozen_selected_union_refs_v2'] },
+  original_selected_union_first_transactions_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
+    readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true, readingSelectedUnionFirstTransactions: true,
+    allowedPhases: ['frozen_selected_union_refs_v2'] },
   original_selected_eligibility_progress_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
     readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true, progressingSelectedEligibility: true,
@@ -1676,7 +1680,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,
       resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,partitioningRecordedGroups=false,
-      readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,readingSelectedUnionFirstEligibility=false,readingSelectedUnionFirstAmenities=false,progressingSelectedEligibility=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
+      readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,readingSelectedUnionFirstEligibility=false,readingSelectedUnionFirstAmenities=false,readingSelectedUnionFirstTransactions=false,progressingSelectedEligibility=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     const readingCadSource=readingCadPages||readingSelectedUnionFirstAmenities;
     if(referencesV2){
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
@@ -2271,9 +2275,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           const preferred=resolveCustomCohortRetainedSubjectHousing(retained.subject.material,retained.subject.target,{check:budget.check}),
             graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))},
             paired=await createNeighborhoodSharedStockOriginalCellsV2(client,stockOptions,graph,context.effective_date)
-              [readingSelectedUnionFirstAmenities?'subjectAndFirstSelectedAmenityAccountPackage':
+              [readingSelectedUnionFirstTransactions?'subjectAndFirstSelectedTransactionAccountPackage':
+                readingSelectedUnionFirstAmenities?'subjectAndFirstSelectedAmenityAccountPackage':
                 progressingSelectedEligibility?'subjectAndNextEligibilityRecordedGroupHousingAccountPackage':
-                'subjectAndFirstSelectedRecordedGroupHousingAccountPackage']({includeSubject:preferred===null}),
+                'subjectAndFirstSelectedRecordedGroupHousingAccountPackage'](...[{includeSubject:preferred===null},
+                  ...(readingSelectedUnionFirstTransactions?[input.observationPeriod]:[])]),
             packet=paired.next,subjectPacket=paired.subject_equals_next?packet:paired.subject;
           if((packet?.account_id??null)!==(firstSelectedEntry?.account_id??null))fail('selected_union_original_mismatch');
           if(preferred===null&&(subjectPacket?.account_id!==scope.account_id
@@ -2330,7 +2336,22 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
               typed_profile:compactProfile(cad.typed_profile),amenity_evidence:cad.amenity_evidence===null?null:
                 {...cad.amenity_evidence,profile:compactProfile(cad.amenity_evidence.profile)}};
           }
-          subjectHousingResult={status:readingSelectedUnionFirstAmenities?'current_authorized_first_selected_original_amenities_reopened'
+          // Retain every native association/observation/marker, but omit only
+          // repeated row-level dates/constant limitations already stated once
+          // on the whole package. The unchanged16KB owner cap still refuses
+          // larger envelopes, never truncates or relabels a partial package.
+          const cellFields=['state','exact_value','unit','reason'],markerFields=['state','json_type','value_text','utf8_bytes','value_sha256'],
+            dateFields=['state','exact_value','reason'],tuples=(values,fields)=>Object.fromEntries(Object.entries(values).map(([k,v])=>[k,fields.map(f=>v[f])])),
+            selectedTransactions=readingSelectedUnionFirstTransactions?{...paired.selected_transactions,
+            diagnostic_encoding:{format:'fixed_field_tuples_v1',cell_fields:cellFields,marker_fields:markerFields,date_fields:dateFields},
+            packages:paired.selected_transactions.packages.map(p=>({kind:p.kind,native_key:p.native_key,counts:p.counts,
+              associations:p.associations,rows:p.rows.map(({stock_member,projection:r})=>({stock_member,kind:r.kind,
+                row_key:r.row_key,account_id:r.account_id,source_record_id:r.source_record_id,original:r.original,
+                markers:tuples(r.markers,markerFields),normalized:{...r.normalized,observations:tuples(r.normalized.observations,cellFields),
+                  dates:tuples(r.normalized.dates,dateFields)},same_payload_reported_sale:r.same_payload_reported_sale===null?null:
+                  {...r.same_payload_reported_sale,observations:tuples(r.same_payload_reported_sale.observations,cellFields)}}))}))}:null;
+          subjectHousingResult={status:readingSelectedUnionFirstTransactions?'current_authorized_first_selected_original_transactions_reopened'
+            :readingSelectedUnionFirstAmenities?'current_authorized_first_selected_original_amenities_reopened'
             :'current_authorized_first_selected_original_recorded_eligibility_reopened',operation_id:input.operationId,
             command_id:issuedSelectionIntent.command_id,union_reference:unionAnchor.receipt_reference,catalog_reference:catalogAnchor.receipt_reference,
             partition_reference:partitionAnchor.receipt_reference,subject_reference:retained.subjectReference,
@@ -2342,6 +2363,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             ...(readingSelectedUnionFirstAmenities?{CAD_source_authorization:{purpose:cadPurpose,decision:cadDecision},
               selected_CAD:selectedCadResult,complete_selected_union_amenities:false,
               amenity_scope:'current_retained_local_reported_pool_and_unresolved_secondary_inventory_not_verified_dictionary_or_historical'}:{}),
+            ...(readingSelectedUnionFirstTransactions?{selected_transactions:selectedTransactions,
+              transaction_scope:'all_date_native_associations_not_economic_equivalence_allocation_or_verified_completion',
+              retained_observation_period:input.observationPeriod,complete_selected_union_transactions:false}:{}),
             selected_entry:firstSelectedEntry,decision,empty_selected_union:firstSelectedEntry===null,
             coverage:'fixed_first_native_selected_ordinal_only_not_complete_eligibility',
             original_reconciliation:'every_selected_and_required_subject_original_all_outside_parts_entire_neutral_cache_full_partition_and_catalog_literals',
@@ -2986,6 +3010,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     // Separate current CAD purpose at BOTH ends; no extra child/row budget.
     readOriginalFrozenCaptureJobFirstSelectedAmenitiesReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_selected_union_first_amenities_refs_v2'),
+    readOriginalFrozenCaptureJobFirstSelectedTransactionsReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'original_selected_union_first_transactions_refs_v2'),
     progressOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_selected_eligibility_progress_refs_v2'),
     async capture(value, options = {}) {

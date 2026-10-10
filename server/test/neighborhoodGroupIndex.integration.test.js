@@ -111,6 +111,8 @@ import { NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodOriginalCadAccountPackagesV2.js';
 import { NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSelectedAmenityOriginalPackageV2.js';
+import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL }
+  from '../src/services/neighborhoodAssessment/neighborhoodSelectedTransactionOriginalPackageV2.js';
 
 // Disposable native fixture only, never production rights provisioning. The
 // real evaluator reads current organization metadata/time on every admission.
@@ -1795,19 +1797,21 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         if(fault==='cad_original_bytes')row.payload_utf8_bytes='1';
         return {...result,rows:[{...result.rows[0],[key]:JSON.stringify(rows)}]};
       }
-      if(Object.values(NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL).includes(config.text)
+      if((Object.values(NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL).includes(config.text)
+        ||config.text===NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL)
         &&['tx_original_mismatch','tx_original_missing','tx_original_text'].includes(refsFault)){
-        const fault=refsFault;refsFault=null;const rows=JSON.parse(result.rows[0].packet_json);
+        const fault=refsFault,key=config.text===NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL?'page_json':'packet_json';
+        refsFault=null;const rows=JSON.parse(result.rows[0][key]);
         const row=rows.find(r=>r.kind==='source_records');
         if(fault==='tx_original_mismatch')row.typed.observations.normalized_year_built={state:'observed',exact_value:'1900',unit:'year',reason:null};
         if(fault==='tx_original_missing')row.typed=null;
         if(fault==='tx_original_text')row.original_text=JSON.stringify({...JSON.parse(row.original_text),synthetic_transport_corruption:true});
-        return {...result,rows:[{...result.rows[0],packet_json:JSON.stringify(rows)}]};
+        return {...result,rows:[{...result.rows[0],[key]:JSON.stringify(rows)}]};
       }
       if([NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL,NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL,
         NEIGHBORHOOD_STOCK_SUBJECT_HOUSING_PACKAGE_V2_SQL,NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,
         NEIGHBORHOOD_STOCK_SUBJECT_AND_FIRST_SELECTED_PACKAGE_V2_SQL,NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_ELIGIBILITY_PACKAGE_V2_SQL,
-        NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
+        NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
         &&['stock_cells_mismatch','stock_cells_missing','stock_cells_original'].includes(refsFault)){
         // Corrupt only the transient transport, never the immutable original or
         // installed cache. Correct hashes/counts cannot launder changed cells.
@@ -1962,6 +1966,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         ||config.text===NEIGHBORHOOD_STOCK_SUBJECT_AND_FIRST_SELECTED_PACKAGE_V2_SQL
         ||config.text===NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_ELIGIBILITY_PACKAGE_V2_SQL
         ||config.text===NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL
+        ||config.text===NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL
         ||Object.values(NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL).includes(config.text)
         ||Object.values(NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL).includes(config.text)){
         // The ending-header fault is consumed by the later second metadata
@@ -4485,6 +4490,9 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           const firstAmenityMethod='readOriginalFrozenCaptureJobFirstSelectedAmenitiesReferencesV2',unfinishedAmenityFrom=refsCalls.length;
           await assert.rejects(cadOwner()[firstAmenityMethod](refsInput,{captureJobClaim:liveClaim}),/unfinished_selected_union/);
           assert.ok(!refsCalls.slice(unfinishedAmenityFrom).includes(NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL));
+          const firstTransactionMethod='readOriginalFrozenCaptureJobFirstSelectedTransactionsReferencesV2',unfinishedTransactionFrom=refsCalls.length;
+          await assert.rejects(freshRefsOwner()[firstTransactionMethod](refsInput,{captureJobClaim:liveClaim}),/unfinished_selected_union/);
+          assert.ok(!refsCalls.slice(unfinishedTransactionFrom).includes(NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL));
           const eligibilityMethod='progressOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2',unfinishedEligibilityFrom=refsCalls.length;
           await assert.rejects(freshRefsOwner()[eligibilityMethod](refsInput,{captureJobClaim:liveClaim}),/checkpoint_changed/);
           assert.ok(!refsCalls.slice(unfinishedEligibilityFrom).includes(NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_ELIGIBILITY_PACKAGE_V2_SQL));
@@ -4745,6 +4753,63 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             maximum_whole_owner_sql_queries:Math.max(...amenityQueryCounts),whole_owner_limits:ORIGINAL_OWNER_LIMITS,
             complete_selected_union_amenities:false,complete_selected_union_eligibility:false,statistics:false,publication:false,
             licensed_acquisition:false,worker_activation:false,production_speed:false});
+          // Exact selected-member all-date transaction closure. All source
+          // originals, outside/unresolved links and legacy sales are retained;
+          // no date filter or price/allocation/economic eligibility shortcut.
+          const transactionQueryCounts=[],selectedTransactionRead=async()=>{const from=refsCalls.length;
+            try{return await freshRefsOwner()[firstTransactionMethod](refsInput,{captureJobClaim:liveClaim});}
+            finally{transactionQueryCounts.push(refsCalls.length-from-3);}},txFrom=refsCalls.length,
+            firstTransaction=await selectedTransactionRead(),tx=firstTransaction.selected_transactions;
+          assert.equal(firstTransaction.status,'current_authorized_first_selected_original_transactions_reopened');
+          assert.deepEqual(firstTransaction.selected_entry,firstEligibility.selected_entry);assert.deepEqual(firstTransaction.subject,firstEligibility.subject);
+          assert.deepEqual(firstTransaction.decision,firstEligibility.decision);assert.equal(firstTransaction.read_only,true);
+          assert.ok(Buffer.byteLength(JSON.stringify(firstTransaction))<=16000);assert.equal(firstTransaction.complete_selected_union_transactions,false);
+          assert.equal(firstTransaction.distinct_original_count,selectionWaitFixture==='union-empty'?0:allSelected?7:11);
+          assert.equal(refsCalls.slice(txFrom).filter(sql=>sql===NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL).length,1);
+          assert.ok(!refsCalls.slice(txFrom).some(sql=>/INSERT INTO|UPDATE app\.|DELETE FROM|ST_DWithin/.test(sql)));
+          assert.equal(tx.transaction_eligibility,'not_established');assert.equal(tx.economic_transaction_equivalence,'not_established');
+          assert.deepEqual(tx.diagnostic_encoding.cell_fields,['state','exact_value','unit','reason']);
+          if(selectionWaitFixture==='union-empty'){
+            assert.equal(tx.account_id,null);assert.equal(tx.original_count,0);assert.deepEqual(tx.packages,[]);
+          }else{
+            assert.equal(tx.account_id,allSelected?'CLOSURE-A':'CLOSURE-B');assert.equal(tx.original_count,allSelected?4:6);
+            assert.deepEqual(tx.packages.map(p=>[p.kind,p.native_key]),allSelected?[['source_record','501']]:
+              [['legacy_sale','3'],['source_record','503'],['source_record','504']]);
+            const rows=tx.packages.flatMap(p=>p.rows);
+            assert.equal(rows.filter(r=>r.account_id==='CLOSURE-OUTSIDE').length,allSelected?2:1);
+            if(allSelected){assert.equal(rows.find(r=>r.kind==='source_records').normalized.period_disposition.state,'outside_period');}
+            else{assert.equal(rows.find(r=>r.kind==='sales'&&r.row_key==='3').normalized.period_disposition.state,'outside_period');
+              assert.equal(rows.find(r=>r.kind==='source_records'&&r.row_key==='504').normalized.period_disposition.state,'in_period');
+              assert.equal(tx.packages.find(p=>p.native_key==='503').associations.unresolved_link_count,1);
+              assert.equal(rows.find(r=>r.kind==='sale_links'&&r.account_id===null).stock_member,null);}
+            for(const [fault,reason] of [['tx_original_mismatch',/original_mismatch/],['tx_original_missing',/original_mismatch/],
+              ['tx_original_text',/original_mismatch/],['stock_cells_mismatch',/original_mismatch/],['stock_cells_original',/original_mismatch/],
+              ['union_first_entry_wrong',/selected_union_original_mismatch/],['union_first_entry_partition',/partition_original_mismatch/]]){
+              refsFault=fault;await assert.rejects(selectedTransactionRead(),reason);assert.equal(refsFault,null);await firstUnchanged();
+            }
+          }
+          for(const [fault,reason] of [['transaction_header',/cache_unavailable/],['license',/market_data_access_denied/],
+            ['role',/job_actor_access_revoked/],['subject',/subject_changed/],['claim',/claim_lost|operation_unavailable/],
+            ['catalog_owner_bytes_ending',/original_account_owner_byte_limit/],['catalog_workspace_revision_ending',/workspace_target_changed/],
+            ['union_subject_head_ending',/selected_union_original_mismatch/],
+            ...(selectionWaitFixture==='union-empty'?[]:[['union_first_entry_ending',/selected_union_original_mismatch/]])]){
+            refsFault=fault;await assert.rejects(selectedTransactionRead(),reason);assert.equal(refsFault,null);await firstUnchanged();
+            if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+            if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+          }
+          refsFault='commit';await assert.rejects(selectedTransactionRead(),e=>e.outcome_unknown===true);await firstUnchanged();
+          assert.deepEqual(await selectedTransactionRead(),firstTransaction);await firstUnchanged();
+          assert.ok(transactionQueryCounts.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries));
+          console.info('[native-first-selected-original-transaction-owner-v2]',{independently_issued_complete_original_graph_and_DONE_union:true,
+            explicit_empty:selectionWaitFixture==='union-empty',first_selected_B_not_first_stock_A:!allSelected&&selectionWaitFixture!=='union-empty',
+            every_stock_subject_and_transaction_original_entire_neutral_cache_one_aggregate_250_original_packet:true,
+            all_date_whole_source_packages_outside_unresolved_and_native_legacy_sales_retained:true,
+            actual_native_partition_catalog_and_immutable_choice_reconciled:true,original_cache_and_member_forgeries_refused:true,
+            original_retained_date_projection_before_association_no_normalized_or_other_row_fallback:true,
+            read_only_lost_real_COMMIT_reopen_no_head_checkpoint_blob_continuation_pin_or_report_writes:true,
+            maximum_whole_owner_sql_queries:Math.max(...transactionQueryCounts),whole_owner_limits:ORIGINAL_OWNER_LIMITS,
+            economic_equivalence:false,price_allocation:false,verified_completion:false,complete_selected_union_transactions:false,
+            complete_selected_union_eligibility:false,statistics:false,publication:false,licensed_acquisition:false,worker_activation:false,production_speed:false});
           // Independent fifth native pass: all selected ordinals, not the stock
           // replay cursor or fixed first account. EVERY original/ENTIRE cache
           // is reopened before writing bits/counts; no value/decision copies.

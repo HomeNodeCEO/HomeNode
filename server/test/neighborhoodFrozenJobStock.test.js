@@ -23,6 +23,8 @@ import { createNeighborhoodSharedJobTransactionPagesV2,prepareNeighborhoodShared
 import { createNeighborhoodSharedTransactionPackagesV1, NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSharedTransactionPackagesV1.js';
 import { createNeighborhoodSharedStockOriginalCellsV2, prepareNeighborhoodStockOriginalCellPageV2,
+  prepareNeighborhoodStockAccountPackagePageV2, NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL,
+  getNeighborhoodStockAccountPackageV2Profile,
   NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL, getNeighborhoodStockOriginalCellsV2Profile }
   from '../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
 import { NEIGHBORHOOD_FROZEN_JOB_IDENTITY_SQL, NEIGHBORHOOD_FROZEN_JOB_IDENTITY_COVERAGE_SQL }
@@ -1009,6 +1011,14 @@ async function stockOriginalCellFixture(hook=()=>{}){
     const supplied=await hook({...call,source,sharedHeader,rows});if(supplied)return supplied;
     if(call.text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.source)return result(source);
     if(call.text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read)return result(structuredClone(sharedHeader));
+    if(call.text===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL){
+      const chosen=Buffer.compare(Buffer.from('STOCK-A'),Buffer.from(call.values[3]))>0?'STOCK-A':null;
+      const packet=chosen?Object.values(rows).flat().filter(r=>r.account_id===chosen).sort((a,b)=>
+        Buffer.compare(Buffer.from(`${a.kind}\u0000${a.row_key}`),Buffer.from(`${b.kind}\u0000${b.row_key}`))):[];
+      return result({account_id:chosen,geographic_parcel_count:chosen?'1':null,
+        original_counts:{parcels:packet.filter(r=>r.kind==='parcels').length,accounts:packet.filter(r=>r.kind==='accounts').length},
+        page_count:packet.length,invalid_count:0,packet_oversize:false,page_json:JSON.stringify(packet)});
+    }
     if(call.text===NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL){
       const candidates=rows[call.values[3]].filter(r=>Buffer.compare(Buffer.from(r.row_key),Buffer.from(call.values[4]))>0).slice(0,call.values[5]);
       return result({page_json:JSON.stringify(candidates),page_count:candidates.length,candidate_count:candidates.length,
@@ -1116,4 +1126,90 @@ test('stock originals refuse unavailable or changed headers and every caller fac
     assert.throws(()=>prepareNeighborhoodStockOriginalCellPageV2(page),/invalid_/);
   for(const o of [{...options,readOriginal:()=>{}},{...options,selectedAccounts:[]},{...options,sourceGrant:{allowed:true}},new Proxy(options,{})])
     assert.throws(()=>createNeighborhoodSharedStockOriginalCellsV2(ending.client,o,ending.graph,'2026-10-07'),/invalid_input/);
+});
+
+test('whole stock account resolves all original parts after retained-year replay without sums or currency inference',async()=>{
+  const f=await stockOriginalCellFixture();
+  f.rows.parcels[0]=stockOriginalCell('parcels','1',{current_market_value:'9007199254740993'});
+  f.rows.parcels[1]=stockOriginalCell('parcels','2',{residential_year_built:1960,current_market_value:'9007199254740993'});
+  const packet=await f.pages().accountPackage({cursor:''});
+  assert.deepEqual(packet.package_profile,getNeighborhoodStockAccountPackageV2Profile());
+  assert.equal(packet.status,'reconciled_stock_account_original_package');
+  assert.equal(packet.coverage,'one_complete_account_package_only');assert.equal(packet.account_id,'STOCK-A');
+  assert.deepEqual(packet.original_counts,{parcels:2,accounts:1});assert.equal(packet.account_original_state,'present');
+  assert.deepEqual(packet.rows.map(r=>r.kind),['accounts','parcels','parcels']);
+  assert.ok(packet.rows.every(r=>!Object.hasOwn(r,'original_text')&&Object.isFrozen(r.typed)));
+  const o=packet.observations;
+  assert.equal(o.reported_year_built.state,'observed');assert.equal(o.reported_year_built.exact_value,'1960');
+  assert.equal(o.reported_year_built.invalid_part_count,'1');assert.equal(o.reported_year_built.observed_part_count,'1');
+  assert.equal(o.reported_residential_area.exact_value,'9007199254740993.01','replicated parts are not added');
+  assert.equal(o.reported_site_area.exact_value,'0');assert.equal(o.reported_site_area.unit,'reported_sqft');
+  assert.equal(o.reported_market_value.state,'unsupported');assert.equal(o.reported_market_value.unit,null);
+  assert.equal(o.reported_market_value.exact_value,'9007199254740993');assert.equal(o.reported_market_value.unsupported_part_count,'2');
+  assert.equal(packet.end_of_accounts,false);assert.equal(packet.next_cursor,'STOCK-A');
+  for(const field of ['authority','selected_union','source_acquisition'])assert.equal(packet[field],'not_established');
+  assert.equal(packet.report_update,'none');
+  const future=await f.pages('2050-01-01').accountPackage({cursor:''});
+  assert.equal(future.observations.reported_year_built.state,'conflicting');
+  assert.deepEqual(future.observations.reported_year_built.conflict_values,['1960','2050']);
+  assert.deepEqual(future.rows[1].typed,packet.rows[1].typed,'date-neutral cache is unchanged');
+});
+
+test('whole stock account retains exact conflicts and missing/invalid/unsupported part denominators, without fabricating account originals',async()=>{
+  const f=await stockOriginalCellFixture();f.rows.accounts=[];
+  f.rows.parcels[0]=stockOriginalCell('parcels','1',{residential_year_built:null,residential_area_sqft:'0',parcel_area_sqft:null,current_market_value:'9007199254740993.01'});
+  f.rows.parcels[1]=stockOriginalCell('parcels','2',{residential_year_built:'bad',residential_area_sqft:null,parcel_area_sqft:'bad',current_market_value:'9007199254740993.02'});
+  const p=await f.pages().accountPackage({cursor:''}),o=p.observations;
+  assert.equal(p.account_original_state,'absent');assert.equal(p.original_counts.accounts,0);
+  assert.equal(o.reported_year_built.state,'invalid');assert.equal(o.reported_year_built.missing_part_count,'1');
+  assert.equal(o.reported_year_built.invalid_part_count,'1');assert.equal(o.reported_year_built.source_part_count,'2');
+  assert.equal(o.reported_residential_area.state,'invalid');assert.equal(o.reported_site_area.state,'invalid');
+  assert.equal(o.reported_market_value.state,'conflicting');assert.equal(o.reported_market_value.exact_value,null);
+  assert.deepEqual(o.reported_market_value.conflict_values,['9007199254740993.01','9007199254740993.02']);
+  f.rows.parcels=f.rows.parcels.map((r,i)=>stockOriginalCell('parcels',String(i+1),{residential_year_built:null,
+    residential_area_sqft:null,parcel_area_sqft:null,current_market_value:null}));
+  const missing=await f.pages().accountPackage({cursor:''});
+  for(const c of Object.values(missing.observations)){assert.equal(c.state,'missing');assert.equal(c.missing_part_count,'2');}
+});
+
+test('account package refuses incomplete, oversized, reordered and forged originals even with matching claimed counts',async()=>{
+  for(const mutate of [r=>r.typed.observations.reported_site_area.exact_value='2',r=>r.original_text=r.original_text.replace('2050','2040'),
+    r=>r.original_payload_sha256='e'.repeat(64),r=>r.typed=null,r=>r.cached_account_id='OUTSIDE']){
+    const f=await stockOriginalCellFixture();f.rows.parcels[0]=structuredClone(f.rows.parcels[0]);mutate(f.rows.parcels[0]);
+    await assert.rejects(f.pages().accountPackage({cursor:''}),/original_mismatch/);
+  }
+  const valid={account_id:'STOCK-A',geographic_parcel_count:'1',original_counts:{parcels:2,accounts:1},
+    page_count:3,invalid_count:0,packet_oversize:false};
+  for(const changes of [{page_count:2},{invalid_count:1},{original_counts:{parcels:1,accounts:1}},
+    {geographic_parcel_count:'3'},{account_id:null},{packet_oversize:true},{page_json:'not JSON'},
+    {original_counts:{parcels:251,accounts:0},page_count:0,page_json:'[]'}]){
+    const f=await stockOriginalCellFixture(({text,rows})=>text===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL?
+      result({...valid,page_json:JSON.stringify([...rows.accounts,...rows.parcels]),...changes}):null);
+    await assert.rejects(f.pages().accountPackage({cursor:''}),/invalid_result|account_package_(?:byte|row)_limit/);
+  }
+  const reordered=await stockOriginalCellFixture(({text,rows})=>text===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL?
+    result({...valid,page_json:JSON.stringify([...rows.parcels,...rows.accounts])}):null);
+  await assert.rejects(reordered.pages().accountPackage({cursor:''}),/invalid_original/);
+  assert.match(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL,/LIMIT \(\$5::integer\+1\)/);
+  assert.match(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL,/LEFT JOIN LATERAL/);
+  assert.doesNotMatch(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL,/FROM core\.|array_agg|ST_DWithin|INSERT|UPDATE|DELETE/);
+});
+
+test('account packages require fresh empty terminal probes and share single-use and ending-header fences with original pages',async()=>{
+  const f=await stockOriginalCellFixture(),reader=f.pages();
+  await reader.accountPackage({cursor:''});
+  await assert.rejects(reader.accountPackage({cursor:'STOCK-A'}),/single_use/);
+  await assert.rejects(reader.page({kind:'parcels',cursor:'',rowLimit:1}),/single_use/);
+  const empty=await f.pages().accountPackage({cursor:'STOCK-A'});
+  assert.equal(empty.account_id,null);assert.equal(empty.end_of_accounts,true);assert.equal(empty.next_cursor,'STOCK-A');
+  assert.deepEqual(empty.rows,[]);assert.equal(empty.observations,null);assert.equal(empty.account_original_state,'not_applicable');
+  const pageReader=f.pages();await pageReader.page({kind:'parcels',cursor:'',rowLimit:1});
+  await assert.rejects(pageReader.accountPackage({cursor:''}),/single_use/);
+  let headers=0;const ending=await stockOriginalCellFixture(({text,sharedHeader})=>text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read&&++headers===2?
+    result({...sharedHeader,status:'building'}):null);
+  await assert.rejects(ending.pages().accountPackage({cursor:''}),/cache_unavailable/);
+  for(const page of [undefined,{cursor:' A'},{cursor:'',complete:true},{cursor:'',account_id:'STOCK-A'},
+    {cursor:'',rowLimit:250},new Proxy({cursor:''},{}),{get cursor(){assert.fail('getter');}}])
+    assert.throws(()=>prepareNeighborhoodStockAccountPackagePageV2(page),/invalid_/);
+  assert.deepEqual(prepareNeighborhoodStockAccountPackagePageV2({cursor:'é'.repeat(64)}),{cursor:'é'.repeat(64)});
 });

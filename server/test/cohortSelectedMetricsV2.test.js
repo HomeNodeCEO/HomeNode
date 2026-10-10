@@ -108,6 +108,9 @@ test('additive native guards close exact13 roots, immutable row grammar, termina
  assert.ok(migration.includes("'^[1-9][0-9]{3}$'"));
  assert.ok(migration.includes("IS DISTINCT FROM (CASE WHEN key='reported_year_built' THEN 'year' ELSE 'reported_sqft' END)"),
    'parenthesize CASE so its THEN cannot terminate the PL/pgSQL IF condition');
+ assert.ok(migration.includes("((row_body->'metrics')-ARRAY['reported_year_built'"),
+   'extract the JSON object before removing its allowed keys; arithmetic subtraction otherwise binds to the key literal');
+ assert.doesNotMatch(migration,/->'[^']+'-ARRAY/);
  assert.equal((migration.match(/END \$\$;/g)??[]).length,6,'six complete PL/pgSQL functions; no replacement suffix injected into regex');
  for(const s of ["jsonb_array_length(cp->'evidence_refs')=13","(cp->'evidence_refs')-12",
    'app.neighborhood_selected_evidence_v2_checkpoint_matches','DEFERRABLE INITIALLY DEFERRED','neighborhood_selected_metrics_v2_orphan_row',

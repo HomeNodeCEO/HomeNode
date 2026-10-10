@@ -172,7 +172,7 @@ BEGIN
       OR (row_body->>'housing_comparison'<>'unresolved' AND row_body->'subject_housing'->>'state'<>'observed')
       OR row_body->>'basis' IS DISTINCT FROM 'current_retained_reported_comparison_not_verified_GLA_currency_historical_housing_or_economic_transaction'
       OR jsonb_typeof(row_body->'metrics') IS DISTINCT FROM 'object' OR (SELECT count(*) FROM jsonb_object_keys(row_body->'metrics'))<>4
-      OR (row_body->'metrics'-ARRAY['reported_year_built','reported_residential_area','reported_site_area','reported_market_value'])<>'{}'::jsonb THEN
+      OR ((row_body->'metrics')-ARRAY['reported_year_built','reported_residential_area','reported_site_area','reported_market_value'])<>'{}'::jsonb THEN
       RAISE EXCEPTION 'neighborhood_selected_metrics_v2_row_conflict' USING ERRCODE='55000'; END IF;
     FOREACH key IN ARRAY ARRAY['reported_year_built','reported_residential_area','reported_site_area','reported_market_value'] LOOP
       cell:=row_body->'metrics'->key;

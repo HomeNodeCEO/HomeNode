@@ -1,5 +1,20 @@
 # Complete larger-area Custom neighborhood studies
 
+## Seventh-pass native correction (2026-10-10 23:18 UTC; inactive)
+
+Exact head `593fb7d67b354933554fb695c21d44a7ae82d38f` passed the
+417-migration suite and subject test, but its isolated-index suite passed only
+11 of 13 tests. The two nonempty seventh-pass cases refused before their
+expected actual head-write rollback: PostgreSQL interpreted the unparenthesized
+`row_body->'metrics'-ARRAY[...]` expression as subtraction from the key literal,
+raising invalid JSON token `metrics`. The explicit EMPTY case alone passed;
+that is not complete selected-population acceptance. The decoded native job
+`114333602246` (foundation run `38093174306`, 2,409,512 characters) was inspected.
+The guard now explicitly extracts `(row_body->'metrics')` before removing its
+allowed keys, with a focused regression. Fresh exact-head cloud verification
+is required; no failed check is bypassed, no rerun is substituted for a fix,
+and nothing is activated or deployed.
+
 ## Durable selected reported-metric traversal (2026-10-10, authored; inactive)
 
 The seventh pass now extends the actual bounded original-reopening database

@@ -3046,28 +3046,52 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       assert.doesNotMatch(JSON.stringify(result.rows),/original_text|cached_account_id/);
     }
     await assertCadUnchanged();
+    const amenityMethod='readOriginalFrozenCaptureJobCadAmenityEvidenceReferencesV2';
+    const amenityA=await cadOwner()[amenityMethod](refsInput,originalCadOptions);
+    const amenityB=await cadOwner()[amenityMethod](refsInput,{...originalCadOptions,cadAccountPackagePage:{cursor:amenityA.next_cursor}});
+    const amenityEnd=await cadOwner()[amenityMethod](refsInput,{...originalCadOptions,cadAccountPackagePage:{cursor:amenityB.next_cursor}});
+    assert.deepEqual(amenityA.rows,originalCadA.rows);assert.deepEqual(amenityB.rows,originalCadB.rows);
+    assert.equal(amenityEnd.end_of_accounts,true);assert.equal(amenityEnd.amenity_evidence,null);
+    for(const [result,account] of [[amenityA,originalCadAccounts[0]],[amenityB,originalCadAccounts[1]]]){
+      const evidence=result.amenity_evidence;
+      assert.equal(result.current_authorized_owner,'V2_issued_graph_geography_identity_and_separate_CAD_rights');
+      assert.equal(result.original_reconciliation,'every_original_and_entire_cache_before_projection');
+      for(const key of ['state','exact_value','unit','reason'])assert.equal(evidence.reported_pool[key],account.observations.reported_pool_flag[key]);
+      assert.equal(evidence.reported_pool.verified_presence_or_absence,'not_established');
+      assert.equal(evidence.provider_fidelity,'not_established');assert.equal(evidence.source_freshness,'not_established');
+      assert.equal(evidence.amenity_completeness,'not_established');
+      assert.deepEqual(evidence.secondary_inventory.rows.map(r=>r.row_key),account.secondary_originals.map(r=>r.row_key));
+      for(const key of ['garage_area','garage_spaces','outbuilding_area'])assert.equal(evidence[key].state,'unsupported');
+      assert.ok(evidence.secondary_inventory.rows.every(r=>r.semantic_type==='unsupported'));
+      assert.doesNotMatch(JSON.stringify(evidence),/original_text|cached_account_id/);
+    }
+    await assertCadUnchanged();
+    for(const method of [originalCadMethod,amenityMethod]){
     for(const fault of ['cad_original_cell','cad_original_missing','cad_original_text','cad_original_bytes']){
-      refsFault=fault;await assert.rejects(cadOwner()[originalCadMethod](refsInput,originalCadOptions),/original_mismatch/);
+      refsFault=fault;await assert.rejects(cadOwner()[method](refsInput,originalCadOptions),/original_mismatch/);
       assert.equal(refsFault,null);await assertCadUnchanged();
     }
     for(const [fault,reason] of [['cad_license',/market_data_access_denied/],['cad_expiry',/market_data_access_denied/],
       ['cad_revision',/CAD_source_policy_changed/],['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],
       ['subject',/subject_changed/],['claim',/claim_lost/],['cancel',/cancelled/],['cad_header',/cache_unavailable/]]){
       refsFault=fault;refsAbort=new AbortController();const from=refsCalls.length;
-      await assert.rejects(cadOwner()[originalCadMethod](refsInput,{...originalCadOptions,signal:refsAbort.signal}),reason,`original CAD ending ${fault}`);
+      await assert.rejects(cadOwner()[method](refsInput,{...originalCadOptions,signal:refsAbort.signal}),reason,`${method} ending ${fault}`);
       assert.equal(refsFault,null);assert.ok(refsCalls.slice(from).includes(NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL));await assertCadUnchanged();
       if(fault.startsWith('cad_'))await setCadFixtureGrant(pool,organization,cadGrant);
       if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
       if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
     }
-    refsFault='commit';await assert.rejects(cadOwner()[originalCadMethod](refsInput,originalCadOptions),e=>e.outcome_unknown===true);
-    assert.equal(refsFault,null);assert.deepEqual((await cadOwner()[originalCadMethod](refsInput,originalCadOptions)).rows,originalCadA.rows);await assertCadUnchanged();
+    refsFault='commit';await assert.rejects(cadOwner()[method](refsInput,originalCadOptions),e=>e.outcome_unknown===true);
+    assert.equal(refsFault,null);const reopened=await cadOwner()[method](refsInput,originalCadOptions);
+    assert.deepEqual(reopened.rows,originalCadA.rows);
+    if(method===amenityMethod)assert.deepEqual(reopened.amenity_evidence,amenityA.amenity_evidence);await assertCadUnchanged();
     for(const fault of ['missing_receipt','corrupt_receipt','missing_geo_receipt','corrupt_geo_receipt','missing_identity_receipt','corrupt_identity_receipt']){
       refsFault=fault;const from=refsCalls.length;
-      await assert.rejects(cadOwner()[originalCadMethod](refsInput,originalCadOptions),/checkpoint_conflict|storage_conflict|invalid_receipt/);
+      await assert.rejects(cadOwner()[method](refsInput,originalCadOptions),/checkpoint_conflict|storage_conflict|invalid_receipt/);
       assert.equal(refsFault,null);assert.ok(!refsCalls.slice(from).includes(NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL));await assertCadUnchanged();
     }
-    await assert.rejects(cadOwner()[originalCadMethod](sourceInput,{...originalCadOptions,captureJobClaim:sourceClaim}),/checkpoint_conflict/);
+    await assert.rejects(cadOwner()[method](sourceInput,{...originalCadOptions,captureJobClaim:sourceClaim}),/checkpoint_conflict/);
+    }
     assert.ok(!refsCalls.slice(originalCadFrom).some(sql=>/ST_DWithin|shared-typed-CAD:(?:page|begin|rows|progress)|checkpoint-save|anchor-(?:advance|insert)/.test(sql)));
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_custom_cohort_typed_original_rows WHERE operation_id=$1',[refsOperation])).rows[0].n,0);
     console.info('[native-original-reconciled-CAD-account-owner-v2]',{stock_accounts:2,primary_originals:2,secondary_originals:3,
@@ -3076,6 +3100,13 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       partial_unissued_corrupt_prerequisites_refused:true,ending_cache_guard:true,unchanged_hash_count_forgeries_refused:true,
       lost_commit_reopen:true,fresh_empty_probe:true,original_payload_copies:0,job_typed_copies:0,checkpoint_or_head_writes:0,
       secondary_type_housing_or_verified_GLA_inference:false,selected_union:false,source_acquisition:false,report_update:false,production_speed:false});
+    console.info('[native-original-reconciled-CAD-amenity-evidence-owner-v2]',{stock_accounts:2,primary_originals:2,secondary_originals:3,
+      every_original_and_entire_cache_replayed:true,all_native_secondary_ids_retained:true,pool_reported_boolean_NULL_distinct:true,
+      no_dictionary_type_area_sum_space_or_verified_presence_inference:true,provider_fidelity_and_freshness_not_established:true,
+      partial_unissued_corrupt_prerequisites_refused:true,current_and_ending_separate_CAD_legacy_rights_cache_claim_cancel:true,
+      unchanged_hash_count_forgeries_refused:true,lost_commit_reopen:true,fresh_empty_probe:true,
+      original_payload_copies:0,job_typed_copies:0,checkpoint_or_head_writes:0,
+      full_amenity_resolution:false,selected_union:false,licensed_acquisition:false,report_update:false,production_speed:false});
     }
     for(const [kind,keys] of Object.entries(expected)){
       let position=null;const seen=[];

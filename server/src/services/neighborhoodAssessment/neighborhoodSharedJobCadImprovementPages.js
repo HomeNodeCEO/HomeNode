@@ -10,6 +10,7 @@ import { getNeighborhoodFrozenTypedCadImprovementV1Profile } from './neighborhoo
 import { NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL,NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_LIMITS,
   prepareNeighborhoodOriginalCadAccountPackagePageV2,reconcileNeighborhoodOriginalCadAccountPackageV2,
   getNeighborhoodOriginalCadAccountPackageV2Profile } from './neighborhoodOriginalCadAccountPackagesV2.js';
+import { resolveNeighborhoodOriginalCadAmenityEvidenceV2 } from './neighborhoodOriginalCadAmenityEvidenceV2.js';
 
 export const NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_LIMITS=Object.freeze({rows:250,row_utf8_bytes:32768,
   page_utf8_bytes:2100000,read_utf8_bytes:32000000,queries:48,step_ms:60000});
@@ -193,7 +194,7 @@ function cadPages(client,rawOptions,rawGraph,effective){
     let encoded;try{encoded=JSON.stringify(r.rows);}catch{fail('invalid_result');}
     readBytes+=Buffer.byteLength(encoded);if(readBytes>L.read_utf8_bytes)fail('byte_limit');check();return r;};
   const store=createNeighborhoodFrozenJobStock({query:execute},o);
-  const readPage=async(rawPage,originalReplay)=>{const page=originalReplay?prepareNeighborhoodOriginalCadAccountPackagePageV2(rawPage)
+  const readPage=async(rawPage,originalReplay,amenities=false)=>{const page=originalReplay?prepareNeighborhoodOriginalCadAccountPackagePageV2(rawPage)
     :projectingAccounts?prepareNeighborhoodSharedJobCadAccountPage(rawPage):prepareNeighborhoodSharedJobCadPage(rawPage);
     if(used)fail('single_use');used=true;started=performance.now();
     const stock=await store.read(),source=prepareNeighborhoodSharedTypedCadSource(await execute(NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.source,[stock.generation_id]),stock.generation_id);
@@ -215,11 +216,15 @@ function cadPages(client,rawOptions,rawGraph,effective){
       const raw=one(await execute(NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL,[stock.operation_id,stock.generation_id,
         PROFILE.profile_ref.content_sha256,page.cursor,bounds.rows,bounds.packet_utf8_bytes,bounds.row_utf8_bytes,
         bounds.original_utf8_bytes,bounds.output_utf8_bytes]));
-      const packet=reconcileNeighborhoodOriginalCadAccountPackageV2(raw,page,effective,check);await finish();
-      return freeze({page_version:2,status:'original_reconciled_CAD_account_package',authority:'not_established',coverage:'one_complete_account_only',
+      const packet=reconcileNeighborhoodOriginalCadAccountPackageV2(raw,page,effective,check);
+      const amenityEvidence=amenities?(packet.rows.length?resolveNeighborhoodOriginalCadAmenityEvidenceV2(packet.rows[0],check):null):undefined;
+      const result={page_version:2,status:amenities?'original_reconciled_CAD_amenity_evidence':'original_reconciled_CAD_account_package',authority:'not_established',coverage:'one_complete_account_only',
         graph,stock,source_metadata:source,typed_profile:PROFILE,projection_profile:getNeighborhoodOriginalCadAccountPackageV2Profile(),
         effective_date:effective,cursor:page.cursor,...packet,absent_primary:'missing_not_zero_or_no_amenity',
-        original_reconciliation:'every_original_and_entire_cache_before_projection',source_acquisition:'not_established',report_update:'none'});
+        ...(amenities?{amenity_evidence:amenityEvidence}:{}),
+        original_reconciliation:'every_original_and_entire_cache_before_projection',source_acquisition:'not_established',report_update:'none'};
+      if(amenities&&Buffer.byteLength(JSON.stringify(result))>bounds.output_utf8_bytes)fail('byte_limit');
+      await finish();return freeze(result);
     }
     const r=one(await execute(projectingAccounts?NEIGHBORHOOD_SHARED_JOB_CAD_ACCOUNT_PAGE_SQL:NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_SQL,
       projectingAccounts?[stock.operation_id,stock.generation_id,PROFILE.profile_ref.content_sha256,page.cursor,page.rowLimit,L.page_utf8_bytes,L.row_utf8_bytes]
@@ -245,5 +250,6 @@ function cadPages(client,rawOptions,rawGraph,effective){
       absent_rows:'not_zero_or_no_amenity',source_acquisition:'not_established',report_update:'none'});
   };
   return Object.freeze({page:rawPage=>readPage(rawPage,false),
-    ...(projectingAccounts?{originalAccountPackage:rawPage=>readPage(rawPage,true)}:{})});
+    ...(projectingAccounts?{originalAccountPackage:rawPage=>readPage(rawPage,true),
+      originalAmenityEvidence:rawPage=>readPage(rawPage,true,true)}:{})});
 }

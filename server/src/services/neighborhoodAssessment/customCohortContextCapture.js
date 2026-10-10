@@ -216,6 +216,8 @@ const FROZEN_SOURCE_STAGES = freeze({
     catalogingRecordedGroups: true, awaitingSelection: true, allowedPhases: ['frozen_recorded_catalog_refs_v2'] },
   original_catalog_selection_intent_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, selectingCatalogIntent: true, allowedPhases: ['frozen_recorded_catalog_refs_v2'] },
+  original_retained_selection_intent_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    catalogingRecordedGroups: true, readingRetainedSelectionIntent: true, allowedPhases: ['frozen_recorded_catalog_refs_v2'] },
 });
 function fail(reason, detail, captureCounts) {
   const error = Object.assign(new Error(`custom_cohort_capture_${reason}`), {
@@ -1650,7 +1652,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,
       resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,partitioningRecordedGroups=false,
-      readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
+      readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     if(referencesV2){
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
       const descriptors=Object.getOwnPropertyDescriptors(options),keys=Reflect.ownKeys(descriptors);
@@ -1681,6 +1683,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     if(!readingStockOriginalCells&&stockOriginalCellPage!==undefined)fail('invalid_options');
     if(!readingStockAccountPackages&&stockAccountPackagePage!==undefined)fail('invalid_options');
     const originalInput=inputOf(value);
+    if(readingRetainedSelectionIntent&&utilTypes.isProxy(providedClaim))fail('invalid_options');
     let claim=selectingCatalogIntent?null:prepareCustomCohortCaptureJobClaim(providedClaim);
     if(claim&&claim.operation_id!==originalInput.operationId.toLowerCase()) fail('operation_conflict');
     if(!reportedProfile) fail('frozen_source_profile_unsupported');
@@ -1715,8 +1718,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         claim=issuedSelectionIntent.claim;
       }
       if(!same(await jobs.readRequest(claim,jobOptions),requested)) fail('operation_conflict');
-      if(readingSelectionWorkspaceTarget||awaitingSelection)selectionWorkspaceTarget=await readCustomCohortFrozenSelectionWorkspaceTarget({
-        client,input,scopeJson:canonicalAssessmentJson(scope),checkBudget:budget.check});
+      if(readingSelectionWorkspaceTarget||awaitingSelection||readingRetainedSelectionIntent){
+        if(readingRetainedSelectionIntent)authorizePublicCadastralCatalogRead(input.auth,input.accountId,{workflows:['custom_appraisal'],
+          permissionChecker:(auth,workflow,permission)=>hasApplicationPermission(auth,workflow,permission,scope.organization_id)});
+        selectionWorkspaceTarget=await readCustomCohortFrozenSelectionWorkspaceTarget({
+          client,input,scopeJson:canonicalAssessmentJson(scope),checkBudget:budget.check});
+      }
       const checkpoint=await jobs.readCheckpoint(claim,jobOptions);
       if(!checkpoint || !allowedPhases.includes(checkpoint.phase)
         ||checkpoint.evidence_refs.length!==({frozen_stock_v1:2,frozen_source_v1:3,frozen_source_refs_v2:3,frozen_verify_refs_v2:4,frozen_geo_verify_refs_v2:5,frozen_identity_refs_v2:6,frozen_stock_traversal_refs_v2:7,frozen_recorded_partition_refs_v2:8,frozen_recorded_catalog_refs_v2:9,frozen_verify_v1:4,frozen_geo_verify_v1:5,frozen_identity_v1:6,frozen_typed_v1:7}[checkpoint.phase]))
@@ -1749,6 +1756,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       // retention and all-date one-hop fields. Retained grant metadata is not
       // authority: current policy must allow before any licensed original.
       const decision=await boundedPolicy(authorizeMarketData,client,input.auth,context,purpose,budget);
+      if(readingRetainedSelectionIntent)issuedSelectionIntent=await createCustomCohortV2SelectionIntentRepository(client)
+        .readRetained(claim,{...jobOptions,workspaceTarget:selectionWorkspaceTarget});
       // Never let an early known-ID error become a revoked-license catalog
       // oracle. This fixed lookup is permitted only AFTER current source policy
       // at BOTH ends. Choices come from the immutable native command, not body
@@ -1768,7 +1777,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           scope.account_id,input.auth.userId]));
         if(row.known!==true)fail('selection_group_unavailable');
       };
-      if(selectingCatalogIntent)await checkSelectionIntentKnownGroups();
+      if(selectingCatalogIntent||readingRetainedSelectionIntent)await checkSelectionIntentKnownGroups();
       // The old seven-layer grant cannot authorize the companion projection.
       // This exact additional purpose is derived only from the actual reopened
       // stock/subject/selection, never a caller grant, date, field list or head.
@@ -2178,7 +2187,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             try{catalogIssued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
             catalogIssued=prepareCohortRecordedCatalogReceiptV2(catalogIssued,catalogExpected);
             if(catalogIssued.sequence!==catalogAnchor.sequence)fail('checkpoint_conflict');}
-          if((readingRecordedCatalog||awaitingSelection||selectingCatalogIntent)&&catalogIssued?.after.done!==true)fail('unfinished_recorded_catalog');
+          if((readingRecordedCatalog||awaitingSelection||selectingCatalogIntent||readingRetainedSelectionIntent)&&catalogIssued?.after.done!==true)fail('unfinished_recorded_catalog');
           catalogCounts=await catalogStore.counts();
           if(!same(catalogCounts,catalogIssued?.after_counts??{assigned_accounts:0,unassigned_accounts:0,assigned_groups:0}))fail('catalog_original_mismatch');
         }
@@ -2314,7 +2323,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       authorizePublicCadastralCatalogRead(input.auth,input.accountId,{workflows:['custom_appraisal'],
         permissionChecker:(auth,workflow,permission)=>hasApplicationPermission(auth,workflow,permission,scope.organization_id)});
       if(!same(await boundedPolicy(authorizeMarketData,client,input.auth,context,purpose,budget),decision)) fail('market_policy_changed');
-      if(selectingCatalogIntent)await checkSelectionIntentKnownGroups();
+      if(selectingCatalogIntent||readingRetainedSelectionIntent)await checkSelectionIntentKnownGroups();
       if(readingCadPages&&!same(await boundedPolicy(authorizeCadImprovementData,client,input.auth,context,cadPurpose,budget),cadDecision))
         fail('CAD_source_policy_changed');
       if(!same(await jobs.readRequest(claim,jobOptions),requested)||!same(await stockStore.read(),stock)) fail('checkpoint_conflict');
@@ -2327,9 +2336,20 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if((readingRecordedPartition||catalogingRecordedGroups)&&!same(await partitionStore.readNextEntry(partitionReadCursor),partitionReadEntry))fail('partition_original_mismatch');
       if(catalogStore&&(!same(await catalogStore.read(),catalogAnchor)||!same(await catalogStore.counts(),catalogCounts)))fail('catalog_original_mismatch');
       if(catalogReadGroupKey&&!same(await catalogStore.readGroup(catalogReadGroupKey),catalogReadGroup))fail('catalog_original_mismatch');
-      if((readingSelectionWorkspaceTarget||awaitingSelection||selectingCatalogIntent)&&!same(await readCustomCohortFrozenSelectionWorkspaceTarget({
+      if((readingSelectionWorkspaceTarget||awaitingSelection||selectingCatalogIntent||readingRetainedSelectionIntent)&&!same(await readCustomCohortFrozenSelectionWorkspaceTarget({
         client,input,scopeJson:canonicalAssessmentJson(scope),checkBudget:budget.check}),selectionWorkspaceTarget))fail('workspace_target_changed');
       budget.check();
+      if(readingRetainedSelectionIntent){
+        const ending=await createCustomCohortV2SelectionIntentRepository(client).readRetained(claim,
+          {...jobOptions,workspaceTarget:selectionWorkspaceTarget});
+        if(!same(ending,issuedSelectionIntent)||!same(ending.catalog_reference,catalogAnchor.receipt_reference))fail('selection_intent_changed');
+        budget.check();return freeze({...issuedSelectionIntent,status:'retained_new_study_selection_intent_reopened',operation_id:input.operationId,
+          selection_workspace_target:selectionWorkspaceTarget,genuine_new_group_choice:'unchanged_immutable_authenticated_command_only',
+          original_reconciliation:'fresh_terminal_original_cache_and_partition_empty_probe_after_issued_catalog_DONE',
+          read_only:true,lease_extended:false,complete_catalog_semantic_replay:'not_established',selected_union:'not_established',
+          statistics:'not_established',context_complete:false,pin_transfer:false,publication:'not_established',
+          source_acquisition:'not_established',report_update:'none'});
+      }
       if(selectingCatalogIntent){
         const ending=await createCustomCohortV2SelectionIntentRepository(client).resume(input.operationId,
           {...jobOptions,intent:selectionIntent,workspaceTarget:selectionWorkspaceTarget});
@@ -2657,6 +2677,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     // browser claim, prior-choice carryover, membership, statistics or Apply.
     resumeOriginalFrozenCaptureJobSelectionIntentReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_catalog_selection_intent_refs_v2'),
+    // Read-only current-worker reopen, not a second human command or lease.
+    // Current actor/source/subject/target and entire original graph are checked
+    // again. Retained IDs do NOT establish complete catalog or selected union.
+    readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'original_retained_selection_intent_refs_v2'),
     async capture(value, options = {}) {
     if (!options || Object.getPrototypeOf(options) !== Object.prototype)
       fail('invalid_options');

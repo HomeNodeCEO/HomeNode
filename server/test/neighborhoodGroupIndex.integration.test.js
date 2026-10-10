@@ -4190,9 +4190,98 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
         assert.equal(await pinCount(),pinsBeforeContinuation);assert.deepEqual(await readTargetWorkspace(),targetWorkspace);
         assert.deepEqual(await readTargetHistory(),targetHistory);assert.deepEqual(await readTargetReport(),targetReport);
         assert.deepEqual(await readTargetWorkfile(),targetWorkfile);assert.deepEqual(await readPriorTargetMetadata(),priorTargetMetadata);
+        const retainedMethod='readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2';
+        let workerClaim=replayed.claim,workerSnapshot=resumedJob;
+        const assertRetainedUnchanged=async()=>{
+          assert.deepEqual(await readIntents(),retainedIntents);assert.deepEqual(await continuationJob(),workerSnapshot);
+          assert.deepEqual(await readCatalogHead(),catalogFinal);assert.deepEqual(await readCatalogGroups(),catalogGroups);
+          assert.deepEqual(await readPartitionHead(),partitionFinal);assert.deepEqual(await readPartitionRows(),partitionRows);
+          assert.deepEqual(await continuationRow(),catalogReadContinuation);assert.equal(await refsBlobCount(),catalogFinalBlobs);
+          assert.equal(await pinCount(),pinsBeforeContinuation);assert.deepEqual(await readTargetWorkspace(),targetWorkspace);
+          assert.deepEqual(await readTargetHistory(),targetHistory);assert.deepEqual(await readTargetReport(),targetReport);
+          assert.deepEqual(await readTargetWorkfile(),targetWorkfile);assert.deepEqual(await readPriorTargetMetadata(),priorTargetMetadata);
+        },readRetained=()=>freshRefsOwner()[retainedMethod](refsInput,{captureJobClaim:workerClaim}),
+          initialReadFrom=refsCalls.length,initialRetained=await readRetained();
+        assert.equal(initialRetained.status,'retained_new_study_selection_intent_reopened');
+        assert.deepEqual(initialRetained.claim,workerClaim);assert.equal(initialRetained.issued_attempts,2);
+        assert.equal(initialRetained.command_id,selectionIntent.command_id);
+        assert.deepEqual(initialRetained.included_recorded_group_ids,selectionIntent.included_recorded_group_ids);
+        assert.equal(initialRetained.read_only,true);assert.equal(initialRetained.lease_extended,false);
+        assert.equal(initialRetained.context_complete,false);assert.equal(initialRetained.pin_transfer,false);
+        assert.equal(initialRetained.complete_catalog_semantic_replay,'not_established');assert.equal(initialRetained.selected_union,'not_established');
+        const initialReadCalls=refsCalls.slice(initialReadFrom);
+        assert.equal(initialReadCalls.filter(sql=>sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,1);
+        assert.equal(initialReadCalls.filter(sql=>sql.includes('selection-intent:retained-read')).length,2);
+        assert.equal(initialReadCalls.filter(sql=>sql.includes('selection-intent:known-groups')).length,2);
+        assert.ok(initialReadCalls.length-3<=ORIGINAL_OWNER_LIMITS.sql_queries);
+        assert.ok(!initialReadCalls.some(sql=>/\b(INSERT|UPDATE|DELETE|TRUNCATE)\b/.test(sql.replace(/FOR UPDATE NOWAIT/g,''))));
+        await assertRetainedUnchanged();
+        // Source denial precedes even the retained command/ID read. A claim or
+        // old accepted command is not a current source grant.
+        await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+        const deniedWorkerFrom=refsCalls.length;await assert.rejects(readRetained(),/market_data_access_denied/);
+        assert.ok(!refsCalls.slice(deniedWorkerFrom).some(sql=>sql.includes('selection-intent:retained-read')
+          ||sql.includes('selection-intent:known-groups')||sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
+        await assertRetainedUnchanged();await setFixtureGrant(pool,organization,fixtureGrant(organization));
+        for(const [fault,reason] of [['catalog_owner_bytes_ending',/original_account_owner_byte_limit/],
+          ['catalog_prior_head_ending',/group_workspace_selection_changed/],['catalog_workspace_revision_ending',/workspace_target_changed/],
+          ['catalog_workspace_pending_ending',/group_workspace_study_changed/],['catalog_workspace_missing_ending',/group_workspace_unavailable/],
+          ['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],['subject',/subject_changed/],
+          ['claim',/claim_lost|operation_unavailable/],['cancel',/cancelled/],['transaction_header',/cache_unavailable/],
+          ['catalog_read_counts_ending',/catalog_original_mismatch/],['catalog_read_head_ending',/checkpoint_conflict|catalog_original_mismatch/]]){
+          refsFault=fault;refsAbort=new AbortController();const from=refsCalls.length;
+          await assert.rejects(freshRefsOwner()[retainedMethod](refsInput,{captureJobClaim:workerClaim,signal:refsAbort.signal}),reason);
+          assert.equal(refsFault,null);assert.equal(refsCalls.slice(from).filter(sql=>sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,1);
+          await assertRetainedUnchanged();
+          if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+          if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+        }
+        refsFault='commit';await assert.rejects(readRetained(),e=>e.outcome_unknown===true);
+        assert.deepEqual(await readRetained(),initialRetained);await assertRetainedUnchanged();
+        const staleWorkerClaim=workerClaim;
+        // Use REAL ordinary failure and scheduling/claiming. No edited attempt,
+        // error history, due time, command, resume token or success sequence.
+        assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client)
+          .failClaim(workerClaim,'synthetic_selection_worker_failure',{retrySeconds:1})),{status:'retry'});
+        assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>createCustomCohortV2ContinuationRepository(client)
+          .claimDue({limit:1,leaseSeconds:900})),[]);
+        await assert.rejects(readRetained(),/claim_lost/);
+        await new Promise(resolve=>setTimeout(resolve,1100));
+        const replacementClaims=(await Promise.all([1,2].map(()=>withCustomCohortJobTransaction(pool,client=>
+          createCustomCohortCaptureJobRepository(client).claimDue({limit:1,leaseSeconds:900}))))).flat();
+        assert.equal(replacementClaims.length,1);const replacement=replacementClaims[0];
+        assert.equal(replacement.operation_id,refsOperation);assert.equal(replacement.attempts,3);
+        assert.notEqual(replacement.claim_token,staleWorkerClaim.claim_token);
+        assert.notEqual(replacement.claim_token,refsClaim.claim_token);
+        workerClaim={operation_id:refsOperation,claim_token:replacement.claim_token,attempts:replacement.attempts};
+        workerSnapshot=await continuationJob();
+        assert.equal(workerSnapshot.last_error_code,'synthetic_selection_worker_failure');
+        assert.deepEqual(workerSnapshot.checkpoint,waiting.checkpoint);assert.equal(workerSnapshot.context_sha256,null);
+        const staleWorkerFrom=refsCalls.length;
+        await assert.rejects(freshRefsOwner()[retainedMethod](refsInput,{captureJobClaim:staleWorkerClaim}),/claim_lost/);
+        assert.ok(!refsCalls.slice(staleWorkerFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
+        await assert.rejects(freshRefsOwner()[intentMethod](refsInput,intentOptions),/command_conflict/);
+        const replacementReadFrom=refsCalls.length,replacementRetained=await readRetained(),replacementReadCalls=refsCalls.slice(replacementReadFrom);
+        assert.equal(replacementRetained.issued_attempts,2);assert.deepEqual(replacementRetained.claim,workerClaim);
+        assert.equal(replacementRetained.command_id,initialRetained.command_id);
+        assert.deepEqual(replacementRetained.included_recorded_group_ids,initialRetained.included_recorded_group_ids);
+        assert.deepEqual(replacementRetained.catalog_reference,initialRetained.catalog_reference);
+        assert.deepEqual(replacementRetained.selection_workspace_target,initialRetained.selection_workspace_target);
+        assert.equal(replacementReadCalls.filter(sql=>sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,1);
+        assert.ok(replacementReadCalls.length-3<=ORIGINAL_OWNER_LIMITS.sql_queries);await assertRetainedUnchanged();
+        console.info('[native-retained-selection-intent-worker-v2]',{independently_built_native_graph:true,
+          immutable_command_IDs_request_nine_roots_profile_workspace_and_prior_head_reopened:true,
+          current_source_denial_before_retained_command_or_known_group_read:true,
+          initial_and_actual_normal_replacement_claim_current_both_end_original_authority_fences:true,
+          all_ending_faults_and_lost_real_read_only_COMMIT_ack_preserve_job_intent_workspace_history_reports_and_pins:true,
+          real_failure_scheduling_two_claimers_one_fresh_attempt3_preserves_issued_attempt2_and_new_error:true,
+          stale_claim_and_original_human_resume_refuse_replacement:true,
+          whole_owner_sql_queries:replacementReadCalls.length-3,whole_owner_limits:ORIGINAL_OWNER_LIMITS,
+          lease_extended:false,new_choice:false,complete_catalog_semantics:false,selected_union:false,statistics:false,
+          publication:false,licensed_acquisition:false,worker_activation:false,production_speed:false});
         assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,refsOperation)),{status:'running'});
-        await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).failClaim(replayed.claim,'synthetic_cancel'));
-        assert.equal((await continuationJob()).status,'cancelled');assert.equal((await continuationJob()).attempts,2);
+        await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).failClaim(workerClaim,'synthetic_cancel'));
+        assert.equal((await continuationJob()).status,'cancelled');assert.equal((await continuationJob()).attempts,3);
         assert.deepEqual(await readIntents(),retainedIntents);assert.equal(await pinCount(),pinsBeforeContinuation);
         console.info('[native-new-study-selection-intent-v2]',{independently_built_native_graph:true,
           explicit_authenticated_new_study_IDs_not_prior_choice_or_worker_inference:true,

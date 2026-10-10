@@ -1,5 +1,67 @@
 # Complete larger-area Custom neighborhood studies
 
+## Retained new-study intent under replacement worker claims (2026-10-10, not activated)
+
+A separate, read-only internal stage now extends the ACTUAL bounded original
+database owner. It accepts only an internal current claim and operation budget,
+never a new command, group choice, cursor, roster, workspace, profile, callback,
+source grant, lease or retry reset. Today's database actor, private draft,
+assignment/subject target and locked pending V7 workspace/prior active head are
+checked again. CURRENT source policy must allow BEFORE the retained immutable
+command or known-group IDs are read. The command must match the actual job
+request, all nine issued roots, recorded-group profile and entire tiny pending
+workspace/revision. Group IDs come only from that immutable command, including
+an explicit empty choice, never from a worker or the previous active choice.
+
+The original still-live resume claim can read it. A genuinely new ordinary
+replacement claim can also read it after a real failure/reclaim, with a higher
+bounded attempt and a different token. The command's original issued attempt
+and token stay immutable. The original human resume endpoint remains strict:
+it cannot replay against a replacement claim or mint another lease. This new
+reader writes nothing and does not renew a lease, reset attempts/errors,
+change scheduling, change roots or issue a success continuation.
+
+In the SAME transaction, the owner reopens the issued source graph, geography,
+identity, stock, traversal, partition and completed catalog; performs ONE fresh
+server-chosen terminal whole-original/ENTIRE-neutral-cache/ENTIRE-partition
+empty probe; and repeats ALL current actor, assignment, private draft, subject,
+source policy, claim, cache, native head/count, pending workspace/prior head and
+immutable command checks. The unchanged whole-owner 256-query / 32MB / 60s
+executor covers every read; all stricter child budgets remain. This is a safe
+intent-reopen prerequisite, NOT complete original catalog semantic replay or
+selected membership. No HTTP, default dispatcher or worker is activated.
+
+148 focused storage/closed-owner tests pass, zero failures/skips (612.1372ms);
+source/native-fixture syntax and diff checks pass. The cloud fixture is extended
+to execute initial-claim read-only reopening, every current ending refusal,
+source denial before command/known-ID reads, lost REAL read-only COMMIT
+acknowledgment, REAL failure and bounded scheduling, two normal claimers with
+one fresh attempt3, retained issued attempt2/error/roots/pins, stale-claim and
+human-resume refusal, and unchanged workspace/history/accepted reports. These
+new native assertions are AUTHORED; new-head cloud execution is PENDING. SQL
+doubles are mechanics only; no heavy suite ran locally.
+
+Parent intent exact `fca57d96` is independently cloud-verified: Foundation
+38052290816 passed all four jobs. Native 114213672146 passed 417 migration /
+10 index / 1 subject / 1 edge / 2 bootstrap tests, zero failures/skips. Its
+12:41:01Z native marker includes revoked-license rejection for both KNOWN and
+UNKNOWN group IDs before any known-ID lookup or original packet. Frontend
+114213672207 passed 3959 tests, zero failures/skips, plus type/lint/source/build.
+These are small parent protocol results, NOT new-child, protected integration,
+complete union, licensed acquisition, production-speed or live acceptance.
+
+Complete original-reconciled catalog semantics, distinct COMPLETE selected
+union/eligibility and metric ordinals, exact medians/COD/calendar-quarter
+checks, coherent publication, finite whole-run dispatcher, terminal pin
+transfer/retirement, licensed >50k / 5-mile / 10-mile / city / retrospective and
+live Hardy saved-map reload acceptance all remain. No source payload copies,
+job-typed copies, dense full-population arrays, source grants, production
+mutations, accepted-report changes, genuine Hardy-choice changes or Apply.
+Protected parents integrate in order, main is retargeted BEFORE sync, and each
+integrated exact head needs fresh required security/native/full checks and an
+ACTUAL included review. No paid, forced, early, quota or check bypass. Same
+heartbeat stays ACTIVE; the roadmap remains incomplete.
+
 ## Explicit NEW-study intent and native resume (2026-10-10, not activated)
 
 The actual bounded original database owner has a new, separate internal command

@@ -3581,12 +3581,30 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql,sql.includes('$1')?[refsOperation]:[])),/continuation_immutable/);
     // A separate bounded catalog pass reopens EVERY whole original and the
     // ENTIRE partition entry, including unassigned A's outside conflicts.
-    const catalogMethod='advanceOriginalFrozenCaptureJobRecordedCatalogReferencesV2',catalogFrom=refsCalls.length,
-      catalogBeforeBlobs=await refsBlobCount(),catalogBeforeJob=await continuationJob(),
+    const catalogMethod='continueOriginalFrozenCaptureJobRecordedCatalogReferencesV2',catalogFrom=refsCalls.length,
+      catalogBeforeBlobs=await refsBlobCount(),catalogBeforeJob=await continuationJob(),catalogBeforeContinuation=await continuationRow(),
       readCatalogHead=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_recorded_catalog_v2_heads WHERE operation_id=$1',[refsOperation])).rows[0]??null,
       readCatalogGroups=async()=>(await pool.query('SELECT group_id,normalized_county,normalized_label,member_count,last_ordinal FROM app.neighborhood_custom_cohort_recorded_catalog_v2_groups WHERE operation_id=$1 ORDER BY group_id',[refsOperation])).rows,
       catalogInitial=async()=>{assert.equal(await readCatalogHead(),null);assert.deepEqual(await readCatalogGroups(),[]);
-        assert.deepEqual(await continuationJob(),catalogBeforeJob);assert.equal(await refsBlobCount(),catalogBeforeBlobs);};
+        assert.deepEqual(await continuationJob(),catalogBeforeJob);assert.equal(await refsBlobCount(),catalogBeforeBlobs);
+        assert.deepEqual(await continuationRow(),catalogBeforeContinuation);};
+    const consumeCatalogSuccess=async sequence=>{
+      const beforeClaim={...refsClaim},released=await continuationJob(),pending=await continuationRow();
+      assert.equal(released.status,'retry');assert.equal(released.claim_token,null);assert.equal(released.lease_expires_at,null);
+      assert.equal(released.attempts,oldClaim.attempts);assert.equal(released.last_error_code,catalogBeforeJob.last_error_code);
+      assert.equal(released.context_sha256,null);assert.equal(pending.sequence,sequence);
+      assert.equal(pending.phase,'frozen_recorded_catalog_refs_v2');assert.equal(pending.consumed_claim_token,null);
+      assert.deepEqual(pending.progress_reference,(await readCatalogHead()).receipt_reference);
+      assert.deepEqual(released.checkpoint.evidence_refs.at(-1),pending.progress_reference);assert.equal(released.checkpoint.evidence_refs.length,9);
+      await assert.rejects(freshRefsOwner()[catalogMethod](refsInput,refsOptions),/claim_lost/);
+      assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900})),[]);
+      const claims=await Promise.all([1,2].map(()=>withCustomCohortJobTransaction(pool,client=>
+        createCustomCohortV2ContinuationRepository(client).claimDue({limit:1,leaseSeconds:900}))));
+      assert.equal(claims.flat().length,1);const fresh=claims.flat()[0];assert.equal(fresh.claim.attempts,oldClaim.attempts);
+      assert.notEqual(fresh.claim.claim_token,beforeClaim.claim_token);Object.assign(refsClaim,fresh.claim);
+      assert.equal((await continuationRow()).consumed_claim_token,refsClaim.claim_token);
+      assert.deepEqual((await continuationJob()).checkpoint,released.checkpoint);assert.equal(await pinCount(),pinsBeforeContinuation);
+    };
     await catalogInitial();
     for(const [fault,reason] of [['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],['subject',/subject_changed/],
       ['claim',/claim_lost/],['cancel',/cancelled/],['transaction_header',/cache_unavailable/],['catalog_counts_ending',/catalog_original_mismatch/],
@@ -3633,6 +3651,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     assert.equal(catalogFirst.sequence,1);assert.equal(catalogFirstCheckpoint.phase,'frozen_recorded_catalog_refs_v2');
     assert.deepEqual(catalogFirstCheckpoint.evidence_refs.slice(0,8),partitionDoneCheckpoint.evidence_refs);
     assert.deepEqual(catalogFirstGroups,[{group_id:'discovery:unassigned',normalized_county:null,normalized_label:null,member_count:1,last_ordinal:1}]);
+    await consumeCatalogSuccess(3);
     for(const fault of ['missing_catalog_receipt','corrupt_catalog_receipt','catalog_counts_mismatch']){
       refsFault=fault;await assert.rejects(freshRefsOwner()[catalogMethod](refsInput,refsOptions),/checkpoint_conflict|storage_conflict|invalid_receipt|catalog_original_mismatch/);
       assert.equal(refsFault,null);assert.deepEqual(await readCatalogHead(),catalogFirst);assert.deepEqual(await readCatalogGroups(),catalogFirstGroups);
@@ -3640,16 +3659,21 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     }
     const catalogSecond=await freshRefsOwner()[catalogMethod](refsInput,refsOptions);assert.deepEqual(catalogSecond.counts,{assigned_accounts:1,unassigned_accounts:1,assigned_groups:1});
     assert.deepEqual(catalogSecond.progress,{after_account:'CLOSURE-B',account_count:2,done:false});
+    assert.equal(catalogSecond.continuation.continuation_sequence,4);assert.equal(catalogSecond.continuation.context_complete,false);
+    await consumeCatalogSuccess(4);
     const catalogEnd=await freshRefsOwner()[catalogMethod](refsInput,refsOptions),catalogFinal=await readCatalogHead(),catalogGroups=await readCatalogGroups(),
       catalogFinalCheckpoint=await readRefsCheckpoint(),catalogFinalBlobs=await refsBlobCount();
     assert.equal(catalogEnd.progress.done,true);assert.equal(catalogFinal.sequence,3);assert.equal(catalogGroups.length,2);
+    assert.equal(catalogEnd.continuation.continuation_sequence,5);await consumeCatalogSuccess(5);
     assert.equal(catalogGroups.find(g=>g.group_id===groupB.recorded_group.assigned_group_id).normalized_label,groupB.recorded_group.candidate_groups[0].normalized_label);
     assert.equal(catalogEnd.selected_union,'not_established');assert.equal(catalogEnd.statistics,'not_established');
-    const catalogReopenFrom=refsCalls.length,reopenedCatalog=await freshRefsOwner()[catalogMethod](refsInput,refsOptions);
+    const catalogReopenFrom=refsCalls.length,reopenedCatalog=await freshRefsOwner().advanceOriginalFrozenCaptureJobRecordedCatalogReferencesV2(refsInput,refsOptions);
     assert.equal(reopenedCatalog.advanced,false);assert.deepEqual(reopenedCatalog.counts,catalogEnd.counts);
     assert.ok(refsCalls.slice(catalogReopenFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL),'completed reopen rechecks original/cache and partition empty probes');
     assert.deepEqual(await readCatalogHead(),catalogFinal);assert.deepEqual(await readCatalogGroups(),catalogGroups);
     assert.deepEqual(await readRefsCheckpoint(),catalogFinalCheckpoint);assert.equal(await refsBlobCount(),catalogFinalBlobs);
+    await assert.rejects(freshRefsOwner()[catalogMethod](refsInput,refsOptions),/claim_lost|continuation_transition_conflict/);
+    assert.equal((await continuationRow()).sequence,5);assert.equal((await continuationJob()).attempts,oldClaim.attempts);
     assert.deepEqual(await readPartitionHead(),partitionFinal);assert.deepEqual(await readPartitionRows(),partitionRows);assert.equal(await pinCount(),pinsBeforeContinuation);
     for(const table of ['neighborhood_custom_cohort_recorded_catalog_v2_groups','neighborhood_custom_cohort_recorded_catalog_v2_heads'])
       for(const sql of [`DELETE FROM app.${table} WHERE operation_id=$1`,`UPDATE app.${table} SET organization_id=organization_id WHERE operation_id=$1`,`TRUNCATE app.${table}`])
@@ -3662,6 +3686,13 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       raw_variants_retained_in_original_partition_lineage:true,original_payload_copies:0,job_typed_copies:0,dense_population_arrays:0,
       assigned_group_limit:2048,large_group_limit_native_execution:false,selected_union:false,statistics:false,publication:false,
       worker_activation:false,licensed_acquisition:false,production_speed:false,report_update:false});
+    console.info('[native-original-recorded-catalog-success-continuation-v2]',{
+      nonempty_catalog_summary_receipt_head_root_and_release_same_transaction:true,all_ending_refusals_rollback_summary_head_root_release:true,
+      lost_commit_pending_then_next_exact_account:true,two_nonempty_and_one_empty_distinct_successes:true,
+      concurrent_single_consume_fresh_token_preserves_attempt_and_error:true,legacy_claim_excludes_pending_success:true,
+      duplicate_DONE_success_refused:true,issued_partition_and_catalog_heads_rows_roots_and_pins_retained:true,
+      success_sequence:5,failure_attempt:oldClaim.attempts,context_complete:false,worker_activation:false,
+      selected_union:false,licensed_acquisition:false,production_speed:false,report_update:false});
     // Actual failures still consume the unchanged five-claim budget. Successful
     // continuation neither erased the first attempt nor bought extra failures.
     for(let attempt=oldClaim.attempts;attempt<=5;attempt++){

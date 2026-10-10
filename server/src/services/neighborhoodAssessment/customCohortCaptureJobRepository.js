@@ -1,4 +1,5 @@
 import { assessmentDate, assessmentEvidenceDigest, canonicalAssessmentJson } from './contract.js';
+import { isProxy } from 'node:util/types';
 import { prepareNeighborhoodDiscoveryChoice } from './selectorInputProfile.js';
 import { customNeighborhoodPrivateSalesPurpose } from '../../security/customNeighborhoodPrivateSalesPolicy.js';
 
@@ -52,6 +53,9 @@ function requestOf(value) {
     ...(privateImport ? { private_sales_import: Object.freeze(preparedPrivate) } : {}) });
 }
 function claimOf(value) {
+  // Claims are detached DATA, never executable adapters. Check before any
+  // reflection: even getPrototypeOf/ownKeys can invoke a Proxy trap.
+  if (isProxy(value)) fail('invalid_input');
   exact(value, ['operation_id', 'claim_token', 'attempts']);
   if (!Number.isInteger(value.attempts) || value.attempts < 1 || value.attempts > 5) fail('invalid_claim');
   return [uuid(value.operation_id), uuid(value.claim_token), value.attempts];

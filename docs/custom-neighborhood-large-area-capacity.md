@@ -1,5 +1,27 @@
 # Complete larger-area Custom neighborhood studies
 
+## Shared capture-claim DATA boundary (2026-10-10, not activated)
+
+The shared job-claim validator now rejects active, transparent and revoked
+JavaScript Proxies before any reflection, property access or SQL. Previously,
+its `getPrototypeOf` check could execute a Proxy trap; the new regression first
+reproduced that failure against the unchanged validator. The fix is shared by
+the actual capture entry points and all eight claim-consuming job repository
+methods, not only the two newer union/intent entry points with local guards.
+Plain detached claim normalization, exact scope/actor/request/lease fences,
+native continuation/selection guards and retry history remain unchanged.
+
+Focused synthetic tests cover zero traps/queries across all repository consumers
+and zero traps/connections/source-policy calls across 14 actual capture entry
+points, plus frozen plain-claim normalization. The combined job/worker/owner/
+union/intent/continuation run passed 127 tests with no failures or skips
+(5403.7485 ms). Heavy database/full-server/frontend checks remain cloud-only.
+This hardening is not housing/metric eligibility, source acquisition, licensed
+large-area or live-speed acceptance. No route, internal stage, grant, worker,
+pin, report, genuine choice or Apply is activated. Protected parent integration,
+fresh exact-head security/native/full checks and actual included review are
+still required before protected merge; automatic skips are not reviews.
+
 ## Independent original replay and explicit selected-stock union (2026-10-10, not activated)
 
 The next INACTIVE internal phase extends the ACTUAL bounded database owner,

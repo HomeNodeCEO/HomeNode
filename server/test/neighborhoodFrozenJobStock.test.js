@@ -1533,12 +1533,24 @@ test('stock original reconciliation cannot be replaced by a matching hash, count
     await assert.rejects(f.pages().page({kind:'parcels',cursor:'',rowLimit:250}),/original_mismatch/);
   }
   const sql=NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL;
-  assert.match(sql,/WITH scan_keys AS MATERIALIZED[\s\S]+ORDER BY o\.row_key LIMIT \$6::integer\s+\), candidates AS MATERIALIZED/);
+  assert.match(sql,/WITH scan_keys AS MATERIALIZED[\s\S]+ORDER BY o\.row_key LIMIT \$6::integer\s+\), raw_sizes AS MATERIALIZED/);
   assert.match(sql,/CROSS JOIN LATERAL \(SELECT o[\s\S]+FROM app\.neighborhood_frozen_source_rows o[\s\S]+LEFT JOIN LATERAL/);
   assert.match(sql,/FROM app\.neighborhood_frozen_typed_v2_rows t[\s\S]+t\.row_key=k\.row_key OFFSET 0/);
   assert.match(sql,/a\.operation_id=\$1::uuid AND a\.account_id=k\.account_id/);
   assert.match(sql,/t\.row_key IS NULL/);assert.match(sql,/output_cumulative\+1<=\$10::integer/);
   assert.doesNotMatch(sql,/ST_DWithin|array_agg|FROM core\.|effective_date|INSERT|UPDATE|DELETE/);
+});
+
+test('original-key page raw admission bounds encoding without shrinking candidate/invalid counts or forging an end',()=>{
+  const sql=NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL,
+    raw=sql.split('), raw_sizes AS MATERIALIZED (')[1].split('), raw_prefix AS MATERIALIZED (')[0];
+  assert.doesNotMatch(raw,/AS original_text|jsonb_build_object|AS encoded|string_agg/);
+  assert.match(sql,/FROM raw_admitted k/);assert.match(sql,/raw_cumulative\+1<=\$7::integer/);
+  assert.match(sql,/raw_output_cumulative\+1<=\$10::integer/);
+  assert.match(sql,/NOT EXISTS\(SELECT 1 FROM raw_sizes WHERE original_bytes>\$9::integer/);
+  assert.match(sql,/FROM raw_sizes\) AS candidate_count/);assert.match(sql,/FROM raw_sizes WHERE invalid/);
+  assert.match(sql,/CASE WHEN count\(\*\)=\(SELECT count\(\*\) FROM raw_sizes\)/);
+  assert.match(sql,/cumulative\+1<=\$7::integer/);assert.match(sql,/bytes<=\$8::integer/);
 });
 
 test('stock original page keysets retain partial/full/empty semantics and single-use aggregate fences',async()=>{

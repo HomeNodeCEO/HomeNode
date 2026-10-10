@@ -1,5 +1,44 @@
 # Complete larger-area Custom neighborhood studies
 
+## One aggregate selected stock/CAD/transaction packet (2026-10-10, not activated)
+
+The separate INACTIVE read-only actual owner method
+`readOriginalFrozenCaptureJobFirstSelectedCombinedEvidenceReferencesV2` reopens
+the complete independently issued ten-root original graph, native DONE union,
+partition/catalog literals, immutable human choice and current DB actor,
+organization/assignment/private draft/retained subject/claim/pin/workspace.
+Fixed native ordinal 1, not caller account/cursor or first C-sorted stock, chooses
+the account. Separate current CAD and market purposes are required at BOTH ends.
+
+One SQL plan admits required subject stock (deduplicated with selected stock),
+selected primary/secondary CAD originals and EVERY whole all-date native source
+association/source-less sale under ONE 250-original total BEFORE any payload
+reads. Three indexed capped account prefixes find transaction source IDs; outside,
+NULL and unresolved associations remain present. All originals and their ENTIRE
+neutral caches are recompiled/reconciled before retained-date and diagnostic
+projections. There is no composition of two source readers, second allowance,
+per-source budget reset, callback/count/hash authority or dense population array.
+
+The single-use child retains 128 SQL/32 MB/60 s, 8 MB transport and 2.1 MB output
+limits; the actual whole owner retains 256 SQL/32 MB/60 s and a 16 KB response
+cap. Oversized combined packets refuse in full. Every source's current/ending
+fences remain independent. All CAD observations and native secondary IDs and
+every transaction association/date/value/state/marker remain in the response;
+only previously established compact presentation encodings are used. No source
+dictionary, garage area, currency, economic equivalence, price allocation,
+at-sale housing, verified completion or transaction eligibility is inferred.
+There are no head/checkpoint/blob/continuation/lease/pin/report writes or routes.
+
+263 focused synthetic tests pass, zero failures/skips, 1770.184 ms; syntax and
+diff checks pass. Native assertions are AUTHORED NOT EXECUTED for this new slice:
+independent B/EMPTY/both fixtures, combined original totals and equality with
+individually reconciled diagnostics, every stock/CAD/transaction original/cache
+fault, separate both-end source rights, native member/partition/end fences, lost
+real read-only COMMIT, fresh reopen and unchanged durable state. Heavy database,
+full-server and frontend checks run only in cloud CI. This fixed-first packet is
+NOT complete selected-union evidence/eligibility/statistics, licensed large-area
+acquisition, publication, worker activation or Hardy live/reload acceptance.
+
 ## Original-backed first selected transaction associations (2026-10-10, not activated)
 
 `readOriginalFrozenCaptureJobFirstSelectedTransactionsReferencesV2` is a separate
@@ -57,6 +96,17 @@ native secondary IDs, source metadata and separate both-end rights remain;
 the 16 KB owner, 2.1 MB child output and every original/SQL/transport/deadline
 limit are unchanged. New exact-head cloud verification remains required.
 
+That fixed exact head `13df21818b479ae15cc73e6ff98e43bd9eb70634` subsequently
+passed Foundation `38073885145`, native job `114276712879`, at 18:16 UTC.
+Decoded logs show 417 migration, 1 subject, 13 index, 1 edge and 2 bootstrap
+tests, all zero failures/skips; index duration was 879944.897765 ms. Independent
+B/EMPTY/both fixtures passed complete original/cache/partition/catalog/intent
+replay, separate both-end CAD rights, forgery/end-fence/lost REAL COMMIT recovery
+and unchanged durable state. Maximum amenity whole-owner SQL was 217 of 256;
+the unchanged 16 KB response cap passed. All five checks present on this stacked
+exact head succeeded. Fresh protected-parent integration/security/actual review,
+complete selected-union amenities and licensed/live acceptance remain separate.
+
 The separate read-only internal method
 `readOriginalFrozenCaptureJobFirstSelectedAmenitiesReferencesV2` admits only the
 actual ten-root DONE selected union, immutable human command and current scoped
@@ -83,10 +133,10 @@ null member/observations/amenity evidence. No values, decisions, originals or
 typed rows are copied into durable blobs. There are no checkpoint/head/lease/
 continuation/pin/workspace/report writes, HTTP routes or worker dispatch.
 
-249 focused synthetic tests passed with zero failures/skips (1688.3528 ms),
+249 focused synthetic tests passed with zero failures/skips (3245.3676 ms),
 including mixed-packet whole-cache faults, row admission, single-use and missing/
-false pool cases. Native database fault assertions are authored for this slice;
-fresh cloud native/full-suite verification is still pending. This
+false pool cases. Native database fault assertions passed on the exact fixed
+head above; protected-parent integrated verification is still required. This
 fixed-first read does NOT establish complete selected-union amenities, economic
 eligibility, statistics, publication, licensed acquisition or production speed.
 

@@ -50,7 +50,8 @@ import { NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodOriginalCadAccountPackagesV2.js';
 import { NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSelectedAmenityOriginalPackageV2.js';
-import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL }
+import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL,
+  NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSelectedTransactionOriginalPackageV2.js';
 
 const id='70000000-0000-4000-8000-000000000001',date='2026-10-07T00:00:00.000000Z';
@@ -1130,17 +1131,20 @@ async function stockOriginalCellFixture(hook=()=>{},transactionCounts={}){
     if(call.text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read)return result(structuredClone(sharedHeader));
     if(call.text===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.source)return result(cadSource);
     if(call.text===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read)return result(structuredClone(cadHeader));
-    if(call.text===NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL){
+    if([NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL].includes(call.text)){
       const originals=Object.values(rows).flat(),ids=[...new Set(originals.map(r=>r.account_id))].sort(),next=ids.at(-1)??null,
         subject=call.values[9]&&ids.includes(options.scope.account_id)?options.scope.account_id:null,
         anchors=next===null?[]:transactionRows.filter(r=>r.account_id===next),sourceIds=new Set(anchors.map(r=>r.source_record_id).filter(id=>id!==null)),
         transactions=transactionRows.filter(r=>r.source_record_id===null?r.kind==='sales'&&r.account_id===next:sourceIds.has(r.source_record_id))
           .map(r=>({...r,stock_member:r.account_id===null?null:ids.includes(r.account_id)})),
-        packet=[...originals.filter(r=>r.account_id===next||r.account_id===subject),...transactions]
+        combined=call.text===NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,
+        cad=combined?cadRows.filter(r=>r.account_id===next):[],
+        packet=[...originals.filter(r=>r.account_id===next||r.account_id===subject),...transactions,...cad]
           .sort((a,b)=>Buffer.compare(Buffer.from(`${a.account_id}\u0000${a.kind}\u0000${a.row_key}`),Buffer.from(`${b.account_id}\u0000${b.kind}\u0000${b.row_key}`))),
         n=(id,kind)=>id===null?0:originals.filter(r=>r.account_id===id&&r.kind===kind).length;
       return result({account_id:next,geographic_parcel_count:next?'1':null,subject_account_id:subject,subject_geographic_parcel_count:subject?'1':null,
         next_parcels:n(next,'parcels'),next_accounts:n(next,'accounts'),subject_parcels:n(subject,'parcels'),subject_accounts:n(subject,'accounts'),
+        ...(combined?{cad_primary:cad.filter(r=>r.kind==='primary').length,cad_secondary:cad.filter(r=>r.kind==='secondary').length}:{}),
         anchor_count:anchors.length,transaction_original_count:transactions.length,
         package_count:sourceIds.size+anchors.filter(r=>r.kind==='sales'&&r.source_record_id===null).length,
         original_count:packet.length,page_count:packet.length,invalid_count:0,packet_oversize:false,page_json:JSON.stringify(packet)});
@@ -1227,6 +1231,81 @@ async function selectedTransactionFixture(hook=()=>{}){
     selectedTransactionOriginal('source_records','11'));
   return f;
 }
+
+test('combined selected stock CAD and whole transaction originals use one packet and one single-use executor',async()=>{
+  const f=await selectedTransactionFixture();f.cadRows.push(selectedCadOriginal('primary','STOCK-B'),
+    selectedCadOriginal('secondary','1',{account_id:'STOCK-B'}),selectedCadOriginal('secondary','2',{account_id:'STOCK-B'}));
+  const reader=f.pages(),from=f.calls.length,p=await reader.subjectAndFirstSelectedCombinedAccountPackage({includeSubject:true},selectedPeriod);
+  assert.equal(p.status,'reconciled_subject_and_first_selected_combined_original_package');
+  assert.equal(p.account_id,'STOCK-B');assert.equal(p.subject.account_id,'STOCK-A');assert.equal(p.distinct_original_count,11);
+  assert.deepEqual(p.selected_CAD.original_counts,{primary:1,secondary:2});
+  assert.equal(p.selected_CAD.amenity_evidence.reported_pool.exact_value,false);
+  assert.deepEqual(p.selected_CAD.amenity_evidence.secondary_inventory.rows.map(r=>r.row_key),['1','2']);
+  assert.equal(p.selected_transactions.original_count,4);assert.equal(p.selected_transactions.package_count,2);
+  assert.equal(p.selected_transactions.packages[1].associations.outside_account_count,1);
+  assert.equal(p.selected_transactions.packages[1].associations.unresolved_link_count,1);
+  assert.equal(f.calls.slice(from).filter(c=>c.text===NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL).length,1);
+  assert.ok(!f.calls.slice(from).some(c=>c.text===NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL
+    ||c.text===NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL||/INSERT|UPDATE|DELETE|FROM core\.|ST_DWithin/.test(c.text)));
+  assert.equal(f.calls.slice(from).filter(c=>c.text===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read).length,2);
+  await assert.rejects(reader.subjectAndFirstSelectedCombinedAccountPackage({includeSubject:true},selectedPeriod),/single_use/);
+  await assert.rejects(reader.subjectAndFirstSelectedTransactionAccountPackage({includeSubject:true},selectedPeriod),/single_use/);
+  await assert.rejects(reader.subjectAndFirstSelectedAmenityAccountPackage({includeSubject:true}),/single_use/);
+});
+
+test('combined source admission refuses total251 before payload decode, never250 for each source',async()=>{
+  const f=await selectedTransactionFixture(({text})=>text===NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL?result({
+    account_id:'STOCK-B',geographic_parcel_count:'1',subject_account_id:'STOCK-A',subject_geographic_parcel_count:'1',
+    next_parcels:1,next_accounts:0,subject_parcels:2,subject_accounts:1,cad_primary:1,cad_secondary:242,
+    anchor_count:2,transaction_original_count:4,package_count:2,original_count:251,page_count:0,
+    invalid_count:0,packet_oversize:false,page_json:'[]'}):null);
+  await assert.rejects(f.pages().subjectAndFirstSelectedCombinedAccountPackage({includeSubject:true},selectedPeriod),/account_package_row_limit/);
+  const sql=NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL;
+  assert.match(sql,/SELECT n FROM stock_totals UNION ALL SELECT n FROM transaction_totals UNION ALL SELECT n FROM cad_totals/);
+  assert.equal((sql.match(/SELECT coalesce\(sum\(n\),0\) FROM all_totals/g)??[]).length,3);
+  assert.match(sql,/profile_sha256=\$11/);assert.match(sql,/r\.ordinal=1/);
+  assert.doesNotMatch(sql,/effective_date|close_date|closing_date|array_agg|FROM core\.|INSERT|UPDATE|DELETE/);
+});
+
+test('combined original replay refuses every stock CAD or transaction whole-cache mismatch',async()=>{
+  for(const layer of ['stock','CAD','transaction']){
+    const f=await selectedTransactionFixture();f.cadRows.push(selectedCadOriginal('primary','STOCK-B'));
+    const row=structuredClone(layer==='stock'?f.rows.parcels[0]:layer==='CAD'?f.cadRows[0]:f.transactionRows[0]);
+    if(layer==='stock'){row.typed.observations.reported_year_built.exact_value='1';f.rows.parcels[0]=row;}
+    if(layer==='CAD'){row.typed.observations.reported_living_area.exact_value='1';f.cadRows[0]=row;}
+    if(layer==='transaction'){row.typed.observations.normalized_current_price.exact_value='1';f.transactionRows[0]=row;}
+    await assert.rejects(f.pages().subjectAndFirstSelectedCombinedAccountPackage({includeSubject:true},selectedPeriod),/original_mismatch/);
+  }
+});
+
+test('combined ending CAD and market caches are independently fenced without another reader budget',async()=>{
+  for(const sql of [NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read,NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read]){
+    let reads=0;const f=await selectedTransactionFixture(({text,sharedHeader,cadHeader})=>text===sql&&++reads===2
+      ?result({...sql===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read?sharedHeader:cadHeader,status:'building'}):null);
+    await assert.rejects(f.pages().subjectAndFirstSelectedCombinedAccountPackage({includeSubject:true},selectedPeriod),/cache_unavailable/);
+  }
+});
+
+test('combined native subject alias and fresh EMPTY retain exact original denominators',async()=>{
+  const f=await stockOriginalCellFixture(()=>null,{source_records:1,sales:1,sale_links:1});
+  f.cadRows.push(selectedCadOriginal());f.transactionRows.push(selectedTransactionOriginal('source_records','10',{primary_account_id:'STOCK-A'}),
+    selectedTransactionOriginal('sales','1',{source_record_id:'10'}),selectedTransactionOriginal('sale_links','2',{account_id:'STOCK-A'}));
+  const p=await f.pages().subjectAndFirstSelectedCombinedAccountPackage({includeSubject:true},selectedPeriod);
+  assert.equal(p.subject_equals_next,true);assert.equal(p.subject,null);assert.equal(p.distinct_original_count,7);
+  assert.equal(p.selected_transactions.package_count,1);assert.deepEqual(p.selected_CAD.original_counts,{primary:1,secondary:0});
+  f.rows.parcels=[];f.rows.accounts=[];f.cadRows=[];
+  const empty=await f.pages().subjectAndFirstSelectedCombinedAccountPackage({includeSubject:false},selectedPeriod);
+  assert.equal(empty.next,null);assert.equal(empty.subject,null);assert.equal(empty.distinct_original_count,0);
+  assert.deepEqual(empty.selected_transactions.packages,[]);assert.equal(empty.selected_CAD.amenity_evidence,null);
+});
+
+test('combined reader rejects caller account cursor rights and period before any SQL',async()=>{
+  const f=await selectedTransactionFixture(),from=f.calls.length;
+  for(const args of [[{includeSubject:true,account_id:'STOCK-A'},selectedPeriod],[{includeSubject:true},selectedPeriod,'extra'],
+    [{includeSubject:true},new Proxy(selectedPeriod,{})],[{includeSubject:true},{...selectedPeriod,end_date:'2027-01-01'}]])
+    await assert.rejects(f.pages().subjectAndFirstSelectedCombinedAccountPackage(...args),/invalid_input|invalid_period|future_or_reversed_period/);
+  assert.equal(f.calls.length,from);
+});
 
 test('actual selected transaction reader shares whole stock budget and retains every outside/unresolved all-date association',async()=>{
   const f=await selectedTransactionFixture(),reader=f.pages(),from=f.calls.length,

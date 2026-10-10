@@ -242,6 +242,11 @@ const FROZEN_SOURCE_STAGES = freeze({
     catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
     readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true, readingSelectedUnionFirstTransactions: true,
     allowedPhases: ['frozen_selected_union_refs_v2'] },
+  original_selected_union_first_combined_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
+    readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true,
+    readingSelectedUnionFirstAmenities: true, readingSelectedUnionFirstTransactions: true,
+    allowedPhases: ['frozen_selected_union_refs_v2'] },
   original_selected_eligibility_progress_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
     readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true, progressingSelectedEligibility: true,
@@ -2275,7 +2280,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           const preferred=resolveCustomCohortRetainedSubjectHousing(retained.subject.material,retained.subject.target,{check:budget.check}),
             graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))},
             paired=await createNeighborhoodSharedStockOriginalCellsV2(client,stockOptions,graph,context.effective_date)
-              [readingSelectedUnionFirstTransactions?'subjectAndFirstSelectedTransactionAccountPackage':
+              [readingSelectedUnionFirstTransactions&&readingSelectedUnionFirstAmenities?'subjectAndFirstSelectedCombinedAccountPackage':
+                readingSelectedUnionFirstTransactions?'subjectAndFirstSelectedTransactionAccountPackage':
                 readingSelectedUnionFirstAmenities?'subjectAndFirstSelectedAmenityAccountPackage':
                 progressingSelectedEligibility?'subjectAndNextEligibilityRecordedGroupHousingAccountPackage':
                 'subjectAndFirstSelectedRecordedGroupHousingAccountPackage'](...[{includeSubject:preferred===null},
@@ -2350,7 +2356,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
                 markers:tuples(r.markers,markerFields),normalized:{...r.normalized,observations:tuples(r.normalized.observations,cellFields),
                   dates:tuples(r.normalized.dates,dateFields)},same_payload_reported_sale:r.same_payload_reported_sale===null?null:
                   {...r.same_payload_reported_sale,observations:tuples(r.same_payload_reported_sale.observations,cellFields)}}))}))}:null;
-          subjectHousingResult={status:readingSelectedUnionFirstTransactions?'current_authorized_first_selected_original_transactions_reopened'
+          subjectHousingResult={status:readingSelectedUnionFirstTransactions&&readingSelectedUnionFirstAmenities
+            ?'current_authorized_first_selected_combined_originals_reopened'
+            :readingSelectedUnionFirstTransactions?'current_authorized_first_selected_original_transactions_reopened'
             :readingSelectedUnionFirstAmenities?'current_authorized_first_selected_original_amenities_reopened'
             :'current_authorized_first_selected_original_recorded_eligibility_reopened',operation_id:input.operationId,
             command_id:issuedSelectionIntent.command_id,union_reference:unionAnchor.receipt_reference,catalog_reference:catalogAnchor.receipt_reference,
@@ -3012,6 +3020,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       frozenCaptureJobSourceStage(value, options, 'original_selected_union_first_amenities_refs_v2'),
     readOriginalFrozenCaptureJobFirstSelectedTransactionsReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_selected_union_first_transactions_refs_v2'),
+    readOriginalFrozenCaptureJobFirstSelectedCombinedEvidenceReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'original_selected_union_first_combined_refs_v2'),
     progressOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_selected_eligibility_progress_refs_v2'),
     async capture(value, options = {}) {

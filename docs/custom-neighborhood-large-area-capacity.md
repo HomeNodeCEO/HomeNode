@@ -1,5 +1,42 @@
 # Complete larger-area Custom neighborhood studies
 
+## Catalog success continuation (2026-10-10, not activated)
+
+`continueOriginalFrozenCaptureJobRecordedCatalogReferencesV2` runs the SAME
+actual bounded catalog owner, then releases the actual native catalog head/root
+in that SAME transaction only after every current-authority/original/cache/
+partition/head/count ending fence. A lost COMMIT retains one contribution and
+pending continuation; the old claim cannot repeat it. Single-consume SKIP LOCKED
+installs a fresh token without spending or refunding failure attempts or clearing
+the prior error. No caller supplies a phase, checkpoint, DONE, cursor or callback.
+
+Additive 20261122 extends the existing native continuation guard to the exact
+catalog head and nine-reference root; existing deferred atomic-release and
+five-failure-history guards remain installed. Backward fixed-phase transitions
+refuse. The finite success ceiling is now 6,000,003: three fixed passes of at
+most 2,000,000 accounts plus one distinct empty terminal probe each. This does
+not increase the five actual failed/expired-claim limit or complete a context.
+
+90 focused closed-admission, finite-bound, catalog, current-owner and storage-
+mechanics tests pass, 0 failures and 0 skips (556.9732ms); source/native-fixture
+syntax and diff checks pass. No heavy suite was run locally.
+Actual PostgreSQL assertions now cover two NONEMPTY catalog contributions and
+the distinct empty terminal, current-ending rollback of summary/head/root/release,
+lost-COMMIT recovery at the next exact account, concurrent single consumption,
+unchanged failure/error history, duplicate-DONE refusal and retained issued
+partition/catalog roots and pins. NEW native/full cloud execution is PENDING;
+SQL doubles and the small native protocol fixture are not source authority,
+licensed large-area acquisition or production-speed acceptance.
+
+The legacy worker remains unchanged and inactive on this path. Fixed V2 worker
+dispatch, genuine current-authenticated selection, original-reconciled exact
+complete selected-union metrics/calendar quarters, provider completeness,
+coherent publication and terminal pin transfer/retirement are still required.
+No production, source grant, genuine Hardy choice, accepted report or Apply
+mutation; QA assignment 7 only for future Apply tests. Protected parent
+integration, fresh exact-head security/native/full suites and ACTUAL included
+review remain gates before any normal expected-head protected merge.
+
 ## Original-reconciled bounded recorded catalog (2026-10-10, not activated)
 
 `advanceOriginalFrozenCaptureJobRecordedCatalogReferencesV2` is a new fixed

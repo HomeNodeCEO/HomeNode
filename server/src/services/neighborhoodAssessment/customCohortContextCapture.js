@@ -200,6 +200,8 @@ const FROZEN_SOURCE_STAGES = freeze({
     partitioningRecordedGroups: true, yieldingV2Progress: true, allowedPhases: ['frozen_stock_traversal_refs_v2', 'frozen_recorded_partition_refs_v2'] },
   original_recorded_catalog_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, allowedPhases: ['frozen_recorded_partition_refs_v2', 'frozen_recorded_catalog_refs_v2'] },
+  original_recorded_catalog_continue_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    catalogingRecordedGroups: true, yieldingV2Progress: true, allowedPhases: ['frozen_recorded_partition_refs_v2', 'frozen_recorded_catalog_refs_v2'] },
 });
 function fail(reason, detail, captureCounts) {
   const error = Object.assign(new Error(`custom_cohort_capture_${reason}`), {
@@ -2238,7 +2240,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         // same TX. The native continuation guard derives the actual issued
         // head/root, refuses duplicate progress and preserves all attempts.
         const continuation=await createCustomCohortV2ContinuationRepository(client).yieldIssued(claim,jobOptions);
-        budget.check();return freeze({...(partitioningRecordedGroups?partitionResult:traversalResult),continuation});
+        budget.check();return freeze({...(catalogingRecordedGroups?catalogResult:partitioningRecordedGroups?partitionResult:traversalResult),continuation});
       }
       if(catalogingRecordedGroups)return freeze(catalogResult);
       if(partitioningRecordedGroups||readingRecordedPartition)return freeze(partitionResult);
@@ -2516,6 +2518,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       frozenCaptureJobSourceStage(value, options, 'original_stock_traversal_continue_refs_v2'),
     continueOriginalFrozenCaptureJobRecordedPartitionReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_recorded_partition_continue_refs_v2'),
+    continueOriginalFrozenCaptureJobRecordedCatalogReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'original_recorded_catalog_continue_refs_v2'),
     /** Reconcile one indexed derived partition entry against EVERY original,
      * not a selected-union capability or a hash/count-only group reader. */
     readOriginalFrozenCaptureJobRecordedPartitionAccountReferencesV2: (value, options = {}) =>

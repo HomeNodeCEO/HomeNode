@@ -135,3 +135,14 @@ test('additive sixth native guard binds exact12 roots/BOTH DONE parents/native n
     'progressOriginalFrozenCaptureJobSelectedEvidenceReferencesV2'])assert.ok(owner.includes(s),s);
   assert.doesNotMatch(sql,/DISABLE TRIGGER|DROP TABLE|DROP TRIGGER|DELETE FROM|UPDATE app\.report|SET attempts=0|ST_DWithin/);
 });
+
+test('native sixth fault injection stays armed until actual source-ending, DML or real COMMIT boundaries',()=>{
+  const fixture=readFileSync(new URL('./neighborhoodGroupIndex.integration.test.js',import.meta.url),'utf8'),
+    block=fixture.slice(fixture.indexOf("if(config.text.includes('neighborhood-frozen-job-closure:parcels')"),
+      fixture.indexOf('if(config.text===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read'));
+  assert.ok(block.includes('config.text===NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL'));
+  assert.ok(block.includes("!fault?.startsWith('evidence_')"));
+  for(const tag of ['evidence_insert_rollback','evidence_advance_rollback','evidence_checkpoint_rollback','evidence_yield_rollback',
+    'evidence_orphan_commit','evidence_head_ending'])assert.ok(fixture.includes(tag),tag);
+  assert.ok(fixture.includes("'evidence_orphan_commit'].includes(refsFault)"));
+});

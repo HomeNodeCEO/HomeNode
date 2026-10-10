@@ -14,7 +14,7 @@ function setup({auto=false,next=member,native=null,corrupt=false,readback=false}
   const client={async query(sql,v){calls.push({sql,v});
     if(sql.includes(':transaction'))return {rowCount:1,rows:[{transaction_id:String(auto?++tx:tx)}]};
     if(sql.includes(':head-read'))return {rowCount:1,rows:[head??empty]};
-    if(sql.includes(':next-selected-entry'))return {rowCount:1,rows:[next??{account_id:null,ordinal:null,partition_ordinal:null,entry_reference:null,state:null,assigned_group_id:null}]};
+    if(sql.includes(':next-selected-entry')||sql.includes(':first-metric-entry'))return {rowCount:1,rows:[next??{account_id:null,ordinal:null,partition_ordinal:null,entry_reference:null,state:null,assigned_group_id:null}]};
     if(sql.includes(':head-insert')){head={command_id:v[8],union_reference:JSON.parse(v[9]),eligibility_reference:JSON.parse(v[10]),
       receipt_reference:JSON.parse(v[11]),sequence:1};
       if(readback)head.eligibility_reference=ref(8);return {rowCount:1,rows:[{sequence:corrupt?2:1}]};}
@@ -52,6 +52,7 @@ test('closed storage rejects caller ordinal, cursor, source, decision and descri
   const {owner,calls,options}=setup();
   for(const v of [undefined,1,{ordinal:1},{cursor:''},()=>assert.fail('callback')]){
     await assert.rejects(owner.read(v),/invalid_input/);await assert.rejects(owner.readNextSelectedEntry(v),/invalid_input/);
+    await assert.rejects(owner.readFirstMetricEntry(v),/invalid_input/);
   }
   for(const args of [[],[null],[null,ref(3),true]])await assert.rejects(owner.advance(...args),/invalid_input/);
   await assert.rejects(owner.advance(new Proxy({}, {getPrototypeOf(){assert.fail('proxy');}}),ref(3)),/invalid_input/);
@@ -61,6 +62,26 @@ test('closed storage rejects caller ordinal, cursor, source, decision and descri
   assert.throws(()=>repository({...options,get command_id(){assert.fail('getter');}}),/invalid_input/);
   assert.throws(()=>repository({...options,eligibility_reference:{...ref(2),canonical_utf8_bytes:'16001'}}),/invalid_reference/);
   assert.throws(()=>repository({...options,union_reference:new Proxy(ref(1),{ownKeys(){assert.fail('proxy');}})}),/invalid_input/);
+});
+
+test('first metric storage is fixed ordinal1 AFTER all three DONE parents, not a sixth next-ordinal ACK',async()=>{
+  const {owner,calls}=setup();assert.deepEqual(await owner.readFirstMetricEntry(),member);
+  assert.equal(calls.length,1);const {sql,v}=calls[0];
+  for(const s of ['r.ordinal=1','entry.account_id=r.account_id','entry.entry_reference=r.entry_reference',
+    'h.eligibility_reference=$11::jsonb','neighborhood_selected_evidence_v2_checkpoint_matches',
+    "union_body.canonical_utf8::jsonb->'after'->>'done'='true'",
+    "fifth_body.canonical_utf8::jsonb->'after'->>'done'='true'",
+    "evidence_body.canonical_utf8::jsonb->'after'->>'done'='true'",
+    "evidence_body.canonical_utf8::jsonb->>'sequence'=h.sequence::text",
+    "evidence_body.canonical_utf8::jsonb->'selected_stock_count'=union_body.canonical_utf8::jsonb->'after_selected_count'",
+    'job.actor_user_id=$8::uuid','job.claim_token=$2::uuid','job.context_sha256 IS NULL'])assert.ok(sql.includes(s),s);
+  assert.doesNotMatch(sql,/coalesce\(h.sequence|\bINSERT\b|\bUPDATE\b|\bDELETE\b|array_agg|jsonb_agg/);
+  assert.equal(v.length,11);assert.equal(v[6],'A');assert.deepEqual(JSON.parse(v[9]),ref(1));assert.deepEqual(JSON.parse(v[10]),ref(2));
+  assert.equal(await setup({next:null}).owner.readFirstMetricEntry(),null);
+  for(const bad of [{...member,ordinal:2},{...member,partition_ordinal:0},{...member,state:null},
+    {...member,account_id:' A'}, {...member,account_id:'\ud800'},{...member,entry_reference:null},
+    {...member,metric_cells:[]},new Proxy(member,{ownKeys(){assert.fail('proxy');}}),
+    {...member,get account_id(){assert.fail('getter');}}])await assert.rejects(setup({next:bad}).owner.readFirstMetricEntry());
 });
 
 test('native bindings, exact CAS/readback, transaction identity and selected rows refuse corruption without owning transaction',async()=>{

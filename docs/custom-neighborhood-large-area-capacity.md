@@ -1,5 +1,62 @@
 # Complete larger-area Custom neighborhood studies
 
+## First metric-source reopen after native DONE evidence (2026-10-10, authored)
+
+The new dormant `readOriginalFrozenCaptureJobFirstSelectedMetricReferencesV2`
+extends the actual bounded database owner, not the older dense-population DATA
+helpers. Admission requires exact twelve roots, the immutable intent and consumed
+continuation/current claim, and native DONE union, fifth and sixth parents. It
+reopens the complete issued original graph, geography/identity, partition/catalog
+and fixed native selected ordinal1. A separate fixed SQL plan independently
+reopens every selected stock/CAD/whole all-date transaction original plus required
+subject originals, reconciles the ENTIRE cache and literal partition/catalog,
+and shares the same single aggregate250 count/raw/exact-byte admission. Current
+and ending actor/assignment/private draft/subject/market/CAD/claim/pin/workspace
+fences and the existing256SQL/32MB/60s/16KB owner limits remain mandatory.
+
+Only this fresh original replay supplies the reported comparison cells; the
+sixth metadata acknowledgement supplies no numerical or membership authority.
+Reported site zero is preserved, incomplete/conflicting/invalid year or area
+remains unresolved, and currency remains unsupported. The response is one
+read-only comparison candidate, explicitly NOT a complete metric population,
+verified GLA, historical housing, transaction economic equivalence, medians,
+CODs, eligible calendar-quarter checks, coherent publication or acquisition.
+It writes no metric rows, heads, checkpoint, continuation, lease or report.
+Old first-selected and next-sixth SQL/admission semantics remain unchanged.
+
+Native complete B-only/EMPTY/both graphs are AUTHORED to refuse earlier/pending
+sixth phases, actual same-transaction reassignment/archive after original/EMPTY
+reads, corrupted stock/CAD/transaction transport, changed native member and
+ending heads/cache. A successful read must match independent fixture values
+and preserve the whole prior job/head/continuation/blob/workspace/report/pin
+state. A fifth rolled-back TEMP count/raw/exact-byte plan case is DATA ONLY,
+not native owner or selected-union authority. The eight-file local focused run
+passed114 tests, zero failures/cancellations/skips (5455.3769ms); owner and native
+fixture syntax/diff checks passed. New metric-stage native/full-suite execution,
+protected integration and actual included review are still required.
+The final nine-file focused source/owner/storage run passed217 tests, zero
+failures/cancellations/skips (2937.7449ms), including first-metric single-use,
+aggregate251-before-decode, whole-cache forgeries and closed caller grammar.
+
+## Sixth traversal and actual assignment/draft native tests passed (2026-10-10)
+
+This supersedes the older pending/authored sixth evidence notes below. Exact
+`1f6e1108` native job114314993584 and exact `ce9df6f5` job114315213844 both passed
+417migration/1subject/13index/1edge/2bootstrap tests with zero failures/skips.
+Complete decoded logs were inspected (2,409,603 and2,410,027 characters).
+Both exact-head foundation runs passed all four jobs, including full server,
+frontend and red-team. These are unprotected stacked-branch results, not fresh
+main-target release clearance or actual included review.
+
+All three independently issued B-only/EMPTY/both sixth traversals passed. Exact
+`ce9df6f5` additionally executed actual same-transaction assignment NULL/archive
+after original or terminal EMPTY queries and verified complete rollback before
+progress. Whole-owner maxima were234/231/235 queries of the unchanged256 limit.
+No original/typed/diagnostic/decision copies were retained. These small native
+protocol tests establish neither licensed>50k acquisition, semantic economic
+eligibility, complete numerical statistics nor live/production speed acceptance.
+All stages remain inactive; no deployment or genuine choice/report writes.
+
 ## Sixth-pass native assignment and draft fences (2026-10-10, authored)
 
 The current authorization branch integrates corrected traversal parent `1f6e1108`.

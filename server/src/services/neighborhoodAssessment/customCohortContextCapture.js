@@ -37,6 +37,9 @@ import { createNeighborhoodFrozenJobSourcePages,createNeighborhoodPreparedJobSou
 import { createNeighborhoodFrozenJobSourceSeeds } from './neighborhoodFrozenJobSourceSeeds.js';
 import { createNeighborhoodSharedJobTransactionPagesV2,prepareNeighborhoodSharedTransactionPageV2 }
   from './neighborhoodSharedJobTransactionPagesV2.js';
+import { projectNeighborhoodTransactionTemporalV1, prepareNeighborhoodTransactionRetainedPeriodV1,
+  getNeighborhoodTransactionTemporalV1Profile, NEIGHBORHOOD_TRANSACTION_TEMPORAL_V1_LIMITS }
+  from './neighborhoodTransactionTemporalV1.js';
 import { createCohortOriginalSourceChainV1Store, COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS }
   from './cohortOriginalSourceChainV1.js';
 import { verifyCohortOriginalSourceGraphStep } from './cohortOriginalSourceGraphV1.js';
@@ -153,6 +156,8 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingCadPages: true, projectingCadAccounts: true, allowedPhases: ['frozen_identity_refs_v2'] },
   shared_transaction_pages_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingTransactionPages: true, allowedPhases: ['frozen_identity_refs_v2'] },
+  shared_transaction_temporal_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    readingTransactionPages: true, projectingTransactionTemporal: true, allowedPhases: ['frozen_identity_refs_v2'] },
 });
 function fail(reason, detail, captureCounts) {
   const error = Object.assign(new Error(`custom_cohort_capture_${reason}`), {
@@ -1588,7 +1593,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       fail('frozen_source_representation_unsupported');
     const {referencesV2=false,verifying=false,stockVerifying=false,identityVerifying=false,
       typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,
-      readingCadPages=false,projectingCadAccounts=false,readingTransactionPages=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
+      readingCadPages=false,projectingCadAccounts=false,readingTransactionPages=false,projectingTransactionTemporal=false,
+      allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     if(referencesV2){
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
       const descriptors=Object.getOwnPropertyDescriptors(options),keys=Reflect.ownKeys(descriptors);
@@ -1939,7 +1945,16 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       }
       if(readingTransactionPages){
         const graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
+        if(projectingTransactionTemporal)prepareNeighborhoodTransactionRetainedPeriodV1(input.observationPeriod,context.effective_date);
         stockMetricResult=await createNeighborhoodSharedJobTransactionPagesV2(client,stockOptions,graph).page(transactionInput);
+        if(projectingTransactionTemporal){
+          const rows=stockMetricResult.rows.map(row=>{budget.check();
+            return projectNeighborhoodTransactionTemporalV1(row,context.effective_date,input.observationPeriod);});
+          if(Buffer.byteLength(JSON.stringify(rows))>NEIGHBORHOOD_TRANSACTION_TEMPORAL_V1_LIMITS.page_utf8_bytes)fail('byte_limit');
+          stockMetricResult={...stockMetricResult,status:'retained_transaction_temporal_page',rows,
+            temporal_profile:getNeighborhoodTransactionTemporalV1Profile(),
+            temporal_basis:'retained_effective_year_and_closing_period_applied_before_resolution'};
+        }
       }
       input=freeze({...input,auth:await loadCurrentCustomCohortJobActor(client,input.auth.userId,scope.organization_id)});
       assertTarget(await resolveTarget(client,input,true),target);
@@ -2180,6 +2195,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * complete packages, verify transaction eligibility or publish selections. */
     readSharedFrozenCaptureJobTransactionsReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'shared_transaction_pages_refs_v2'),
+    /** Project one all-date original page under actual retained dates only after
+     * issued V2 prerequisites and current authorization/cache fences at both ends.
+     * This read neither resolves complete packages nor advances durable state. */
+    readSharedFrozenCaptureJobTransactionTemporalReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'shared_transaction_temporal_refs_v2'),
     async capture(value, options = {}) {
     if (!options || Object.getPrototypeOf(options) !== Object.prototype)
       fail('invalid_options');

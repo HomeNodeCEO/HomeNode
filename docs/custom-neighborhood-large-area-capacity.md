@@ -1,5 +1,34 @@
 # Complete larger-area Custom neighborhood studies
 
+## Sixth-pass native assignment and draft fences (2026-10-10, authored)
+
+The current authorization branch integrates corrected traversal parent `1f6e1108`.
+Its eight-file focused run passed 107 tests, zero failures/cancellations/skips
+(670.4239 ms), with native fixture syntax and diff checks passing. These are local
+synthetic checks only; cloud execution and actual protected-parent integration
+are still required. The earlier 207-test result below belongs to preparation.
+
+The selected-evidence native fixture now changes the actual assignment appraiser
+or archives the actual private workfile in the SAME database transaction, after
+the fixed next-combined original/EMPTY query has executed. It requires the
+existing actual owner to refuse with `assignment_access_denied` or
+`private_source_read_only` before retaining evidence/continuation progress.
+The entire assignment/workfile row and evidence head, job, continuation, blob
+count, prior heads, accepted reports and genuine choices must remain unchanged
+after rollback. No mocked authorization return, actor/rights override or guard
+weakening is used. The initial ordinal and fresh terminal EMPTY boundary are
+both exercised for the independently issued B-only, empty and both-selected
+original graphs; all existing whole-owner budgets remain mandatory.
+
+These additional native assertions are AUTHORED, not yet executed. The local
+wiring regression is not a database, source, selected-union or acceptance proof.
+Eight-file focused synthetic regression: 207 passed, zero failures/cancellations/
+skips (1865.2685 ms). Native fixture syntax and diff checks passed locally;
+heavy database/full-server/frontend verification remains cloud-only.
+No production code, activation, grant, Apply, report or genuine choice changed.
+Actual protected-parent integration, fresh integrated security/native/full
+suites and actual included review remain required in dependency order.
+
 ## Sixth empty-selection assertion corrected after actual native run (2026-10-10)
 
 Exact `5a170e8d` native job 114309675712 passed 417 migration and one subject

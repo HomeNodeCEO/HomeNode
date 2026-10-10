@@ -177,3 +177,20 @@ test('native intent truncate proof includes every command FK child without bypas
   assert.ok(fixture.includes("'TRUNCATE app.neighborhood_custom_cohort_v2_selection_intents')),\n          /cannot truncate a table referenced in a foreign key constraint/"));
   assert.ok(fixture.includes('/selection_intent_immutable|custom_cohort_context_immutable/'));
 });
+
+test('sixth authority regression mutates actual same-transaction assignment and draft after one combined query and pins rollback',()=>{
+  const fixture=readFileSync(new URL('./neighborhoodGroupIndex.integration.test.js',import.meta.url),'utf8'),
+    start=fixture.indexOf('// Mutate actual native authority only AFTER'),
+    end=fixture.indexOf("if(refsFault==='union_delta_count'",start),block=fixture.slice(start,end),
+    query=fixture.lastIndexOf('const result=await client.query(config);',start);
+  assert.ok(start>=0&&end>start&&query>=0&&start-query<100,'injection follows the real query');
+  for(const s of ['config.text===NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL',
+    "['evidence_assignment_ending','evidence_draft_ending'].includes(refsFault)",
+    'await client.query(', 'UPDATE app.assignment_files SET assigned_appraiser_user_id=NULL',
+    "UPDATE app.custom_appraisal_workfiles SET status='archived'",'refsFault=null'])assert.ok(block.includes(s),s);
+  assert.doesNotMatch(block,/await pool\.query|return \{.*rows/);
+  for(const s of ['await assertEvidenceAuthorityRefusal(evidenceInitial)','await assertEvidenceAuthorityRefusal(pending)',
+    "['evidence_assignment_ending',/assignment_access_denied/]","['evidence_draft_ending',/private_source_read_only/]",
+    'assert.deepEqual(await readEvidenceAuthority(),authority','await evidenceUnchanged(snapshot)',
+    'native reassignment/archive and all retained progress roll back together'])assert.ok(fixture.includes(s),s);
+});

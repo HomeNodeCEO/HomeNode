@@ -1767,6 +1767,17 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       // REAL COMMIT must reject orphan progress. No fabricated SQL result.
       if(orphanUnionYield)await client.query('SAVEPOINT synthetic_union_yield');
       const result=await client.query(config);
+      // Mutate actual native authority only AFTER the actual sixth combined
+      // original/EMPTY query. Same client/TX: every refusal must roll these
+      // changes back together with any progress, never a mocked return row.
+      if(config.text===NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL
+        &&['evidence_assignment_ending','evidence_draft_ending'].includes(refsFault)){
+        const fault=refsFault;refsFault=null;
+        if(fault==='evidence_assignment_ending')await client.query(
+          'UPDATE app.assignment_files SET assigned_appraiser_user_id=NULL WHERE id=$1',[assignment]);
+        if(fault==='evidence_draft_ending')await client.query(
+          "UPDATE app.custom_appraisal_workfiles SET status='archived' WHERE assignment_file_id=$1",[assignment]);
+      }
       if(refsFault==='union_delta_count'&&config.text.includes('custom-cohort-selected-union-v2:member-insert'))
         refsFault='union_delta_after_member';
       if(refsFault==='union_delta_after_member'&&config.text.includes('custom-cohort-selected-union-v2:counts')){
@@ -5076,7 +5087,24 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             evidenceSnapshot=async()=>({heads:await readEvidence(),job:await continuationJob(),continuation:await continuationRow(),blobs:await refsBlobCount()}),
             evidenceUnchanged=async snapshot=>{assert.deepEqual(await evidenceSnapshot(),snapshot);
               assert.deepEqual(await readEligibility(),completedEligibility.heads);await stablePrior();};
+          const readEvidenceAuthority=async()=>(await pool.query(`SELECT
+            (SELECT to_jsonb(a) FROM app.assignment_files a WHERE a.id=$1) AS assignment,
+            (SELECT to_jsonb(w) FROM app.custom_appraisal_workfiles w WHERE w.assignment_file_id=$1) AS workfile`,[assignment])).rows[0],
+            assertEvidenceAuthorityRefusal=async snapshot=>{
+              const authority=await readEvidenceAuthority();
+              for(const [fault,reason] of [['evidence_assignment_ending',/assignment_access_denied/],
+                ['evidence_draft_ending',/private_source_read_only/]]){
+                const from=refsCalls.length;refsFault=fault;
+                await assert.rejects(evidenceStep(),reason);assert.equal(refsFault,null);
+                assert.equal(refsCalls.slice(from).filter(sql=>sql===NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL).length,1);
+                assert.ok(!refsCalls.slice(from).some(sql=>/custom-cohort-selected-evidence-v2:head-(?:insert|advance)|custom-cohort-v2-continuation:yield/.test(sql)),
+                  'current assignment/draft refusal precedes retained evidence or continuation writes');
+                await evidenceUnchanged(snapshot);assert.deepEqual(await readEvidenceAuthority(),authority,
+                  'native reassignment/archive and all retained progress roll back together');
+              }
+            };
           const evidenceInitial=await evidenceSnapshot();assert.deepEqual(evidenceInitial.heads,[]);
+          await assertEvidenceAuthorityRefusal(evidenceInitial);
           await assert.rejects(freshRefsOwner()[evidenceMethod](refsInput,{captureJobClaim:liveClaim}),/CAD_source_policy_required/);
           await setCadFixtureGrant(pool,organization,{...cadGrant,revoked_at:cadGrant.valid_from});
           const deniedFrom=refsCalls.length;await assert.rejects(evidenceStep(),/market_data_access_denied/);
@@ -5143,6 +5171,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             visited.push(body.selected_entry.account_id);previous=state.heads[0].receipt_reference;
           }
           const pending=await evidenceSnapshot();
+          await assertEvidenceAuthorityRefusal(pending);
           for(const patch of [{selected_stock_count:selectedCount+1},{after:{selected_ordinal:selectedCount+1,done:false}},
             {selected_entry:{account_id:'FORGED',ordinal:selectedCount+1,partition_ordinal:1,entry_reference:terminal.union_reference}},
             {eligibility_reference:terminal.union_reference},{observations:{free_authority:true}}]){
@@ -5198,6 +5227,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             explicit_empty:selectedCount===0,selected_ordinals:selectedCount,native_B_partition2_not_first_A:!allSelected&&selectedCount>0,
             every_selected_stock_CAD_whole_all_date_transaction_and_required_subject_original_entire_cache:true,
             separate_current_and_ending_CAD_and_market_actor_assignment_draft_subject_claim_workspace_fences:true,
+            actual_native_reassignment_and_archive_after_combined_original_or_terminal_EMPTY_roll_back_before_progress:true,
             one_aggregate250_single_use_child_unchanged_owner_query_byte_deadline_limits:true,
             insert_update_checkpoint_yield_rollbacks_and_real_orphan_COMMIT_refused:true,
             lost_real_COMMIT_fresh_single_use_continuation_no_duplicate_ordinal_or_history:true,

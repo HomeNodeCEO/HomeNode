@@ -27,6 +27,21 @@ now corrected. The changed documentation head needs fresh checks and actual
 review; the next conservative request gate is 18:13:32 UTC, also subject to a
 fresh repository-wide actual-review activity check. No protected merge is claimed.
 
+The c68c03d3 documentation head passed all 14 checks. Its actual incremental
+included review 9631f215-d7f0-4b65-9810-e8b79acb1474 finished at 18:26:47 UTC
+and found an outside-diff memory issue: the transaction plan encoded all admitted
+originals before rejecting an oversized packet. Both fixed plans now materialize
+only byte lengths under the original-count cap, then gate payload encoding on
+raw original/cache lower bounds. The exact encoded-row, transport and output
+checks remain mandatory; limits, profiles and whole-package refusal are unchanged.
+125 focused tests passed, zero failures/skips (1424.1255 ms). New cloud-only TEMP
+plan assertions require zero encoded members for an over-limit 250-original
+packet, per-original refusal and rejection when raw sizes fit but actual encoding
+does not. These new native assertions have NOT yet executed. The implementation
+fix needs fresh exact-head checks and actual included review before merge. The
+next conservative request gate is 19:31:47 UTC AND a fresh repository-wide
+actual-review activity preflight. No early, paid, forced or check bypass.
+
 All internal stages remain inactive. No production deployment, grant, worker,
 scheduler, generation pin, accepted report, genuine Hardy choice or Apply was
 changed. Native protocol checks are not licensed acquisition or live acceptance.

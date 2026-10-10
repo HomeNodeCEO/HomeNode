@@ -1749,6 +1749,11 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty']) t
       // REAL COMMIT must reject orphan progress. No fabricated SQL result.
       if(orphanUnionYield)await client.query('SAVEPOINT synthetic_union_yield');
       const result=await client.query(config);
+      if(refsFault==='union_delta_count'&&config.text.includes('custom-cohort-selected-union-v2:member-insert'))
+        refsFault='union_delta_after_member';
+      if(refsFault==='union_delta_after_member'&&config.text.includes('custom-cohort-selected-union-v2:counts')){
+        refsFault=null;return {...result,rows:result.rows.map(r=>({...r,selected_count:r.selected_count+1}))};
+      }
       if(orphanUnionYield){await client.query('ROLLBACK TO SAVEPOINT synthetic_union_yield');refsFault=null;}
       if(config.text===NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL){
         const p=result.rows[0];
@@ -4365,7 +4370,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty']) t
             ['catalog_read_counts_ending',/catalog_original_mismatch/],['catalog_read_head_ending',/checkpoint_conflict|catalog_original_mismatch/],
             ['stock_cells_mismatch',/original_mismatch/],['stock_cells_missing',/original_mismatch/],['stock_cells_original',/original_mismatch/],
             ['union_group_rollback',/actual union_group_rollback/],['union_head_rollback',/actual union_head_rollback/],
-            ['union_yield_rollback',/actual union_yield_rollback/],['union_orphan_commit',/neighborhood_selected_union_v2_orphan_progress/]]){
+            ['union_yield_rollback',/actual union_yield_rollback/],['union_orphan_commit',/neighborhood_selected_union_v2_orphan_progress/],
+            ['union_delta_count',/selected_union_original_mismatch/]]){
             refsFault=fault;refsAbort=new AbortController();
             await assert.rejects(freshRefsOwner()[method](refsInput,{captureJobClaim:liveClaim,signal:refsAbort.signal}),reason);
             assert.equal(refsFault,null);await unionUnchanged();
@@ -4408,6 +4414,15 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty']) t
           assert.deepEqual(second.current_subject_housing.subject,selectionWaitFixture==='union-empty'
             ?{state:'missing',category:null,origin:'retained_subject_public'}:{state:'conflicting',category:null,origin:'current_subject_cad'});
           assert.equal(second.current_subject_housing.eligibility,'not_established');
+          const oneDecision=second.current_account_recorded_eligibility;
+          assert.equal(oneDecision.account_id,groupB.account_id);assert.equal(oneDecision.partition_ordinal,2);
+          assert.equal(oneDecision.selected_stock_member,selectionWaitFixture!=='union-empty');
+          assert.equal(oneDecision.selected_ordinal,selectionWaitFixture==='union-empty'?null:1);
+          assert.deepEqual(oneDecision.decision.housing.reasons,[selectionWaitFixture==='union-empty'
+            ?'subject_housing_missing':'subject_housing_conflicting','account_housing_unknown']);
+          assert.ok(Object.values(oneDecision.decision.metrics).every(m=>m.recorded_comparison_eligible===false));
+          assert.equal(oneDecision.decision.issued_eligibility_progress,false);
+          assert.equal(oneDecision.decision.complete_selected_union_eligibility,false);
           assert.equal(second.context_complete,false);assert.equal(second.pin_transfer,false);
           liveClaim=await consume();const staleUnionClaim=liveClaim;
           const subjectHousingMethod='readOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2',unfinishedSubjectFrom=refsCalls.length;
@@ -4428,6 +4443,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty']) t
           assert.equal(terminal.selected_stock_accounts,selectionWaitFixture==='union-empty'?0:1);
           assert.deepEqual(terminal.current_subject_housing.subject,second.current_subject_housing.subject);
           assert.equal(terminal.current_subject_housing.distinct_original_count,selectionWaitFixture==='union-empty'?0:3);
+          assert.equal(terminal.current_account_recorded_eligibility,null,'fresh EMPTY never repeats the previous account decision');
           assert.equal(finalUnion.heads[0].sequence,3);assert.equal(finalUnion.groups.length,2);
           assert.equal(finalUnion.rows.length,selectionWaitFixture==='union-empty'?0:1);
           if(finalUnion.rows.length){const member=finalUnion.rows[0];assert.equal(member.account_id,groupB.account_id);
@@ -4536,6 +4552,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty']) t
             native_subject_same_account_deduplicated_or_two_distinct_accounts_one_aggregate_budget:true,
             retained_explicit_null_blocks_subject_fallback:selectionWaitFixture==='union-empty',
             subject_only_cache_forgery_with_correct_next_account_refused:selectionWaitFixture!=='union-empty',
+            one_account_recorded_decision_unknown_reasons_native_selected_ordinal_fresh_EMPTY:true,
+            native_selected_delta_disagrees_with_immutable_command_rolls_back_real_DML:true,
             current_source_before_command_and_known_ID_lookup_all_ending_faults_and_real_DML_rollbacks:true,
             exact_human_resume_token_bridge_fresh_same_attempt_success_and_real_higher_attempt_reclaim:true,
             lost_real_COMMIT_ack_next_native_ordinal_no_duplicate_or_recapture:true,

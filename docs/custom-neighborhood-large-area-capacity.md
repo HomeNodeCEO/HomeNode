@@ -1,5 +1,43 @@
 # Complete larger-area Custom neighborhood studies
 
+## Original-backed per-account recorded eligibility (2026-10-10, not activated)
+
+The actual native union-progress owner now derives a transient decision for
+its ONE original-reconciled next account, after comparing the ENTIRE partition
+entry and native catalog literals. It uses the already-reopened subject and
+account in the SAME aggregate original/SQL/byte/deadline budget; there is no
+second source reader, caller callback, extra SQL query or population array.
+After all ending fences, the actual native contribution's selected-count delta
+must exactly match the immutable command's group membership. Only that native
+result supplies the returned selected flag/ordinal, never a caller count.
+
+Recorded comparison requires the SAME exact known subject/account housing
+category and EVERY original parcel part observed at the retained date with one
+equal value and its fixed reported unit. An aggregate `observed` state with even
+one missing, invalid or unsupported part is NOT complete. All part denominators
+and subject/account unknown, partial, conflict and different-category reasons
+remain explicit. Market-value currency remains unsupported, even for exact
+numeric literals. Equal reported area is not summed or promoted to verified
+GLA, one economic unit, historical housing, amenities or market eligibility.
+A fresh terminal EMPTY returns no previous account decision.
+
+269 focused synthetic tests passed, zero failures/skips (1648.4677ms), including
+actual neutral-compiler replay with a future outside-part year invalidated
+before account resolution. Full issued native union assertions for selected
+and explicit-empty unions are AUTHORED NOT EXECUTED for this new change. They
+require unresolved subject/account reasons, native selected ordinal, terminal
+EMPTY and unchanged source/typed copies and all existing native safeguards.
+
+This is ONE-account decision groundwork, NOT an issued eligibility pass or
+complete selected-population eligibility. Decisions are not copied into blobs,
+native rows or a new checkpoint. The fifth native pass still needs server-owned
+selected-ordinal progress, atomic head/checkpoint/consumed continuation, complete
+terminal reconciliation and real DML/orphan/lost-COMMIT/cancellation proofs.
+Statistics, coherent publication, durable workers/pin retirement, licensed
+large-area acquisition and live Hardy reload acceptance remain unfinished.
+All stages stay internal/inactive; no production, rights, choices, reports or
+Apply operations are performed.
+
 ## One subject/next-account original budget (2026-10-10, not activated)
 
 The actual native union-progress owner now resolves retained subject precedence
@@ -24,13 +62,22 @@ returned subject observation is not persisted as semantic authority or a new
 eligibility receipt. Existing single-purpose reader shapes/bytes are unchanged.
 
 264 focused synthetic tests passed with zero failures/skips (1608.4365ms).
-Cloud-only native assertions are AUTHORED, NOT EXECUTED for this change: actual
+Cloud-only native assertions PASSED at exact head30191519 in #1262: actual
 union progress exercises same-account deduplication, two-account replay,
 subject-only cache forgery while the next account remains correct, original
 and ending-fence faults, native DML rollback and lost real COMMIT acknowledgment.
 Separate TEMP SQL DATA assertions exercise four indexed cap+1 count loops,
 aggregate 250/251 admission, missing-subject zero payload and blocked fallback;
 those TEMP rows are NOT issued original/source authority.
+Foundation38064622717 native114249645171 decoded417 migration/12 index/1
+subject/1 edge/2 bootstrap tests ALLPASS, zero failures/skips (migration
+150879.2915ms; index767805.453797ms). Actual independently issued nonempty and
+explicit-empty union markers15:55:39/15:56:53 verified shared subject/next
+replay, subject-only forgery refusal, native DML/orphan/lost-real-COMMIT and
+all ending/continuation/terminal guards; both stayed within230 of256 whole
+owner SQL queries. Server114249644977, frontend114249645127 and
+bootstrap114249645115 also passed. This is initial unprotected-stack proof,
+NOT a replacement for later integrated exact-head protected gates/review.
 
 This is a shared-budget prerequisite, NOT issued housing/metric eligibility
 progress, complete selected-population statistics, coherent publication,

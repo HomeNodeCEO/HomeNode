@@ -79,6 +79,7 @@ import { prepareCustomCohortGroupWorkspaceSave,
   prepareCustomCohortGroupCaptureCompletion, readCustomCohortFrozenSelectionWorkspaceTarget } from './customCohortGroupWorkspaceSave.js';
 import { resumeCustomCohortSubjectCheckpoint } from './customCohortCaptureSubjectCheckpoint.js';
 import { resolveCustomCohortRetainedSubjectHousing } from './customCohortRetainedSubjectHousing.js';
+import { resolveNeighborhoodOriginalAccountEligibilityV2 } from './neighborhoodOriginalAccountEligibilityV2.js';
 import { resumeCustomCohortPreparationCheckpoint } from './customCohortCapturePreparationCheckpoint.js';
 import { prepareCustomCohortContextReference, prepareCustomCohortContextHeader } from './customCohortContextContract.js';
 import { captureNeighborhoodSpatialMembershipCompact } from './cachedSpatialMembership.js';
@@ -2153,7 +2154,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       }
       let partitionStore=null,partitionAnchor=null,partitionResult=null,partitionReadCursor=null,partitionReadEntry=null,
         catalogStore=null,catalogAnchor=null,catalogCounts=null,catalogResult=null,catalogReadGroup=null,catalogReadGroupKey=null,
-        unionStore=null,unionAnchor=null,unionCounts=null,unionExpected=null,unionIssued=null,unionPlan=null,subjectHousingResult=null,unionSubjectHousing=null;
+        unionStore=null,unionAnchor=null,unionCounts=null,unionExpected=null,unionIssued=null,unionPlan=null,subjectHousingResult=null,unionSubjectHousing=null,
+        unionAccountEligibility=null,unionExpectedSelected=false;
       if(partitioningRecordedGroups||readingRecordedPartition||catalogingRecordedGroups){
         const baseExpected={binding,source_reference:reference,root,graph_verification_reference:verificationReference,
           stock_verification_reference:stockVerificationReference,identity_verification_reference:identityVerificationReference,
@@ -2369,6 +2371,22 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         }
         if(replayingSelectedUnion){
           if(partitionReadEntry&&partitionReadEntry.ordinal!==before.account_count+1)fail('partition_original_mismatch');
+          if(partitionReadEntry){
+            // Transient ONE-account decision only, never a persisted semantic
+            // capability or a complete eligibility receipt. The facts above
+            // came from EVERY original/all outside parts and ENTIRE cache in
+            // the same subject/next aggregate budget. Unknown/incomplete parts
+            // remain explicit; selected stock is not automatically eligible.
+            const housing=packet.recorded_housing,subject=unionSubjectHousing.subject;
+            unionAccountEligibility={account_id:packet.account_id,partition_ordinal:partitionReadEntry.ordinal,
+              decision:resolveNeighborhoodOriginalAccountEligibilityV2({
+                subject:{state:subject.state,category:subject.category},
+                housing:{state:housing.state,category:housing.category,county_state:housing.county_state,
+                  source_part_count:housing.source_part_count,part_states:housing.part_states},
+                original_counts:packet.original_counts,observations:packet.observations})};
+            unionExpectedSelected=issuedSelectionIntent.included_recorded_group_ids.includes(packet.recorded_group.assigned_group_id??'discovery:unassigned');
+            if(Buffer.byteLength(JSON.stringify(unionAccountEligibility))>8192)fail('byte_limit');
+          }
           // ONE already-original-reconciled account only. Writes are postponed
           // until ALL current ending fences below, including exact intent and
           // server head/count checks; no second reader or budget is opened.
@@ -2442,6 +2460,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const beforeCounts=unionCounts,{selected_count:beforeSelected,...beforeGroupCounts}=beforeCounts;
         if(unionPlan.entry)unionCounts=await unionStore.contribute(unionAnchor,unionPlan.entry);
         const {selected_count:afterSelected,...afterGroupCounts}=unionCounts;
+        if(afterSelected-beforeSelected!==Number(unionExpectedSelected))fail('selected_union_original_mismatch');
         const receipt=prepareCohortSelectedUnionReceiptV2({format:'cohort_selected_union_receipt_v2',...unionExpected,
           sequence:(unionAnchor?.sequence??0)+1,previous:unionAnchor?.receipt_reference??null,
           before:unionPlan.before,after:unionPlan.after,entry_reference:unionPlan.entry?.entry_reference??null,
@@ -2460,6 +2479,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           membership:'immutable_explicit_group_IDs_only_unassigned_candidates_not_promoted',
           housing_and_metric_eligibility:'separate_not_established_unknown_conflicting_lineage_preserved',
           current_subject_housing:unionSubjectHousing,
+          current_account_recorded_eligibility:unionAccountEligibility===null?null:
+            {...unionAccountEligibility,selected_stock_member:afterSelected>beforeSelected,
+              selected_ordinal:afterSelected>beforeSelected?afterSelected:null},
           statistics:'not_established',publication:'not_established',context_complete:false,pin_transfer:false,
           source_acquisition:'not_established',report_update:'none',continuation});
       }

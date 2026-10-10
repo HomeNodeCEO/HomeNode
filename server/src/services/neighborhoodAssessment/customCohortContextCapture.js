@@ -165,6 +165,8 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingTransactionPages: true, projectingTransactionTemporal: true, allowedPhases: ['frozen_identity_refs_v2'] },
   shared_transaction_packages_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingTransactionPackages: true, allowedPhases: ['frozen_identity_refs_v2'] },
+  original_transaction_packages_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    readingTransactionPackages: true, reconcilingTransactionPackages: true, allowedPhases: ['frozen_identity_refs_v2'] },
   shared_stock_original_cells_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingStockOriginalCells: true, allowedPhases: ['frozen_identity_refs_v2'] },
   shared_stock_account_packages_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
@@ -1605,7 +1607,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     const {referencesV2=false,verifying=false,stockVerifying=false,identityVerifying=false,
       typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,
       readingCadPages=false,projectingCadAccounts=false,readingTransactionPages=false,projectingTransactionTemporal=false,
-      readingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
+      readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     if(referencesV2){
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
       const descriptors=Object.getOwnPropertyDescriptors(options),keys=Reflect.ownKeys(descriptors);
@@ -1977,8 +1979,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       }
       if(readingTransactionPackages){
         const graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
-        stockMetricResult=await createNeighborhoodSharedTransactionPackagesV1(client,stockOptions,graph,
-          context.effective_date,input.observationPeriod).page(packageInput);
+        const packages=createNeighborhoodSharedTransactionPackagesV1(client,stockOptions,graph,context.effective_date,input.observationPeriod);
+        stockMetricResult=await (reconcilingTransactionPackages?packages.originalPage(packageInput):packages.page(packageInput));
       }
       if(readingStockOriginalCells||readingStockAccountPackages){
         const graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
@@ -2234,6 +2236,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * parcel completeness, economic equivalence, eligibility or publication. */
     readSharedFrozenCaptureJobTransactionPackagesReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'shared_transaction_packages_refs_v2'),
+    /** Replay every complete package original under the same issued/current
+     * fences before retained temporal/native projection; no new authority. */
+    readOriginalFrozenCaptureJobTransactionPackagesReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'original_transaction_packages_refs_v2'),
     /** Recompile each bounded stock original against its entire neutral cache
      * under independently issued V2 prerequisites and both-end current rights.
      * No selection, statistic, new phase, payload copy or report is issued. */

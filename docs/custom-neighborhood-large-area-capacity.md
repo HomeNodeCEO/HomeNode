@@ -1,5 +1,111 @@
 # Complete larger-area Custom neighborhood studies
 
+## Protected account-package merge / transaction integration (2026-10-10)
+
+PR #1239 exact c7a43142 passed all 14 fresh exact-head checks and ACTUAL included
+review edabdc0e-c0af-474d-882f-dce00283a6da of all seven changed files against
+protected d2930c13. Review finished 15:56:51 UTC with no actionable comments;
+exact coverage was `reviewed`, not an automatic skip. Fresh strict ruleset,
+main/head/CI and unresolved-thread checks preceded normal expected-head merge
+at 15:58:06, actual protected merge 244c1fd97fcec9b3c143b23273632c5408e876c0.
+
+PR #1240 was retargeted to MAIN at 15:58:20 BEFORE synchronization. Its actual
+protected parent 244c1fd9 was merged locally as e498a467; the sole test-import
+conflict kept BOTH independent original-admission and transaction-plan checks.
+124 focused tests passed, zero failures/skips (1412.5138 ms). Fresh integrated
+required security/native/full-suite cloud checks and actual included review
+remain required; older stacked 0ddddc43 proofs are historical, not integrated
+acceptance. That actual included review finished 15:56:51; its conservative
+request gate was NOT BEFORE 17:01:51 UTC AND a fresh repository-wide actual
+review-activity preflight. No early, paid, forced or required-check bypass.
+
+Integrated #1240 head 39d5b594 subsequently passed all 14 exact-head checks,
+including decoded native original-transaction reconciliation. Actual included
+review d44e25a1-6443-413f-bc68-7ac45c178f02 covered all nine changed files and
+finished at 17:08:32 UTC. Its sole finding was missing spaces in the prose above,
+now corrected. The changed documentation head needs fresh checks and actual
+review; the next conservative request gate is 18:13:32 UTC, also subject to a
+fresh repository-wide actual-review activity check. No protected merge is claimed.
+
+The c68c03d3 documentation head passed all 14 checks. Its actual incremental
+included review 9631f215-d7f0-4b65-9810-e8b79acb1474 finished at 18:26:47 UTC
+and found an outside-diff memory issue: the transaction plan encoded all admitted
+originals before rejecting an oversized packet. Both fixed plans now materialize
+only byte lengths under the original-count cap, then gate payload encoding on
+raw original/cache lower bounds. The exact encoded-row, transport and output
+checks remain mandatory; limits, profiles and whole-package refusal are unchanged.
+125 focused tests passed, zero failures/skips (1424.1255 ms). New cloud-only TEMP
+plan assertions require zero encoded members for an over-limit 250-original
+packet, per-original refusal and rejection when raw sizes fit but actual encoding
+does not. These new native assertions have NOT yet executed. The implementation
+fix needs fresh exact-head checks and actual included review before merge. The
+next conservative request gate is 19:31:47 UTC AND a fresh repository-wide
+actual-review activity preflight. No early, paid, forced or check bypass.
+
+All internal stages remain inactive. No production deployment, grant, worker,
+scheduler, generation pin, accepted report, genuine Hardy choice or Apply was
+changed. Native protocol checks are not licensed acquisition or live acceptance.
+
+## Original-reconciled native transaction packages (2026-10-10, not activated)
+
+`readOriginalFrozenCaptureJobTransactionPackagesReferencesV2` extends the actual
+bounded database owner. It requires the independently issued DONE original graph,
+geographic and identity heads, immutable complete neutral cache, original stock
+and exact one-hop seed index. Current database actor/assignment/private draft/
+retained subject/source-purpose/claim/pin authorization repeats at both ends.
+Only a closed `transactionPackagePage: {kind, cursor}` is admitted; callers cannot
+provide original readers, accounts, periods, profiles, counts or completeness.
+
+Fixed indexed SQL counts each ORIGINAL source/sale/link kind at cap+1 (251)
+before admitting the entire package, maximum total 250. Over-limit packages
+deliver zero payload rows. Original/envelope/transport/output caps are 1 MB,
+2.1 MB, 8 MB and 2.1 MB respectively. Every original is recompiled; the ENTIRE
+neutral cache, native identities, recomputed hash and byte length must agree
+before the unchanged native-association/retained-temporal projection runs.
+Missing cache rows refuse rather than shrink the denominator. Original payload
+text does not escape to the consumer and no payload copy is stored.
+
+Source packages follow exact BIGINT stock-seed order, including above 2^53.
+Legacy sales first scan at most 250 RAW original C-text keys BEFORE source-less
+and stock-membership filtering. A full sparse empty prefix advances its watermark
+without claiming end. When a package is found, continuation uses THAT consumed
+key, never the last scanned key, so later eligible members cannot be skipped.
+Every nonempty package still requires a fresh terminal probe; an end/cursor does
+not prove earlier traversal. All old/outside/unresolved native observations
+remain; multiple native sale IDs do not become one economic transaction.
+No provider membership, currency, price allocation or eligibility is inferred.
+
+The old typed-only V1 consumer remains separate and unchanged in meaning. Both
+fixed methods on one reader share a single-use 32-MB all-nested-result, 128-query,
+60-second and five-second-query budget. No migration, phase, default/public route,
+cache-miss repair, worker, selected head, report or production activation is added.
+129 focused local tests passed (zero failed/skipped, 1,339.6563 ms); actual compiler
+replay, exact values, all-date/outside/unknown associations, whole packet caps,
+unchanged-hash/count forgeries, sparse scan/no-skip, hostile input, cancellation,
+single-use and ending-cache refusal are covered. New native tests are authored
+for original admission/query-plan bounds and the actual issued current-authorized
+owner, including prerequisites, ending rights/cache and lost-COMMIT reopening.
+Initial cloud head `d3148be4` passed server, frontend (3,959 tests, zero failed/
+skipped), redteam and Sales CI. Its actual issued-owner original-reconciled
+transaction-package block passed: three source packages, one legacy package,
+three source/three sale/four link originals, full replay, both-end fences,
+forgeries, prerequisites, lost-COMMIT reopen and zero copies/checkpoint writes.
+The overall native job FAILED (seven of eight index tests passed): the separate
+TEMP admission fixture reused one uncast SQL parameter for text and BIGINT
+columns (`42P08`), before its whole-package/plan assertions could finish.
+The fixture now explicitly casts both uses; no implementation guard or assertion
+was removed. Fresh exact-head native/full-suite execution remains required.
+
+This is not provider acquisition, economic resolution, complete selected-union
+authority, immutable full-population ordinal cells, exact union medians/CODs/
+calendar-quarter checks, coherent publication or durable large-area work/pin
+retirement. Protected parents must be integrated in order, retargeted to main
+BEFORE synchronize pushes, with fresh required security/native/full-suite checks
+and actual included review of integrated heads. Licensed >50k/5-mile/10-mile/city/
+retrospective and live Hardy saved-map reload acceptance remain outstanding.
+Internal stages remain inactive; accepted reports and genuine Hardy choices are
+unchanged. No local database/full-server/frontend suites or Indexer were started.
+
 ## Complete single-account original packages (2026-10-10, not activated)
 
 PR #1239 was retargeted to main at 14:50:52 UTC BEFORE synchronization, then
@@ -63,8 +169,18 @@ and two account originals), outside parts, exact conflicts/no sums, unsupported
 currency, current/ending rights/cache/prerequisite refusal and lost-COMMIT reopen.
 A separate rolled-back TEMP SQL DATA fixture checks exact total 250/whole 251
 refusal, both counters capped at 251, no oversized payload delivery, whole byte
-refusal, missing-cache preservation and fresh empty probes. Native/cloud execution
-for this NEW slice is pending, not claimed by the earlier original-page receipt.
+refusal, missing-cache preservation and fresh empty probes. The exact initial
+stacked head b2d9be42 passed foundation run 38028070588: native job 114143065145
+actually passed 417 migration, eight index, one subject, one edge and two bootstrap
+tests, all zero failed/skipped; index duration 446,426.360994 ms. Its decoded
+`native-stock-account-package-admission-DATA-v2` marker verifies both 251 counter
+inputs/two loops and zero oversized original delivery. Separate
+`native-reconciled-stock-account-packages-owner-v2` verifies the actual issued
+two-account/three-parcel/two-account-original graph and all authored owner fences.
+Frontend job 114143065085 passed 3,959 tests, zero failed/skipped (73,934.16451 ms),
+plus typecheck/lint/source quality/build; server/redteam jobs also succeeded.
+These initial stacked receipts do not replace future integrated-head protected
+checks/actual review or licensed/live acceptance.
 
 This establishes neither complete selected-union traversal nor an issued selected
 revision, immutable full-population ordinal cell source, amenities/transaction

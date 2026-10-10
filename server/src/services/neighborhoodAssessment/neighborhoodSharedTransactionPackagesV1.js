@@ -6,6 +6,8 @@ import { createNeighborhoodFrozenJobSourceSeeds } from './neighborhoodFrozenJobS
 import { NEIGHBORHOOD_SHARED_TYPED_V2_SQL, prepareNeighborhoodSharedTypedSource } from './neighborhoodSharedTypedGeneration.js';
 import { getNeighborhoodFrozenTypedOriginalV2Profile } from './neighborhoodFrozenTypedOriginalV1.js';
 import { prepareNeighborhoodTypedTransactionV2 } from './neighborhoodFrozenTypedTransactionV2.js';
+import { NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL, NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_LIMITS,
+  getNeighborhoodOriginalTransactionPackageV2Profile, reconcileNeighborhoodOriginalTransactionPackageV2 } from './neighborhoodOriginalTransactionPackagesV2.js';
 import { getNeighborhoodTransactionTemporalV1Profile, prepareNeighborhoodTransactionRetainedPeriodV1,
   projectNeighborhoodTransactionTemporalV1 } from './neighborhoodTransactionTemporalV1.js';
 
@@ -200,9 +202,8 @@ export function createNeighborhoodSharedTransactionPackagesV1(client, rawOptions
     bytes += Buffer.byteLength(encoded); if (bytes > L.read_utf8_bytes) fail('byte_limit'); check(); return result;
   }
   const seeds = createNeighborhoodFrozenJobSourceSeeds({ query: execute }, options);
-  return Object.freeze({
-    /** A delivered last package is not a terminal receipt; a fresh empty probe is required. */
-    async page(rawPage) {
+  /** Both fixed consumers share one single-use aggregate budget and identical fences. */
+  async function readPackage(rawPage, originalReplay) {
       const page = prepareNeighborhoodTransactionPackagePageV1(rawPage); if (used) fail('single_use'); used = true; started = performance.now();
       const seed = await seeds.read(), stock = seed.stock, original = stock.original;
       const source = prepareNeighborhoodSharedTypedSource(await execute(NEIGHBORHOOD_SHARED_TYPED_V2_SQL.source, [stock.generation_id]), stock.generation_id);
@@ -221,17 +222,29 @@ export function createNeighborhoodSharedTransactionPackagesV1(client, rawOptions
           || p.typed_rows !== source.row_count || !count(p.typed_utf8_bytes, 8000000000) || BigInt(p.typed_utf8_bytes) < BigInt(p.typed_rows)) fail('cache_unavailable');
       }
       const header = one(await execute(NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read, values)); validate(header);
-      const raw = one(await execute(NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL[page.kind],
-        [stock.operation_id, stock.generation_id, TYPED.profile_ref.content_sha256, page.cursor, L.rows, L.packet_utf8_bytes, L.row_utf8_bytes]));
-      const projected = projectNeighborhoodTransactionPackageV1(raw, page, graph.layer_counts, effectiveDate, period); check();
+      const originalLimits=NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_LIMITS;
+      const raw = one(await execute((originalReplay?NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL:NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL)[page.kind],
+        [stock.operation_id, stock.generation_id, TYPED.profile_ref.content_sha256, page.cursor, L.rows,
+          ...(originalReplay?[originalLimits.packet_utf8_bytes,originalLimits.row_utf8_bytes,originalLimits.original_utf8_bytes,originalLimits.output_utf8_bytes]
+            :[L.packet_utf8_bytes,L.row_utf8_bytes])]));
+      const reconciled=originalReplay?reconcileNeighborhoodOriginalTransactionPackageV2(raw,page,check):null;
+      let projected = projectNeighborhoodTransactionPackageV1(reconciled?reconciled.packet:raw, page, graph.layer_counts, effectiveDate, period); check();
+      if(reconciled&&!projected.package)projected={...projected,next_cursor:reconciled.next_scan_cursor,end_of_kind:reconciled.empty_scan_terminal};
       if (!same(await seeds.read(), seed) || !same(prepareNeighborhoodSharedTypedSource(
         await execute(NEIGHBORHOOD_SHARED_TYPED_V2_SQL.source, [stock.generation_id]), stock.generation_id), source)) fail('source_changed');
       const ending = one(await execute(NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read, values)); validate(ending);
       if (!same(header, ending)) fail('source_changed'); check();
-      return freeze({ status: 'complete_native_transaction_package_page', graph, stock, seed_index: seed, source_metadata: source,
+      return freeze({ status: originalReplay?'original_reconciled_native_transaction_package_page':'complete_native_transaction_package_page', graph, stock, seed_index: seed, source_metadata: source,
         typed_profile: TYPED, package_profile: PROFILE, ...projected,
+        ...(originalReplay?{original_package_profile:getNeighborhoodOriginalTransactionPackageV2Profile(),
+          original_reconciliation:'every_package_original_recompiled_before_retained_projection',scanned_original_count:reconciled.scanned_original_count}:{}),
         authority: 'not_established', coverage: 'one_complete_native_package_not_whole_population',
         source_acquisition: 'not_established', transaction_eligibility: 'not_established', report_update: 'none' });
-    },
+  }
+  return Object.freeze({
+    /** A delivered last package needs a fresh empty probe; no cursor proves earlier consumption. */
+    page: rawPage=>readPackage(rawPage,false),
+    /** Fixed original-rooted replay, never a caller-selected reader or cache-count shortcut. */
+    originalPage: rawPage=>readPackage(rawPage,true),
   });
 }

@@ -244,7 +244,8 @@ test(`${method} accepts no caller period, profile, source facts, selection or is
 test('native transaction package owner admits only the closed cursor, never caller completeness, dates or source facts', async () => {
   const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
     claim={operation_id:base.operationId,claim_token:'70000000-0000-4000-8000-000000000002',attempts:1};
-  const method='readSharedFrozenCaptureJobTransactionPackagesReferencesV2',opts={captureJobClaim:claim,
+  for(const method of ['readSharedFrozenCaptureJobTransactionPackagesReferencesV2','readOriginalFrozenCaptureJobTransactionPackagesReferencesV2']){
+  const opts={captureJobClaim:claim,
     transactionPackagePage:{kind:'source_record',cursor:''}};
   const service=createCustomCohortContextCapture({pool:{connect(){assert.fail('must not connect');}},sourceMode:'combined-witness2-v1',
     authorizeMarketData:()=>assert.fail('must not authorize')});
@@ -255,6 +256,7 @@ test('native transaction package owner admits only the closed cursor, never call
     {kind:'source_record',get cursor(){assert.fail('getter');}}])
     await assert.rejects(service[method](base,{...opts,transactionPackagePage:page}),/invalid_/);
   await assert.rejects(service[method](base,{captureJobClaim:claim,get transactionPackagePage(){assert.fail('getter');}}),/invalid_options/);
+  }
 });
 
 test('stock original cells owner accepts no caller originals, dates, selection, counts, callbacks or issued head',async()=>{

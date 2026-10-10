@@ -1,5 +1,72 @@
 # Complete larger-area Custom neighborhood studies
 
+## Original-reconciled stock cell pages (2026-10-10, not activated)
+
+`readSharedFrozenCaptureJobStockOriginalCellsReferencesV2` is a separate dormant
+internal consumer of the actual issued DONE V2 graph, geographic and identity
+heads. It uses the existing bounded database capture owner and reloads current
+actor/assignment/private-draft/retained-subject/original-source rights, exact
+request/claim/pin/stock and all issued heads at both ends. Caller input is only
+a closed `stockOriginalCellPage` kind/cursor/limit; no original, date, selection,
+count, cache, continuation authority, permission or callback is accepted.
+
+The fixed query first caps a native C-key prefix of immutable originals BEFORE
+stock filtering. Fixed lateral point probes then retain exact stock accounts,
+including retained parcel parts outside the geometry, and LEFT JOIN the exact
+neutral cache. Missing cache rows refuse instead of vanishing from the roster.
+Every delivered original payload is recompiled with the pinned neutral profile;
+the ENTIRE cache row, native account/source identities, original hash and byte
+length must match. Hashes or counts are not a substitute for original replay.
+Only reconciled typed observations and bounded literal markers leave the reader;
+original payload text and geometry are not delivered or durably copied. The
+owner's retained effective-year rule is applied to each cell before future
+account/union resolution, without changing neutral originals or cache keys.
+Missing account originals are not fabricated; the complete stock denominator
+and its explicit absent-account reconciliation remain future owner duties.
+
+The single-use read retains 250-row, 1-MB-original, 2.1-MB-envelope, 8-MB-original
+page and 2.1-MB-output bounds, plus 32 MB of ALL nested query results, 128 queries,
+60 seconds and five seconds per query. SQL independently admits a transport and
+output byte prefix; malformed/oversized candidates refuse, not skip. The row limit
+counts original scan keys, not just qualifying stock rows. An empty scoped page
+can advance the scan watermark and is NOT an exhausted kind when its key prefix
+is full. A partial byte prefix never skips an unconsumed scoped candidate. Scan
+counts/watermarks are not selected-population receipts. A full tail requires a
+fresh empty probe. No page end proves that earlier pages were consumed.
+No dense whole population, synchronous per-cell SQL callback, cache-miss repair,
+new phase, migration, route, worker, selection head or report is introduced.
+
+Focused tests exercise actual compiler replay against synthetic original text,
+exact values above 2^53, future-year projection, missing/zero distinctions,
+account marker literals, full/short/empty prefixes, forged cells with unchanged
+hash/count envelopes, original/cache/identity mismatch, closed hostile input,
+single-use/cancellation and ending cache refusal. The combined lightweight local
+run passed 142 tests, failed zero, with one deliberately cloud-only large-run
+DATA test skipped (1,344.4562 ms); source/helper/native-fixture syntax and diff
+checks passed. The authored small native
+fixture extends the actual issued owner, independently checks all three parcel
+parts and two account originals, and covers partial/unissued/corrupt prerequisites,
+current authorization/cache refusal, transient corruption and lost-COMMIT reopen.
+An independent rolled-back TEMP SQL-only DATA fixture adds 10,001 rows, verifies
+the bounded 250-key plan/index input, transport/output prefixes, zero oversized
+original delivery and sparse watermark semantics. Those TEMP rows are NOT
+issued originals, original reconciliation, current rights or licensed acquisition.
+Native/full-suite execution for this new slice is pending cloud CI, not claimed.
+These fixtures are not licensed acquisition or production speed acceptance.
+
+This is an original-cell page boundary, NOT a complete selected-union source,
+server-owned selected revision, immutable ordinal cell index, five-state account
+resolution, exact median/COD/calendar-quarter receipt or publication. The future
+complete owner must consume and independently reconcile every original/member,
+retain homogeneous units and aggregate lifetime budgets/cleanup roots, and
+preserve original re-reconciliation before and after statistics. It cannot wire
+these pages to caller callbacks, reset budgets per page, feed a dense full
+population array or substitute hashes/counts and claim the roadmap complete.
+Coherent publication, durable large-area workers/terminal pin transfer-retirement,
+licensed >50k/5-mile/10-mile/city/retrospective and live Hardy acceptance remain.
+Internal stages stay inactive; no production deployment/grant/worker/pin/report,
+genuine Hardy choice or Apply changes. QA assignment 7 is the only Apply-test target.
+
 ## Exact calendar-quarter numerical checks (2026-10-09, not activated)
 
 `checkExactCalendarQuarterAreasV1` is a separate dormant mathematical checker,

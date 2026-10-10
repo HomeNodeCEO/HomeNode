@@ -42,6 +42,8 @@ import { projectNeighborhoodTransactionTemporalV1, prepareNeighborhoodTransactio
   from './neighborhoodTransactionTemporalV1.js';
 import { createNeighborhoodSharedTransactionPackagesV1, prepareNeighborhoodTransactionPackagePageV1 }
   from './neighborhoodSharedTransactionPackagesV1.js';
+import { createNeighborhoodSharedStockOriginalCellsV2, prepareNeighborhoodStockOriginalCellPageV2 }
+  from './neighborhoodSharedStockOriginalCellsV2.js';
 import { createCohortOriginalSourceChainV1Store, COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS }
   from './cohortOriginalSourceChainV1.js';
 import { verifyCohortOriginalSourceGraphStep } from './cohortOriginalSourceGraphV1.js';
@@ -162,6 +164,8 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingTransactionPages: true, projectingTransactionTemporal: true, allowedPhases: ['frozen_identity_refs_v2'] },
   shared_transaction_packages_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingTransactionPackages: true, allowedPhases: ['frozen_identity_refs_v2'] },
+  shared_stock_original_cells_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    readingStockOriginalCells: true, allowedPhases: ['frozen_identity_refs_v2'] },
 });
 function fail(reason, detail, captureCounts) {
   const error = Object.assign(new Error(`custom_cohort_capture_${reason}`), {
@@ -1594,28 +1598,31 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     const {referencesV2=false,verifying=false,stockVerifying=false,identityVerifying=false,
       typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,
       readingCadPages=false,projectingCadAccounts=false,readingTransactionPages=false,projectingTransactionTemporal=false,
-      readingTransactionPackages=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
+      readingTransactionPackages=false,readingStockOriginalCells=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     if(referencesV2){
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
       const descriptors=Object.getOwnPropertyDescriptors(options),keys=Reflect.ownKeys(descriptors);
       const admittedKeys=['captureJobClaim','signal','deadline',...(readingSharedStockMetrics?['stockMetricPage']:[]),
         ...(readingCadPages?[projectingCadAccounts?'cadAccountPage':'cadImprovementPage']:[]),
-        ...(readingTransactionPages?['transactionPage']:[]),...(readingTransactionPackages?['transactionPackagePage']:[])];
+        ...(readingTransactionPages?['transactionPage']:[]),...(readingTransactionPackages?['transactionPackagePage']:[]),
+        ...(readingStockOriginalCells?['stockOriginalCellPage']:[])];
       if(keys.some(key=>!admittedKeys.includes(key)
         ||!descriptors[key].enumerable||!Object.hasOwn(descriptors[key],'value')))fail('invalid_options');
       options=Object.fromEntries(keys.map(key=>[key,descriptors[key].value]));
     }
     if (!options || Object.getPrototypeOf(options)!==Object.prototype) fail('invalid_options');
-    const {captureJobClaim:providedClaim,stockMetricPage,cadImprovementPage,cadAccountPage,transactionPage,transactionPackagePage,...budgetOptions}=options;
+    const {captureJobClaim:providedClaim,stockMetricPage,cadImprovementPage,cadAccountPage,transactionPage,transactionPackagePage,stockOriginalCellPage,...budgetOptions}=options;
     const metricPage=readingStockMetrics||readingSharedStockMetrics?prepareNeighborhoodFrozenStockMetricPage(stockMetricPage):null;
     const cadPage=readingCadPages?projectingCadAccounts?prepareNeighborhoodSharedJobCadAccountPage(cadAccountPage)
       :prepareNeighborhoodSharedJobCadPage(cadImprovementPage):null;
     const transactionInput=readingTransactionPages?prepareNeighborhoodSharedTransactionPageV2(transactionPage):null;
     const packageInput=readingTransactionPackages?prepareNeighborhoodTransactionPackagePageV1(transactionPackagePage):null;
+    const originalCellInput=readingStockOriginalCells?prepareNeighborhoodStockOriginalCellPageV2(stockOriginalCellPage):null;
     if(!readingStockMetrics&&!readingSharedStockMetrics&&stockMetricPage!==undefined) fail('invalid_options');
     if(!readingCadPages&&cadImprovementPage!==undefined)fail('invalid_options');
     if(!readingTransactionPages&&transactionPage!==undefined)fail('invalid_options');
     if(!readingTransactionPackages&&transactionPackagePage!==undefined)fail('invalid_options');
+    if(!readingStockOriginalCells&&stockOriginalCellPage!==undefined)fail('invalid_options');
     const originalInput=inputOf(value),claim=prepareCustomCohortCaptureJobClaim(providedClaim);
     if(claim.operation_id!==originalInput.operationId.toLowerCase()) fail('operation_conflict');
     if(!reportedProfile) fail('frozen_source_profile_unsupported');
@@ -1854,7 +1861,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           issued=prepareCohortSourceIdentityReceiptV2(issued,expected);
           if(issued.sequence!==identityAnchor.sequence)fail('checkpoint_conflict');
         }
-        if((readingSharedStockMetrics||readingCadPages||readingTransactionPages||readingTransactionPackages)
+        if((readingSharedStockMetrics||readingCadPages||readingTransactionPages||readingTransactionPackages||readingStockOriginalCells)
           &&issued?.after.kind_index!==COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.length)
           fail('unfinished_identity_verification');
         // Keep the original exact all-date one-hop identity SQL unchanged.
@@ -1964,6 +1971,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         stockMetricResult=await createNeighborhoodSharedTransactionPackagesV1(client,stockOptions,graph,
           context.effective_date,input.observationPeriod).page(packageInput);
       }
+      if(readingStockOriginalCells){
+        const graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
+        stockMetricResult=await createNeighborhoodSharedStockOriginalCellsV2(client,stockOptions,graph,
+          context.effective_date).page(originalCellInput);
+      }
       input=freeze({...input,auth:await loadCurrentCustomCohortJobActor(client,input.auth.userId,scope.organization_id)});
       assertTarget(await resolveTarget(client,input,true),target);
       privateDraft(await privateCaptureWorkfile(client,input));
@@ -1979,11 +1991,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(geographicAnchorStore&&!same(await geographicAnchorStore.read(),geographicAnchor))fail('checkpoint_conflict');
       if(identityAnchorStore&&!same(await identityAnchorStore.read(),identityAnchor))fail('checkpoint_conflict');
       budget.check();
-      if(readingStockMetrics||readingSharedStockMetrics||readingCadPages||readingTransactionPages||readingTransactionPackages) return freeze({...stockMetricResult,
+      if(readingStockMetrics||readingSharedStockMetrics||readingCadPages||readingTransactionPages||readingTransactionPackages||readingStockOriginalCells) return freeze({...stockMetricResult,
         ...(readingStockMetrics?{typed_original_reference:typedReference}:{}),
         ...(readingCadPages?{CAD_source_authorization:{purpose:cadPurpose,decision:cadDecision},stock_reference:stockReference,
           current_authorized_owner:'V2_issued_graph_geography_identity_and_separate_CAD_rights'}:{}),
-        ...(readingTransactionPages||readingTransactionPackages?{stock_reference:stockReference,retained_effective_date:context.effective_date,
+        ...(readingTransactionPages||readingTransactionPackages||readingStockOriginalCells?{stock_reference:stockReference,retained_effective_date:context.effective_date,
           retained_observation_period:input.observationPeriod,
           current_authorized_owner:'V2_issued_graph_geography_identity_and_current_original_source_rights'}:{}),
         source_reference:reference,verification_reference:verificationReference,stock_verification_reference:stockVerificationReference,
@@ -2203,6 +2215,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * parcel completeness, economic equivalence, eligibility or publication. */
     readSharedFrozenCaptureJobTransactionPackagesReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'shared_transaction_packages_refs_v2'),
+    /** Recompile each bounded stock original against its entire neutral cache
+     * under independently issued V2 prerequisites and both-end current rights.
+     * No selection, statistic, new phase, payload copy or report is issued. */
+    readSharedFrozenCaptureJobStockOriginalCellsReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'shared_stock_original_cells_refs_v2'),
     async capture(value, options = {}) {
     if (!options || Object.getPrototypeOf(options) !== Object.prototype)
       fail('invalid_options');

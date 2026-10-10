@@ -23,6 +23,11 @@ clock or source adapter override. A failure poisons that operation so a fresh
 child reader cannot continue under a reset budget; actual transaction rollback
 and lost-COMMIT classification are unchanged. No original reconciliation or
 current source/actor/assignment/subject/claim/head fence is removed or reordered.
+The executor preserves the transaction-local client shape used by the existing
+prior-selection repository, but its `release` guard refuses to release the real
+connection. A regression with a nonempty prior active workspace exercises that
+repository through this same executor, including missing/changed prior-head
+refusals; it does not read old source facts or mint new selection intent.
 
 Focused tests execute exact/one-over query and cumulative byte boundaries,
 shared initial/ending deadline/cancellation, malformed driver rows and original

@@ -25,7 +25,11 @@ export function createCustomCohortOriginalAccountOwnerBudget(client, options) {
     checkBudget();
     if (performance.now() - started >= L.operation_ms) fail('deadline');
   };
-  return Object.freeze({ async query(...args) {
+  return Object.freeze({
+    // Existing transaction-local repositories require this client shape. They
+    // must not release the real connection owned by the outer transaction.
+    release() { fail('transaction_owner_required'); },
+    async query(...args) {
     try {
       check();
       if (++queries > L.sql_queries) fail('query_limit');

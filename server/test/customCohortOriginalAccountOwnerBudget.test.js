@@ -8,7 +8,8 @@ test('one actual owner executor charges authority, workspace, original and endin
   const calls = [], result = { rowCount: 0, rows: [] }, raw = { async query(...args) { calls.push(args); return result; } },
     owner = createBudget(raw, { checkBudget() {} });
   assert.deepEqual(L, { sql_queries: 256, decoded_rows_utf8_bytes: 32000000, operation_ms: 60000 });
-  assert.ok(Object.isFrozen(L)); assert.ok(Object.isFrozen(owner)); assert.deepEqual(Object.keys(owner), ['query']);
+  assert.ok(Object.isFrozen(L)); assert.ok(Object.isFrozen(owner)); assert.deepEqual(Object.keys(owner), ['release', 'query']);
+  assert.throws(() => owner.release(), /owner_transaction_owner_required/);
   for (let i = 0; i < L.sql_queries; i++) {
     const config = { text: ['authority', 'workspace', 'original', 'ending'][i % 4], values: [i], query_timeout: 7 };
     assert.equal(await owner.query(config), result); assert.equal(calls.at(-1)[0], config);

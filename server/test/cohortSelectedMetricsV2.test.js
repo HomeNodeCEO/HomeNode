@@ -137,4 +137,9 @@ test('authored native seventh coverage is real issued graph/COMMIT/whole-state e
    'await authorityRefusal(pendingMetrics)','selectedCount+1','await metricsUnchanged(finishedMetrics)',
    'maximum_whole_owner_sql_queries:Math.max(...metricsQueries)','statistics:false,publication:false,licensed_acquisition:false,production_speed:false,worker_activation:false'])
    assert.ok(f.includes(s),s);
+ assert.match(f,/if\(!allSelected\)\{\s+await withCustomCohortJobTransaction[\s\S]{0,180}synthetic_eligibility_reclaim/);
+ assert.match(f,/if\(allSelected\)\{\s+await withCustomCohortJobTransaction[\s\S]{0,180}synthetic_evidence_reclaim/);
+ assert.ok(f.includes("assert.equal(pendingMetrics.job.attempts,4"));
+ assert.ok(f.includes("assert.equal(failedMetrics.status,'retry')"));
+ assert.ok(f.includes('assert.equal(replacement.attempts,5)'));
 });

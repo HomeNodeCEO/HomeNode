@@ -1684,6 +1684,21 @@ test('next eligibility original reader uses native head ordinal and exactly the 
   assert.doesNotMatch(sql,/FROM core\.|array_agg|jsonb_agg|ST_DWithin|INSERT|UPDATE|DELETE/);
 });
 
+test('all five whole-stock packet plans gate raw byte lengths before encoding and preserve exact byte admission',()=>{
+  for(const sql of [NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL,NEIGHBORHOOD_STOCK_SUBJECT_HOUSING_PACKAGE_V2_SQL,
+    NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,NEIGHBORHOOD_STOCK_SUBJECT_AND_FIRST_SELECTED_PACKAGE_V2_SQL,
+    NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_ELIGIBILITY_PACKAGE_V2_SQL]){
+    const raw=sql.split('), raw_sizes AS MATERIALIZED (')[1].split('), raw_gate AS MATERIALIZED (')[0],
+      members=sql.split('), members AS MATERIALIZED (')[1].split('), sized AS MATERIALIZED')[0];
+    assert.match(raw,/octet_length\(o\.payload::text\)/);assert.match(raw,/octet_length\(t\.typed::text\)/);
+    assert.match(raw,/\(SELECT sum\(n\) FROM totals\)<=\$5::integer/);assert.doesNotMatch(raw,/jsonb_build_object|AS encoded|string_agg/);
+    assert.match(members,/AND NOT \(SELECT oversize FROM raw_gate\) OFFSET 0/);
+    assert.match(sql,/\(SELECT oversize FROM raw_gate\) OR coalesce\(max\(bytes\),0\)>\$7::integer/);
+    assert.match(sql,/CASE WHEN NOT \(SELECT oversize FROM raw_gate\)[\s\S]+sum\(bytes\+1\)[\s\S]+ELSE '\[\]'/);
+    if(sql.includes('subject_account AS MATERIALIZED'))assert.match(raw,/NOT \$10::boolean OR EXISTS\(SELECT 1 FROM subject_account\)/);
+  }
+});
+
 test('paired originals reconcile two different accounts, omit blocked fallback and keep a fresh empty next probe',async()=>{
   const f=await stockOriginalCellFixture();
   f.rows.parcels[0]=stockOriginalCell('parcels','1',{class_code:'A11'});

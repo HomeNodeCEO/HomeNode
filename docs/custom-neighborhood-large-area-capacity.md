@@ -2,6 +2,16 @@
 
 ## Standalone CAD and selected-amenity raw-byte gates (2026-10-10, not activated)
 
+The same fix now also covers the two whole-stock SQL stems: standalone account
+and exact-subject housing, plus paired-next, fixed-first-selected and native
+next-eligibility plans. All five retain only raw byte lengths under the existing
+count/subject admission before encoding; exact encoded gates still run. The
+cloud-only stock TEMP fixture now authors raw-over-8-MB/zero-members, per-original
+1-MB, raw-fit/exact-over and count-over/zero-raw-members assertions for standalone,
+exact-subject and paired admissions; existing issued selected/fifth-pass owners
+remain required. These NEW assertions are AUTHORED NOT EXECUTED. The separate
+original-key-prefix page query is unchanged by this whole-account fix.
+
 The same encode-before-byte-refusal risk also existed in the actual standalone
 CAD account and fixed selected-amenity SQL plans. Both now retain ONLY byte
 lengths under their unchanged complete-original count admission, then refuse

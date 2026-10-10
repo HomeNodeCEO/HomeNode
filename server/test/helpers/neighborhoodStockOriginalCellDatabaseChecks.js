@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL as SQL, NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL,
-  NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,
+  NEIGHBORHOOD_STOCK_SUBJECT_HOUSING_PACKAGE_V2_SQL,NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,
   NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_LIMITS as L }
   from '../../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
 
@@ -72,7 +72,8 @@ export async function runNeighborhoodStockOriginalCellDatabaseChecks(client){
       candidate_cap:250,transport_prefix:1,output_prefix:1,oversized_original_payload_rows:0,
       missing_cache_row_not_skipped:true,fresh_empty_probe:true,temporary_DATA_only:true,
       issued_owner_authority:false,original_reconciliation:false,licensed_or_live_acceptance:false});
-    const packetValues=[operation,generation,profile,'',L.rows,L.page_utf8_bytes,L.row_utf8_bytes,L.original_utf8_bytes,L.output_utf8_bytes];
+    const packetValues=[operation,generation,profile,'',L.rows,L.page_utf8_bytes,L.row_utf8_bytes,L.original_utf8_bytes,L.output_utf8_bytes],
+      pairSql=substitute(NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL),pairValues=[...packetValues,true];
     /** Complete SQL packet or zero payload delivery; not a licensed source. */
     const packet=async overrides=>{const args=[...packetValues];for(const [i,v] of Object.entries(overrides??{}))args[Number(i)]=v;
       const r=await client.query(packetSql,args);assert.equal(r.rowCount,1);return r.rows[0];};
@@ -96,9 +97,33 @@ export async function runNeighborhoodStockOriginalCellDatabaseChecks(client){
     const admitted=await packet();assert.deepEqual(admitted.original_counts,{parcels:249,accounts:1});
     assert.equal(admitted.page_count,250);assert.equal(admitted.invalid_count,0);assert.equal(admitted.packet_oversize,false);
     assert.equal(JSON.parse(admitted.page_json).length,250);
+    const planNodes=async(statement,args)=>{const p=(await client.query(`EXPLAIN (ANALYZE,FORMAT JSON) ${statement}`,args)).rows[0]['QUERY PLAN'][0].Plan,all=[];
+      const visit=n=>{all.push(n);(n.Plans??[]).forEach(visit);};visit(p);return all;};
+    // Three distinct fixed admissions, sharing the same two production SQL
+    // stems. Derived selected/fifth-pass plans also run in full issued owners.
+    for(const [statement,args] of [[packetSql,packetValues],
+      [substitute(NEIGHBORHOOD_STOCK_SUBJECT_HOUSING_PACKAGE_V2_SQL),[...packetValues.slice(0,3),'A',...packetValues.slice(4)]],
+      [pairSql,pairValues]]){
+      const read=async values=>(await client.query(statement,values??args)).rows[0];
+      await client.query("UPDATE pg_temp.stock_cell_data_originals SET payload=jsonb_build_object('DATA_only',repeat('x',40000))");
+      const rawOver=await read();assert.equal(rawOver.page_count,0);assert.equal(rawOver.packet_oversize,true);assert.equal(rawOver.page_json,'[]');
+      const rawPlan=await planNodes(statement,args);assert.equal(rawPlan.find(n=>n['Subplan Name']==='CTE raw_sizes')['Actual Rows'],250);
+      assert.equal(rawPlan.find(n=>n['Subplan Name']==='CTE members')['Actual Rows'],0);
+      await client.query(`UPDATE pg_temp.stock_cell_data_originals SET payload='{"SQL_admission_DATA_only":true}'::jsonb`);
+      await client.query("UPDATE pg_temp.stock_cell_data_originals SET payload=jsonb_build_object('DATA_only',repeat('x',1000000)) WHERE kind='accounts'");
+      const largeOriginal=await read();assert.equal(largeOriginal.page_count,0);assert.equal(largeOriginal.packet_oversize,true);
+      await client.query(`UPDATE pg_temp.stock_cell_data_originals SET payload='{"SQL_admission_DATA_only":true}'::jsonb WHERE kind='accounts'`);
+      const lower=Number((await client.query(`SELECT (sum(octet_length(o.payload::text)::bigint+octet_length(t.typed::text)+1)+2)::text AS n
+        FROM pg_temp.stock_cell_data_originals o JOIN pg_temp.stock_cell_data_typed t USING(generation_id,kind,row_key)`)).rows[0].n),exactArgs=[...args];
+      exactArgs[5]=lower;const exactOver=await read(exactArgs);assert.equal(exactOver.page_count,250);
+      assert.equal(exactOver.packet_oversize,true);assert.equal(exactOver.page_json,'[]');
+    }
     await client.query(`INSERT INTO pg_temp.stock_cell_data_originals VALUES($1,'parcels','1000250','A',NULL,'{"account_id":"A"}')`,[generation]);
     const oneOver=await packet();assert.deepEqual(oneOver.original_counts,{parcels:250,accounts:1});
     assert.equal(oneOver.page_count,0);assert.equal(oneOver.page_json,'[]');
+    const countPlan=await planNodes(packetSql,packetValues);
+    assert.equal(countPlan.find(n=>n['Subplan Name']==='CTE raw_sizes')['Actual Rows'],0);
+    assert.equal(countPlan.find(n=>n['Subplan Name']==='CTE members')['Actual Rows'],0);
     await client.query("DELETE FROM pg_temp.stock_cell_data_originals WHERE row_key='1000250'");
     const tooBig=await packet({7:10});assert.equal(tooBig.packet_oversize,true);assert.equal(tooBig.page_json,'[]');
     const transport=await packet({5:10});assert.equal(transport.packet_oversize,true);assert.equal(transport.page_json,'[]');
@@ -110,10 +135,11 @@ export async function runNeighborhoodStockOriginalCellDatabaseChecks(client){
     assert.deepEqual(terminal.original_counts,{parcels:0,accounts:0});assert.equal(terminal.page_json,'[]');
     console.info('[native-stock-account-package-admission-DATA-v2]',{total_cap:250,one_over:251,
       both_kind_count_caps:251,actual_main_count_input_rows:251,actual_count_loops:2,oversized_original_payload_rows:0,
+      three_fixed_raw_byte_admissions:true,actual_raw_size_rows:250,actual_raw_over_limit_encoded_rows:0,
+      per_original_1MB_gate:true,raw_fit_exact_encoding_over_refused:true,count_251_zero_raw_sizes_and_encoded_members:true,
       missing_cache_not_skipped:true,whole_byte_refusal:true,fresh_empty_probe:true,temporary_DATA_only:true,
       issued_owner_authority:false,original_reconciliation:false,licensed_or_live_acceptance:false});
-    const pairSql=substitute(NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL),pairValues=[...packetValues,true],
-      pair=async overrides=>{const args=[...pairValues];for(const [i,v] of Object.entries(overrides??{}))args[Number(i)]=v;
+    const pair=async overrides=>{const args=[...pairValues];for(const [i,v] of Object.entries(overrides??{}))args[Number(i)]=v;
         const r=await client.query(pairSql,args);assert.equal(r.rowCount,1);return r.rows[0];};
     const dedup=await pair();assert.equal(dedup.account_id,'A');assert.equal(dedup.subject_account_id,'A');
     assert.equal(dedup.original_count,250);assert.equal(dedup.page_count,250,'same subject and next do not double-charge or duplicate originals');
@@ -125,6 +151,9 @@ export async function runNeighborhoodStockOriginalCellDatabaseChecks(client){
     const aggregateOver=await pair({3:'A'});assert.equal(aggregateOver.account_id,'B');assert.equal(aggregateOver.subject_account_id,'A');
     assert.equal(aggregateOver.next_parcels,1);assert.equal(aggregateOver.subject_parcels,249);assert.equal(aggregateOver.subject_accounts,1);
     assert.equal(aggregateOver.original_count,251);assert.equal(aggregateOver.page_count,0);assert.equal(aggregateOver.page_json,'[]');
+    const pairOverPlan=await planNodes(pairSql,[...pairValues.slice(0,3),'A',...pairValues.slice(4)]);
+    assert.equal(pairOverPlan.find(n=>n['Subplan Name']==='CTE raw_sizes')['Actual Rows'],0);
+    assert.equal(pairOverPlan.find(n=>n['Subplan Name']==='CTE members')['Actual Rows'],0);
     const blocked=await pair({3:'A',9:false});assert.equal(blocked.subject_account_id,null);assert.equal(blocked.original_count,1);
     assert.equal(blocked.page_count,1);assert.equal(JSON.parse(blocked.page_json)[0].account_id,'B');
     await client.query("UPDATE pg_temp.stock_cell_data_jobs SET account_id='NOT-STOCK'");

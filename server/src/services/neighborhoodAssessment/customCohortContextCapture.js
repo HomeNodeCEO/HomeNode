@@ -60,6 +60,7 @@ import { prepareCohortStockTraversalReceiptV2 } from './cohortStockTraversalRece
 import { createCustomCohortStockTraversalV2AnchorRepository } from './customCohortStockTraversalV2AnchorRepository.js';
 import { prepareCohortRecordedGroupPartitionReceiptV2 } from './cohortRecordedGroupPartitionReceiptV2.js';
 import { createCustomCohortRecordedPartitionV2Repository } from './customCohortRecordedPartitionV2Repository.js';
+import { createCustomCohortV2ContinuationRepository } from './customCohortV2ContinuationRepository.js';
 import { getNeighborhoodOriginalRecordedGroupV2Profile } from './neighborhoodOriginalRecordedGroupV2.js';
 import { createCustomCohortRecordedGroupSelectionOwner,
   reopenCustomCohortRecordedGroupSelectionOriginal } from './customCohortRecordedGroupSelectionOwner.js';
@@ -191,6 +192,10 @@ const FROZEN_SOURCE_STAGES = freeze({
     partitioningRecordedGroups: true, allowedPhases: ['frozen_stock_traversal_refs_v2', 'frozen_recorded_partition_refs_v2'] },
   original_recorded_partition_account_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingStockAccountPackages: true, readingRecordedPartition: true, allowedPhases: ['frozen_recorded_partition_refs_v2'] },
+  original_stock_traversal_continue_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    traversingStock: true, yieldingV2Progress: true, allowedPhases: ['frozen_identity_refs_v2', 'frozen_stock_traversal_refs_v2'] },
+  original_recorded_partition_continue_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    partitioningRecordedGroups: true, yieldingV2Progress: true, allowedPhases: ['frozen_stock_traversal_refs_v2', 'frozen_recorded_partition_refs_v2'] },
 });
 function fail(reason, detail, captureCounts) {
   const error = Object.assign(new Error(`custom_cohort_capture_${reason}`), {
@@ -1625,7 +1630,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,
       resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,partitioningRecordedGroups=false,
-      readingRecordedPartition=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
+      readingRecordedPartition=false,yieldingV2Progress=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     if(referencesV2){
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
       const descriptors=Object.getOwnPropertyDescriptors(options),keys=Reflect.ownKeys(descriptors);
@@ -2172,6 +2177,13 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(partitionStore&&!same(await partitionStore.read(),partitionAnchor))fail('checkpoint_conflict');
       if(readingRecordedPartition&&!same(await partitionStore.readNextEntry(partitionReadCursor),partitionReadEntry))fail('partition_original_mismatch');
       budget.check();
+      if(yieldingV2Progress){
+        // Only after EVERY original/current-authority ending fence, in this
+        // same TX. The native continuation guard derives the actual issued
+        // head/root, refuses duplicate progress and preserves all attempts.
+        const continuation=await createCustomCohortV2ContinuationRepository(client).yieldIssued(claim,jobOptions);
+        budget.check();return freeze({...(partitioningRecordedGroups?partitionResult:traversalResult),continuation});
+      }
       if(partitioningRecordedGroups||readingRecordedPartition)return freeze(partitionResult);
       if(traversingStock)return freeze(traversalResult);
       if(readingStockMetrics||readingSharedStockMetrics||readingCadPages||readingTransactionPages||readingTransactionPackages||readingStockOriginalCells||readingStockAccountPackages) return freeze({...stockMetricResult,
@@ -2436,6 +2448,13 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     /** One original-backed recorded-group ordinal, not a selected member list. */
     advanceOriginalFrozenCaptureJobRecordedPartitionReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_recorded_partition_refs_v2'),
+    /** Same bounded original/current-authority owner, then atomically release
+     * one new issued progress reference for a fresh-token success continuation.
+     * No retry-history reset, worker activation, completion or pin transfer. */
+    continueOriginalFrozenCaptureJobStockTraversalReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'original_stock_traversal_continue_refs_v2'),
+    continueOriginalFrozenCaptureJobRecordedPartitionReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'original_recorded_partition_continue_refs_v2'),
     /** Reconcile one indexed derived partition entry against EVERY original,
      * not a selected-union capability or a hash/count-only group reader. */
     readOriginalFrozenCaptureJobRecordedPartitionAccountReferencesV2: (value, options = {}) =>

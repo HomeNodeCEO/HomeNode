@@ -46,6 +46,8 @@ import { createCustomCohortStockTraversalV2AnchorRepository }
   from '../src/services/neighborhoodAssessment/customCohortStockTraversalV2AnchorRepository.js';
 import { createCustomCohortRecordedPartitionV2Repository }
   from '../src/services/neighborhoodAssessment/customCohortRecordedPartitionV2Repository.js';
+import { createCustomCohortV2ContinuationRepository }
+  from '../src/services/neighborhoodAssessment/customCohortV2ContinuationRepository.js';
 import { getNeighborhoodOriginalRecordedGroupV2Profile }
   from '../src/services/neighborhoodAssessment/neighborhoodOriginalRecordedGroupV2.js';
 import { createCustomCohortContextCapture }
@@ -3392,8 +3394,45 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       assert.equal(refsFault,null);assert.ok(!refsCalls.slice(from).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
       assert.deepEqual(await readPartitionHead(),partitionFirst);assert.deepEqual(await readRefsCheckpoint(),partitionFirstCheckpoint);
     }
-    const partitionSecond=await freshRefsOwner()[partitionMethod](refsInput,refsOptions);
-    assert.deepEqual(partitionSecond.progress,{after_account:'CLOSURE-B',account_count:2,done:false});
+    const continueMethod='continueOriginalFrozenCaptureJobRecordedPartitionReferencesV2',
+      continuationJob=async()=>(await pool.query('SELECT status,attempts,claim_token::text,lease_expires_at,last_error_code,checkpoint,context_sha256 FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[refsOperation])).rows[0],
+      continuationRow=async()=>(await pool.query('SELECT sequence,phase,progress_reference,issued_claim_token::text,issued_attempts,consumed_claim_token::text FROM app.neighborhood_custom_cohort_v2_continuations WHERE operation_id=$1',[refsOperation])).rows[0]??null,
+      pinCount=async()=>(await pool.query('SELECT count(*)::integer AS n FROM app.neighborhood_custom_cohort_prepared_generation_pins WHERE operation_id=$1',[refsOperation])).rows[0].n;
+    const beforeNonemptyJob=await continuationJob(),beforeNonemptyRows=await readPartitionRows(),beforeNonemptyBlobs=await refsBlobCount(),
+      beforeNonemptyPins=await pinCount(),beforeNonemptyClaim={...refsClaim};
+    // This is a new NONEMPTY account, not the later completed-head empty probe.
+    // Every ending refusal must roll back its entry/blob/head/root AND release.
+    for(const [fault,reason] of [['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],['subject',/subject_changed/],
+      ['claim',/claim_lost/],['cancel',/cancelled/],['transaction_header',/cache_unavailable/]]){
+      refsFault=fault;refsAbort=new AbortController();
+      await assert.rejects(freshRefsOwner()[continueMethod](refsInput,{...refsOptions,signal:refsAbort.signal}),reason);
+      assert.equal(refsFault,null);assert.equal(await continuationRow(),null);assert.deepEqual(await continuationJob(),beforeNonemptyJob);
+      assert.deepEqual(await readPartitionHead(),partitionFirst);assert.deepEqual(await readPartitionRows(),beforeNonemptyRows);
+      assert.deepEqual(await readRefsCheckpoint(),partitionFirstCheckpoint);assert.equal(await refsBlobCount(),beforeNonemptyBlobs);
+      assert.equal(await pinCount(),beforeNonemptyPins);
+      if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+      if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    }
+    refsFault='commit';await assert.rejects(freshRefsOwner()[continueMethod](refsInput,refsOptions),e=>e.outcome_unknown===true);
+    const nonemptyJob=await continuationJob(),nonemptyHead=await readPartitionHead(),nonemptyContinuation=await continuationRow();
+    assert.equal(nonemptyJob.status,'retry');assert.equal(nonemptyJob.claim_token,null);assert.equal(nonemptyJob.lease_expires_at,null);
+    assert.equal(nonemptyJob.attempts,beforeNonemptyClaim.attempts);assert.equal(nonemptyJob.last_error_code,beforeNonemptyJob.last_error_code);
+    assert.equal(nonemptyJob.context_sha256,null);assert.equal(nonemptyHead.sequence,2);assert.equal(nonemptyContinuation.sequence,1);
+    assert.equal(nonemptyContinuation.phase,'frozen_recorded_partition_refs_v2');assert.equal(nonemptyContinuation.consumed_claim_token,null);
+    assert.deepEqual(nonemptyContinuation.progress_reference,nonemptyHead.receipt_reference);
+    assert.deepEqual(nonemptyJob.checkpoint.evidence_refs.at(-1),nonemptyHead.receipt_reference);
+    assert.deepEqual((await readPartitionRows()).map(r=>[r.account_id,r.ordinal]),[['CLOSURE-A',1],['CLOSURE-B',2]]);
+    assert.equal(await refsBlobCount(),beforeNonemptyBlobs+2,'the new account entry and receipt commit once with release');
+    assert.deepEqual(await readTraversalAnchor(),traversalFinal);assert.equal(await pinCount(),beforeNonemptyPins);
+    await assert.rejects(freshRefsOwner()[partitionMethod](refsInput,refsOptions),/claim_lost/,'the old token cannot repeat the committed account');
+    assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900})),[]);
+    const nonemptyClaims=await withCustomCohortJobTransaction(pool,client=>createCustomCohortV2ContinuationRepository(client).claimDue({limit:1,leaseSeconds:900}));
+    assert.equal(nonemptyClaims.length,1);assert.equal(nonemptyClaims[0].claim.attempts,beforeNonemptyClaim.attempts);
+    assert.notEqual(nonemptyClaims[0].claim.claim_token,beforeNonemptyClaim.claim_token);Object.assign(refsClaim,nonemptyClaims[0].claim);
+    assert.equal((await continuationRow()).consumed_claim_token,refsClaim.claim_token);
+    const nonemptyReceipt=await withCustomCohortJobTransaction(pool,async client=>JSON.parse(await createNeighborhoodCohortBlobRepository(client,organization)
+      .get(nonemptyHead.receipt_reference.content_sha256,nonemptyHead.receipt_reference.canonical_utf8_bytes)));
+    assert.deepEqual(nonemptyReceipt.after,{after_account:'CLOSURE-B',account_count:2,done:false});
     const partitionEnd=await freshRefsOwner()[partitionMethod](refsInput,refsOptions),partitionFinal=await readPartitionHead(),partitionRows=await readPartitionRows();
     assert.equal(partitionEnd.progress.done,true);assert.equal(partitionFinal.sequence,3);assert.equal(partitionRows.length,2);
     assert.equal(partitionRows[0].state,'unassigned');assert.equal(partitionRows[1].state,'assigned');
@@ -3482,6 +3521,79 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       all_issued_partial_unissued_corrupt_prerequisites_refused:true,lost_commit_reopen:true,fresh_original_and_partition_empty_probe:true,
       original_payload_copies:0,job_typed_copies:0,checkpoint_head_entry_writes:0,complete_selected_union:false,statistics:false,
       licensed_acquisition:false,production_speed:false,report_update:false});
+    // A completed internal head is NOT context completion or a released pin.
+    // One newly issued progress identity can be yielded once after a fresh
+    // complete original/cache empty probe and all current ending fences.
+    const oldClaim={...refsClaim},jobBeforeContinuation=await continuationJob(),pinsBeforeContinuation=await pinCount(),
+      continuationBeforeDone=await continuationRow();
+    assert.equal(continuationBeforeDone.sequence,1);assert.equal(continuationBeforeDone.consumed_claim_token,refsClaim.claim_token);
+    // Every ending refusal must roll back both issued progress and release.
+    for(const [fault,reason] of [['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],['subject',/subject_changed/],
+      ['claim',/claim_lost/],['cancel',/cancelled/],['transaction_header',/cache_unavailable/]]){
+      refsFault=fault;refsAbort=new AbortController();
+      await assert.rejects(freshRefsOwner()[continueMethod](refsInput,{...refsOptions,signal:refsAbort.signal}),reason);
+      assert.equal(refsFault,null);assert.deepEqual(await continuationRow(),continuationBeforeDone);assert.deepEqual(await continuationJob(),jobBeforeContinuation);
+      if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+      if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    }
+    // Native metadata cannot be orphaned by a caller that omits job release.
+    await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(`UPDATE app.neighborhood_custom_cohort_v2_continuations c
+      SET sequence=c.sequence+1,phase=job.checkpoint->>'phase',progress_reference=job.checkpoint->'evidence_refs'->-1,
+        issued_claim_token=job.claim_token,issued_attempts=job.attempts,consumed_claim_token=NULL
+      FROM app.neighborhood_custom_cohort_capture_jobs job WHERE c.operation_id=job.operation_id AND job.operation_id=$1`,[refsOperation])),/continuation_commit_conflict/);
+    assert.deepEqual(await continuationRow(),continuationBeforeDone);
+    refsFault='commit';await assert.rejects(freshRefsOwner()[continueMethod](refsInput,refsOptions),e=>e.outcome_unknown===true);
+    const yielded=await continuationJob(),issuedContinuation=await continuationRow();
+    assert.equal(yielded.status,'retry');assert.equal(yielded.claim_token,null);assert.equal(yielded.lease_expires_at,null);
+    assert.equal(yielded.attempts,oldClaim.attempts);assert.equal(yielded.last_error_code,jobBeforeContinuation.last_error_code);
+    assert.equal(yielded.context_sha256,null);assert.deepEqual(yielded.checkpoint,partitionDoneCheckpoint);
+    assert.equal(issuedContinuation.sequence,2);assert.equal(issuedContinuation.consumed_claim_token,null);
+    assert.deepEqual(issuedContinuation.progress_reference,partitionFinal.receipt_reference);
+    await assert.rejects(freshRefsOwner()[partitionReadMethod](refsInput,stockAccountOptions),/claim_lost/);
+    await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
+      "UPDATE app.neighborhood_custom_cohort_capture_jobs SET attempts=0 WHERE operation_id=$1",[refsOperation])),/continuation_attempt_history_conflict|continuation_job_conflict/);
+    assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900})),[],
+      'legacy claims must not spend failure attempts on a pending success');
+    const claims=await Promise.all([1,2].map(()=>withCustomCohortJobTransaction(pool,client=>
+      createCustomCohortV2ContinuationRepository(client).claimDue({limit:1,leaseSeconds:900}))));
+    assert.equal(claims.flat().length,1,'only one concurrent worker consumes the success');
+    const fresh=claims.flat()[0];assert.equal(fresh.claim.attempts,oldClaim.attempts);assert.notEqual(fresh.claim.claim_token,oldClaim.claim_token);
+    Object.assign(refsClaim,fresh.claim);
+    assert.equal((await continuationJob()).status,'running');assert.equal((await continuationRow()).consumed_claim_token,refsClaim.claim_token);
+    assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>createCustomCohortV2ContinuationRepository(client).claimDue({limit:1,leaseSeconds:900})),[]);
+    assert.deepEqual((await freshRefsOwner()[partitionReadMethod](refsInput,stockAccountOptions)).recorded_group,groupA.recorded_group);
+    await assert.rejects(freshRefsOwner()[continueMethod](refsInput,refsOptions),/claim_lost|continuation_transition_conflict/,'the same DONE reference cannot mint another success');
+    assert.equal((await continuationRow()).sequence,2);assert.equal((await continuationJob()).attempts,oldClaim.attempts);
+    assert.deepEqual(await readPartitionHead(),partitionFinal);assert.deepEqual(await readPartitionRows(),partitionRows);
+    assert.deepEqual(await readRefsCheckpoint(),partitionDoneCheckpoint);assert.equal(await pinCount(),pinsBeforeContinuation);
+    for(const sql of ['DELETE FROM app.neighborhood_custom_cohort_v2_continuations WHERE operation_id=$1','TRUNCATE app.neighborhood_custom_cohort_v2_continuations'])
+      await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql,sql.includes('$1')?[refsOperation]:[])),/continuation_immutable/);
+    // Actual failures still consume the unchanged five-claim budget. Successful
+    // continuation neither erased the first attempt nor bought extra failures.
+    for(let attempt=oldClaim.attempts;attempt<=5;attempt++){
+      assert.equal(refsClaim.attempts,attempt);
+      const failed=await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client)
+        .failClaim(refsClaim,'synthetic_continuation_failure',{retrySeconds:1}));
+      assert.equal(failed.status,attempt===5?'failed':'retry');
+      if(attempt<5){
+        await pool.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET run_after=clock_timestamp() WHERE operation_id=$1',[refsOperation]);
+        const jobs=await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900}));
+        assert.equal(jobs.length,1);assert.equal(jobs[0].operation_id,refsOperation);assert.notEqual(jobs[0].claim_token,refsClaim.claim_token);
+        Object.assign(refsClaim,{operation_id:jobs[0].operation_id,claim_token:jobs[0].claim_token,attempts:jobs[0].attempts});
+      }
+    }
+    const exhausted=await continuationJob();assert.equal(exhausted.attempts,5);assert.equal(exhausted.status,'failed');
+    assert.equal(exhausted.last_error_code,'synthetic_continuation_failure');assert.equal(exhausted.context_sha256,null);
+    assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>createCustomCohortV2ContinuationRepository(client).claimDue({limit:1,leaseSeconds:900})),[]);
+    assert.equal(await pinCount(),pinsBeforeContinuation,'failure does not silently retire retained roots or pins');
+    console.info('[native-issued-success-continuation-v2]',{nonempty_account_entry_head_root_and_release_same_transaction:true,
+      nonempty_ending_failure_rolls_back_entry_blobs_head_root_release:true,nonempty_lost_commit_reopens_next_account:true,
+      two_distinct_successes_preserve_same_failure_attempt:true,actual_owner_original_cache_empty_and_current_ending_fences:true,
+      ending_failure_rolls_back_progress_and_release:true,native_orphan_release_free_attempt_reset_refused:true,
+      lost_commit_fresh_pending_reopen:true,legacy_failure_claim_excludes_pending_success:true,concurrent_single_consume:true,
+      fresh_claim_token:true,attempts_preserved:oldClaim.attempts,last_error_preserved:true,duplicate_DONE_success_refused:true,
+      actual_failure_history_reaches_unchanged_five_claim_terminal:true,
+      issued_heads_roots_and_pins_unchanged:true,context_complete:false,worker_activation:false,licensed_acquisition:false,production_speed:false,report_update:false});
     }
     for(const [kind,keys] of Object.entries(expected)){
       let position=null;const seen=[];

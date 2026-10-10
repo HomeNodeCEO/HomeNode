@@ -55,6 +55,28 @@ test('indexed original source owner requires explicit combined composition and e
   await assert.rejects(service.prepareFrozenCaptureJobSourcePage(input(),{captureJobClaim:claim}),/frozen_discovery_unsupported/);
 });
 
+test('actual capture entry points refuse executable claim Proxies before connection or source policy',async()=>{
+  const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
+    claim={operation_id:base.operationId,claim_token:'33333333-3333-4333-8333-333333333333',attempts:1};
+  let connections=0,policies=0,traps=0;
+  const service=createCustomCohortContextCapture({pool:{connect(){connections++;assert.fail('must not connect');}},
+    sourceMode:'combined-witness2-v1',authorizeMarketData(){policies++;assert.fail('must not authorize');}});
+  const trap=()=>{traps++;throw Error('claim trap');},handler={get:trap,getPrototypeOf:trap,ownKeys:trap,getOwnPropertyDescriptor:trap};
+  const revoked=Proxy.revocable({...claim},handler);revoked.revoke();
+  const values=[new Proxy({...claim},handler),new Proxy({...claim},{}),revoked.proxy];
+  for(const method of ['capture','prepareFrozenCaptureJobStock','prepareFrozenCaptureJobSourcePage',
+    'prepareFrozenCaptureJobSourceReferencesV2Page','verifyFrozenCaptureJobSourceReferencesV2Page',
+    'verifyFrozenCaptureJobStockOriginalReferencesV2','verifyFrozenCaptureJobSourceIdentityReferencesV2',
+    'advanceOriginalFrozenCaptureJobStockTraversalReferencesV2','continueOriginalFrozenCaptureJobStockTraversalReferencesV2',
+    'continueOriginalFrozenCaptureJobRecordedPartitionReferencesV2','continueOriginalFrozenCaptureJobRecordedCatalogReferencesV2',
+    'awaitOriginalFrozenCaptureJobSelectionReferencesV2','readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2',
+    'continueOriginalFrozenCaptureJobSelectedStockUnionReferencesV2']){
+    assert.equal(typeof service[method],'function',method);
+    for(const value of values)await assert.rejects(service[method](base,{captureJobClaim:value}),/invalid_input|invalid_options/);
+  }
+  assert.equal(traps,0);assert.equal(connections,0);assert.equal(policies,0);
+});
+
 test('original graph verifier admits no caller root, progress, source rows, permission grant or alternate profile',async()=>{
   const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}};
   const claim={operation_id:base.operationId,claim_token:'33333333-3333-4333-8333-333333333333',attempts:1};

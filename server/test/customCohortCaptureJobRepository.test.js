@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { CAPTURE_JOB_LEASE_SECONDS, createCustomCohortCaptureJobRepository }
+import { CAPTURE_JOB_LEASE_SECONDS, createCustomCohortCaptureJobRepository, prepareCustomCohortCaptureJobClaim }
   from '../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
 import { assessmentEvidenceDigest } from '../src/services/neighborhoodAssessment/contract.js';
 
@@ -14,6 +14,28 @@ const scope = { organization_id: organization, report_file_id: report,
   assignment_file_id: '17', account_id: 'SYNTHETIC-ACCOUNT' };
 const request = { operation_id: operation, observation_period: {
   start_date: '2024-01-01', end_date: '2024-12-31' } };
+
+test('every claim consumer rejects active and revoked Proxies before traps or SQL',async()=>{
+  const claim={operation_id:operation,claim_token:token,attempts:1},options={scope,actorUserId:actor};
+  let traps=0,queries=0;
+  const trap=()=>{traps++;throw Error('claim Proxy trap executed');};
+  const handler={getPrototypeOf:trap,ownKeys:trap,getOwnPropertyDescriptor:trap,get:trap};
+  const revoked=Proxy.revocable({...claim},handler);revoked.revoke();
+  const claims=[new Proxy({...claim},handler),new Proxy({...claim},{}),revoked.proxy];
+  const repository=createCustomCohortCaptureJobRepository({query(){queries++;assert.fail('must not query');}});
+  const consumers=[value=>repository.readRequest(value,options),value=>repository.readCheckpoint(value,options),
+    value=>repository.saveCheckpoint(value,options,{phase:'subject',evidence_refs:[]}),
+    value=>repository.readPreparedGeneration(value,options),value=>repository.pinPreparedGeneration(value,options),
+    value=>repository.heartbeat(value),value=>repository.failClaim(value,'synthetic_failure'),
+    value=>repository.complete(value,'a'.repeat(64))];
+  for(const value of claims){
+    assert.throws(()=>prepareCustomCohortCaptureJobClaim(value),/custom_cohort_capture_job_invalid_input/);
+    for(const consume of consumers)await assert.rejects(consume(value),/custom_cohort_capture_job_invalid_input/);
+  }
+  assert.equal(traps,0);assert.equal(queries,0);
+  const prepared=prepareCustomCohortCaptureJobClaim(Object.freeze({...claim,operation_id:operation.toUpperCase()}));
+  assert.deepEqual(prepared,claim);assert.ok(Object.isFrozen(prepared));assert.notEqual(prepared,claim);
+});
 
 test('waiting status is not success and scoped cancellation does not reset retained history or requeue',async()=>{
   const calls=[],repository=createCustomCohortCaptureJobRepository({async query(sql,values){calls.push({sql,values});

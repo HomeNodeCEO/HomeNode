@@ -74,6 +74,20 @@ The repaired owner/storage/closed-grammar regression set passes 90 tests,
 zero failures/skips (697.5905ms); native-fixture syntax and diff checks pass.
 Those focused SQL doubles and source checks are mechanics, not native proof.
 
+The next cloud head (`b7b3d256`) passed all 417 migration tests and reached the
+terminal union/cancellation assertions for BOTH explicit-empty and nonempty
+choices. Its remaining two index failures are a final negative-test mismatch:
+the existing pending-continuation job guard correctly refuses a cancelled-job
+escape before the selection-wait guard expected by the test. The fixture now
+accepts either specific native refusal and verifies the ENTIRE cancelled job,
+continuation and union remain unchanged after EACH attempted escape. No native
+guard or implementation was weakened. The complete fresh native run must still
+pass before this stage has native protocol acceptance; this is not licensed or
+live-speed acceptance.
+Focused owner/storage/grammar regressions pass 91 tests, zero failures/skips
+(597.1242ms), with native-fixture syntax and diff checks passing. These local
+checks do not execute PostgreSQL or establish complete source authority.
+
 The finite 8,000,004 success ceiling covers THESE FOUR fixed stock passes only;
 it is NOT a whole-roadmap runtime or production-SLA claim. No HTTP/default
 worker dispatch, source acquisition, source grant, housing/metric eligibility,

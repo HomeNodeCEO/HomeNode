@@ -4404,9 +4404,16 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty']) t
             'TRUNCATE app.neighborhood_custom_cohort_selected_union_v2_rows')),/immutable|mutation|not permitted/);
           assert.deepEqual(await readUnion(),finalUnion);
           assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,refsOperation)),{status:'cancelled'});
-          for(const set of ["status='retry'",'checkpoint=NULL',"cancellation_requested_at=NULL"])
+          const cancelledUnionJob=await continuationJob(),cancelledUnionContinuation=await continuationRow();
+          // The pending continuation guard runs before selection-wait guards.
+          // Either native boundary may refuse; every attempted escape must
+          // leave the actual cancelled job, continuation and union unchanged.
+          for(const set of ["status='retry'",'checkpoint=NULL',"cancellation_requested_at=NULL"]){
             await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
-              `UPDATE app.neighborhood_custom_cohort_capture_jobs SET ${set} WHERE operation_id=$1`,[refsOperation])),/selection_wait_immutable|selection_intent_job_conflict/);
+              `UPDATE app.neighborhood_custom_cohort_capture_jobs SET ${set} WHERE operation_id=$1`,[refsOperation])),/selection_wait_immutable|selection_intent_job_conflict|continuation_job_conflict/);
+            assert.deepEqual(await continuationJob(),cancelledUnionJob);
+            assert.deepEqual(await continuationRow(),cancelledUnionContinuation);assert.deepEqual(await readUnion(),finalUnion);
+          }
           console.info('[native-original-selected-stock-union-v2]',{independently_built_native_graph:true,
             explicit_empty:selectionWaitFixture==='union-empty',stock_accounts:2,distinct_selected_stock_accounts:finalUnion.rows.length,
             complete_original_catalog_replay_and_every_group_terminal_reconciliation:true,

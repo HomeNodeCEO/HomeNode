@@ -103,3 +103,12 @@ test('native union rollback faults survive the real original read until their re
     'custom-cohort-v2-continuation:yield'])assert.ok(fixture.includes(tag));
   assert.ok(fixture.includes("ROLLBACK TO SAVEPOINT synthetic_union_yield"));
 });
+
+test('native terminal cancellation tests keep both refusal guards and assert the entire state remains unchanged',()=>{
+  const fixture=readFileSync(new URL('./neighborhoodGroupIndex.integration.test.js',import.meta.url),'utf8'),
+    sql=readFileSync(new URL('../migrations/20261120_custom_cohort_issued_continuations_v2.sql',import.meta.url),'utf8');
+  assert.ok(sql.includes("RAISE EXCEPTION 'neighborhood_v2_continuation_job_conflict'"));
+  assert.ok(fixture.includes('/selection_wait_immutable|selection_intent_job_conflict|continuation_job_conflict/'));
+  assert.ok(fixture.includes('assert.deepEqual(await continuationJob(),cancelledUnionJob)'));
+  assert.ok(fixture.includes('assert.deepEqual(await continuationRow(),cancelledUnionContinuation);assert.deepEqual(await readUnion(),finalUnion)'));
+});

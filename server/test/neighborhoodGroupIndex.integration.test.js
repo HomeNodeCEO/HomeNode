@@ -51,6 +51,8 @@ import { createCustomCohortRecordedCatalogV2Repository } from '../src/services/n
 import { prepareCohortRecordedCatalogReceiptV2 } from '../src/services/neighborhoodAssessment/cohortRecordedCatalogReceiptV2.js';
 import { createCustomCohortV2ContinuationRepository }
   from '../src/services/neighborhoodAssessment/customCohortV2ContinuationRepository.js';
+import { createCustomCohortV2SelectionWaitRepository }
+  from '../src/services/neighborhoodAssessment/customCohortV2SelectionWaitRepository.js';
 import { CUSTOM_COHORT_ORIGINAL_ACCOUNT_OWNER_LIMITS as ORIGINAL_OWNER_LIMITS }
   from '../src/services/neighborhoodAssessment/customCohortOriginalAccountOwnerBudget.js';
 import { getNeighborhoodOriginalRecordedGroupV2Profile }
@@ -1328,7 +1330,11 @@ test('isolated PostgreSQL: freezes a complete 60001-account original source popu
   } finally {await pool.end();}
 });
 
-test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion',{
+// Independent real-native captures: preserve the original five-failure terminal
+// test, and build an entirely new issued graph for the waiting boundary. Never
+// clone/rebind job roots, summaries, original payloads or caller DONE metadata.
+for(const selectionWaitFixture of [false,true]) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
+  +(selectionWaitFixture?' with issued selection waiting':''),{
   skip:!process.env.DATABASE_URL,timeout:180_000,
 },async()=>{
   const target=await prepareNeighborhoodCiDatabase();const {default:pg}=await import('pg');
@@ -1718,12 +1724,25 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     const refsClaim=await withCustomCohortJobTransaction(pool,async client=>{
       const [job]=await createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900});assert.equal(job.operation_id,refsOperation);
       return {operation_id:refsOperation,claim_token:job.claim_token,attempts:job.attempts};});
+    if(selectionWaitFixture){
+      // Real prior failure and fresh ordinary reclaim, not edited counters or
+      // error metadata. Waiting must later retain attempt2 and this exact error.
+      await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client)
+        .failClaim(refsClaim,'synthetic_pre_selection_failure',{retrySeconds:1}));
+      await pool.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET run_after=clock_timestamp() WHERE operation_id=$1',[refsOperation]);
+      const [fresh]=await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900}));
+      assert.equal(fresh.operation_id,refsOperation);assert.equal(fresh.attempts,2);assert.notEqual(fresh.claim_token,refsClaim.claim_token);
+      Object.assign(refsClaim,{operation_id:fresh.operation_id,claim_token:fresh.claim_token,attempts:fresh.attempts});
+    }
     const refsCalls=[],refsQueryParameters=[],refsBlobPuts=[];let refsFault=null,refsAbort=null;
     const refsPool={async connect(){const client=await pool.connect();let cadHeaderReads=0,transactionHeaderReads=0;return {release:client.release.bind(client),async query(config){
       refsCalls.push(config.text);
       refsQueryParameters.push(config.values);
       if(config.text.includes('neighborhood-cohort-blob:insert */'))refsBlobPuts.push(config.values[3]);
       const result=await client.query(config);
+      if(config.text.includes('custom-cohort-v2-selection-wait:release')&&refsFault==='wait_release_rollback'){
+        refsFault=null;throw Error('synthetic actual waiting release rollback');
+      }
       if(config.text===NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL
         &&['cad_original_cell','cad_original_missing','cad_original_text','cad_original_bytes'].includes(refsFault)){
         const fault=refsFault;refsFault=null;const rows=JSON.parse(result.rows[0].packet_json),row=rows.find(r=>r.kind==='primary');
@@ -1858,7 +1877,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         ||Object.values(NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL).includes(config.text)){
         // The ending-header fault is consumed by the later second metadata
         // read, not by the page query. Keep it armed like the COMMIT fault.
-        const fault=refsFault;if(!['commit','cad_header','transaction_header'].includes(fault)&&!fault?.startsWith('partition_')&&!fault?.startsWith('catalog_'))refsFault=null;
+        const fault=refsFault;if(!['commit','cad_header','transaction_header','wait_release_rollback'].includes(fault)&&!fault?.startsWith('partition_')&&!fault?.startsWith('catalog_'))refsFault=null;
         if(fault==='license')await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
         if(fault==='role')await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);
         if(fault==='subject')await client.query("UPDATE app.appraisal_subject_snapshots SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2000') WHERE id=$1",[sourceSnapshot]);
@@ -1909,6 +1928,9 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     const readRefsCheckpoint=async()=>(await pool.query('SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[refsOperation])).rows[0].checkpoint;
     const refsStockCheckpoint=await readRefsCheckpoint();
     assert.equal(refsStockCheckpoint.phase,'frozen_stock_v1');
+    await assert.rejects(withCustomCohortJobTransaction(pool,client=>createCustomCohortV2SelectionWaitRepository(client)
+      .awaitSelection(refsClaim,options)),/selection_wait_issued_catalog_required/);
+    assert.deepEqual(await readRefsCheckpoint(),refsStockCheckpoint);
     const refsBlobCount=async()=>(await pool.query('SELECT count(*)::integer AS n FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1',[organization])).rows[0].n;
     const refsSeedsCount=async()=>(await pool.query('SELECT count(*)::integer AS n FROM app.neighborhood_custom_cohort_seed_indexes WHERE operation_id=$1',[refsOperation])).rows[0].n;
     const beforeRefsBlobs=await refsBlobCount();
@@ -3982,9 +4004,12 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       complete_catalog_original_replay:false,selected_union:false,statistics:false,publication:false,licensed_acquisition:false,production_speed:false});
     // Remove ONLY the synthetic fixture row just inserted above; preserve the
     // pre-existing absence expected by the rest of this isolated cloud fixture.
-    await pool.query(`DELETE FROM app.custom_appraisal_workfile_sections
-      WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace' AND updated_by=$2`,[assignment,actor]);
-    assert.deepEqual(await readTargetWorkspace(),[]);assert.deepEqual(await readTargetHistory(),targetHistory);
+    const removeSyntheticTargetWorkspace=async()=>{
+      await pool.query(`DELETE FROM app.custom_appraisal_workfile_sections
+        WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace' AND updated_by=$2`,[assignment,actor]);
+      assert.deepEqual(await readTargetWorkspace(),[]);assert.deepEqual(await readTargetHistory(),targetHistory);
+    };
+    if(!selectionWaitFixture)await removeSyntheticTargetWorkspace();
     for(const table of ['neighborhood_custom_cohort_recorded_catalog_v2_groups','neighborhood_custom_cohort_recorded_catalog_v2_heads'])
       for(const sql of [`DELETE FROM app.${table} WHERE operation_id=$1`,`UPDATE app.${table} SET organization_id=organization_id WHERE operation_id=$1`,`TRUNCATE app.${table}`])
         await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql,sql.includes('$1')?[refsOperation]:[])),/immutable|transition_conflict|prefix_conflict/);
@@ -4006,6 +4031,80 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       duplicate_DONE_success_refused:true,issued_partition_and_catalog_heads_rows_roots_and_pins_retained:true,
       success_sequence:5,failure_attempt:oldClaim.attempts,context_complete:false,worker_activation:false,
       selected_union:false,licensed_acquisition:false,production_speed:false,report_update:false});
+    if(selectionWaitFixture){
+      const waitMethod='awaitOriginalFrozenCaptureJobSelectionReferencesV2',waitFrom=refsCalls.length,
+        beforeWaitJob=await continuationJob();
+      assert.equal(beforeWaitJob.attempts,2);assert.equal(beforeWaitJob.last_error_code,'synthetic_pre_selection_failure');
+      for(const [fault,reason] of [['catalog_owner_bytes_ending',/original_account_owner_byte_limit/],
+        ['catalog_prior_head_ending',/group_workspace_selection_changed/],
+        ['catalog_workspace_revision_ending',/workspace_target_changed/],
+        ['catalog_workspace_pending_ending',/group_workspace_study_changed/],['catalog_workspace_missing_ending',/group_workspace_unavailable/],
+        ['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],['subject',/subject_changed/],
+        ['claim',/claim_lost/],['cancel',/cancelled/],['transaction_header',/cache_unavailable/],
+        ['catalog_read_counts_ending',/catalog_original_mismatch/],['catalog_read_head_ending',/checkpoint_conflict|catalog_original_mismatch/]]){
+        refsFault=fault;refsAbort=new AbortController();const from=refsCalls.length;
+        await assert.rejects(freshRefsOwner()[waitMethod](refsInput,{...refsOptions,signal:refsAbort.signal}),reason);
+        assert.equal(refsFault,null);assert.equal(refsCalls.slice(from).filter(sql=>sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,1);
+        assert.ok(!refsCalls.slice(from).some(sql=>sql.includes('custom-cohort-v2-selection-wait:release')));
+        await assertTargetUnchanged();
+        if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+        if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+      }
+      refsFault='wait_release_rollback';await assert.rejects(freshRefsOwner()[waitMethod](refsInput,refsOptions),/actual waiting release rollback/);
+      assert.equal(refsFault,null);await assertTargetUnchanged();
+      const commitWaitFrom=refsCalls.length;refsFault='commit';
+      await assert.rejects(freshRefsOwner()[waitMethod](refsInput,refsOptions),e=>e.outcome_unknown===true);
+      const waitCalls=refsCalls.slice(commitWaitFrom),waiting=await continuationJob();
+      assert.equal(waitCalls.filter(sql=>sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,1);
+      const releaseIndex=waitCalls.findIndex(sql=>sql.includes('custom-cohort-v2-selection-wait:release'));
+      assert.ok(releaseIndex>waitCalls.findLastIndex(sql=>sql.includes('custom-cohort-group-workspace:read')));
+      assert.ok(waitCalls.length-3<=ORIGINAL_OWNER_LIMITS.sql_queries);
+      assert.equal(waiting.status,'awaiting_selection');assert.equal(waiting.claim_token,null);assert.equal(waiting.lease_expires_at,null);
+      assert.equal(waiting.attempts,beforeWaitJob.attempts);assert.equal(waiting.last_error_code,beforeWaitJob.last_error_code);
+      assert.equal(waiting.context_sha256,null);assert.deepEqual(waiting.checkpoint,beforeWaitJob.checkpoint);
+      const staleFrom=refsCalls.length;await assert.rejects(freshRefsOwner()[waitMethod](refsInput,refsOptions),/claim_lost/);
+      assert.ok(!refsCalls.slice(staleFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
+      for(const repo of [createCustomCohortCaptureJobRepository,createCustomCohortV2ContinuationRepository])
+        assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>repo(client).claimDue({limit:1,leaseSeconds:900})),[]);
+      for(const method of ['heartbeat','failClaim'])await assert.rejects(withCustomCohortJobTransaction(pool,client=>
+        createCustomCohortCaptureJobRepository(client)[method](refsClaim,...(method==='failClaim'?['synthetic_failure']:[]))),/claim_lost/);
+      const status=await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).status(scope,refsOperation));
+      assert.equal(status.status,'awaiting_selection');assert.ok(!Object.hasOwn(status,'context_ref'));
+      for(const set of ["status='queued'","status='retry'","status='failed'","status='awaiting_selection'",
+        "status='running',claim_token=gen_random_uuid(),lease_expires_at=clock_timestamp()+interval '5 minutes'",
+        "status='succeeded',context_sha256=repeat('a',64)","status='cancelled'","attempts=0",'checkpoint=NULL',
+        "run_after=clock_timestamp()+interval '1 hour'","last_error_code='invented_error'"])
+        await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
+          `UPDATE app.neighborhood_custom_cohort_capture_jobs SET ${set} WHERE operation_id=$1`,[refsOperation])),/selection_wait_immutable|continuation_attempt_history_conflict/);
+      await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
+        'DELETE FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[refsOperation])),/selection_wait_immutable/);
+      assert.deepEqual(await continuationJob(),waiting);
+      assert.deepEqual(await readCatalogHead(),catalogFinal);assert.deepEqual(await readCatalogGroups(),catalogGroups);
+      assert.deepEqual(await readPartitionHead(),partitionFinal);assert.deepEqual(await readPartitionRows(),partitionRows);
+      assert.deepEqual(await continuationRow(),catalogReadContinuation);assert.equal(await refsBlobCount(),catalogFinalBlobs);
+      assert.equal(await pinCount(),pinsBeforeContinuation);assert.deepEqual(await readTargetWorkspace(),targetWorkspace);
+      assert.deepEqual(await readTargetHistory(),targetHistory);assert.deepEqual(await readTargetReport(),targetReport);
+      assert.deepEqual(await readTargetWorkfile(),targetWorkfile);assert.deepEqual(await readPriorTargetMetadata(),priorTargetMetadata);
+      assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,refsOperation)),{status:'cancelled'});
+      assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,refsOperation)),{status:'cancelled'});
+      const cancelledWait=await continuationJob();
+      for(const set of ["status='retry'",'checkpoint=NULL',"cancellation_requested_at=NULL"])
+        await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
+          `UPDATE app.neighborhood_custom_cohort_capture_jobs SET ${set} WHERE operation_id=$1`,[refsOperation])),/selection_wait_immutable/);
+      assert.deepEqual(await continuationJob(),cancelledWait);
+      assert.equal((await continuationJob()).attempts,beforeWaitJob.attempts);assert.equal(await pinCount(),pinsBeforeContinuation);
+      await removeSyntheticTargetWorkspace();
+      assertBoundedCohortAuthorityAggregates(refsCalls.slice(waitFrom).map((text,index)=>({text,values:refsQueryParameters[waitFrom+index]})),
+        {actorUserId:actor,organizationId:organization,assignmentFileId:assignment});
+      console.info('[native-issued-catalog-selection-wait-v2]',{independently_built_native_graph:true,
+        fresh_terminal_whole_original_cache_and_partition_empty_probe:true,current_authority_and_workspace_prior_head_fenced_both_ends:true,
+        same_whole_owner_budget_including_native_release:true,all_ending_refusals_rollback_before_release:true,
+        real_release_rollback_and_lost_real_commit_ack_verified:true,stale_claim_and_both_worker_claimers_refuse:true,
+        native_free_resume_checkpoint_schedule_error_attempt_mutation_direct_success_and_cancel_escape_refused:true,
+        exact_nine_roots_attempt_error_continuation_pins_workspace_history_reports_unchanged:true,scoped_cancel_retains_roots_and_pins:true,
+        human_command:false,resume_protocol:false,complete_catalog_semantics:false,selected_union:false,publication:false,
+        licensed_acquisition:false,worker_activation:false,production_speed:false});
+    }else{
     // Actual failures still consume the unchanged five-claim budget. Successful
     // continuation neither erased the first attempt nor bought extra failures.
     for(let attempt=oldClaim.attempts;attempt<=5;attempt++){
@@ -4033,6 +4132,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       actual_failure_history_reaches_unchanged_five_claim_terminal:true,
       issued_partition_heads_and_pins_unchanged:true,completed_catalog_root_retained:true,
       context_complete:false,worker_activation:false,licensed_acquisition:false,production_speed:false,report_update:false});
+    }
     }
     for(const [kind,keys] of Object.entries(expected)){
       let position=null;const seen=[];

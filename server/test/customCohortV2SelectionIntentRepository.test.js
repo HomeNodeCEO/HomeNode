@@ -72,3 +72,59 @@ test('additive native guard binds all nine roots, exact workspace and one immuta
     'NEW.resume_claim_token','workspace.section_value IS DISTINCT FROM NEW.workspace_checkpoint',
     "NEW.status IN ('succeeded','awaiting_selection')",'NEW.attempts<OLD.attempts','NEW.checkpoint IS DISTINCT FROM command.checkpoint'])assert.ok(sql.includes(s),s);
 });
+
+const workerOptions={scope,actorUserId:id(5),workspaceTarget:options.workspaceTarget},
+  currentClaim={operation_id:id(4),claim_token:id(6),attempts:5};
+function retainedSetup({patch={},auto=false,endAuto=false,missing=false}={}){
+  const calls=[];let transactions=0;
+  return {calls,owner:repository({async query(sql,values){calls.push({sql,values});
+    if(sql.includes(':transaction'))return {rowCount:1,rows:[{transaction_id:String(auto?++transactions:endAuto&&++transactions===3?9:8)}]};
+    if(sql.includes(':retained-read'))return {rowCount:missing?0:1,rows:missing?[]:[{...structuredClone(command),
+      job_request_sha256:command.request_sha256,job_checkpoint:structuredClone(checkpoint),...patch}]};
+    assert.fail(sql);
+  }})};
+}
+
+test('retained command reopens read-only for its original claim or a fresh ordinary replacement attempt, never a new choice',async()=>{
+  for(const [claim,patch] of [[currentClaim,{}],[{...currentClaim,claim_token:id(9)},{issued_attempts:4}]]){
+    const {owner,calls}=retainedSetup({patch}),result=await owner.readRetained(claim,workerOptions);
+    assert.deepEqual(result.claim,claim);assert.deepEqual(result.included_recorded_group_ids,intent.included_recorded_group_ids);
+    assert.equal(result.issued_attempts,patch.issued_attempts??5);assert.equal(result.command_id,intent.command_id);
+    assert.ok(Object.isFrozen(result));assert.ok(Object.isFrozen(result.included_recorded_group_ids));
+    assert.deepEqual(calls.find(c=>c.sql.includes(':retained-read')).values,[id(4),claim.claim_token,5,...Object.values(scope),id(5)]);
+    assert.ok(calls.every(c=>!(/\b(INSERT|UPDATE|DELETE|TRUNCATE)\b/.test(c.sql))));
+    assert.equal(calls.filter(c=>c.sql.includes(':transaction')).length,3);
+    for(const s of ['FOR SHARE OF job,command NOWAIT',"job.status='running'",'job.context_sha256 IS NULL',
+      'job.lease_expires_at>clock_timestamp()','job.cancellation_requested_at IS NULL'])
+      assert.ok(calls.find(c=>c.sql.includes(':retained-read')).sql.includes(s),s);
+  }
+  const empty=retainedSetup({patch:{included_group_ids:[]}});
+  assert.deepEqual((await empty.owner.readRetained(currentClaim,workerOptions)).included_recorded_group_ids,[]);
+});
+
+test('retained command refuses wrong request, roots, profile, workspace, attempt and reused initial token',async()=>{
+  for(const patch of [{job_request_sha256:'d'.repeat(64)},{job_checkpoint:{...checkpoint,phase:'frozen_stock_v1'}},
+    {checkpoint:{phase:checkpoint.phase,evidence_refs:[ref]}},{profile_reference:ref},
+    {workspace_revision:2},{workspace_checkpoint:{...workspace,pending_capture:null}},
+    {issued_attempts:6},{issued_attempts:0},{issued_attempts:4},{resume_claim_token:id(9)},
+    {included_group_ids:[group,group]}])
+    await assert.rejects(retainedSetup({patch}).owner.readRetained(currentClaim,workerOptions),
+      /checkpoint_changed|workspace_changed|claim_lost|invalid_|group_id/);
+  await assert.rejects(retainedSetup({missing:true}).owner.readRetained(currentClaim,workerOptions),/operation_unavailable/);
+});
+
+test('retained worker has a closed read-only grammar and requires the same actual owner transaction',async()=>{
+  for(const raw of [{...workerOptions,intent},{...workerOptions,leaseSeconds:900},
+    {...workerOptions,workspaceTarget:{...workerOptions.workspaceTarget,readWorkspace:()=>assert.fail('callback')}},
+    new Proxy(workerOptions,{getPrototypeOf(){assert.fail('proxy');}}),
+    {...workerOptions,get actorUserId(){assert.fail('getter');}}]){
+    const {owner,calls}=retainedSetup();await assert.rejects(owner.readRetained(currentClaim,raw));assert.equal(calls.length,0);
+  }
+  for(const claim of [{...currentClaim,readOriginal:()=>assert.fail('callback')},new Proxy(currentClaim,{getPrototypeOf(){assert.fail('proxy');}}),
+    {...currentClaim,get claim_token(){assert.fail('getter');}}]){
+    const {owner,calls}=retainedSetup();await assert.rejects(owner.readRetained(claim,workerOptions));assert.equal(calls.length,0);
+  }
+  const before=retainedSetup({auto:true});await assert.rejects(before.owner.readRetained(currentClaim,workerOptions),/caller_transaction_required/);
+  assert.equal(before.calls.length,2);
+  await assert.rejects(retainedSetup({endAuto:true}).owner.readRetained(currentClaim,workerOptions),/caller_transaction_required/);
+});

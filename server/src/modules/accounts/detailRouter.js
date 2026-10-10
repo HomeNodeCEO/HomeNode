@@ -143,6 +143,10 @@ export function createAccountDetailRouter({
       `;
       const { rows: accRows } = await pool.query(accountSql, [canonicalId]);
       if (!accRows.length) return res.status(404).json({ error: "not_found" });
+      // Entered addresses are assignment subjects, not public CAD records.
+      if (accRows[0].data_quality_status === "manual_subject" && !assignmentScoped) {
+        return res.status(404).json({ error: "not_found" });
+      }
 
       const propertyActivityHistoryPromise = (assignmentScoped
         ? loadPropertyActivity(pool, canonicalId)

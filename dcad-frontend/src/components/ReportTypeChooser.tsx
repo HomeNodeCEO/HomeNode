@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useApplicationAuth } from "@/features/auth/ApplicationAuth";
 import {
+  createAddressReportFile,
   createCanonicalReportFile,
   getCanonicalReportFiles,
   type CanonicalReportFile,
@@ -10,9 +11,11 @@ import {
 import { reportDestination, type HomeNodeReportType } from "@/lib/reportDestinations";
 
 export type ReportTypeChooserSubject = {
-  accountId: string;
+  accountId: string | null;
   address: string;
   ownerName?: string | null;
+  addressOnly?: boolean;
+  manualAddress?: { address: string; city?: string | null };
 };
 
 type Props = { subject: ReportTypeChooserSubject | null; onClose: () => void };
@@ -61,10 +64,11 @@ export default function ReportTypeChooser({ subject, onClose }: Props) {
   useEffect(() => {
     setSelectedType(null);
     setFiles([]);
+    setLoading(false);
     setError("");
     setEffectiveDate("");
     creationIntent.current = null;
-  }, [subject?.accountId]);
+  }, [subject?.accountId, subject?.address]);
 
   useEffect(() => {
     setOrganizationId((current) => writableOrganizations.some((item) => item.organization_id === current)
@@ -73,7 +77,7 @@ export default function ReportTypeChooser({ subject, onClose }: Props) {
   }, [writableOrganizations]);
 
   useEffect(() => {
-    if (!subject || !option) return undefined;
+    if (!subject || !option || !subject.accountId) return undefined;
     let cancelled = false;
     setLoading(true);
     setError("");
@@ -90,20 +94,31 @@ export default function ReportTypeChooser({ subject, onClose }: Props) {
 
   async function startNewAssignment() {
     if (!option || !organizationId || creating || !subject) return;
+    if (subject.addressOnly && option.workflow !== "custom_appraisal") return;
     if (option.workflow === "custom_appraisal" && !effectiveDate) return;
     setCreating(true);
     setError("");
     try {
-      const key = JSON.stringify([subject.accountId, option.workflow, organizationId,
+      const key = JSON.stringify([subject.accountId, subject.manualAddress, option.workflow, organizationId,
         option.workflow === "custom_appraisal" ? effectiveDate : null]);
       if (creationIntent.current?.key !== key) creationIntent.current = { key, id: crypto.randomUUID() };
-      const result = await createCanonicalReportFile(subject.accountId, {
-        workflow_type: option.workflow,
-        organization_id: organizationId,
-        client_request_id: creationIntent.current.id,
-        ...(option.workflow === "custom_appraisal" ? { effective_date: effectiveDate } : {}),
-      });
-      window.location.assign(reportDestination(option.type, subject, result.report_file.target_id));
+      const result = subject.manualAddress
+        ? await createAddressReportFile({
+            organization_id: organizationId,
+            client_request_id: creationIntent.current.id,
+            effective_date: effectiveDate,
+            subject: subject.manualAddress,
+          })
+        : await createCanonicalReportFile(subject.accountId || "", {
+            workflow_type: option.workflow,
+            organization_id: organizationId,
+            client_request_id: creationIntent.current.id,
+            ...(option.workflow === "custom_appraisal" ? { effective_date: effectiveDate } : {}),
+          });
+      window.location.assign(reportDestination(option.type, {
+        accountId: result.report_file.account_id || subject.accountId || "",
+        ownerName: subject.ownerName,
+      }, result.report_file.target_id));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The new assignment could not be created.");
       setCreating(false);
@@ -118,7 +133,9 @@ export default function ReportTypeChooser({ subject, onClose }: Props) {
             <div className="hn-report-chooser__eyebrow text-xs tracking-[0.16em]">{option ? "Assignment file" : "New or existing report"}</div>
             <h2 id="report-type-title" className="hn-report-chooser__title mt-1 text-2xl font-semibold">{option ? option.title : "Choose a report type"}</h2>
             <p className="hn-report-chooser__subject mt-2 text-sm font-medium">{subject.address}</p>
-            <p className="hn-report-chooser__meta mt-0.5 text-xs">Account {subject.accountId}</p>
+            <p className="hn-report-chooser__meta mt-0.5 text-xs">
+              {subject.addressOnly ? "Address entered manually · verify property details before completing the appraisal" : `Account ${subject.accountId}`}
+            </p>
           </div>
           <button aria-label="Close report chooser" className="hn-report-chooser__close rounded-full border px-3 py-1.5 text-lg leading-none" onClick={onClose} type="button">×</button>
         </div>
@@ -126,9 +143,9 @@ export default function ReportTypeChooser({ subject, onClose }: Props) {
         {!option ? (
           <div className="mt-5 grid gap-3 md:grid-cols-3">
             {REPORT_OPTIONS.map((item) => (
-              <button key={item.type} className="hn-report-type-option block rounded-xl border p-4 text-left" onClick={() => setSelectedType(item.type)} type="button">
+              <button key={item.type} className="hn-report-type-option block rounded-xl border p-4 text-left disabled:cursor-not-allowed disabled:opacity-50" disabled={Boolean(subject.addressOnly) && item.workflow !== "custom_appraisal"} onClick={() => setSelectedType(item.type)} type="button">
                 <span className="hn-report-type-option__title block text-base font-semibold">{item.title}</span>
-                <span className="hn-report-type-option__description mt-2 block text-sm leading-5">{item.description}</span>
+                <span className="hn-report-type-option__description mt-2 block text-sm leading-5">{subject.addressOnly && item.workflow !== "custom_appraisal" ? "Requires a matched CAD account." : item.description}</span>
               </button>
             ))}
           </div>
@@ -143,7 +160,7 @@ export default function ReportTypeChooser({ subject, onClose }: Props) {
                 <h3 className="hn-report-chooser__section-title text-sm font-semibold">Continue an existing file</h3>
                 <div className="mt-2 grid gap-2">
                   {files.map((file) => (
-                    <a className={`hn-report-existing-file flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 no-underline ${file.target_id ? "" : "pointer-events-none opacity-60"}`} href={file.target_id ? reportDestination(option.type, subject, file.target_id) : undefined} key={file.id}>
+                    <a className={`hn-report-existing-file flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 no-underline ${file.target_id ? "" : "pointer-events-none opacity-60"}`} href={file.target_id && subject.accountId ? reportDestination(option.type, { accountId: subject.accountId, ownerName: subject.ownerName }, file.target_id) : undefined} key={file.id}>
                       <span>
                         <span className="hn-report-existing-file__title block font-semibold">File {file.file_number}</span>
                         <span className="hn-report-existing-file__meta mt-0.5 block text-xs">Last updated {displayDate(file.updated_at)}</span>
@@ -153,6 +170,8 @@ export default function ReportTypeChooser({ subject, onClose }: Props) {
                   ))}
                 </div>
               </section>
+            ) : subject.manualAddress ? (
+              <p className="hn-report-chooser__notice rounded-xl p-4 text-sm">A new file will be created from this address. Add and verify property details from Realist or other sources in the report.</p>
             ) : (
               <p className="hn-report-chooser__notice rounded-xl p-4 text-sm">No existing {option.title} files were found for this property.</p>
             )}
@@ -179,7 +198,7 @@ export default function ReportTypeChooser({ subject, onClose }: Props) {
                   </select>
                 </label>
               )}
-              <button className="hn-report-chooser-button mt-3 rounded-xl px-5 py-2.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50" disabled={!organizationId || creating || (option.workflow === "custom_appraisal" && !effectiveDate)} onClick={() => { void startNewAssignment(); }} type="button">
+              <button className="hn-report-chooser-button mt-3 rounded-xl px-5 py-2.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50" disabled={!organizationId || creating || (subject.addressOnly && option.workflow !== "custom_appraisal") || (option.workflow === "custom_appraisal" && !effectiveDate)} onClick={() => { void startNewAssignment(); }} type="button">
                 {creating ? "Creating assignment…" : "Start New Assignment"}
               </button>
               {!writableOrganizations.length && <p className="hn-report-chooser__warning mt-2 text-xs font-medium">Your account does not have permission to create this report type.</p>}

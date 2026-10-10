@@ -88,6 +88,9 @@ export default function PropertySearchPage() {
   const [selectedReportSubject, setSelectedReportSubject] = useState<ReportTypeChooserSubject | null>(null);
   const searchRequestRef = useRef(0);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const enteredAddress = q.trim();
+  const canStartFromAddress = enteredAddress.length <= 200
+    && /^\d+[A-Za-z]?(?:[-/]\d+)?\s+\S/.test(enteredAddress);
 
 
   function normalizeAddress(s: string): string {
@@ -141,6 +144,34 @@ export default function PropertySearchPage() {
     const items = await runSearch(query, cityQuery);
     if (!items.length) return;
 
+    const exact = exactItem(items, query);
+    if (exact) openReportChooser(exact);
+  }
+
+  async function startWithEnteredAddress() {
+    if (!canStartFromAddress) return;
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    const query = enteredAddress;
+    const cityQuery = city.trim();
+    const exact = exactItem(await runSearch(query, cityQuery), query);
+    if (exact) {
+      openReportChooser(exact);
+      return;
+    }
+    const [streetAddress, enteredCity] = query.split(",", 2);
+    const subjectCity = cityQuery || (enteredCity || "")
+      .trim()
+      .replace(/\s+[A-Z]{2}(?:\s+\d{5}(?:-\d{4})?)?$/i, "")
+      .trim();
+    setSelectedReportSubject({
+      accountId: null,
+      address: subjectCity ? `${streetAddress.trim()}, ${subjectCity}` : streetAddress.trim(),
+      addressOnly: true,
+      manualAddress: { address: streetAddress.trim(), city: subjectCity || null },
+    });
+  }
+
+  function exactItem(items: SearchItem[], query: string): SearchItem | undefined {
     const exactFromApi = items.find((item) =>
       item.raw?.search_match === "exact_account" || item.raw?.search_match === "exact_address"
     );
@@ -148,11 +179,9 @@ export default function PropertySearchPage() {
     const exactByAddress = query ? items.find((item) =>
       normalizeAddress(item.raw?.address || item.raw?.situs_address || "") === normalizedQueryAddress
     ) : undefined;
-    const exact = query
+    return query
       ? (/^[0-9A-Za-z]{17}$/.test(query) ? items[0] : (exactFromApi || exactByAddress))
       : undefined;
-
-    if (exact) openReportChooser(exact);
   }
 
   function openReportChooser(item: SearchItem) {
@@ -163,6 +192,7 @@ export default function PropertySearchPage() {
         item.raw?.city,
       ),
       ownerName: item.raw?.owner || null,
+      addressOnly: item.raw?.data_quality_status === "manual_subject",
     });
   }
 
@@ -244,8 +274,19 @@ export default function PropertySearchPage() {
         Results update as you type. The first field keeps the original address, owner, and account search behavior; the optional City field can be used alone or to narrow those result tiles.
       </div>
 
+      {canStartFromAddress && !exactItem(results, enteredAddress) && (
+        <div className="hn-workspace-surface rounded-2xl border p-4" style={{ display: "grid", gap: 8, justifyItems: "start" }}>
+          <div>No matching account for this address? Start a Custom Appraisal and enter the property details yourself.</div>
+          <button type="button" className="hn-action-secondary btn" disabled={loading} onClick={() => { void startWithEnteredAddress(); }}>
+            Start Appraisal With This Address
+          </button>
+        </div>
+      )}
+
       {/* Status */}
-      {err && <div style={{ color: "crimson" }}>Error: {err}</div>}
+      {err && <div style={{ color: err === "No results found" ? "inherit" : "crimson" }}>
+        {err === "No results found" ? err : `Error: ${err}`}
+      </div>}
       {loading && <div>Loading…</div>}
 
       {/* Results */}
@@ -345,7 +386,9 @@ export default function PropertySearchPage() {
                 )}
 
                 {/* Account ID (secondary line) */}
-                <div style={{ fontSize: 12, opacity: 0.75 }}>{r.id}</div>
+                <div style={{ fontSize: 12, opacity: 0.75 }}>
+                  {qualityStatus === "manual_subject" ? "Address-only appraisal · entered manually" : r.id}
+                </div>
 
                 {r.raw?.city && (
                   <div style={{ fontSize: 12, opacity: 0.72 }}>
@@ -354,9 +397,11 @@ export default function PropertySearchPage() {
                 )}
 
                 {/* Market Value (third line) */}
-                <div style={{ fontSize: 12, opacity: 0.6 }}>
-                  Market Value: {mvDisplay}
-                </div>
+                {qualityStatus !== "manual_subject" && (
+                  <div style={{ fontSize: 12, opacity: 0.6 }}>
+                    Market Value: {mvDisplay}
+                  </div>
+                )}
                 <div style={{ marginTop: 4, fontSize: 12, fontWeight: 700, color: "var(--hn-violet)" }}>
                   Choose report type
                 </div>

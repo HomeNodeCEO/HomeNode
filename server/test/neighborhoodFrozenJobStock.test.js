@@ -48,6 +48,8 @@ import { compileNeighborhoodFrozenTypedCadImprovementV1,getNeighborhoodFrozenTyp
 import { getNeighborhoodFrozenCadImprovementProfile } from '../src/services/neighborhoodAssessment/neighborhoodFrozenCadImprovements.js';
 import { NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodOriginalCadAccountPackagesV2.js';
+import { NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL }
+  from '../src/services/neighborhoodAssessment/neighborhoodSelectedAmenityOriginalPackageV2.js';
 
 const id='70000000-0000-4000-8000-000000000001',date='2026-10-07T00:00:00.000000Z';
 const claim={operation_id:id,claim_token:'70000000-0000-4000-8000-000000000002',attempts:1};
@@ -1118,23 +1120,28 @@ function stockOriginalCell(kind='parcels',key='1',changes={}){
 }
 /** DATA-only SQL double. It issues no graph, stock, rights or selected-union receipt. */
 async function stockOriginalCellFixture(hook=()=>{}){
-  let source,sharedHeader;const rows={parcels:[stockOriginalCell(),stockOriginalCell('parcels','2',{residential_year_built:1960})],
+  let source,sharedHeader,cadSource,cadHeader;const cadRows=[],rows={parcels:[stockOriginalCell(),stockOriginalCell('parcels','2',{residential_year_built:1960})],
     accounts:[stockOriginalCell('accounts','STOCK-A')]};
   const f=fixture(async call=>{
-    const supplied=await hook({...call,source,sharedHeader,rows});if(supplied)return supplied;
+    const supplied=await hook({...call,source,sharedHeader,cadSource,cadHeader,cadRows,rows});if(supplied)return supplied;
     if(call.text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.source)return result(source);
     if(call.text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read)return result(structuredClone(sharedHeader));
+    if(call.text===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.source)return result(cadSource);
+    if(call.text===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read)return result(structuredClone(cadHeader));
     if([NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,NEIGHBORHOOD_STOCK_SUBJECT_AND_FIRST_SELECTED_PACKAGE_V2_SQL,
-      NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_ELIGIBILITY_PACKAGE_V2_SQL].includes(call.text)){
+      NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_ELIGIBILITY_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL].includes(call.text)){
       const originals=Object.values(rows).flat(),ids=[...new Set(originals.map(r=>r.account_id))].sort((a,b)=>Buffer.compare(Buffer.from(a),Buffer.from(b))),
-        next=[NEIGHBORHOOD_STOCK_SUBJECT_AND_FIRST_SELECTED_PACKAGE_V2_SQL,NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_ELIGIBILITY_PACKAGE_V2_SQL].includes(call.text)?ids.at(-1)??null
+        next=[NEIGHBORHOOD_STOCK_SUBJECT_AND_FIRST_SELECTED_PACKAGE_V2_SQL,NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_ELIGIBILITY_PACKAGE_V2_SQL,
+          NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL].includes(call.text)?ids.at(-1)??null
           :ids.find(id=>Buffer.compare(Buffer.from(id),Buffer.from(call.values[3]))>0)??null,
         subject=call.values[9]&&ids.includes(options.scope.account_id)?options.scope.account_id:null,
-        packet=originals.filter(r=>r.account_id===next||r.account_id===subject).sort((a,b)=>
+        amenities=call.text===NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL,
+        packet=[...originals.filter(r=>r.account_id===next||r.account_id===subject),...(amenities?cadRows.filter(r=>r.account_id===next):[])].sort((a,b)=>
           Buffer.compare(Buffer.from(`${a.account_id}\u0000${a.kind}\u0000${a.row_key}`),Buffer.from(`${b.account_id}\u0000${b.kind}\u0000${b.row_key}`))),
         n=(id,kind)=>id===null?0:packet.filter(r=>r.account_id===id&&r.kind===kind).length;
       return result({account_id:next,geographic_parcel_count:next?'1':null,subject_account_id:subject,subject_geographic_parcel_count:subject?'1':null,
         next_parcels:n(next,'parcels'),next_accounts:n(next,'accounts'),subject_parcels:n(subject,'parcels'),subject_accounts:n(subject,'accounts'),
+        ...(amenities?{cad_primary:n(next,'primary'),cad_secondary:n(next,'secondary')}:{}),
         original_count:packet.length,page_count:packet.length,invalid_count:0,packet_oversize:false,page_json:JSON.stringify(packet)});
     }
     if([NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL,NEIGHBORHOOD_STOCK_SUBJECT_HOUSING_PACKAGE_V2_SQL].includes(call.text)){
@@ -1160,11 +1167,98 @@ async function stockOriginalCellFixture(hook=()=>{}){
   sharedHeader={binding_sha256:binding,source_metadata:source,definition_json:profile.definition_blob.canonical_json,
     progress:{format:'shared_frozen_typed_progress_v2',binding_sha256:binding,kind_index:7,after:'',layer_rows:0,
       typed_rows:source.row_count,typed_utf8_bytes:'12000400'},status:'complete',completed_at:date};
+  const cadProfile=getNeighborhoodFrozenTypedCadImprovementV1Profile();
+  const cadOriginal=getNeighborhoodFrozenCadImprovementProfile();
+  cadSource={...source,source_profile_sha256:cadOriginal.profile_ref.content_sha256,source_definition_json:cadOriginal.definition_blob.canonical_json,
+    layer_counts:{primary:{row_count:'1',payload_utf8_bytes:'100'},secondary:{row_count:'249',payload_utf8_bytes:'24900'}},
+    row_count:'250',payload_utf8_bytes:'25000'};
+  const cadBinding=assessmentEvidenceDigest({source:cadSource,profile:cadProfile});
+  cadHeader={binding_sha256:cadBinding,source_metadata:cadSource,definition_json:cadProfile.definition_blob.canonical_json,
+    progress:{format:'shared_frozen_typed_CAD_progress_v1',binding_sha256:cadBinding,kind_index:2,after:'',layer_rows:0,
+      typed_rows:cadSource.row_count,typed_utf8_bytes:'30000'},status:'complete',completed_at:date};
   const graph={root:{content_sha256:'c'.repeat(64),canonical_utf8_bytes:'100'},layer_counts:{parcels:60001,accounts:1,
     source_records:0,sales:0,sale_links:0,sync_state:0,sync_runs:0}};
-  return {...f,source,sharedHeader,rows,graph,pages:(effective='2026-10-07')=>
+  return {...f,source,sharedHeader,cadSource,cadHeader,cadRows,rows,graph,pages:(effective='2026-10-07')=>
     createNeighborhoodSharedStockOriginalCellsV2(f.client,options,graph,effective)};
 }
+
+/** Synthetic ORIGINAL, not a licensed source or actual selected-member receipt. */
+function selectedCadOriginal(kind='primary',row_key='STOCK-A',patch={}){
+  const original_text=JSON.stringify(kind==='primary'?{account_id:row_key,year_built:'2050',living_area_sqft:'1200',
+    bedroom_count:'3',bath_count:'2',number_units:'1',pool:false,...patch}
+    :{id:row_key,account_id:'STOCK-A',sec_imp_number:'1',sec_imp_sqft:'0',sec_imp_type:'ATTACHED GARAGE',...patch});
+  const typed=compileNeighborhoodFrozenTypedCadImprovementV1({kind,row_key,payload_text:original_text});
+  return {kind,row_key,account_id:typed.account_id,original_text,payload_sha256:typed.original.payload_sha256,
+    payload_utf8_bytes:String(typed.original.payload_utf8_bytes),cached_account_id:typed.account_id,
+    original_payload_sha256:typed.original.payload_sha256,typed};
+}
+test('first selected stock and CAD originals share one packet and do not infer garage types or historical amenities',async()=>{
+  const f=await stockOriginalCellFixture();f.cadRows.push(selectedCadOriginal(),selectedCadOriginal('secondary','1'),selectedCadOriginal('secondary','2'));
+  const reader=f.pages(),from=f.calls.length,p=await reader.subjectAndFirstSelectedAmenityAccountPackage({includeSubject:true});
+  assert.equal(p.status,'reconciled_subject_and_first_selected_stock_CAD_amenity_original_package');
+  assert.equal(p.subject_equals_next,true);assert.equal(p.subject,null);assert.equal(p.distinct_original_count,6);
+  assert.deepEqual(p.selected_CAD.original_counts,{primary:1,secondary:2});
+  assert.equal(p.selected_CAD.observations.reported_year_built.state,'invalid');
+  assert.equal(p.selected_CAD.amenity_evidence.reported_pool.exact_value,false);
+  assert.equal(p.selected_CAD.amenity_evidence.reported_pool.verified_presence_or_absence,'not_established');
+  assert.deepEqual(p.selected_CAD.amenity_evidence.secondary_inventory.rows.map(r=>r.row_key),['1','2']);
+  assert.ok(p.selected_CAD.amenity_evidence.secondary_inventory.rows.every(r=>r.semantic_type==='unsupported'));
+  assert.equal(p.selected_CAD.amenity_evidence.garage_area.state,'unsupported');
+  assert.equal(p.selected_CAD.amenity_evidence.amenity_completeness,'not_established');
+  const noOriginalText=value=>{if(value&&typeof value==='object'){
+    assert.equal(Object.hasOwn(value,'original_text'),false);assert.equal(Object.hasOwn(value,'payload_text'),false);
+    Object.values(value).forEach(noOriginalText);}};noOriginalText(p);
+  assert.equal(f.calls.slice(from).filter(c=>c.text===NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL).length,1);
+  assert.equal(f.calls.slice(from).filter(c=>c.text===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.source).length,2);
+  assert.ok(f.calls.slice(from).every(c=>c.query_timeout===5000));
+  await assert.rejects(reader.subjectAndFirstSelectedAmenityAccountPackage({includeSubject:true}),/single_use/);
+  await assert.rejects(reader.subjectAndFirstSelectedRecordedGroupHousingAccountPackage({includeSubject:true}),/single_use/);
+});
+test('selected CAD missing primary is missing, not zero or no pool; reported NULL is not reported false',async()=>{
+  const f=await stockOriginalCellFixture(),missing=await f.pages().subjectAndFirstSelectedAmenityAccountPackage({includeSubject:false});
+  assert.equal(missing.selected_CAD.amenity_evidence.reported_pool.state,'missing');
+  assert.equal(missing.selected_CAD.amenity_evidence.reported_pool.reason,'primary_original_absent');
+  f.cadRows.push(selectedCadOriginal('primary','STOCK-A',{pool:null}));
+  const nul=await f.pages().subjectAndFirstSelectedAmenityAccountPackage({includeSubject:false});
+  assert.equal(nul.selected_CAD.amenity_evidence.reported_pool.state,'missing');
+  assert.equal(nul.selected_CAD.amenity_evidence.reported_pool.exact_value,null);
+});
+test('selected amenity packet recompiles every CAD original and ENTIRE cache before resolution',async()=>{
+  for(const mutate of [r=>r.original_text=r.original_text.replace('2050','2040'),r=>r.payload_sha256='e'.repeat(64),
+    r=>r.payload_utf8_bytes='1',r=>r.original_payload_sha256='e'.repeat(64),r=>r.cached_account_id='OTHER',
+    r=>r.typed.observations.reported_pool_flag.exact_value=true,r=>r.typed.original.payload_utf8_bytes++]){
+    const f=await stockOriginalCellFixture();f.cadRows.push(structuredClone(selectedCadOriginal()));mutate(f.cadRows[0]);
+    await assert.rejects(f.pages().subjectAndFirstSelectedAmenityAccountPackage({includeSubject:true}),/original_mismatch|invalid_original/);
+  }
+});
+test('stock plus CAD originals refuse as ONE aggregate 250-row packet before payloads, not 250 each',async()=>{
+  const f=await stockOriginalCellFixture(({text})=>text===NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL?result({
+    account_id:'STOCK-A',geographic_parcel_count:'1',subject_account_id:'STOCK-A',subject_geographic_parcel_count:'1',
+    next_parcels:2,next_accounts:1,subject_parcels:2,subject_accounts:1,cad_primary:1,cad_secondary:247,
+    original_count:251,page_count:0,invalid_count:0,packet_oversize:false,page_json:'[]'}):null);
+  await assert.rejects(f.pages().subjectAndFirstSelectedAmenityAccountPackage({includeSubject:true}),/account_package_row_limit/);
+  const sql=NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL;
+  assert.match(sql,/r\.ordinal=1/);assert.match(sql,/selected_union_v2_checkpoint_matches/);
+  assert.match(sql,/SELECT \* FROM next_account UNION SELECT \* FROM subject_account/);
+  assert.equal((sql.match(/SELECT sum\(n\) FROM totals/g)??[]).length,2);
+  assert.match(sql,/frozen_cad_improvement_rows o[\s\S]+frozen_typed_cad_rows t/);
+  assert.match(sql,/sum\(bytes\+1\)/);assert.match(sql,/sum\(2\*coalesce\(typed_bytes,0\)\+1024\)/);
+  assert.doesNotMatch(sql,/FROM core\.|ST_DWithin|array_agg|INSERT|UPDATE|DELETE/);
+});
+test('selected amenity cache prerequisites and ending metadata share stock child budgets and refuse changes',async()=>{
+  for(const fault of ['initial','ending','metadata']){
+    let reads=0;const f=await stockOriginalCellFixture(({text,cadHeader,cadSource})=>{
+      if(text===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read&&++reads===(fault==='ending'?2:1)&&fault!=='metadata')
+        return result({...structuredClone(cadHeader),status:'building'});
+      if(fault==='metadata'&&text===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.source)return result({...cadSource,source_snapshot:'2:3:'});
+    });
+    await assert.rejects(f.pages().subjectAndFirstSelectedAmenityAccountPackage({includeSubject:true}),/CAD_cache_unavailable|CAD_source_mismatch|source_unavailable/);
+  }
+  const f=await stockOriginalCellFixture(),before=f.calls.length;
+  for(const bad of [{includeSubject:true,cursor:''},{includeSubject:true,account_id:'OTHER'},new Proxy({includeSubject:true},{})])
+    await assert.rejects(f.pages().subjectAndFirstSelectedAmenityAccountPackage(bad),/invalid_input/);
+  assert.equal(f.calls.length,before);
+});
 
 test('stock original cells replay complete originals before retained-year projection without rounding, fallback or raw delivery',async()=>{
   const f=await stockOriginalCellFixture(),from=f.calls.length;

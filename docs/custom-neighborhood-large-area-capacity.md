@@ -1,5 +1,56 @@
 # Complete larger-area Custom neighborhood studies
 
+## Original-backed first selected CAD amenities (2026-10-10, not activated)
+
+The separate read-only internal method
+`readOriginalFrozenCaptureJobFirstSelectedAmenitiesReferencesV2` admits only the
+actual ten-root DONE selected union, immutable human command and current scoped
+database actor/assignment/private draft/retained subject/pin/workspace. It reopens
+the complete original V2 graph, geography, identity, traversal, partition and
+catalog. Native selected ordinal 1, not first C-sorted stock or caller account,
+chooses the member; the full partition bytes and catalog literals are reconciled.
+
+The separately authorized current CAD purpose is checked at BOTH transaction
+ends. Its original generation must have the pinned stock generation's exact
+source snapshot/transaction start and a complete immutable date-neutral cache.
+Stock originals, required subject fallback and selected primary/secondary CAD
+originals share ONE aggregate 250-original admission BEFORE payload reads, one
+8 MB transport/2.1 MB output envelope and one single-use 128-SQL/32 MB/60 s child.
+There is no second CAD allowance or reader. The whole actual owner retains its
+256-SQL/32 MB/60 s ceilings. Every original is recompiled against the ENTIRE
+neutral cache before retained-date projection or amenity evidence resolution.
+
+Reported pool true/false remain distinct from NULL and missing primary. Every
+native secondary ID remains present, including duplicate improvement numbers;
+garage/secondary types, areas, spaces, historical/at-sale facts, provider fidelity
+and completeness are NOT inferred from labels or diagnostic hashes. EMPTY has
+null member/observations/amenity evidence. No values, decisions, originals or
+typed rows are copied into durable blobs. There are no checkpoint/head/lease/
+continuation/pin/workspace/report writes, HTTP routes or worker dispatch.
+
+249 focused synthetic tests passed with zero failures/skips (1688.3528 ms),
+including mixed-packet whole-cache faults, row admission, single-use and missing/
+false pool cases. Native database fault assertions are authored for this slice;
+fresh cloud native/full-suite verification is still pending. This
+fixed-first read does NOT establish complete selected-union amenities, economic
+eligibility, statistics, publication, licensed acquisition or production speed.
+
+### Parent fifth-pass native evidence
+
+PR #1265 exact head `132d7d7fee8e93d800a2ae67b3bb1423f4fde1e9`, cloud Foundation
+run `38071351840`, native job `114269228268`, finished successfully at 17:37 UTC.
+Decoded logs show 417 migration, 1 subject, 13 index, 1 edge and 2 bootstrap tests,
+all with zero failures/skips; index duration was 791279.684756 ms. The independently
+issued explicit-both fixture exercised A then B, preferred observed subject,
+whole B A11 housing and reported site area zero as the sole count of one; A's
+conflicting housing, future year, zero residential area and unsupported currency
+were not admitted. Actual progression, rollback/orphan guards, lost REAL COMMIT,
+fresh single-use recovery and terminal EMPTY preserved exact ten prior roots and
+prior heads/intent/pins/workspace/history/reports. Maximum whole-owner queries
+were 226 of 256. All seven checks present on that stacked head succeeded; this is
+NOT fresh protected-parent integrated security/review evidence for a main merge,
+nor full selected-union eligibility, licensed/live or speed acceptance.
+
 ## Durable original-backed selected recorded-comparison pass (2026-10-10, not activated)
 
 The actual bounded database owner has a separate fifth-pass internal method,

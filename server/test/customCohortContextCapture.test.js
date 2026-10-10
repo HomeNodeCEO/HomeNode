@@ -71,7 +71,8 @@ test('actual capture entry points refuse executable claim Proxies before connect
     'continueOriginalFrozenCaptureJobRecordedPartitionReferencesV2','continueOriginalFrozenCaptureJobRecordedCatalogReferencesV2',
     'awaitOriginalFrozenCaptureJobSelectionReferencesV2','readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2',
     'continueOriginalFrozenCaptureJobSelectedStockUnionReferencesV2','readOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2',
-    'readOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2','progressOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2']){
+    'readOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2','readOriginalFrozenCaptureJobFirstSelectedAmenitiesReferencesV2',
+    'progressOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2']){
     assert.equal(typeof service[method],'function',method);
     for(const value of values)await assert.rejects(service[method](base,{captureJobClaim:value}),/invalid_input|invalid_options/);
   }
@@ -324,12 +325,13 @@ for(const method of ['advanceOriginalFrozenCaptureJobStockTraversalReferencesV2'
   'continueOriginalFrozenCaptureJobRecordedCatalogReferencesV2','awaitOriginalFrozenCaptureJobSelectionReferencesV2',
   'readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','continueOriginalFrozenCaptureJobSelectedStockUnionReferencesV2',
   'readOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2','readOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2',
+  'readOriginalFrozenCaptureJobFirstSelectedAmenitiesReferencesV2',
   'progressOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2'])
 test(`${method} admits only the live claim and bounded operation, not caller continuation`,async()=>{
   const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
     claim={operation_id:base.operationId,claim_token:'70000000-0000-4000-8000-000000000002',attempts:1};
   const service=createCustomCohortContextCapture({pool:{connect(){assert.fail('must not connect');}},sourceMode:'combined-witness2-v1',
-    authorizeMarketData:()=>assert.fail('must not authorize')});
+    authorizeMarketData:()=>assert.fail('must not authorize'),authorizeCadImprovementData:()=>assert.fail('must not authorize')});
   for(const key of ['cursor','stockAccountPackagePage','count','done','rows','observations','originalCellAtOrdinal','issuedHead',
     'sourceGrant','profile','housingInterpretation','effective_date','deadlineOverride','selectionIntent','command_id',
     'included_recorded_group_ids','workspaceTarget','leaseSeconds','run_after','ordinal','decision','account_id'])

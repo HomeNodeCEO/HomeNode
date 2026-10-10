@@ -5,7 +5,12 @@ import { prepareNeighborhoodCohortBlob, prepareNeighborhoodCohortBlobReference }
 import { createNeighborhoodFrozenJobStock } from './neighborhoodFrozenJobStock.js';
 import { compileNeighborhoodFrozenTypedOriginalV2, getNeighborhoodFrozenTypedOriginalV2Profile }
   from './neighborhoodFrozenTypedOriginalV1.js';
-import { NEIGHBORHOOD_SHARED_TYPED_V2_SQL, prepareNeighborhoodSharedTypedSource } from './neighborhoodSharedTypedGeneration.js';
+import { NEIGHBORHOOD_SHARED_TYPED_V2_SQL, prepareNeighborhoodSharedTypedSource,
+  NEIGHBORHOOD_SHARED_TYPED_CAD_SQL, prepareNeighborhoodSharedTypedCadSource } from './neighborhoodSharedTypedGeneration.js';
+import { getNeighborhoodFrozenTypedCadImprovementV1Profile } from './neighborhoodFrozenTypedCadImprovementV1.js';
+import { reconcileNeighborhoodOriginalCadAccountPackageV2 } from './neighborhoodOriginalCadAccountPackagesV2.js';
+import { resolveNeighborhoodOriginalCadAmenityEvidenceV2 } from './neighborhoodOriginalCadAmenityEvidenceV2.js';
+import { NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL } from './neighborhoodSelectedAmenityOriginalPackageV2.js';
 import { resolveNeighborhoodOriginalAccountHousingV2 } from './neighborhoodOriginalAccountHousingV2.js';
 import { projectNeighborhoodOriginalRecordedGroupLabelsV2,resolveNeighborhoodOriginalRecordedGroupV2 }
   from './neighborhoodOriginalRecordedGroupV2.js';
@@ -13,7 +18,8 @@ import { projectNeighborhoodOriginalRecordedGroupLabelsV2,resolveNeighborhoodOri
 export const NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_LIMITS = Object.freeze({ rows:250,
   original_utf8_bytes:1000000, row_utf8_bytes:2100000, page_utf8_bytes:8000000,
   output_utf8_bytes:2100000, read_utf8_bytes:32000000, queries:128, step_ms:60000, query_ms:5000 });
-const L=NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_LIMITS, TYPED=getNeighborhoodFrozenTypedOriginalV2Profile();
+const L=NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_LIMITS, TYPED=getNeighborhoodFrozenTypedOriginalV2Profile(),
+  CAD_TYPED=getNeighborhoodFrozenTypedCadImprovementV1Profile();
 const KINDS=Object.freeze(['parcels','accounts']), ALL=['parcels','accounts','source_records','sales','sale_links','sync_state','sync_runs'];
 /** Refuse without including retained private observations in the error. */
 const fail=reason=>{throw new TypeError(`neighborhood_stock_original_cells_v2_${reason}`);};
@@ -348,6 +354,31 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
         if(!same(ending,header))fail('source_changed');check();
       }};
   }
+  /** Distinct CAD cache prerequisite inside this SAME single-use executor.
+   * The actual owner has already authorized the separate CAD purpose; neither
+   * metadata nor this helper grants rights or prepares a cache on miss. */
+  async function openCad(stock){
+    const readSource=async()=>prepareNeighborhoodSharedTypedCadSource(
+      await execute(NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.source,[stock.generation_id]),stock.generation_id);
+    const source=await readSource();
+    if(source.source_snapshot!==stock.original.source_snapshot
+      ||source.started_at!==stock.original.source_transaction_started_at)fail('CAD_source_mismatch');
+    const binding=assessmentEvidenceDigest({source,profile:CAD_TYPED}),values=[stock.generation_id,CAD_TYPED.profile_ref.content_sha256];
+    const validate=value=>{
+      const h=data(value,['binding_sha256','source_metadata','definition_json','progress','status','completed_at']),
+        p=data(h.progress,['format','binding_sha256','kind_index','after','layer_rows','typed_rows','typed_utf8_bytes']);
+      if(h.binding_sha256!==binding||!same(h.source_metadata,source)||h.definition_json!==CAD_TYPED.definition_blob.canonical_json
+        ||h.status!=='complete'||typeof h.completed_at!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(h.completed_at)
+        ||p.format!=='shared_frozen_typed_CAD_progress_v1'||p.binding_sha256!==binding||p.kind_index!==2||p.after!==''||p.layer_rows!==0
+        ||p.typed_rows!==source.row_count||!count(p.typed_utf8_bytes,8000000000)||BigInt(p.typed_utf8_bytes)<BigInt(p.typed_rows))fail('CAD_cache_unavailable');
+    };
+    const header=one(await execute(NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read,values));validate(header);
+    return {source,async finish(){
+      if(!same(await readSource(),source))fail('CAD_source_changed');
+      const ending=one(await execute(NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read,values));validate(ending);
+      if(!same(ending,header))fail('CAD_source_changed');check();
+    }};
+  }
   /** Recompile a complete original; never accept the stored cell as authority. */
   function reconcile(value,recordedGroup=false){
     check();const row=data(value,['kind','row_key','account_id','source_record_id','original_text',
@@ -426,17 +457,19 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
   /** Both complete accounts share every original/transport/output/SQL bound.
    * This is source DATA only; actual issued owner chooses the next cursor and
    * independently fences the full native graph, intent and current authority. */
-  async function subjectAndNextPackage(rawPage,rawSubject,firstSelected=false,nextEligibility=false){
+  async function subjectAndNextPackage(rawPage,rawSubject,firstSelected=false,nextEligibility=false,amenities=false){
     const page=prepareNeighborhoodStockAccountPackagePageV2(rawPage),{includeSubject}=data(rawSubject,['includeSubject']);
     if(typeof includeSubject!=='boolean')fail('invalid_input');
-    const context=await open(),{stock,source}=context,result=one(await execute(nextEligibility
+    const context=await open(),{stock,source}=context,cadContext=amenities?await openCad(stock):null,
+      values=[stock.operation_id,stock.generation_id,TYPED.profile_ref.content_sha256,page.cursor,L.rows,L.page_utf8_bytes,
+        L.row_utf8_bytes,L.original_utf8_bytes,L.output_utf8_bytes,includeSubject],
+      result=one(await execute(amenities?NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL:nextEligibility
       ?NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_ELIGIBILITY_PACKAGE_V2_SQL:firstSelected
       ?NEIGHBORHOOD_STOCK_SUBJECT_AND_FIRST_SELECTED_PACKAGE_V2_SQL:NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,
-      [stock.operation_id,stock.generation_id,TYPED.profile_ref.content_sha256,page.cursor,L.rows,L.page_utf8_bytes,
-        L.row_utf8_bytes,L.original_utf8_bytes,L.output_utf8_bytes,includeSubject]));
-    const keys=['next_parcels','next_accounts','subject_parcels','subject_accounts'];
+      amenities?[...values,CAD_TYPED.profile_ref.content_sha256]:values));
+    const keys=['next_parcels','next_accounts','subject_parcels','subject_accounts',...(amenities?['cad_primary','cad_secondary']:[])];
     if(!keys.every(k=>Number.isInteger(result[k])&&result[k]>=0&&result[k]<=L.rows+1)
-      ||!Number.isInteger(result.original_count)||result.original_count<0||result.original_count>4*(L.rows+1)
+      ||!Number.isInteger(result.original_count)||result.original_count<0||result.original_count>(amenities?6:4)*(L.rows+1)
       ||!Number.isInteger(result.page_count)||result.page_count<0||result.invalid_count!==0
       ||typeof result.packet_oversize!=='boolean'||typeof result.page_json!=='string')fail('invalid_result');
     if(includeSubject&&result.subject_account_id===null)fail('subject_not_in_issued_stock');
@@ -445,7 +478,8 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
     const nextCounts={parcels:result.next_parcels,accounts:result.next_accounts},subjectCounts={parcels:result.subject_parcels,accounts:result.subject_accounts},
       duplicated=includeSubject&&result.account_id===result.subject_account_id;
     if(duplicated&&!same(nextCounts,subjectCounts))fail('invalid_result');
-    const total=nextCounts.parcels+nextCounts.accounts+(duplicated?0:subjectCounts.parcels+subjectCounts.accounts);
+    const total=nextCounts.parcels+nextCounts.accounts+(duplicated?0:subjectCounts.parcels+subjectCounts.accounts)
+      +(amenities?result.cad_primary+result.cad_secondary:0);
     if(result.original_count!==total)fail('invalid_result');
     if(total>L.rows){if(result.page_count!==0||result.page_json!=='[]')fail('invalid_result');fail('account_package_row_limit');}
     if(result.packet_oversize)fail('account_package_byte_limit');
@@ -463,6 +497,20 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
       ||nextCounts.accounts+(duplicated?0:subjectCounts.accounts)>layers.accounts)fail('invalid_result');
     let encoded;try{encoded=JSON.parse(result.page_json);}catch{fail('invalid_result');}
     if(!Array.isArray(encoded)||encoded.length!==total)fail('invalid_result');
+    let cadEvidence=null;
+    if(amenities){
+      if(result.cad_primary>Number(cadContext.source.layer_counts.primary.row_count)
+        ||result.cad_secondary>Number(cadContext.source.layer_counts.secondary.row_count))fail('invalid_result');
+      const cadRows=encoded.filter(r=>r?.kind==='primary'||r?.kind==='secondary');
+      const cadPacket=reconcileNeighborhoodOriginalCadAccountPackageV2({account_id:result.account_id,
+        geographic_parcel_count:result.geographic_parcel_count,counts:{primary:String(result.cad_primary),secondary:String(result.cad_secondary)},
+        row_count:cadRows.length,invalid_count:0,packet_oversize:false,packet_json:JSON.stringify(cadRows)},page,effective,check);
+      const account=cadPacket.rows[0]??null;
+      cadEvidence={original_counts:{primary:result.cad_primary,secondary:result.cad_secondary},source_metadata:cadContext.source,
+        typed_profile:CAD_TYPED,account_id:account?.account_id??null,observations:account?.observations??null,
+        amenity_evidence:account===null?null:resolveNeighborhoodOriginalCadAmenityEvidenceV2(account,check)};
+      encoded=encoded.filter(r=>r?.kind!=='primary'&&r?.kind!=='secondary');
+    }
     const accounts=new Map();let previous=null;
     for(const value of encoded){
       const row=reconcile(value,true),key=`${row.account_id}\u0000${row.kind}\u0000${row.row_key}`;
@@ -482,17 +530,19 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
     // Charge the ENTIRE outgoing envelope; duplicated facts are marked as an
     // alias rather than serialized twice. Neither metadata nor the second
     // account receives a reset output allowance.
-    const output={page_version:2,status:nextEligibility?'reconciled_subject_and_next_eligibility_stock_original_package'
+    const output={page_version:2,status:amenities?'reconciled_subject_and_first_selected_stock_CAD_amenity_original_package'
+      :nextEligibility?'reconciled_subject_and_next_eligibility_stock_original_package'
       :firstSelected?'reconciled_subject_and_first_selected_stock_original_package'
       :'reconciled_subject_and_next_stock_original_package',authority:'not_established',
       coverage:'at_most_two_complete_distinct_accounts_one_aggregate_budget',graph,stock,source_metadata:source,typed_profile:TYPED,
       package_profile:PACKAGE_PROFILE,effective_date:effective,cursor:page.cursor,account_id:result.account_id,
       next_cursor:result.account_id??page.cursor,end_of_accounts:result.account_id===null,next,subject:duplicated?null:subject,
       subject_included:includeSubject,subject_equals_next:duplicated,distinct_original_count:total,
+      ...(amenities?{selected_CAD:cadEvidence}:{}),
       original_reconciliation:'every_distinct_original_once_entire_neutral_cache',selected_union:'not_established',
       eligibility:'not_established',source_acquisition:'not_established',report_update:'none'};
     if(Buffer.byteLength(JSON.stringify(output))>L.output_utf8_bytes)fail('byte_limit');
-    await context.finish();return freeze(output);
+    await context.finish();if(cadContext)await cadContext.finish();return freeze(output);
   }
   return Object.freeze({
     /** Reconcile one original-key prefix; a page end proves no earlier traversal. */
@@ -553,6 +603,11 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
     },
     subjectAndNextEligibilityRecordedGroupHousingAccountPackage(...args){
       if(args.length!==1)fail('invalid_input');return subjectAndNextPackage({cursor:''},args[0],false,true);
+    },
+    /** Fixed selected ordinal1 plus its ENTIRE primary/secondary originals.
+     * Required subject fallback is deduplicated in the SAME aggregate packet. */
+    subjectAndFirstSelectedAmenityAccountPackage(...args){
+      if(args.length!==1)fail('invalid_input');return subjectAndNextPackage({cursor:''},args[0],true,false,true);
     },
   });
 }

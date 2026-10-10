@@ -7,6 +7,9 @@ import { createNeighborhoodFrozenJobStock } from './neighborhoodFrozenJobStock.j
 import { NEIGHBORHOOD_SHARED_TYPED_CAD_SQL,prepareNeighborhoodSharedTypedCadSource } from './neighborhoodSharedTypedGeneration.js';
 import { getNeighborhoodFrozenCadImprovementProfile } from './neighborhoodFrozenCadImprovements.js';
 import { getNeighborhoodFrozenTypedCadImprovementV1Profile } from './neighborhoodFrozenTypedCadImprovementV1.js';
+import { NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL,NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_LIMITS,
+  prepareNeighborhoodOriginalCadAccountPackagePageV2,reconcileNeighborhoodOriginalCadAccountPackageV2,
+  getNeighborhoodOriginalCadAccountPackageV2Profile } from './neighborhoodOriginalCadAccountPackagesV2.js';
 
 export const NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_LIMITS=Object.freeze({rows:250,row_utf8_bytes:32768,
   page_utf8_bytes:2100000,read_utf8_bytes:32000000,queries:48,step_ms:60000});
@@ -190,7 +193,9 @@ function cadPages(client,rawOptions,rawGraph,effective){
     let encoded;try{encoded=JSON.stringify(r.rows);}catch{fail('invalid_result');}
     readBytes+=Buffer.byteLength(encoded);if(readBytes>L.read_utf8_bytes)fail('byte_limit');check();return r;};
   const store=createNeighborhoodFrozenJobStock({query:execute},o);
-  return Object.freeze({async page(rawPage){const page=projectingAccounts?prepareNeighborhoodSharedJobCadAccountPage(rawPage):prepareNeighborhoodSharedJobCadPage(rawPage);if(used)fail('single_use');used=true;started=performance.now();
+  const readPage=async(rawPage,originalReplay)=>{const page=originalReplay?prepareNeighborhoodOriginalCadAccountPackagePageV2(rawPage)
+    :projectingAccounts?prepareNeighborhoodSharedJobCadAccountPage(rawPage):prepareNeighborhoodSharedJobCadPage(rawPage);
+    if(used)fail('single_use');used=true;started=performance.now();
     const stock=await store.read(),source=prepareNeighborhoodSharedTypedCadSource(await execute(NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.source,[stock.generation_id]),stock.generation_id);
     if(source.source_snapshot!==stock.original.source_snapshot||source.started_at!==stock.original.source_transaction_started_at
       ||Object.entries(graph.layer_counts).some(([k,n])=>n>Number(stock.original.layer_counts[k].row_count)))fail('source_mismatch');
@@ -201,6 +206,21 @@ function cadPages(client,rawOptions,rawGraph,effective){
         ||!TIME.test(h.completed_at??'')||p.format!=='shared_frozen_typed_CAD_progress_v1'||p.binding_sha256!==binding||p.kind_index!==2
         ||p.after!==''||p.layer_rows!==0||p.typed_rows!==source.row_count||!count(p.typed_utf8_bytes,8000000000)||BigInt(p.typed_utf8_bytes)<BigInt(p.typed_rows))fail('cache_unavailable');};
     const header=one(await execute(NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read,headerValues));validate(header);
+    const finish=async()=>{
+      if(!same(await store.read(),stock)||!same(prepareNeighborhoodSharedTypedCadSource(await execute(NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.source,[stock.generation_id]),stock.generation_id),source))fail('source_changed');
+      const ending=one(await execute(NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read,headerValues));validate(ending);if(!same(ending,header))fail('source_changed');check();
+    };
+    if(originalReplay){
+      const bounds=NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_LIMITS;
+      const raw=one(await execute(NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL,[stock.operation_id,stock.generation_id,
+        PROFILE.profile_ref.content_sha256,page.cursor,bounds.rows,bounds.packet_utf8_bytes,bounds.row_utf8_bytes,
+        bounds.original_utf8_bytes,bounds.output_utf8_bytes]));
+      const packet=reconcileNeighborhoodOriginalCadAccountPackageV2(raw,page,effective,check);await finish();
+      return freeze({page_version:2,status:'original_reconciled_CAD_account_package',authority:'not_established',coverage:'one_complete_account_only',
+        graph,stock,source_metadata:source,typed_profile:PROFILE,projection_profile:getNeighborhoodOriginalCadAccountPackageV2Profile(),
+        effective_date:effective,cursor:page.cursor,...packet,absent_primary:'missing_not_zero_or_no_amenity',
+        original_reconciliation:'every_original_and_entire_cache_before_projection',source_acquisition:'not_established',report_update:'none'});
+    }
     const r=one(await execute(projectingAccounts?NEIGHBORHOOD_SHARED_JOB_CAD_ACCOUNT_PAGE_SQL:NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_SQL,
       projectingAccounts?[stock.operation_id,stock.generation_id,PROFILE.profile_ref.content_sha256,page.cursor,page.rowLimit,L.page_utf8_bytes,L.row_utf8_bytes]
         :[stock.operation_id,stock.generation_id,PROFILE.profile_ref.content_sha256,page.kind,page.cursor.account_id,page.cursor.row_key,page.rowLimit,L.page_utf8_bytes,L.row_utf8_bytes]));
@@ -214,8 +234,7 @@ function cadPages(client,rawOptions,rawGraph,effective){
       if(order<0||order===0&&(projectingAccounts||Buffer.compare(Buffer.from(row.row_key),Buffer.from(previous.row_key))<=0))fail('invalid_order');
       previous={account_id:row.account_id,row_key:projectingAccounts?'':row.row_key};return row;});
     if(r.next_account!==(rows.length?previous.account_id:null)||!projectingAccounts&&r.next_key!==(rows.length?previous.row_key:null))fail('invalid_result');
-    if(!same(await store.read(),stock)||!same(prepareNeighborhoodSharedTypedCadSource(await execute(NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.source,[stock.generation_id]),stock.generation_id),source))fail('source_changed');
-    const ending=one(await execute(NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read,headerValues));validate(ending);if(!same(ending,header))fail('source_changed');check();
+    await finish();
     if(projectingAccounts)return freeze({page_version:1,status:'current_CAD_account_projection_page',authority:'not_established',coverage:'one_account_page_only',
       graph,stock,source_metadata:source,typed_profile:PROFILE,projection_profile:ACCOUNT_PROFILE,effective_date:effective,
       cursor:page.cursor,rows,next_cursor:previous.account_id,end_of_accounts:r.candidate_count<page.rowLimit&&r.page_count===r.candidate_count,
@@ -224,5 +243,7 @@ function cadPages(client,rawOptions,rawGraph,effective){
       graph,stock,source_metadata:source,typed_profile:PROFILE,kind:page.kind,cursor:page.cursor,rows,next_cursor:previous,
       end_of_kind:r.candidate_count<page.rowLimit&&r.page_count===r.candidate_count,
       absent_rows:'not_zero_or_no_amenity',source_acquisition:'not_established',report_update:'none'});
-  }});
+  };
+  return Object.freeze({page:rawPage=>readPage(rawPage,false),
+    ...(projectingAccounts?{originalAccountPackage:rawPage=>readPage(rawPage,true)}:{})});
 }

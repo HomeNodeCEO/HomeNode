@@ -39,6 +39,8 @@ import { NEIGHBORHOOD_SHARED_TYPED_CAD_SQL } from '../src/services/neighborhoodA
 import { compileNeighborhoodFrozenTypedCadImprovementV1,getNeighborhoodFrozenTypedCadImprovementV1Profile }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenTypedCadImprovementV1.js';
 import { getNeighborhoodFrozenCadImprovementProfile } from '../src/services/neighborhoodAssessment/neighborhoodFrozenCadImprovements.js';
+import { NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL }
+  from '../src/services/neighborhoodAssessment/neighborhoodOriginalCadAccountPackagesV2.js';
 
 const id='70000000-0000-4000-8000-000000000001',date='2026-10-07T00:00:00.000000Z';
 const claim={operation_id:id,claim_token:'70000000-0000-4000-8000-000000000002',attempts:1};
@@ -561,12 +563,20 @@ function fixture(hook=()=>{},initial=false,transactionCounts=null) {
 
 async function sharedCadFixture(hook=()=>{}){
   const profile=getNeighborhoodFrozenTypedCadImprovementV1Profile(),original=getNeighborhoodFrozenCadImprovementProfile();let source,header;
-  const typed=compileNeighborhoodFrozenTypedCadImprovementV1({kind:'primary',row_key:'STOCK-A',payload_text:JSON.stringify({account_id:'STOCK-A',
-    year_built:'2050',living_area_sqft:'9007199254740993',bedroom_count:'3',bath_count:'2.00',number_units:'1',pool:null})});
+  const primaryText=JSON.stringify({account_id:'STOCK-A',year_built:'2050',living_area_sqft:'9007199254740993',bedroom_count:'3',bath_count:'2.00',number_units:'1',pool:null});
+  const typed=compileNeighborhoodFrozenTypedCadImprovementV1({kind:'primary',row_key:'STOCK-A',payload_text:primaryText});
+  const originalTexts=new Map([[typed.original.payload_sha256,primaryText]]);
   const rows=[{kind:'primary',account_id:typed.account_id,row_key:typed.original.row_key,original_payload_sha256:typed.original.payload_sha256,typed}];
-  const f=fixture(async call=>{const supplied=await hook({...call,source,header,rows});if(supplied)return supplied;
+  const f=fixture(async call=>{const supplied=await hook({...call,source,header,rows,originalTexts});if(supplied)return supplied;
     if(call.text===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.source)return result(structuredClone(source));
     if(call.text===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read)return result(structuredClone(header));
+    if(call.text===NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL){
+      const account_id=['STOCK-A','STOCK-B'].find(a=>a>call.values[3])??null;
+      const originals=rows.filter(r=>r.account_id===account_id).map(r=>({...r,original_text:originalTexts.get(r.original_payload_sha256),
+        payload_sha256:r.original_payload_sha256,payload_utf8_bytes:String(r.typed.original.payload_utf8_bytes),cached_account_id:r.account_id}));
+      return result({account_id,geographic_parcel_count:account_id===null?null:'1',counts:Object.fromEntries(['primary','secondary'].map(k=>[k,String(originals.filter(r=>r.kind===k).length)])),
+        row_count:originals.length,invalid_count:0,packet_oversize:false,packet_json:JSON.stringify(originals)});
+    }
     if(call.text===NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_SQL){const selected=rows.filter(r=>r.kind===call.values[3]&&(r.account_id>call.values[4]||r.account_id===call.values[4]&&r.row_key>call.values[5])).slice(0,call.values[6]);
       return result({page_json:JSON.stringify(selected),page_count:selected.length,candidate_count:selected.length,oversized_count:0,next_account:selected.at(-1)?.account_id??null,next_key:selected.at(-1)?.row_key??null});}
     if(call.text===NEIGHBORHOOD_SHARED_JOB_CAD_ACCOUNT_PAGE_SQL){
@@ -581,9 +591,46 @@ async function sharedCadFixture(hook=()=>{}){
   const binding=assessmentEvidenceDigest({source,profile});header={binding_sha256:binding,source_metadata:source,definition_json:profile.definition_blob.canonical_json,
     progress:{format:'shared_frozen_typed_CAD_progress_v1',binding_sha256:binding,kind_index:2,after:'',layer_rows:0,typed_rows:'7',typed_utf8_bytes:'20000'},status:'complete',completed_at:date};
   const graph={root:{content_sha256:'c'.repeat(64),canonical_utf8_bytes:'100'},layer_counts:{parcels:60001,accounts:0,source_records:0,sales:0,sale_links:0,sync_state:0,sync_runs:0}};
-  return {...f,source,header,rows,graph,cad:()=>createNeighborhoodSharedJobCadImprovementPages(f.client,options,graph)};
+  return {...f,source,header,rows,originalTexts,graph,cad:()=>createNeighborhoodSharedJobCadImprovementPages(f.client,options,graph)};
 }
 const firstCadPage={kind:'primary',cursor:{account_id:'',row_key:''},rowLimit:250};
+
+test('original CAD account reader uses complete original replay, retains absent accounts, and requires a fresh terminal probe',async()=>{
+  const f=await sharedCadFixture(),reader=()=>createNeighborhoodSharedJobCadAccountPages(f.client,options,f.graph,'2026-10-07'),from=f.calls.length;
+  const a=await reader().originalAccountPackage({cursor:''});assert.equal(a.rows[0].account_id,'STOCK-A');assert.equal(a.end_of_accounts,false);
+  assert.equal(a.rows[0].observations.reported_living_area.exact_value,'9007199254740993');
+  assert.equal(a.rows[0].observations.reported_year_built.state,'invalid');
+  assert.equal(a.original_reconciliation,'every_original_and_entire_cache_before_projection');
+  assert.equal(a.source_acquisition,'not_established');assert.equal(a.report_update,'none');
+  const b=await reader().originalAccountPackage({cursor:a.next_cursor});assert.equal(b.end_of_accounts,false);
+  assert.equal(b.rows[0].primary_original_count,'0');assert.equal(b.rows[0].observations.reported_pool_flag.reason,'primary_original_absent');
+  const end=await reader().originalAccountPackage({cursor:b.next_cursor});assert.equal(end.end_of_accounts,true);assert.deepEqual(end.rows,[]);
+  assert.ok(f.calls.slice(from).filter(c=>c.text===NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL).every(c=>c.query_timeout===5000&&c.values[4]===250));
+  assert.ok(!f.calls.slice(from).some(c=>/INSERT|UPDATE|DELETE|FROM core\.|ST_DWithin/.test(c.text)));
+  assert.doesNotMatch(JSON.stringify(a.rows),/original_text|cached_account_id/);
+});
+
+test('original CAD and old typed methods share single-use lifetime budgets and both ending source/cache/claim checks',async()=>{
+  for(const first of ['page','originalAccountPackage']){
+    const f=await sharedCadFixture(),reader=createNeighborhoodSharedJobCadAccountPages(f.client,options,f.graph,'2026-10-07');
+    await reader[first](first==='page'?{cursor:'',rowLimit:250}:{cursor:''});
+    for(const second of ['page','originalAccountPackage'])await assert.rejects(reader[second](second==='page'?{cursor:'',rowLimit:250}:{cursor:''}),/single_use/);
+  }
+  let reads=0;const changed=await sharedCadFixture(({text,header})=>text===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read&&++reads===2?result({...header,status:'building'}):null);
+  await assert.rejects(createNeighborhoodSharedJobCadAccountPages(changed.client,options,changed.graph,'2026-10-07').originalAccountPackage({cursor:''}),/cache_unavailable/);
+  const cancelled=await sharedCadFixture(),from=cancelled.calls.length;
+  await assert.rejects(createNeighborhoodSharedJobCadAccountPages(cancelled.client,{...options,checkBudget(){throw Error('cancelled');}},cancelled.graph,'2026-10-07').originalAccountPackage({cursor:''}),/cancelled/);
+  assert.equal(cancelled.calls.length,from);
+  assert.equal(createNeighborhoodSharedJobCadImprovementPages(cancelled.client,options,cancelled.graph).originalAccountPackage,undefined);
+});
+
+test('original CAD owner DATA cannot launder changed cells or payload with unchanged hashes/counts',async()=>{
+  for(const mutate of [rows=>rows[0].typed.observations.reported_baths.exact_value='3',
+    (rows,texts)=>texts.set(rows[0].original_payload_sha256,texts.get(rows[0].original_payload_sha256).replace('2050','2040'))]){
+    const f=await sharedCadFixture();f.rows[0]=structuredClone(f.rows[0]);mutate(f.rows,f.originalTexts);
+    await assert.rejects(createNeighborhoodSharedJobCadAccountPages(f.client,options,f.graph,'2026-10-07').originalAccountPackage({cursor:''}),/original_mismatch/);
+  }
+});
 
 test('current CAD account projection retains absent-primary denominators, exact values, secondary identities and effective-year policy',async()=>{
   const f=await sharedCadFixture(),start=f.calls.length;

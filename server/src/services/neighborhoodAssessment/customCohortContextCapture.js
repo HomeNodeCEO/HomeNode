@@ -27,6 +27,7 @@ import { createNeighborhoodFrozenJobSourceIdentity } from './neighborhoodFrozenJ
 import { createNeighborhoodSharedJobCadImprovementPages,prepareNeighborhoodSharedJobCadPage,
   createNeighborhoodSharedJobCadAccountPages,prepareNeighborhoodSharedJobCadAccountPage }
   from './neighborhoodSharedJobCadImprovementPages.js';
+import { prepareNeighborhoodOriginalCadAccountPackagePageV2 } from './neighborhoodOriginalCadAccountPackagesV2.js';
 import { describeNeighborhoodCadImprovementPurpose } from '../../security/customNeighborhoodCadImprovementSourcePolicy.js';
 import { createNeighborhoodFrozenJobTypedOriginals } from './neighborhoodFrozenJobTypedOriginals.js';
 import { getNeighborhoodFrozenTypedOriginalV1Profile } from './neighborhoodFrozenTypedOriginalV1.js';
@@ -159,6 +160,8 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingCadPages: true, allowedPhases: ['frozen_identity_refs_v2'] },
   shared_CAD_accounts_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingCadPages: true, projectingCadAccounts: true, allowedPhases: ['frozen_identity_refs_v2'] },
+  original_CAD_account_packages_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    readingCadPages: true, projectingCadAccounts: true, reconcilingCadAccounts: true, allowedPhases: ['frozen_identity_refs_v2'] },
   shared_transaction_pages_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingTransactionPages: true, allowedPhases: ['frozen_identity_refs_v2'] },
   shared_transaction_temporal_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
@@ -1602,13 +1605,13 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       fail('frozen_source_representation_unsupported');
     const {referencesV2=false,verifying=false,stockVerifying=false,identityVerifying=false,
       typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,
-      readingCadPages=false,projectingCadAccounts=false,readingTransactionPages=false,projectingTransactionTemporal=false,
+      readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     if(referencesV2){
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
       const descriptors=Object.getOwnPropertyDescriptors(options),keys=Reflect.ownKeys(descriptors);
       const admittedKeys=['captureJobClaim','signal','deadline',...(readingSharedStockMetrics?['stockMetricPage']:[]),
-        ...(readingCadPages?[projectingCadAccounts?'cadAccountPage':'cadImprovementPage']:[]),
+        ...(readingCadPages?[reconcilingCadAccounts?'cadAccountPackagePage':projectingCadAccounts?'cadAccountPage':'cadImprovementPage']:[]),
         ...(readingTransactionPages?['transactionPage']:[]),...(readingTransactionPackages?['transactionPackagePage']:[]),
         ...(readingStockOriginalCells?['stockOriginalCellPage']:[]),...(readingStockAccountPackages?['stockAccountPackagePage']:[])];
       if(keys.some(key=>!admittedKeys.includes(key)
@@ -1616,9 +1619,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       options=Object.fromEntries(keys.map(key=>[key,descriptors[key].value]));
     }
     if (!options || Object.getPrototypeOf(options)!==Object.prototype) fail('invalid_options');
-    const {captureJobClaim:providedClaim,stockMetricPage,cadImprovementPage,cadAccountPage,transactionPage,transactionPackagePage,stockOriginalCellPage,stockAccountPackagePage,...budgetOptions}=options;
+    const {captureJobClaim:providedClaim,stockMetricPage,cadImprovementPage,cadAccountPage,cadAccountPackagePage,transactionPage,transactionPackagePage,stockOriginalCellPage,stockAccountPackagePage,...budgetOptions}=options;
     const metricPage=readingStockMetrics||readingSharedStockMetrics?prepareNeighborhoodFrozenStockMetricPage(stockMetricPage):null;
-    const cadPage=readingCadPages?projectingCadAccounts?prepareNeighborhoodSharedJobCadAccountPage(cadAccountPage)
+    const cadPage=readingCadPages?reconcilingCadAccounts?prepareNeighborhoodOriginalCadAccountPackagePageV2(cadAccountPackagePage)
+      :projectingCadAccounts?prepareNeighborhoodSharedJobCadAccountPage(cadAccountPage)
       :prepareNeighborhoodSharedJobCadPage(cadImprovementPage):null;
     const transactionInput=readingTransactionPages?prepareNeighborhoodSharedTransactionPageV2(transactionPage):null;
     const packageInput=readingTransactionPackages?prepareNeighborhoodTransactionPackagePageV1(transactionPackagePage):null;
@@ -1956,9 +1960,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       }
       if(readingCadPages){
         const graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
-        stockMetricResult=projectingCadAccounts
-          ?await createNeighborhoodSharedJobCadAccountPages(client,stockOptions,graph,context.effective_date).page(cadPage)
-          :await createNeighborhoodSharedJobCadImprovementPages(client,stockOptions,graph).page(cadPage);
+        if(projectingCadAccounts){
+          const accounts=createNeighborhoodSharedJobCadAccountPages(client,stockOptions,graph,context.effective_date);
+          stockMetricResult=await (reconcilingCadAccounts?accounts.originalAccountPackage(cadPage):accounts.page(cadPage));
+        }else stockMetricResult=await createNeighborhoodSharedJobCadImprovementPages(client,stockOptions,graph).page(cadPage);
       }
       if(readingTransactionPages){
         const graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
@@ -2213,6 +2218,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       frozenCaptureJobSourceStage(value, options, 'shared_CAD_pages_refs_v2'),
     readSharedFrozenCaptureJobCadAccountsReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'shared_CAD_accounts_refs_v2'),
+    readOriginalFrozenCaptureJobCadAccountPackagesReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'original_CAD_account_packages_refs_v2'),
     readSharedFrozenCaptureJobTransactionsReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'shared_transaction_pages_refs_v2'),
     readSharedFrozenCaptureJobTransactionTemporalReferencesV2: (value, options = {}) =>

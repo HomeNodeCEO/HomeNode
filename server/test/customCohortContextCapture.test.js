@@ -225,6 +225,23 @@ test('CAD account owner obtains its date from retained context and accepts no ca
   assert.equal(connections,0);
 });
 
+test('original CAD account package owner admits only a cursor and separate current CAD policy before any connection',async()=>{
+  const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
+    claim={operation_id:base.operationId,claim_token:'70000000-0000-4000-8000-000000000002',attempts:1};
+  const opts={captureJobClaim:claim,cadAccountPackagePage:{cursor:''}},method='readOriginalFrozenCaptureJobCadAccountPackagesReferencesV2';
+  let connections=0;const dependencies={pool:{async connect(){connections++;throw Error('unreachable');}},
+    sourceMode:'combined-witness2-v1',authorizeMarketData:async()=>({allowed:false})};
+  await assert.rejects(createCustomCohortContextCapture(dependencies)[method](base,opts),/CAD_source_policy_required/);
+  const service=createCustomCohortContextCapture({...dependencies,authorizeCadImprovementData:async()=>({allowed:false})});
+  for(const key of ['effectiveDate','rows','originalReader','counts','sourceGrant','cadAccountPage','cadImprovementPage','stockMetricPage','issuedHead'])
+    await assert.rejects(service[method](base,{...opts,[key]:{}}),/invalid_options/);
+  for(const page of [undefined,{...opts.cadAccountPackagePage,rowLimit:250},{...opts.cadAccountPackagePage,kind:'primary'},
+    new Proxy(opts.cadAccountPackagePage,{}),{...opts.cadAccountPackagePage,get cursor(){assert.fail('getter');}}])
+    await assert.rejects(service[method](base,{...opts,cadAccountPackagePage:page}),/invalid_/);
+  await assert.rejects(service[method](base,{captureJobClaim:claim,get cadAccountPackagePage(){assert.fail('getter');}}),/invalid_options/);
+  assert.equal(connections,0);
+});
+
 for(const method of ['readSharedFrozenCaptureJobTransactionsReferencesV2','readSharedFrozenCaptureJobTransactionTemporalReferencesV2'])
 test(`${method} accepts no caller period, profile, source facts, selection or issued head`,async()=>{
   const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},

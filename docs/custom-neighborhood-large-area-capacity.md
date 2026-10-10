@@ -1,5 +1,61 @@
 # Complete larger-area Custom neighborhood studies
 
+## Original-reconciled complete CAD account packages (2026-10-10, not activated)
+
+`readOriginalFrozenCaptureJobCadAccountPackagesReferencesV2` extends the ACTUAL
+bounded database owner. It requires independently issued DONE original graph,
+geographic and identity heads, immutable complete neutral CAD cache, original
+stock and the separately authorized same-snapshot CAD companion. Current DB
+actor/assignment/private draft/retained subject/legacy and CAD source-purpose/
+claim/pin checks repeat at both ends. The seven-layer grant/graph is not silently
+cast into a CAD acquisition receipt. Only `cadAccountPackagePage: {cursor}` is
+admitted; no caller rows, counts, dates, profiles, dictionary or original callback.
+
+The server chooses ONE next exact stock account in native C-key order. Both
+ORIGINAL primary/secondary counters stop at 251 before payload materialization;
+their whole total must be at most 250, otherwise zero payload rows are delivered
+and the account refuses. Counters order by the installed original account/kind/
+row-key index, avoiding whole-account bitmap/sort work before LIMIT. Exact cache
+PK LEFT JOINs retain missing cache as refusal, never a smaller denominator.
+Every original is recompiled with the fixed neutral CAD compiler. ENTIRE cache,
+native account/row identity and recomputed original hash/byte length must agree
+before the owner's retained-year projection. Original text does not escape or
+become a durable per-job payload copy. Original/envelope/transport/output bounds
+are 1 MB/2.1 MB/8 MB/2.1 MB. Both fixed old/new methods share ONE single-use
+32-MB all-nested-result, 48-query, 60-second/five-second-query budget.
+
+Missing primary originals retain the stock account and explicit missing cells,
+not zero/no amenity. Native boolean false remains observed false; NULL remains
+missing. Exact reported square feet and CAD bathroom units remain distinct from
+verified GLA or bathroom equivalence. Every secondary native row ID is retained,
+including duplicate improvement numbers and bounded literal type markers; no
+garage/type alias, housing eligibility or summed area is inferred. Current CAD
+is not historical stock or at-sale amenities. Every nonempty account requires
+a fresh empty terminal probe; a cursor/end alone does not prove traversal.
+
+169 focused local tests passed, zero failed/skipped (1,287.3484 ms), including
+compiler/companion/rights regressions, exact >2^53 values, primary absence, pool
+NULL/false, duplicate secondary numbers, whole250/251, bytes, unchanged-hash/count
+forgeries, hostile DATA, cancellation, shared single-use and ending-cache checks.
+Native tests are AUTHORED for both the rolled-back TEMP SQL admission/ordered
+index plans and the actual issued current-authorized owner (two stock accounts,
+two primary/three secondary originals, independent original/cache/native hash/
+byte reconciliation, partial/unissued/corrupt prerequisites, all both-end rights,
+cache tampering, lost-COMMIT reopening and zero checkpoint/head/payload writes).
+NEW native/full-suite execution is pending; synthetic DATA and small protocol
+fixtures are not licensed >50k acquisition or production-speed acceptance.
+
+No migration, phase, default/public route, cache repair, worker, selected head,
+report write or activation is added. Protected-parent integration/main retarget
+before synchronization/fresh security-native-full-suite checks/actual included
+review remain required. Full housing/amenity/provider-economic resolution,
+server-owned complete selected-union ordinal authority/exact medians/CODs/
+calendar-quarter checks, coherent publication, finite workers and terminal pin
+transfer/retirement, licensed area/retrospective/live Hardy reload remain open.
+Accepted reports and genuine Hardy choices are unchanged; QA assignment 7 only
+for future Apply. Heavy suites run in cloud, local CPU/disk remains light, and
+Windows Indexer remains untouched.
+
 ## Original-reconciled native transaction packages (2026-10-10, not activated)
 
 `readOriginalFrozenCaptureJobTransactionPackagesReferencesV2` extends the actual
@@ -48,7 +104,15 @@ The overall native job FAILED (seven of eight index tests passed): the separate
 TEMP admission fixture reused one uncast SQL parameter for text and BIGINT
 columns (`42P08`), before its whole-package/plan assertions could finish.
 The fixture now explicitly casts both uses; no implementation guard or assertion
-was removed. Fresh exact-head native/full-suite execution remains required.
+was removed. Fresh corrected `0ddddc43` cloud foundation `38029817861` and Sales
+`38029817785` then PASSED. Native job `114148203450` independently decoded 417
+migration/8 index/1 subject/1 edge/2 bootstrap tests, zero failed/skipped; index
+406,641.78475 ms. Both new original admission-plan DATA and actual issued-owner
+reconciliation blocks completed. Frontend `114148203565` decoded 3,959 passed,
+zero failed/skipped (73,396.523233 ms), all typecheck/lint/sourcequality/build/
+render-order steps passed; server `114148203631` and redteam `114148203572` passed.
+These initial stacked receipts do not establish future integrated main-head
+protected readiness, actual review, licensed acquisition or live acceptance.
 
 This is not provider acquisition, economic resolution, complete selected-union
 authority, immutable full-population ordinal cells, exact union medians/CODs/

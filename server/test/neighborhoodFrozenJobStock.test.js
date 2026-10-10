@@ -1442,3 +1442,76 @@ test('recorded-group reader cannot bypass unchanged-hash/count original/cache fo
   const end=await f.pages().recordedGroupAccountPackage({cursor:'STOCK-A'});
   assert.equal(end.recorded_group,null);assert.equal(end.end_of_accounts,true);assert.equal(end.next_cursor,'STOCK-A');assert.deepEqual(end.rows,[]);
 });
+
+test('combined account facts derive full labels, housing and retained-date metrics from ONE original packet without changing existing consumers',async()=>{
+  const f=await stockOriginalCellFixture(),long='Synthetic '+ 'x'.repeat(502);
+  f.rows.accounts=[stockOriginalCell('accounts','STOCK-A',{subdivision:long})];
+  f.rows.parcels=[stockOriginalCell('parcels','1',{subdivision_name:long,class_code:'A11'}),
+    stockOriginalCell('parcels','2',{subdivision_name:long,class_code:'A12',residential_year_built:1960})];
+  const from=f.calls.length,p=await f.pages().recordedGroupAndHousingAccountPackage({cursor:''});
+  assert.equal(p.status,'reconciled_stock_account_recorded_group_and_housing');
+  assert.equal(f.calls.slice(from).filter(c=>c.text===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,1);
+  assert.equal(p.recorded_group.state,'assigned');assert.equal(p.recorded_group.candidate_groups[0].normalized_label,long.toLowerCase());
+  assert.equal(p.rows[0].original_recorded_labels.subdivision.raw,long);
+  assert.equal(p.recorded_housing.state,'conflicting');assert.equal(p.recorded_housing.category,null);
+  assert.deepEqual(p.recorded_housing.parts,[{row_key:'1',state:'observed',category:'detached_single_family'},
+    {row_key:'2',state:'observed',category:'townhouse'}],'outside-geometry housing contradiction remains explicit');
+  assert.equal(p.geographic_parcel_count,'1');assert.equal(p.recorded_housing.source_part_count,'2');
+  assert.equal(p.rows[1].retained_observations.reported_year_built.state,'invalid');
+  assert.equal(p.observations.reported_year_built.exact_value,'1960');
+  assert.equal(p.observations.reported_residential_area.exact_value,'9007199254740993.01');
+  assert.equal(p.observations.reported_residential_area.unit,'reported_sqft');
+  const group=await f.pages().recordedGroupAccountPackage({cursor:''}),housing=await f.pages().housingAccountPackage({cursor:''}),
+    legacy=await f.pages().accountPackage({cursor:''});
+  assert.deepEqual(p.rows,group.rows);assert.deepEqual(p.recorded_group,group.recorded_group);
+  assert.deepEqual(p.recorded_housing,housing.recorded_housing);assert.deepEqual(p.observations,legacy.observations);
+  assert.deepEqual(p.rows.map(({original_recorded_labels,...row})=>row),legacy.rows);
+  assert.ok(!Object.hasOwn(group,'recorded_housing'));assert.ok(!Object.hasOwn(housing,'recorded_group'));
+  assert.ok(!Object.hasOwn(legacy,'recorded_group'));assert.ok(!Object.hasOwn(legacy,'recorded_housing'));
+  assert.ok(Object.isFrozen(p.recorded_housing.parts));assert.ok(Object.isFrozen(p.recorded_group));
+  assert.ok(p.rows.every(r=>!Object.hasOwn(r,'original_text')));assert.ok(Buffer.byteLength(JSON.stringify(p))<=2100000);
+  assert.equal(p.coverage,'one_complete_account_package_only');assert.equal(p.authority,'not_established');
+  assert.equal(p.selected_union,'not_established');assert.equal(p.report_update,'none');
+  const future=await f.pages('2050-01-01').recordedGroupAndHousingAccountPackage({cursor:''});
+  assert.deepEqual(future.recorded_housing,p.recorded_housing);assert.deepEqual(future.recorded_group,p.recorded_group);
+  assert.deepEqual(future.rows.map(r=>r.typed),p.rows.map(r=>r.typed));
+  assert.equal(future.observations.reported_year_built.state,'conflicting');
+});
+
+test('combined facts refuse original/cache forgeries in either interpretation and preserve missing-county and outside-label reasons',async()=>{
+  for(const change of [r=>r.typed.markers.class_code.value_text='A12',r=>r.typed.markers.subdivision_name.value_text='forged',
+    r=>r.original_text=r.original_text.replace('2050','1900'),r=>r.original_payload_sha256='e'.repeat(64),r=>r.typed=null]){
+    const f=await stockOriginalCellFixture();f.rows.parcels[0]=structuredClone(f.rows.parcels[0]);change(f.rows.parcels[0]);
+    await assert.rejects(f.pages().recordedGroupAndHousingAccountPackage({cursor:''}),/original_mismatch/);
+  }
+  const f=await stockOriginalCellFixture();f.rows.accounts=[];
+  let p=await f.pages().recordedGroupAndHousingAccountPackage({cursor:''});
+  assert.equal(p.recorded_housing.state,'unknown');assert.equal(p.recorded_housing.account_original_state,'absent');
+  assert.equal(p.recorded_group.state,'unassigned');assert.equal(p.account_original_state,'absent');
+  f.rows.accounts=[stockOriginalCell('accounts','STOCK-A')];
+  f.rows.parcels[1]=stockOriginalCell('parcels','2',{subdivision_name:'Outside contradictory group',structure_type:'CONDO / TOWNHOME'});
+  p=await f.pages().recordedGroupAndHousingAccountPackage({cursor:''});
+  assert.equal(p.recorded_group.state,'unassigned');assert.equal(p.recorded_group.candidate_groups.length,2);
+  assert.equal(p.recorded_housing.state,'unknown');assert.equal(p.recorded_housing.category,null);
+  f.rows.parcels[1]=stockOriginalCell('parcels','2',{subdivision_name:'x'.repeat(513)});
+  await assert.rejects(f.pages().recordedGroupAndHousingAccountPackage({cursor:''}),/recorded_label_text_limit/);
+});
+
+test('combined facts keep the whole packet bounds, ending fences, fresh empty probe and single-use lifetime across ALL consumers',async()=>{
+  for(const change of [{packet_oversize:true},{invalid_count:1},{original_counts:{parcels:251,accounts:0},page_count:0,page_json:'[]'}]){
+    const f=await stockOriginalCellFixture(({text,rows})=>text===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL?
+      result({account_id:'STOCK-A',geographic_parcel_count:'1',original_counts:{parcels:2,accounts:1},page_count:3,invalid_count:0,
+        packet_oversize:false,page_json:JSON.stringify([...rows.accounts,...rows.parcels]),...change}):null);
+    await assert.rejects(f.pages().recordedGroupAndHousingAccountPackage({cursor:''}),/invalid_result|account_package_(?:byte|row)_limit/);
+  }
+  let headers=0;const ending=await stockOriginalCellFixture(({text,sharedHeader})=>text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read&&++headers===2?
+    result({...sharedHeader,status:'building'}):null);
+  await assert.rejects(ending.pages().recordedGroupAndHousingAccountPackage({cursor:''}),/cache_unavailable/);
+  const f=await stockOriginalCellFixture(),methods=['accountPackage','housingAccountPackage','recordedGroupAccountPackage','recordedGroupAndHousingAccountPackage'];
+  for(const first of methods){const reader=f.pages();await reader[first]({cursor:''});
+    for(const next of methods)await assert.rejects(reader[next]({cursor:''}),/single_use/);
+    await assert.rejects(reader.page({kind:'parcels',cursor:'',rowLimit:1}),/single_use/);}
+  const empty=await f.pages().recordedGroupAndHousingAccountPackage({cursor:'STOCK-A'});
+  assert.equal(empty.end_of_accounts,true);assert.equal(empty.next_cursor,'STOCK-A');assert.deepEqual(empty.rows,[]);
+  assert.equal(empty.recorded_group,null);assert.equal(empty.recorded_housing,null);assert.equal(empty.observations,null);
+});

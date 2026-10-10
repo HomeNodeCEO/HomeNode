@@ -3927,12 +3927,18 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         workspace_revision:1,workspace_checkpoint:pendingTarget});
       assert.deepEqual(actual.rows,original.rows);assert.deepEqual(actual.observations,original.observations);
       assert.deepEqual(actual.recorded_group,original.recorded_group);assert.deepEqual(actual.catalog_reference,original.catalog_reference);
+      assert.equal(actual.account_fact_reconciliation,'retained_date_metrics_recorded_group_and_housing_from_one_whole_original_packet');
       assert.equal(actual.prior_active_choice,'not_carried_into_new_study');assert.equal(actual.genuine_new_group_choice,'not_established');
       assert.equal(actual.selection_intent,'not_established');assert.equal(actual.selected_union,'not_established');
       assert.equal(actual.complete_catalog_original_replay,false);assert.equal(actual.statistics,'not_established');
       assert.equal(actual.publication,'not_established');assert.equal(actual.report_update,'none');
       assert.ok(Object.isFrozen(actual.selection_workspace_target.workspace_checkpoint));assert.ok(Buffer.byteLength(JSON.stringify(actual))<=2100000);
     }
+    assert.deepEqual(targetA.recorded_housing,housingA.recorded_housing);
+    assert.deepEqual(targetB.recorded_housing,housingB.recorded_housing);
+    assert.equal(targetA.recorded_housing.state,'conflicting','outside geometry housing contradiction survives the catalog/target owner');
+    assert.equal(targetB.recorded_housing.state,'unknown','unsupported housing is not made eligible by an assigned recorded label');
+    assert.equal(targetEnd.recorded_housing,null);
     assert.equal(targetEnd.end_of_accounts,true);await assertTargetUnchanged();
     for(const [fault,reason] of [['catalog_owner_bytes_ending',/original_account_owner_byte_limit/],
       ['catalog_prior_head_ending',/group_workspace_selection_changed/],
@@ -3968,6 +3974,8 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       whole_owner_ending_decoded_byte_overflow_refuses_without_budget_reset:true,
       actual_pending_job_period_discovery_private_review_fenced_before_original_io:true,actual_workspace_revision_and_pending_fenced_both_ends:true,
       exactly_one_whole_original_packet_per_call:true,current_ending_authority_and_original_cache_partition_catalog_group_fences:true,
+      original_housing_full_recorded_labels_and_retained_date_metrics_same_packet:true,
+      outside_housing_conflict_and_unknown_not_made_eligible_by_recorded_group:true,
       workspace_history_workfile_accepted_report_heads_roots_job_continuation_attempts_pins_unchanged:true,lost_commit_fresh_reopen:true,
       native_empty_prior_active_case:true,native_prior_active_head_case:true,prior_metadata_only_not_source_authority:true,
       prior_head_mismatch_before_originals_and_at_ending_refused:true,focused_prior_active_head_case:true,genuine_new_group_command:false,old_choice_carried:false,

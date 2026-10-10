@@ -1827,6 +1827,12 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       if(config.text.includes('custom-cohort-group-workspace:read')&&refsFault==='catalog_owner_bytes_after_first'){
         refsFault=null;return {...result,rows:result.rows.map(row=>({...row,synthetic_owner_transport_padding:'x'.repeat(32000001)}))};
       }
+      if(config.text.includes('custom-cohort-group-selection:head')&&refsFault==='catalog_prior_head_ending'){
+        refsFault='catalog_prior_head_after_first';return result;
+      }
+      if(config.text.includes('custom-cohort-group-selection:head')&&refsFault==='catalog_prior_head_after_first'){
+        refsFault=null;return {...result,rows:result.rows.map(row=>({...row,selection_sha256:'f'.repeat(64)}))};
+      }
       if(config.text.includes('custom-cohort-group-workspace:read')&&refsFault?.startsWith('catalog_workspace_')){
         const fault=refsFault;
         if(fault.endsWith('_ending')){refsFault=fault.replace('_ending','_after_first');return result;}
@@ -3830,7 +3836,35 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     const targetAbsentFrom=refsCalls.length;
     await assert.rejects(freshRefsOwner()[workspaceTargetMethod](refsInput,stockAccountOptions),/group_workspace_unavailable/);
     assert.ok(!refsCalls.slice(targetAbsentFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
-    const pendingTarget={workspace_version:7,active:null,pending_capture:{operation_id:refsOperation,
+    // Isolated metadata-only PRIOR editor fixture, not an issued context or
+    // old source facts. Reuse an existing blob so the immutable source/root
+    // inventory stays unchanged. Its contents MUST NOT be opened as a header
+    // or selection manifest by the pending-target reader.
+    const priorTargetContext={context_id:randomUUID(),context_revision:'1',context_sha256:'a'.repeat(64)},
+      priorTargetSelection={selection_version:1,selection_revision:1,selection_sha256:'b'.repeat(64),
+        manifest_ref:catalogFinal.receipt_reference};
+    await pool.query(`INSERT INTO app.neighborhood_custom_cohort_contexts
+      (organization_id,report_file_id,assignment_file_id,account_id,context_id,context_revision,context_sha256,
+        header_content_sha256,header_canonical_utf8_bytes)
+      VALUES($1,$2,$3,$4,$5,1,$6,$7,$8)`,[organization,report,assignment,scope.account_id,priorTargetContext.context_id,
+      priorTargetContext.context_sha256,catalogFinal.receipt_reference.content_sha256,catalogFinal.receipt_reference.canonical_utf8_bytes]);
+    await pool.query(`INSERT INTO app.neighborhood_custom_cohort_group_selections
+      (organization_id,context_id,report_file_id,assignment_file_id,account_id,context_revision,context_sha256,
+        selection_revision,operation_id,request_sha256,selection_sha256,manifest_content_sha256,manifest_canonical_utf8_bytes)
+      VALUES($1,$2,$3,$4,$5,1,$6,1,$7,$8,$9,$10,$11)`,[organization,priorTargetContext.context_id,report,assignment,scope.account_id,
+      priorTargetContext.context_sha256,randomUUID(),'c'.repeat(64),priorTargetSelection.selection_sha256,
+      priorTargetSelection.manifest_ref.content_sha256,priorTargetSelection.manifest_ref.canonical_utf8_bytes]);
+    await pool.query(`INSERT INTO app.neighborhood_custom_cohort_group_selection_heads
+      (organization_id,context_id,selection_revision) VALUES($1,$2,1)`,[organization,priorTargetContext.context_id]);
+    const readPriorTargetMetadata=async()=>({
+      context:(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_contexts WHERE organization_id=$1 AND context_id=$2',
+        [organization,priorTargetContext.context_id])).rows,
+      selection:(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_group_selections WHERE organization_id=$1 AND context_id=$2',
+        [organization,priorTargetContext.context_id])).rows,
+      head:(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_group_selection_heads WHERE organization_id=$1 AND context_id=$2',
+        [organization,priorTargetContext.context_id])).rows}),priorTargetMetadata=await readPriorTargetMetadata();
+    const pendingTarget={workspace_version:7,active:{context_ref:priorTargetContext,selection_ref:priorTargetSelection,
+      observation_period:refsInput.observationPeriod},pending_capture:{operation_id:refsOperation,
       observation_period:refsInput.observationPeriod,discovery:refsInput.discovery}};
     await pool.query(`INSERT INTO app.custom_appraisal_workfile_sections(assignment_file_id,section_key,section_value,revision,updated_by)
       VALUES($1,'neighborhood_workspace',$2::jsonb,1,$3)`,[assignment,canonicalAssessmentJson(pendingTarget),actor]);
@@ -3847,11 +3881,27 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     }
     await pool.query(`UPDATE app.custom_appraisal_workfile_sections SET section_value=$2::jsonb
       WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`,[assignment,canonicalAssessmentJson(pendingTarget)]);
+    const emptyPriorTarget={...pendingTarget,active:null};
+    await pool.query(`UPDATE app.custom_appraisal_workfile_sections SET section_value=$2::jsonb
+      WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`,[assignment,canonicalAssessmentJson(emptyPriorTarget)]);
+    const emptyPriorFrom=refsCalls.length,emptyPriorResult=await freshRefsOwner()[workspaceTargetMethod](refsInput,stockAccountOptions);
+    assert.deepEqual(emptyPriorResult.selection_workspace_target.workspace_checkpoint,emptyPriorTarget);
+    assert.equal(refsCalls.slice(emptyPriorFrom).filter(sql=>sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,1);
+    assert.ok(!refsCalls.slice(emptyPriorFrom).some(sql=>sql.includes('custom-cohort-group-selection:')));
+    await assertCatalogReadUnchanged();
+    const wrongPriorTarget=structuredClone(pendingTarget);wrongPriorTarget.active.selection_ref.selection_sha256='d'.repeat(64);
+    await pool.query(`UPDATE app.custom_appraisal_workfile_sections SET section_value=$2::jsonb
+      WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`,[assignment,canonicalAssessmentJson(wrongPriorTarget)]);
+    const wrongPriorFrom=refsCalls.length;
+    await assert.rejects(freshRefsOwner()[workspaceTargetMethod](refsInput,stockAccountOptions),/group_workspace_selection_changed/);
+    assert.ok(!refsCalls.slice(wrongPriorFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
+    await pool.query(`UPDATE app.custom_appraisal_workfile_sections SET section_value=$2::jsonb
+      WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`,[assignment,canonicalAssessmentJson(pendingTarget)]);
     const targetWorkspace=await readTargetWorkspace(),targetHistory=await readTargetHistory(),targetReport=await readTargetReport(),
       targetWorkfile=await readTargetWorkfile(),assertTargetUnchanged=async()=>{
         await assertCatalogReadUnchanged();assert.deepEqual(await readTargetWorkspace(),targetWorkspace);
         assert.deepEqual(await readTargetHistory(),targetHistory);assert.deepEqual(await readTargetReport(),targetReport);
-        assert.deepEqual(await readTargetWorkfile(),targetWorkfile);
+        assert.deepEqual(await readTargetWorkfile(),targetWorkfile);assert.deepEqual(await readPriorTargetMetadata(),priorTargetMetadata);
       },targetFrom=refsCalls.length;
     const targetA=await freshRefsOwner()[workspaceTargetMethod](refsInput,stockAccountOptions),targetBFrom=refsCalls.length,
       targetB=await freshRefsOwner()[workspaceTargetMethod](refsInput,{...stockAccountOptions,stockAccountPackagePage:{cursor:targetA.next_cursor}}),
@@ -3864,6 +3914,11 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     const targetWorkspaceReads=refsCalls.slice(targetFrom).flatMap((sql,i)=>sql.includes('custom-cohort-group-workspace:read')
       ?[{sql,values:refsQueryParameters[targetFrom+i]}]:[]);
     assert.equal(targetWorkspaceReads.length,6,'the same actual pending workspace is fenced at BOTH ends, including empty probe');
+    const targetPriorHeads=refsCalls.slice(targetFrom).flatMap((sql,i)=>sql.includes('custom-cohort-group-selection:head')
+      ?[{sql,values:refsQueryParameters[targetFrom+i]}]:[]);
+    assert.equal(targetPriorHeads.length,6,'actual prior metadata head is checked at BOTH ends, including empty probe');
+    for(const {values} of targetPriorHeads)assert.deepEqual(values,[organization,priorTargetContext.context_id,report,assignment,
+      scope.account_id,priorTargetContext.context_revision,priorTargetContext.context_sha256]);
     for(const {sql,values} of targetWorkspaceReads){assert.deepEqual(values,[assignment,'neighborhood_workspace',524288]);
       assert.ok(sql.includes('FOR UPDATE NOWAIT'));assert.ok(!/array_agg|jsonb_agg|ST_DWithin/.test(sql));}
     for(const [actual,original] of [[targetA,catalogReplayA],[targetB,catalogReplayB],[targetEnd,catalogReplayEnd]]){
@@ -3880,6 +3935,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     }
     assert.equal(targetEnd.end_of_accounts,true);await assertTargetUnchanged();
     for(const [fault,reason] of [['catalog_owner_bytes_ending',/original_account_owner_byte_limit/],
+      ['catalog_prior_head_ending',/group_workspace_selection_changed/],
       ['catalog_workspace_revision_ending',/workspace_target_changed/],
       ['catalog_workspace_pending_ending',/group_workspace_study_changed/],['catalog_workspace_missing_ending',/group_workspace_unavailable/],
       ['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],['subject',/subject_changed/],
@@ -3913,7 +3969,8 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       actual_pending_job_period_discovery_private_review_fenced_before_original_io:true,actual_workspace_revision_and_pending_fenced_both_ends:true,
       exactly_one_whole_original_packet_per_call:true,current_ending_authority_and_original_cache_partition_catalog_group_fences:true,
       workspace_history_workfile_accepted_report_heads_roots_job_continuation_attempts_pins_unchanged:true,lost_commit_fresh_reopen:true,
-      native_prior_active_head_case:false,focused_prior_active_head_case:true,genuine_new_group_command:false,old_choice_carried:false,
+      native_empty_prior_active_case:true,native_prior_active_head_case:true,prior_metadata_only_not_source_authority:true,
+      prior_head_mismatch_before_originals_and_at_ending_refused:true,focused_prior_active_head_case:true,genuine_new_group_command:false,old_choice_carried:false,
       complete_catalog_original_replay:false,selected_union:false,statistics:false,publication:false,licensed_acquisition:false,production_speed:false});
     // Remove ONLY the synthetic fixture row just inserted above; preserve the
     // pre-existing absence expected by the rest of this isolated cloud fixture.

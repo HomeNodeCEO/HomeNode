@@ -70,13 +70,17 @@ choices remain unchanged and are never inferred to apply to the new study.
 
 Focused tests cover exact pending identity, detached immutable target output,
 the metadata-only prior active head, missing/changed heads, hostile options and
-same-owner interruption. Authored native assertions use an isolated synthetic
-empty-prior-active V7 workspace: A/B/fresh-empty replay, both-end section reads,
+same-owner interruption. Authored native assertions use isolated synthetic
+empty and nonempty-prior-active V7 workspaces: A/B/fresh-empty replay, both-end section reads,
 wrong pending identity before originals, ending revision/pending disappearance,
 existing current authority/original/prerequisite refusals, lost COMMIT/fresh
 reopen and unchanged workspace/history/workfile/report and all durable roots.
-The nonempty prior active head is focused-tested, not yet executed natively in
-this fixture. New-head native/full execution is pending. No heavy local suite,
+The nonempty prior active head is focused-tested through the whole-owner
+executor. The updated native fixture now authors real scoped context/selection/
+head metadata reads at both ends, mismatched prior heads before original I/O
+and at the ending fence, and unchanged prior metadata. This isolated metadata
+fixture deliberately cannot supply old source facts or new human intent;
+new-head native/full execution is pending. No heavy local suite,
 route/worker/default/activation/source grant/report/genuine Hardy choice/Apply
 mutation; QA assignment 7 only for future Apply. Protected parents in order,
 fresh integrated security/native/full suites and actual included review remain

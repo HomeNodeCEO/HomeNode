@@ -36,6 +36,9 @@ function scaled(value) {
   if (whole.length + fraction.length > L.canonical_digits || fraction.length > L.fractional_digits) fail('invalid_observation');
   return BigInt(whole) * SCALE + BigInt(fraction.padEnd(12, '0'));
 }
+/** Shared fixed-profile syntax/ordering parser for dormant derived decimal runs.
+ * This validates representation only, never a metric, unit or source receipt. */
+export function parseExactDecimalPagedObservationV1(value) { return scaled(value); }
 /** Encode an exact finite decimal with no rounding or exponent notation. */
 function decimal(value, digits) {
   const text = value.toString().padStart(digits + 1, '0'), fraction = text.slice(-digits).replace(/0+$/, '');

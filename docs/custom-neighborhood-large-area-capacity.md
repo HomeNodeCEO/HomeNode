@@ -1,5 +1,80 @@
 # Complete larger-area Custom neighborhood studies
 
+## Exact-decimal original-reconciled derived runs (2026-10-09, not activated)
+
+`createExactDecimalObservationRunStoreV1` is a distinct dormant DATA run store,
+not a rewrite of the legacy Number store or accepted-report semantics. It shares
+the exact-decimal kernel's fixed representation parser. No economic value goes
+through Number. At most eight 1,000-entry cursors merge by exact BigInt value,
+then original ordinal; duplicate values remain separate observations. All
+observed, missing, invalid, conflicting and unsupported cells must exhaust the
+independently declared denominator before a manifest can be delivered.
+
+New-format canonical immutable manifests bind all five counts, the opaque
+owner-supplied binding and the complete ordered original cell digest. Reopening
+requires fresh complete original pages and a trusted synchronous O(1) ordinal
+reader over those same immutable cells. It reconciles every original initially
+and at both statistical-pass endings, and every sorted ordinal/value in both
+passes. Missing/changed bytes, foreign binding/format, duplicate ordinals,
+incorrect counts/order, changed non-observed reasons or an ending refusal cannot
+return provisional statistics. The complete numerical result retains the
+kernel's exact decimal quartiles and rational mean/descriptive COD.
+
+One store charges all repository operations, staging and reads across its
+lifetime: 5,000 operations, 1,200 attempted puts, 64 MB staged and 128 MB read.
+Every intermediate and attempted write is returned as an immutable cleanup
+root, including after an ACK/cancellation/deadline failure. These roots are NOT
+registered retention or publication; the actual owner must roll back its
+transaction or register all of them in its versioned graph. One bounded page
+is detached, including its cells, before owner callbacks/yields. Source/iterator
+and repository I/O settle before cancellation cleanup completes.
+
+18 focused decimal-run/kernel tests passed, zero failures, with one deliberately
+cloud-only test skipped locally (653.7332ms). They cover exact >2^53 values,
+stable ties, all five reasons, original reconciliation at both endings, hostile
+DATA, missing/forged/changed runs, cancellation and cleanup roots, aggregate
+staging bounds and mutable-page detachment. The authored cloud-only lazy DATA
+test exercises multi-level merges/reopen at 60,001 and the unchanged 250,000
+numerical ceiling; its execution and full cloud suites are pending. These
+synthetic numerical counts are not licensed source acquisition or speed/SLA
+acceptance. No local database/full-server/frontend suite ran.
+
+This helper does not issue an actual current-authorized original source,
+selected-union membership, one homogeneous unit/currency, economic eligibility,
+retained historical applicability or calendar-quarter checks. Those remaining
+owner integrations and coherent publication are mandatory. An opaque binding,
+original DATA hash or caller callback is not source/selection authority. No
+route/default/migration, source grant, worker/pin, accepted report, genuine Hardy
+choice, production deployment or Apply mutation. QA assignment 7 only for future
+Apply tests; the full roadmap and live acceptance remain incomplete.
+
+Initial stacked head `3e9bdb4a` used the historical #1235 parent `35fa4064`.
+Its cloud-only 60,001 / 250,000 synthetic run test actually passed, as did the
+initial full server, frontend and native suites. Those historical receipts do
+not verify a later protected-parent-integrated head.
+
+On 2026-10-10, #1235's actual included incremental review
+`4d3a8503-b83f-4f13-b397-7f79ec200e5b` covered exact `c95b8021`, reported no
+actionable comments, and finished at 10:12:24Z. All 14 exact-head checks passed;
+fresh main, active strict rules, no bypass actors, clean mergeability and all
+resolved findings were independently checked. Its normal expected-head protected
+merge is `85ade496a8da29daa6da3d08a558e5a96a5b0df1`. This carries the reviewed
+median-centered public contract and the actual prior CAD/transaction fixes.
+#1236 was retargeted to MAIN BEFORE any synchronize push, then integrated that
+actual protected parent without conflicts. The derived-run implementation is
+unchanged and uses the corrected public distribution contract.
+The integrated run/kernel/CAD/transaction/package/stock tests passed 123 tests,
+with zero failures and one intentionally cloud-only synthetic test skipped
+locally (1353.6505ms). Native fixture syntax and diff checks passed. No heavy
+suite or database ran locally.
+
+Fresh integrated-head required security/native/full-suite cloud checks and
+ACTUAL included review remain mandatory before protected merging. The next
+ordinary included request is conservatively not before 11:17:24Z, subject to
+fresh repository-wide invocation/allowance preflight; a newer actual review moves
+the gate later. No paid/forced review, quota or required-check bypass. This is
+not activation, current selected-union authority or licensed/live acceptance.
+
 ## Exact-decimal bounded distribution primitive (2026-10-09, not activated)
 
 `exactDecimalDistributionFromSortedPagesV1` is a new numerical DATA primitive,

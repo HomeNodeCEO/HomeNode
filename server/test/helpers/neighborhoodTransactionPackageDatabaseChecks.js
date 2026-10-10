@@ -3,6 +3,24 @@ import { randomUUID } from 'node:crypto';
 import { NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL as SQL, projectNeighborhoodTransactionPackageV1 }
   from '../../src/services/neighborhoodAssessment/neighborhoodSharedTransactionPackagesV1.js';
 
+/** Inspect actual EXPLAIN DATA without assuming InitPlans precede/follow input.
+ * The one-row chosen-source initializer is not the counter's main input. */
+export function assertBoundedTransactionPackageCountPlan(plan) {
+  const nodes=[];
+  const visit=node=>{nodes.push(node);for(const child of node.Plans??[])visit(child);};
+  visit(plan);
+  const bounded=nodes.filter(n=>n['Node Type']==='Limit'&&n['Actual Rows']===251);
+  assert.equal(bounded.length,2,'oversized sale and link counters stop at exactly cap+1');
+  for(const node of bounded){
+    const inputs=node.Plans.filter(child=>child['Parent Relationship']==='Outer');
+    assert.equal(inputs.length,1,'counter has exactly one main input, distinct from InitPlans');
+    assert.equal(inputs[0]['Actual Rows'],251,'counter main input never returns the full 1000 rows');
+  }
+  const members=nodes.find(n=>n['Subplan Name']==='CTE members');
+  assert.ok(members,'materialized members plan is present');
+  assert.equal(members['Actual Rows'],0,'oversized package materializes no payload member');
+}
+
 /** Native execution of the fixed package plans on rolled-back TEMP DATA only.
  * No original/cache/issued head is changed or fabricated as owner authority.
  * Actual issued/current-rights owner coverage is a separate integration fixture. */
@@ -28,7 +46,9 @@ export async function runNeighborhoodTransactionPackageDatabaseChecks(client) {
     await client.query('INSERT INTO package_plan_seeds VALUES($1,$2,1)',[operation,generation]);
     await client.query("INSERT INTO package_plan_stock VALUES($1,'A')",[operation]);
     for(const [sales,links,counts] of [[0,249,{source_records:'1',sales:'0',sale_links:'249'}],
+      [124,125,{source_records:'1',sales:'124',sale_links:'125'}],
       [0,250,{source_records:'1',sales:'0',sale_links:'250'}],
+      [125,125,{source_records:'1',sales:'125',sale_links:'125'}],
       [1000,1000,{source_records:'1',sales:'251',sale_links:'251'}]]){
       await client.query('TRUNCATE pg_temp.package_plan_rows');
       await client.query(`INSERT INTO package_plan_rows
@@ -40,7 +60,7 @@ export async function runNeighborhoodTransactionPackageDatabaseChecks(client) {
       const result=await client.query(fixed.source_record,values);
       assert.equal(result.rowCount,1);const packet=result.rows[0];
       assert.equal(packet.package_key,'1');assert.deepEqual(packet.counts,counts);
-      if(links===249){
+      if(sales+links===249){
         assert.equal(packet.row_count,250);assert.equal(JSON.parse(packet.packet_json).length,250);
       }else{
         assert.equal(packet.row_count,0);assert.equal(packet.packet_json,'[]');
@@ -49,14 +69,7 @@ export async function runNeighborhoodTransactionPackageDatabaseChecks(client) {
       }
       if(sales===1000){
         const explained=await client.query(`EXPLAIN (ANALYZE,FORMAT JSON) ${fixed.source_record}`,values);
-        const nodes=[];
-        const visit=node=>{nodes.push(node);for(const child of node.Plans??[])visit(child);};
-        visit(explained.rows[0]['QUERY PLAN'][0].Plan);
-        const bounded=nodes.filter(n=>n['Node Type']==='Limit'&&n['Actual Rows']===251);
-        assert.equal(bounded.length,2,'oversized sale and link counters stop at exactly cap+1');
-        for(const node of bounded)assert.equal(node.Plans[0]['Actual Rows'],251,'counter child never returns the full 1000 rows');
-        assert.equal(nodes.find(n=>n['Subplan Name']==='CTE members')['Actual Rows'],0,
-          'oversized package materializes no payload member');
+        assertBoundedTransactionPackageCountPlan(explained.rows[0]['QUERY PLAN'][0].Plan);
       }
     }
     const ended=(await client.query(fixed.source_record,[...values.slice(0,3),'1',...values.slice(4)])).rows[0];
@@ -68,6 +81,7 @@ export async function runNeighborhoodTransactionPackageDatabaseChecks(client) {
     assert.equal(legacy.row_count,1);assert.equal(JSON.parse(legacy.packet_json).length,1);
     console.info('[native-package-count-admission-plans-v1]',{at_cap:250,one_over:251,
       oversized_rows_per_kind:1000,bounded_rows_per_kind:251,oversized_payload_rows:0,
-      fresh_empty_probe:true,legacy_plan:true,temporary_DATA_only:true,issued_owner_authority:false,licensed_or_live_acceptance:false});
+      mixed_kind_exact_cap_and_one_over:true,fresh_empty_probe:true,legacy_plan:true,temporary_DATA_only:true,
+      issued_owner_authority:false,licensed_or_live_acceptance:false});
   }finally{await client.query('ROLLBACK');}
 }

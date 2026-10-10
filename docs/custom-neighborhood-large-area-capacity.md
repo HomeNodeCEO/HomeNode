@@ -102,6 +102,21 @@ owner, licensed acquisition or production-speed receipt; the actual issued
 owner fixture remains independently required. Fresh corrected-head checks
 and ordinary included review remain pending; no early merge is authorized.
 
+The first corrected-head native run (`b1e1bc47`, job `114132708094`) refused
+the new plan regression because it inspected the first child, a one-row
+chosen-source InitPlan, instead of the main counter input. Both Limit nodes
+had already returned exactly 251, and oversized packets had zero payloads.
+The plan inspector now identifies the `Outer` input explicitly, with focused
+synthetic plan tests for either InitPlan order, oversized input, payload leakage,
+missing counters and absent/ambiguous inputs. Native SQL coverage also includes
+mixed-kind exact-250 and 251 sums. The prior native run is a failure (7 of 8
+index tests passed), not merge readiness; a fresh corrected-head full native
+run and actual included review are mandatory. The actual issued owner fixture
+did execute successfully in that failed run, with its no-copy/no-write and
+ending-authority guards intact. No production behavior changed for this
+test-inspection correction. The expanded focused suite passed 114 tests with
+zero failures/skips (1187.7446ms); this is not fresh native execution.
+
 No production grant/deploy/activation, worker,
 HTTP default, accepted report, genuine Hardy choice or Apply changes. Provider/
 amenity meaning and economic transaction resolution, server-owned selection,

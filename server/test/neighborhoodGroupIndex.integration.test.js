@@ -46,6 +46,8 @@ import { createCustomCohortStockTraversalV2AnchorRepository }
   from '../src/services/neighborhoodAssessment/customCohortStockTraversalV2AnchorRepository.js';
 import { createCustomCohortRecordedPartitionV2Repository }
   from '../src/services/neighborhoodAssessment/customCohortRecordedPartitionV2Repository.js';
+import { createCustomCohortRecordedCatalogV2Repository } from '../src/services/neighborhoodAssessment/customCohortRecordedCatalogV2Repository.js';
+import { prepareCohortRecordedCatalogReceiptV2 } from '../src/services/neighborhoodAssessment/cohortRecordedCatalogReceiptV2.js';
 import { createCustomCohortV2ContinuationRepository }
   from '../src/services/neighborhoodAssessment/customCohortV2ContinuationRepository.js';
 import { getNeighborhoodOriginalRecordedGroupV2Profile }
@@ -1783,6 +1785,15 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
           return {...result,rows:[{...result.rows[0],entry_reference:other}]};
         }
       }
+      if(['missing_catalog_receipt','corrupt_catalog_receipt'].includes(refsFault)&&config.text.includes('neighborhood-cohort-blob:read */')
+        &&config.values[1]===(await client.query('SELECT receipt_reference->>\'content_sha256\' AS hash FROM app.neighborhood_custom_cohort_recorded_catalog_v2_heads WHERE operation_id=$1',[refsOperation])).rows[0]?.hash){
+        const fault=refsFault;refsFault=null;
+        return fault==='missing_catalog_receipt'?{rowCount:0,rows:[]}:{...result,rows:result.rows.map(row=>({...row,canonical_utf8:'{}'}))};
+      }
+      if(config.text.includes('custom-cohort-recorded-catalog-v2:anchor-insert')&&refsFault==='catalog_counts_ending')refsFault='catalog_counts_mismatch';
+      if(config.text.includes('custom-cohort-recorded-catalog-v2:counts')&&refsFault==='catalog_counts_mismatch'){
+        refsFault=null;return {...result,rows:result.rows.map(r=>({...r,unassigned_accounts:r.unassigned_accounts+1}))};
+      }
       if(['partition_missing_blob','partition_corrupt_blob'].includes(refsFault)&&config.text.includes('neighborhood-cohort-blob:read */')
         &&config.values[1]===(await client.query("SELECT entry_reference->>'content_sha256' AS hash FROM app.neighborhood_custom_cohort_recorded_partition_v2_rows WHERE operation_id=$1 AND account_id='CLOSURE-A'",[refsOperation])).rows[0]?.hash){
         const fault=refsFault;refsFault=null;
@@ -1798,7 +1809,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         ||Object.values(NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL).includes(config.text)){
         // The ending-header fault is consumed by the later second metadata
         // read, not by the page query. Keep it armed like the COMMIT fault.
-        const fault=refsFault;if(!['commit','cad_header','transaction_header'].includes(fault)&&!fault?.startsWith('partition_'))refsFault=null;
+        const fault=refsFault;if(!['commit','cad_header','transaction_header'].includes(fault)&&!fault?.startsWith('partition_')&&!fault?.startsWith('catalog_'))refsFault=null;
         if(fault==='license')await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
         if(fault==='role')await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);
         if(fault==='subject')await client.query("UPDATE app.appraisal_subject_snapshots SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2000') WHERE id=$1",[sourceSnapshot]);
@@ -3568,6 +3579,89 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     assert.deepEqual(await readRefsCheckpoint(),partitionDoneCheckpoint);assert.equal(await pinCount(),pinsBeforeContinuation);
     for(const sql of ['DELETE FROM app.neighborhood_custom_cohort_v2_continuations WHERE operation_id=$1','TRUNCATE app.neighborhood_custom_cohort_v2_continuations'])
       await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql,sql.includes('$1')?[refsOperation]:[])),/continuation_immutable/);
+    // A separate bounded catalog pass reopens EVERY whole original and the
+    // ENTIRE partition entry, including unassigned A's outside conflicts.
+    const catalogMethod='advanceOriginalFrozenCaptureJobRecordedCatalogReferencesV2',catalogFrom=refsCalls.length,
+      catalogBeforeBlobs=await refsBlobCount(),catalogBeforeJob=await continuationJob(),
+      readCatalogHead=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_recorded_catalog_v2_heads WHERE operation_id=$1',[refsOperation])).rows[0]??null,
+      readCatalogGroups=async()=>(await pool.query('SELECT group_id,normalized_county,normalized_label,member_count,last_ordinal FROM app.neighborhood_custom_cohort_recorded_catalog_v2_groups WHERE operation_id=$1 ORDER BY group_id',[refsOperation])).rows,
+      catalogInitial=async()=>{assert.equal(await readCatalogHead(),null);assert.deepEqual(await readCatalogGroups(),[]);
+        assert.deepEqual(await continuationJob(),catalogBeforeJob);assert.equal(await refsBlobCount(),catalogBeforeBlobs);};
+    await catalogInitial();
+    for(const [fault,reason] of [['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],['subject',/subject_changed/],
+      ['claim',/claim_lost/],['cancel',/cancelled/],['transaction_header',/cache_unavailable/],['catalog_counts_ending',/catalog_original_mismatch/],
+      ['stock_cells_mismatch',/original_mismatch/],['stock_cells_missing',/original_mismatch/],['stock_cells_original',/original_mismatch/],
+      ['partition_entry_ending',/partition_original_mismatch/],['partition_entry_ordinal',/partition_original_mismatch/],
+      ['partition_entry_ref',/partition_original_mismatch/],['partition_corrupt_blob',/storage_conflict/]]){
+      refsFault=fault;refsAbort=new AbortController();
+      await assert.rejects(freshRefsOwner()[catalogMethod](refsInput,{...refsOptions,signal:refsAbort.signal}),reason);
+      assert.equal(refsFault,null);await catalogInitial();
+      if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+      if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    }
+    for(const fault of ['missing_receipt','corrupt_receipt','missing_geo_receipt','corrupt_geo_receipt','missing_identity_receipt','corrupt_identity_receipt',
+      'missing_traversal_receipt','corrupt_traversal_receipt','missing_partition_receipt','corrupt_partition_receipt']){
+      refsFault=fault;const from=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[catalogMethod](refsInput,refsOptions),/checkpoint_conflict|storage_conflict|invalid_receipt/);
+      assert.equal(refsFault,null);assert.ok(!refsCalls.slice(from).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));await catalogInitial();
+    }
+    await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(`INSERT INTO app.neighborhood_custom_cohort_recorded_catalog_v2_groups
+      (operation_id,organization_id,group_id,normalized_county,normalized_label,member_count,last_ordinal)
+      VALUES($1,$2,$3,$4,$5,1,2)`,[refsOperation,organization,groupB.recorded_group.assigned_group_id,
+      groupB.recorded_group.candidate_groups[0].normalized_county,groupB.recorded_group.candidate_groups[0].normalized_label])),/prefix_conflict/);
+    await catalogInitial();
+    await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(`INSERT INTO app.neighborhood_custom_cohort_recorded_catalog_v2_groups
+      (operation_id,organization_id,group_id,normalized_county,normalized_label,member_count,last_ordinal)
+      VALUES($1,$2,'discovery:unassigned',NULL,NULL,1,1)`,[refsOperation,organization])),/query returned no rows|commit_conflict/);
+    await catalogInitial();
+    // A valid increment/head without the retention checkpoint is also orphaned.
+    await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
+      const store=createCustomCohortRecordedCatalogV2Repository({client,claim:refsClaim,scope,actorUserId:actor,
+        ...partitionBindings,partition_reference:partitionFinal.receipt_reference}),blobs=createNeighborhoodCohortBlobRepository(client,organization),
+        part=JSON.parse(await blobs.get(partitionFinal.receipt_reference.content_sha256,partitionFinal.receipt_reference.canonical_utf8_bytes)),
+        expected=Object.fromEntries(['binding','source_reference','root','graph_verification_reference','stock_verification_reference',
+          'identity_verification_reference','stock_reference','effective_date','stock_account_count','traversal_reference','profile_reference'].map(k=>[k,part[k]]));
+      expected.partition_reference=partitionFinal.receipt_reference;
+      const counts=await store.contribute(null,{account_id:'CLOSURE-A',ordinal:1,group_id:'discovery:unassigned',normalized_county:null,normalized_label:null}),
+        receipt=prepareCohortRecordedCatalogReceiptV2({format:'cohort_recorded_catalog_receipt_v2',...expected,sequence:1,previous:null,
+          before:{after_account:'',account_count:0,done:false},after:{after_account:'CLOSURE-A',account_count:1,done:false},
+          entry_reference:partitionRows[0].entry_reference,before_counts:{assigned_accounts:0,unassigned_accounts:0,assigned_groups:0},after_counts:counts},expected);
+      await store.advance(null,await blobs.put(canonicalAssessmentJson(receipt)));
+    }),/commit_conflict/);await catalogInitial();
+    refsFault='commit';await assert.rejects(freshRefsOwner()[catalogMethod](refsInput,refsOptions),e=>e.outcome_unknown===true);
+    const catalogFirst=await readCatalogHead(),catalogFirstGroups=await readCatalogGroups(),catalogFirstCheckpoint=await readRefsCheckpoint();
+    assert.equal(catalogFirst.sequence,1);assert.equal(catalogFirstCheckpoint.phase,'frozen_recorded_catalog_refs_v2');
+    assert.deepEqual(catalogFirstCheckpoint.evidence_refs.slice(0,8),partitionDoneCheckpoint.evidence_refs);
+    assert.deepEqual(catalogFirstGroups,[{group_id:'discovery:unassigned',normalized_county:null,normalized_label:null,member_count:1,last_ordinal:1}]);
+    for(const fault of ['missing_catalog_receipt','corrupt_catalog_receipt','catalog_counts_mismatch']){
+      refsFault=fault;await assert.rejects(freshRefsOwner()[catalogMethod](refsInput,refsOptions),/checkpoint_conflict|storage_conflict|invalid_receipt|catalog_original_mismatch/);
+      assert.equal(refsFault,null);assert.deepEqual(await readCatalogHead(),catalogFirst);assert.deepEqual(await readCatalogGroups(),catalogFirstGroups);
+      assert.deepEqual(await readRefsCheckpoint(),catalogFirstCheckpoint);
+    }
+    const catalogSecond=await freshRefsOwner()[catalogMethod](refsInput,refsOptions);assert.deepEqual(catalogSecond.counts,{assigned_accounts:1,unassigned_accounts:1,assigned_groups:1});
+    assert.deepEqual(catalogSecond.progress,{after_account:'CLOSURE-B',account_count:2,done:false});
+    const catalogEnd=await freshRefsOwner()[catalogMethod](refsInput,refsOptions),catalogFinal=await readCatalogHead(),catalogGroups=await readCatalogGroups(),
+      catalogFinalCheckpoint=await readRefsCheckpoint(),catalogFinalBlobs=await refsBlobCount();
+    assert.equal(catalogEnd.progress.done,true);assert.equal(catalogFinal.sequence,3);assert.equal(catalogGroups.length,2);
+    assert.equal(catalogGroups.find(g=>g.group_id===groupB.recorded_group.assigned_group_id).normalized_label,groupB.recorded_group.candidate_groups[0].normalized_label);
+    assert.equal(catalogEnd.selected_union,'not_established');assert.equal(catalogEnd.statistics,'not_established');
+    const catalogReopenFrom=refsCalls.length,reopenedCatalog=await freshRefsOwner()[catalogMethod](refsInput,refsOptions);
+    assert.equal(reopenedCatalog.advanced,false);assert.deepEqual(reopenedCatalog.counts,catalogEnd.counts);
+    assert.ok(refsCalls.slice(catalogReopenFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL),'completed reopen rechecks original/cache and partition empty probes');
+    assert.deepEqual(await readCatalogHead(),catalogFinal);assert.deepEqual(await readCatalogGroups(),catalogGroups);
+    assert.deepEqual(await readRefsCheckpoint(),catalogFinalCheckpoint);assert.equal(await refsBlobCount(),catalogFinalBlobs);
+    assert.deepEqual(await readPartitionHead(),partitionFinal);assert.deepEqual(await readPartitionRows(),partitionRows);assert.equal(await pinCount(),pinsBeforeContinuation);
+    for(const table of ['neighborhood_custom_cohort_recorded_catalog_v2_groups','neighborhood_custom_cohort_recorded_catalog_v2_heads'])
+      for(const sql of [`DELETE FROM app.${table} WHERE operation_id=$1`,`UPDATE app.${table} SET organization_id=organization_id WHERE operation_id=$1`,`TRUNCATE app.${table}`])
+        await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql,sql.includes('$1')?[refsOperation]:[])),/immutable|transition_conflict|prefix_conflict/);
+    assert.ok(!refsCalls.slice(catalogFrom).some(sql=>/ST_DWithin|job-typed:|jsonb_agg|array_agg/.test(sql)));
+    console.info('[native-original-recorded-catalog-issued-owner-v2]',{accounts:2,assigned_groups:1,assigned_accounts:1,unassigned_accounts:1,
+      all_whole_originals_entire_neutral_cache_and_entire_partition_entries_replayed:true,outside_conflicting_candidates_not_promoted:true,
+      native_exact_next_ordinal_orphan_summary_and_head_without_root_refused:true,current_ending_authority_cache_counts_fences:true,
+      lost_commit_resumes_next_account:true,fresh_original_and_partition_empty_terminal_reopen:true,
+      raw_variants_retained_in_original_partition_lineage:true,original_payload_copies:0,job_typed_copies:0,dense_population_arrays:0,
+      assigned_group_limit:2048,large_group_limit_native_execution:false,selected_union:false,statistics:false,publication:false,
+      worker_activation:false,licensed_acquisition:false,production_speed:false,report_update:false});
     // Actual failures still consume the unchanged five-claim budget. Successful
     // continuation neither erased the first attempt nor bought extra failures.
     for(let attempt=oldClaim.attempts;attempt<=5;attempt++){
@@ -3593,7 +3687,8 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       lost_commit_fresh_pending_reopen:true,legacy_failure_claim_excludes_pending_success:true,concurrent_single_consume:true,
       fresh_claim_token:true,attempts_preserved:oldClaim.attempts,last_error_preserved:true,duplicate_DONE_success_refused:true,
       actual_failure_history_reaches_unchanged_five_claim_terminal:true,
-      issued_heads_roots_and_pins_unchanged:true,context_complete:false,worker_activation:false,licensed_acquisition:false,production_speed:false,report_update:false});
+      issued_partition_heads_and_pins_unchanged:true,completed_catalog_root_retained:true,
+      context_complete:false,worker_activation:false,licensed_acquisition:false,production_speed:false,report_update:false});
     }
     for(const [kind,keys] of Object.entries(expected)){
       let position=null;const seen=[];

@@ -47,8 +47,26 @@ export async function runNeighborhoodOriginalCadAccountPackageDatabaseChecks(cli
       '{"SQL_DATA_only":true}'::jsonb FROM pg_temp.cad_originals`,[profile]);
     const full=await read();assert.deepEqual(full.counts,{primary:'1',secondary:'249'});assert.equal(full.row_count,250);
     assert.equal(full.invalid_count,0);assert.equal(full.packet_oversize,false);assert.equal(JSON.parse(full.packet_json).length,250);
+    const planNodes=async()=>{const p=(await client.query(`EXPLAIN (ANALYZE,FORMAT JSON) ${sql}`,values)).rows[0]['QUERY PLAN'][0].Plan,all=[];
+      const visit=n=>{all.push(n);(n.Plans??[]).forEach(visit);};visit(p);return all;};
+    // All 250 originals individually fit 1 MB; their raw sum exceeds 8 MB.
+    // The actual plan must execute ZERO envelope-encoding members.
+    await client.query("UPDATE pg_temp.cad_originals SET payload=jsonb_build_object('SQL_DATA_only',repeat('x',40000))");
+    const rawOver=await read();assert.equal(rawOver.row_count,0);assert.equal(rawOver.packet_oversize,true);assert.equal(rawOver.packet_json,'[]');
+    const rawPlan=await planNodes();assert.equal(rawPlan.find(n=>n['Subplan Name']==='CTE raw_sizes')['Actual Rows'],250);
+    assert.equal(rawPlan.find(n=>n['Subplan Name']==='CTE members')['Actual Rows'],0);
+    await client.query(`UPDATE pg_temp.cad_originals SET payload='{"SQL_DATA_only":true}'::jsonb`);
+    await client.query("UPDATE pg_temp.cad_originals SET payload=jsonb_build_object('SQL_DATA_only',repeat('x',1000000)) WHERE kind='primary'");
+    const largeOriginal=await read();assert.equal(largeOriginal.row_count,0);assert.equal(largeOriginal.packet_oversize,true);
+    await client.query(`UPDATE pg_temp.cad_originals SET payload='{"SQL_DATA_only":true}'::jsonb WHERE kind='primary'`);
+    const lower=Number((await client.query(`SELECT (sum(octet_length(o.payload::text)::bigint+octet_length(t.typed::text)+1)+2)::text AS n
+      FROM pg_temp.cad_originals o JOIN pg_temp.cad_typed t USING(generation_id,kind,row_key)`)).rows[0].n);
+    const encodedOver=await read({5:lower});assert.equal(encodedOver.row_count,250);assert.equal(encodedOver.packet_oversize,true);
+    assert.equal(encodedOver.packet_json,'[]','raw admission must still pass the exact encoded-byte gate');
     await client.query(`INSERT INTO pg_temp.cad_originals VALUES($1::uuid,'secondary','1000250','A','{}',$2::text,2)`,[generation,profile]);
     const over=await read();assert.deepEqual(over.counts,{primary:'1',secondary:'250'});assert.equal(over.row_count,0);assert.equal(over.packet_json,'[]');
+    const countPlan=await planNodes();assert.equal(countPlan.find(n=>n['Subplan Name']==='CTE raw_sizes')['Actual Rows'],0);
+    assert.equal(countPlan.find(n=>n['Subplan Name']==='CTE members')['Actual Rows'],0);
     await client.query("DELETE FROM pg_temp.cad_originals WHERE kind='secondary' AND row_key='1000250'");
     for(const overrides of [{5:10},{6:10},{7:10},{8:10}]){const r=await read(overrides);assert.equal(r.packet_oversize,true);assert.equal(r.packet_json,'[]');}
     await client.query("DELETE FROM pg_temp.cad_typed WHERE kind='secondary' AND row_key='1000001'");
@@ -58,7 +76,9 @@ export async function runNeighborhoodOriginalCadAccountPackageDatabaseChecks(cli
     assert.deepEqual(absent.counts,{primary:'0',secondary:'0'});
     const end=await read({3:'B'});assert.equal(end.account_id,null);assert.equal(end.geographic_parcel_count,null);assert.equal(end.row_count,0);
     console.info('[native-original-CAD-account-package-admission-DATA-v2]',{kind_count_cap:251,actual_count_input_rows:251,
-      actual_count_loops:2,complete_total_cap:250,whole_251_refusal:true,oversized_payload_delivery:0,whole_byte_refusal:true,
+      actual_count_loops:2,complete_total_cap:250,whole_251_refusal:true,count_over_zero_raw_size_and_encoded_rows:true,
+      actual_raw_size_rows:250,actual_raw_over_limit_encoded_rows:0,original_1MB_gate:true,raw_fit_exact_encoding_over_refused:true,
+      oversized_payload_delivery:0,whole_byte_refusal:true,
       missing_cache_not_skipped:true,absent_primary_denominator:true,fresh_empty_probe:true,temporary_DATA_only:true,
       issued_owner_authority:false,original_reconciliation:false,licensed_or_live_acceptance:false});
   }finally{await client.query('ROLLBACK');}

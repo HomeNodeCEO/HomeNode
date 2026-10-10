@@ -53,6 +53,28 @@ export async function runNeighborhoodOriginalTransactionPackageDatabaseChecks(cl
     const full=await read();assert.deepEqual(full.counts,{source_records:'1',sales:'249',sale_links:'0'});
     assert.equal(full.row_count,250);assert.equal(full.invalid_count,0);assert.equal(full.packet_oversize,false);
     assert.equal(JSON.parse(full.packet_json).length,250);
+    // Native plan DATA proves the lower-bound gate prevents encoding even
+    // when the admitted 250 originals individually fit but cannot fit 8 MB total.
+    // Only byte lengths, not whole original strings, enter raw_sizes.
+    await client.query("UPDATE pg_temp.tx_originals SET payload=jsonb_build_object('SQL_DATA_only',repeat('x',40000))");
+    const rawOver=await read();assert.deepEqual(rawOver.counts,full.counts);assert.equal(rawOver.row_count,0);
+    assert.equal(rawOver.packet_oversize,true);assert.equal(rawOver.packet_json,'[]');
+    const rawPlan=(await client.query(`EXPLAIN (ANALYZE,FORMAT JSON) ${queries.source_record}`,values)).rows[0]['QUERY PLAN'][0].Plan;
+    const rawNodes=[];
+    /** Find named materialized admission nodes without positional assumptions. */
+    const walkRaw=node=>{rawNodes.push(node);(node.Plans??[]).forEach(walkRaw);};walkRaw(rawPlan);
+    assert.equal(rawNodes.find(n=>n['Subplan Name']==='CTE raw_sizes')['Actual Rows'],250);
+    assert.equal(rawNodes.find(n=>n['Subplan Name']==='CTE members')['Actual Rows'],0,'no encoded members for raw-over-limit packet');
+    await client.query(`UPDATE pg_temp.tx_originals SET payload='{"SQL_admission_DATA_only":true}'::jsonb`);
+    await client.query("UPDATE pg_temp.tx_originals SET payload=jsonb_build_object('SQL_DATA_only',repeat('x',1000000)) WHERE kind='source_records'");
+    const oneRawOver=await read();assert.equal(oneRawOver.row_count,0);assert.equal(oneRawOver.packet_oversize,true);assert.equal(oneRawOver.packet_json,'[]');
+    await client.query(`UPDATE pg_temp.tx_originals SET payload='{"SQL_admission_DATA_only":true}'::jsonb`);
+    // Raw lower bounds do not replace exact JSON encoding checks: this limit
+    // fits raw originals+typed values, but not the actual diagnostic envelope.
+    const rawLower=(await client.query(`SELECT (sum(octet_length(o.payload::text)::bigint+octet_length(t.typed::text)+1)+2)::text AS n
+      FROM pg_temp.tx_originals o JOIN pg_temp.tx_typed t USING(generation_id,kind,row_key)`)).rows[0].n;
+    const encodedOver=await read('source_record',{5:Number(rawLower)});assert.equal(encodedOver.row_count,250);
+    assert.equal(encodedOver.packet_oversize,true);assert.equal(encodedOver.packet_json,'[]');
     await client.query(`INSERT INTO pg_temp.tx_originals VALUES($1,'sales','1000250','A',$2,'{}')`,[generation,source]);
     const over=await read();assert.deepEqual(over.counts,{source_records:'1',sales:'250',sale_links:'0'});
     assert.equal(over.row_count,0);assert.equal(over.packet_json,'[]');
@@ -82,6 +104,8 @@ export async function runNeighborhoodOriginalTransactionPackageDatabaseChecks(cl
       actual_count_loops:3,complete_total_cap:250,whole_251_refusal:true,oversized_payload_delivery:0,
       raw_legacy_prefix_cap:250,actual_legacy_scan_input_rows:250,sparse_watermark:true,no_skipped_later_member:true,
       missing_cache_not_skipped:true,whole_byte_refusal:true,fresh_empty_probe:true,temporary_DATA_only:true,
+      raw_byte_lower_bound_before_encoding:true,actual_over_limit_encoded_rows:0,raw_size_rows:250,
+      exact_encoded_gate_still_required:true,original_per_row_lower_bound:true,
       issued_owner_authority:false,original_reconciliation:false,licensed_or_live_acceptance:false});
   }finally{await client.query('ROLLBACK');}
 }

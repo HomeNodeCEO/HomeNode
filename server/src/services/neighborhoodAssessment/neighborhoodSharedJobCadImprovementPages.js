@@ -15,16 +15,25 @@ export const NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_LIMITS=Object.freeze({rows:250,row
   page_utf8_bytes:2100000,read_utf8_bytes:32000000,queries:48,step_ms:60000});
 const L=NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_LIMITS,PROFILE=getNeighborhoodFrozenTypedCadImprovementV1Profile(),SOURCE=getNeighborhoodFrozenCadImprovementProfile();
 const KINDS=['primary','secondary'],HASH=/^[a-f0-9]{64}$/,TIME=/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+/** Refuse a bounded CAD page protocol violation without returning source data. */
 const fail=r=>{throw new TypeError(`neighborhood_shared_job_CAD_${r}`);};
+/** Compare exact retained DATA values, not their authorization or provider meaning. */
 const same=(a,b)=>canonicalAssessmentJson(a)===canonicalAssessmentJson(b);
+/** Freeze the validated page graph so later callers cannot change its receipts. */
 const freeze=v=>{if(v&&typeof v==='object'&&!Object.isFrozen(v)){Object.values(v).forEach(freeze);Object.freeze(v);}return v;};
+/** Admit only the installed own enumerable data fields, without getters or proxies. */
 function data(v,keys){if(!v||isProxy(v)||Object.getPrototypeOf(v)!==Object.prototype||Reflect.ownKeys(v).length!==keys.length
   ||!keys.every(k=>{const d=Object.getOwnPropertyDescriptor(v,k);return d?.enumerable&&Object.hasOwn(d,'value');}))fail('invalid_data');return v;}
+/** Validate a literal account identity; only the initial keyset cursor may be empty. */
 function account(v,empty=false){if(typeof v!=='string'||!v.isWellFormed()||!empty&&!v||Buffer.byteLength(v)>64||v!==v.trim()||/[\u0000-\u001f\u007f]/.test(v))fail('invalid_data');return v;}
+/** Test a canonical nonnegative SQL count against its fixed exact integer ceiling. */
 const count=(v,max)=>typeof v==='string'&&/^(?:0|[1-9][0-9]{0,18})$/.test(v)&&BigInt(v)<=BigInt(max);
+/** Require exactly one metadata or aggregate result row from the fixed SQL plan. */
 const one=r=>{if(r?.rowCount!==1||r.rows?.length!==1)fail('invalid_result');return r.rows[0];};
+/** Keep primary account keys and secondary native bigint keys distinct and exact. */
 function key(v,kind,accountId,empty=false){if(empty&&v==='')return v;
   if(kind==='primary'?v!==accountId:typeof v!=='string'||!/^[1-9][0-9]{0,18}$/.test(v)||BigInt(v)>9223372036854775807n)fail('invalid_data');return v;}
+/** Validate one bounded kind/cursor/limit request; it does not establish traversal completeness. */
 export function prepareNeighborhoodSharedJobCadPage(value){
   const v=data(value,['kind','cursor','rowLimit']),c=data(v.cursor,['account_id','row_key']);
   if(!KINDS.includes(v.kind)||!Number.isInteger(v.rowLimit)||v.rowLimit<1||v.rowLimit>L.rows)fail('invalid_page');
@@ -32,6 +41,7 @@ export function prepareNeighborhoodSharedJobCadPage(value){
   if((c.account_id==='')!==(c.row_key===''))fail('invalid_page');
   return freeze({kind:v.kind,cursor:{...c},rowLimit:v.rowLimit});
 }
+/** Admit only an exact bounded account cursor/limit, never caller dates, facts or authority. */
 export function prepareNeighborhoodSharedJobCadAccountPage(value){
   const v=data(value,['cursor','rowLimit']);account(v.cursor,true);
   if(!Number.isInteger(v.rowLimit)||v.rowLimit<1||v.rowLimit>L.rows)fail('invalid_page');
@@ -51,6 +61,7 @@ const ACCOUNT_DEFINITION=freeze({id:'neighborhood-current-CAD-stock-account-proj
 const accountText=canonicalAssessmentJson(ACCOUNT_DEFINITION),accountBlob=prepareNeighborhoodCohortBlob(accountText);
 const ACCOUNT_PROFILE=freeze({profile_ref:{id:ACCOUNT_DEFINITION.id,revision:'1',content_sha256:accountBlob.content_sha256},
   definition_blob:{ref:accountBlob,canonical_json:accountText}});
+/** Return the immutable installed current-CAD projection definition, not a grant or historical proof. */
 export function getNeighborhoodSharedJobCadAccountProfile(){return ACCOUNT_PROFILE;}
 // Exact stock-account PK probes and the generation/profile/kind/account/key
 // cache index; no geometry clipping, array of the stock, current core read or
@@ -98,6 +109,7 @@ SELECT coalesce('['||string_agg(encoded,',' ORDER BY account_id)||']','[]') AS p
 const FIELDS={primary:{reported_year_built:'year',reported_living_area:'reported_sqft',reported_bedrooms:'reported_bedrooms',
   reported_baths:'CAD_reported_baths',reported_units:'reported_units',reported_pool_flag:'reported_pool_flag'},
   secondary:{reported_improvement_number:'reported_improvement_number',reported_improvement_area:'reported_sqft'}};
+/** Reconcile a bounded retained literal with its type, UTF-8 size and digest. */
 function rawOf(value){const r=data(value,['state','json_type','value_text','utf8_bytes','value_sha256']);
   if(!['json_null','scalar','oversize','non_scalar'].includes(r.state)||!['null','string','number','boolean','object','array'].includes(r.json_type)
     ||!Number.isInteger(r.utf8_bytes)||r.utf8_bytes<0||r.utf8_bytes>1000000)fail('invalid_typed_row');
@@ -112,7 +124,9 @@ function rawOf(value){const r=data(value,['state','json_type','value_text','utf8
 }
 // Independently reconcile each retained cell with its bounded literal, without
 // reading the original payload or converting economic values to JS Number.
+/** Replay only the fixed neutral syntax rule; no provider meaning or report-date policy. */
 function expectedCell(raw,name,unit){
+  /** Produce the fixed syntax cell; only observed literals retain an exact value/unit. */
   const cell=(state,exact_value,reason)=>({state,exact_value,unit:state==='observed'?unit:null,reason});
   if(raw.state==='json_null'||name!=='reported_pool_flag'&&raw.state==='scalar'&&raw.json_type==='string'&&!raw.value_text.trim())return cell('missing',null,'raw_value_missing');
   if(raw.state==='oversize')return cell('unsupported',null,'raw_value_oversize');
@@ -126,6 +140,7 @@ function expectedCell(raw,name,unit){
     ||integral&&(fraction||BigInt(whole)>2147483647n)||name==='reported_year_built'&&(BigInt(whole)<1600n||BigInt(whole)>9999n))return cell('invalid',null,'raw_value_invalid');
   return cell('observed',whole+(fraction?`.${fraction}`:''),null);
 }
+/** Verify one cache row's exact original/profile identity and independently replay every cell. */
 function decodeRow(value,kind){const r=data(value,['kind','account_id','row_key','original_payload_sha256','typed']);
   if(r.kind!==kind||!HASH.test(r.original_payload_sha256??''))fail('invalid_typed_row');account(r.account_id);key(r.row_key,kind,r.account_id);
   const t=data(r.typed,['typed_CAD_improvement_version','interpretation_profile_ref','temporal_basis','original','account_id',
@@ -142,6 +157,7 @@ function decodeRow(value,kind){const r=data(value,['kind','account_id','row_key'
   const markers=data(t.markers,kind==='primary'?[]:['sec_imp_type']);if(kind==='secondary')rawOf(markers.sec_imp_type);
   if(Buffer.byteLength(canonicalAssessmentJson(r))>L.row_utf8_bytes)fail('row_limit');return freeze(r);
 }
+/** Reconcile a bounded account row and retain missing literals; only the owner's effective year constrains syntax. */
 function decodeAccountRow(value,effective,source){
   const r=data(value,['account_id','geographic_parcel_count','primary','secondary_original_count']);account(r.account_id);
   if(!count(r.geographic_parcel_count,2000000)||r.geographic_parcel_count==='0'
@@ -175,6 +191,7 @@ export function createNeighborhoodSharedJobCadImprovementPages(client,rawOptions
 export function createNeighborhoodSharedJobCadAccountPages(client,rawOptions,rawGraph,effectiveDate){
   return cadPages(client,rawOptions,rawGraph,assessmentDate(effectiveDate));
 }
+/** Share fixed stock/cache fences and budgets for one syntax or current-account DATA page; never build on a miss. */
 function cadPages(client,rawOptions,rawGraph,effective){
   const projectingAccounts=effective!==null;
   const o={...data(rawOptions,['claim','scope','actorUserId','geometryInput','discovery','subjectIntent','checkBudget'])};
@@ -184,7 +201,9 @@ function cadPages(client,rawOptions,rawGraph,effective){
     ['parcels','accounts','source_records','sales','sale_links','sync_state','sync_runs']);
   if(!Object.values(counts).every(n=>Number.isInteger(n)&&n>=0&&n<=2000000))fail('invalid_input');
   const graph=freeze({root,layer_counts:{...counts}});let used=false,queries=0,readBytes=0,started;
+  /** Fence cancellation/owner work and the finite elapsed page budget around every await. */
   const check=()=>{o.checkBudget();if(performance.now()-started>L.step_ms)fail('deadline');};
+  /** Run one fixed bounded query and charge actual returned JSON transport bytes. */
   const execute=async(text,values)=>{check();if(++queries>L.queries)fail('query_limit');
     const q=typeof text==='string'?{text,values,query_timeout:5000}:{...text,query_timeout:5000};const r=await client.query(q);
     if(!Array.isArray(r?.rows))fail('invalid_result');
@@ -200,6 +219,7 @@ function cadPages(client,rawOptions,rawGraph,effective){
     if(source.source_snapshot!==stock.original.source_snapshot||source.started_at!==stock.original.source_transaction_started_at
       ||Object.entries(graph.layer_counts).some(([k,n])=>n>Number(stock.original.layer_counts[k].row_count)))fail('source_mismatch');
     const binding=assessmentEvidenceDigest({source,profile:PROFILE}),headerValues=[stock.generation_id,PROFILE.profile_ref.content_sha256];
+    /** Require the exact immutable completed cache header at both page-transaction ends. */
     const validate=raw=>{const h=data(raw,['binding_sha256','source_metadata','definition_json','progress','status','completed_at']);
       const p=data(h.progress,['format','binding_sha256','kind_index','after','layer_rows','typed_rows','typed_utf8_bytes']);
       if(h.binding_sha256!==binding||h.status!=='complete'||!same(h.source_metadata,source)||h.definition_json!==PROFILE.definition_blob.canonical_json

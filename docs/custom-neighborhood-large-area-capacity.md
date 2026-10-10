@@ -1,5 +1,34 @@
 # Complete larger-area Custom neighborhood studies
 
+## Protected CAD merge integrated into bounded housing (2026-10-10)
+
+PR #1241 exact `291f287da655f7025ccde93c3d3abfb9c7e76616` passed all
+14 exact-head checks and actual included review
+`74e8fe1b-266b-4582-9a7d-9c4675d681f4`, finishing at 20:47:47 UTC with
+no actionable findings and exact-head coverage marked reviewed. The optional
+ast-grep tool timed out on the native test file; that complete changed-file diff
+was separately inspected, without a new finding. Full decoded native job
+114299602222 passed 417 migration / 1 subject / 8 index / 1 edge / 2 bootstrap
+tests, zero failures/skips. Fresh main/head/rules/checks/thread inspection
+preceded the normal expected-head protected merge at 20:48:32 UTC:
+`6b48eeea609007a0cc2a6c1f508bab370715bd15`. No activation or deployment.
+
+PR #1242 was retargeted to MAIN before synchronization with that actual protected
+parent. This integration preserves both the original housing owner and every
+protected raw-byte admission, transaction, CAD-rights and original-reconciliation
+fix. Older stacked proofs below are historical. Fresh integrated exact-head
+security/native/full-server/frontend checks and an actual included review are
+still required. The next conservative included-review gate is 21:52:47 UTC AND
+fresh repository-wide actual-review activity; no forced/paid/quota/check bypass.
+
+The merged working tree passed 352 focused synthetic tests locally, zero
+failures/cancellations/skips (5149.0808 ms), plus owner/native-test syntax and
+diff checks. Protected transaction and CAD raw-gate regressions were included.
+This is not a native/full-server/frontend or licensed/live acceptance result.
+
+All internal stages remain inactive. Small native protocols and synthetic tests
+are not licensed large-population acquisition or production-speed acceptance.
+
 ## Original-reconciled bounded recorded housing (2026-10-10, not activated)
 
 `readOriginalFrozenCaptureJobAccountHousingReferencesV2` extends the actual
@@ -53,6 +82,60 @@ retrospective and live Hardy reload remain outstanding. Protected dependency
 integration, main retarget BEFORE synchronization, fresh security/native/full
 suites and actual included exact-head review remain mandatory. QA7-only future
 Apply, source rights, accepted reports and genuine Hardy choices are preserved.
+
+## Original CAD raw-byte fix before protected review (2026-10-10)
+
+The integrated #1241 head 72f66b7f passed all 14 exact-head checks. Its full
+decoded native job 114296867789 passed 417 migration / 1 subject / 8 index /
+1 edge / 2 bootstrap tests with zero failures/skips; index duration was
+441081.248494 ms. An actual included review has NOT run for that integrated head.
+
+Before requesting review, this revision backports the already-native-tested
+standalone CAD raw-byte admission from the downstream raw-gate slice. The CAD
+query previously encoded all count-admitted payloads before byte refusal, the
+same memory-risk class found in the protected transaction review. It now retains
+only raw byte lengths under the whole 250-original count cap, then blocks JSON
+encoding on original/row/transport/output lower bounds. Exact encoded gates,
+all limits, current rights and full original/ENTIRE-cache reconciliation stay
+mandatory and unchanged. This is a scoped fix, not integration of unprotected
+descendant features or acceptance of their receipts as this new head's proof.
+
+Cloud-only TEMP assertions require over-limit 250 raw-size rows to encode zero
+members, count251 to read zero raw/member rows, per-original refusal and raw-fit/
+exact-encoding-over refusal. These assertions actually passed on downstream
+d9df38f4 native job 114294315209, but need fresh execution on THIS corrected
+integrated head, along with security/full-server/frontend checks and actual
+included review. The request gate remains 20:39:59 UTC AND fresh repository-wide
+actual-review activity. No early, paid, forced, quota or required-check bypass.
+
+The corrected integration passed 164 focused synthetic tests locally, zero
+failures/skips (1451.2995 ms), with source/helper syntax and diff checks passing.
+
+All internal stages remain inactive. No production, grant, worker/scheduler,
+pin, accepted report, genuine Hardy choice or Apply changed. TEMP DATA and small
+native owner protocols are not full licensed acquisition or live speed acceptance.
+
+## Protected transaction merge and CAD integration (2026-10-10)
+
+PR #1240 exact 7b92505e passed all 14 fresh exact-head checks and actual included
+review 59133864-31ae-4102-b639-088279412dac. The incremental four-file review
+finished at 19:34:59 UTC with no actionable comments and exact coverage `reviewed`.
+Fresh main/head, active strict ruleset with no bypass actors, all checks and
+resolved-thread reads preceded the normal expected-head protected merge:
+92896a389e308a10075599c581b6944083d8f9e9. No deployment or activation followed.
+
+PR #1241 was retargeted to MAIN at 19:36:05 UTC BEFORE synchronization with
+that actual protected parent. Merge resolution preserves both CAD-original
+and independently protected transaction-plan checks, plus both owner methods.
+Fresh integrated security/native/full-suite checks and actual included review
+are required; old stacked receipts below are historical. The next conservative
+included-request gate is 20:39:59 UTC AND a fresh repository-wide actual-review
+activity check. No early, paid, forced, quota or required-check bypass.
+
+The integrated CAD owner and protected transaction regressions passed 163
+focused synthetic tests locally, zero failures or skips (1438.8089 ms).
+Syntax and diff checks passed. Heavy native/full-server/frontend suites remain
+cloud-only; these local checks are not licensed acquisition or live acceptance.
 
 ## Original-reconciled complete CAD account packages (2026-10-10, not activated)
 
@@ -119,6 +202,52 @@ transfer/retirement, licensed area/retrospective/live Hardy reload remain open.
 Accepted reports and genuine Hardy choices are unchanged; QA assignment 7 only
 for future Apply. Heavy suites run in cloud, local CPU/disk remains light, and
 Windows Indexer remains untouched.
+
+## Protected account-package merge / transaction integration (2026-10-10)
+
+PR #1239 exact c7a43142 passed all 14 fresh exact-head checks and ACTUAL included
+review edabdc0e-c0af-474d-882f-dce00283a6da of all seven changed files against
+protected d2930c13. Review finished 15:56:51 UTC with no actionable comments;
+exact coverage was `reviewed`, not an automatic skip. Fresh strict ruleset,
+main/head/CI and unresolved-thread checks preceded normal expected-head merge
+at 15:58:06, actual protected merge 244c1fd97fcec9b3c143b23273632c5408e876c0.
+
+PR #1240 was retargeted to MAIN at 15:58:20 BEFORE synchronization. Its actual
+protected parent 244c1fd9 was merged locally as e498a467; the sole test-import
+conflict kept BOTH independent original-admission and transaction-plan checks.
+124 focused tests passed, zero failures/skips (1412.5138 ms). Fresh integrated
+required security/native/full-suite cloud checks and actual included review
+remain required; older stacked 0ddddc43 proofs are historical, not integrated
+acceptance. That actual included review finished 15:56:51; its conservative
+request gate was NOT BEFORE 17:01:51 UTC AND a fresh repository-wide actual
+review-activity preflight. No early, paid, forced or required-check bypass.
+
+Integrated #1240 head 39d5b594 subsequently passed all 14 exact-head checks,
+including decoded native original-transaction reconciliation. Actual included
+review d44e25a1-6443-413f-bc68-7ac45c178f02 covered all nine changed files and
+finished at 17:08:32 UTC. Its sole finding was missing spaces in the prose above,
+now corrected. The changed documentation head needs fresh checks and actual
+review; the next conservative request gate is 18:13:32 UTC, also subject to a
+fresh repository-wide actual-review activity check. No protected merge is claimed.
+
+The c68c03d3 documentation head passed all 14 checks. Its actual incremental
+included review 9631f215-d7f0-4b65-9810-e8b79acb1474 finished at 18:26:47 UTC
+and found an outside-diff memory issue: the transaction plan encoded all admitted
+originals before rejecting an oversized packet. Both fixed plans now materialize
+only byte lengths under the original-count cap, then gate payload encoding on
+raw original/cache lower bounds. The exact encoded-row, transport and output
+checks remain mandatory; limits, profiles and whole-package refusal are unchanged.
+125 focused tests passed, zero failures/skips (1424.1255 ms). New cloud-only TEMP
+plan assertions require zero encoded members for an over-limit 250-original
+packet, per-original refusal and rejection when raw sizes fit but actual encoding
+does not. These new native assertions have NOT yet executed. The implementation
+fix needs fresh exact-head checks and actual included review before merge. The
+next conservative request gate is 19:31:47 UTC AND a fresh repository-wide
+actual-review activity preflight. No early, paid, forced or check bypass.
+
+All internal stages remain inactive. No production deployment, grant, worker,
+scheduler, generation pin, accepted report, genuine Hardy choice or Apply was
+changed. Native protocol checks are not licensed acquisition or live acceptance.
 
 ## Original-reconciled native transaction packages (2026-10-10, not activated)
 
@@ -189,6 +318,19 @@ Internal stages remain inactive; accepted reports and genuine Hardy choices are
 unchanged. No local database/full-server/frontend suites or Indexer were started.
 
 ## Complete single-account original packages (2026-10-10, not activated)
+
+PR #1239 was retargeted to main at 14:50:52 UTC BEFORE synchronization, then
+integrated the actual protected #1238 merge
+`d2930c13b157c5258439110ad3d6955b688cadfe` without conflicts. The integrated
+diff remains this seven-file account-package slice; the protected transaction
+and stock-original database checks are both retained. Fresh integrated-head
+security/native/full-suite checks and an actual included review are required;
+the historical initial-stack receipts are not integrated readiness. No internal
+stage, deployment, source grant, worker, pin, report or Apply was activated.
+The integrated lightweight owner/stock/V1-and-V2 original-compiler run passed
+115 tests, zero failures or skips (1450.4428 ms); all six changed JavaScript
+files passed syntax checks and the diff check passed. Heavy database, full
+server and frontend suites remain cloud-only.
 
 `readSharedFrozenCaptureJobStockAccountPackagesReferencesV2` extends the actual
 bounded V2 database capture owner, not a caller-supplied account callback. It
@@ -261,6 +403,27 @@ protocol tests cannot satisfy those licensed/live gates. Internal stages remain
 inactive and production/accepted reports/genuine Hardy choices are unchanged.
 
 ## Original-reconciled stock cell pages (2026-10-10, not activated)
+
+PR #1238 was retargeted to main before synchronizing the actual protected
+parent #1237 (`0287caf8618c7ddb5068d45bce066c0db2bc8ebd`). The single native
+test-call conflict preserves BOTH the protected transaction-package database
+checks and this stock-original database check. The focused owner/stock run
+passes 97 tests, zero failures or skips (1353.6981 ms); native-fixture syntax
+and diff checks pass. Fresh integrated-head security/native/full suites and
+actual included review subsequently passed on exact integrated
+`158c9c3e13d60a4e2d9d6965e61aecac7f4d667d`: all 14 checks were freshly
+re-read successful, including CodeQL, dependency/security, native and full
+server/frontend checks. Native job `114226635469` passed all 417 migration,
+eight index, one subject, one edge and two bootstrap cases with no failures or
+skips, and executed the original-reconciled actual-owner marker separately
+from TEMP admission DATA. Included review run
+`f598085b-3ad2-4472-9744-75954f318b01` finished at 14:47:47 UTC, covered all
+seven changed files through that exact head and reported no actionable findings.
+Fresh protected rules/MAIN/checks/threads were re-read before the normal
+expected-head merge at 14:50:38 UTC, producing protected MAIN
+`d2930c13b157c5258439110ad3d6955b688cadfe`. Neither this small native protocol
+proof nor that review establishes complete licensed acquisition, selected-union
+authority or live-speed acceptance. No activation changed.
 
 `readSharedFrozenCaptureJobStockOriginalCellsReferencesV2` is a separate dormant
 internal consumer of the actual issued DONE V2 graph, geographic and identity
@@ -380,31 +543,32 @@ member bounds with one-over refusal. Syntax/diff checks passed; new-head full
 cloud execution is pending. No local database/full-server/frontend suite ran.
 
 Independently, actual integrated #1233 `f78185eb` passed all 14 exact checks:
-foundation37949774072/native113885218711 executed all417migration/8index/
-1subject/1edge/2bootstrap tests, zero failures/skips; index441527.481999ms.
-The actual retained temporal owner marker executed3source3sale4link rows,
+foundation 37949774072 / native 113885218711 executed all 417 migration / 8 index /
+1 subject / 1 edge / 2 bootstrap tests, zero failures/skips; index 441527.481999 ms.
+The actual retained temporal owner marker executed 3 source / 3 sale / 4 link rows,
 retained old/outside evidence and independent dates, refused partial/unissued/
 corrupt prerequisites and ending current authorization/cache changes, recovered
 lost COMMIT, and made zero original reads/typed copies/checkpoint/head writes.
-Actual server10550pass0fail62separatelyDBgatedskip256609.417425ms; frontend
-3959pass0fail0skip59801.597364ms. Included review remains required, not before
+Actual server: 10550 pass, 0 fail, 62 separately DB-gated skips, 256609.417425 ms;
+frontend: 3959 pass, 0 fail, 0 skip, 59801.597364 ms. Included review remains required, not before
 16:08Z after prior actual completion; automatic skipped reviews are not reviews.
 
 Exact #1236 `3e9bdb4a` also passed all five initial stacked checks. Actual
-foundation37949414839/native113883990588 repeated all417/8/1/1/2 tests without
-failures/skips; index367013.905351ms, actual issued-current-authorized whole
-package marker3sourcepackages1legacy/3sources3sales4links/independentcounts/
-fresh-empty-probes/prerequisite-current-rights-cache-refusal/lostCOMMIT and zero
-original reads/copies/durable writes. Actual server10579pass0fail62DBgatedskip
-166358.938711ms includes the new cloud-only60001/250000 decimal-run test actually
-executed, not skipped; frontend3959pass0fail0skip59519.539539ms. Main-only security,
+foundation 37949414839 / native 113883990588 repeated all 417 / 8 / 1 / 1 / 2 tests without
+failures/skips; index 367013.905351 ms, actual issued-current-authorized whole
+package marker: 3 source packages (1 legacy) / 3 sources / 3 sales / 4 links /
+independent counts / fresh-empty probes / prerequisite-current-rights-cache refusal /
+lost COMMIT, and zero original reads/copies/durable writes. Actual server: 10579 pass,
+0 fail, 62 DB-gated skips, 166358.938711 ms; includes the new cloud-only 60001/250000
+decimal-run test actually executed, not skipped; frontend: 3959 pass, 0 fail,
+0 skip, 59519.539539 ms. Main-only security,
 real protected-parent integration and included review are still outstanding.
 Synthetic large numerical tests and small native protocols are not licensed
 population acquisition, selected-union owner or live production SLA acceptance.
 
 This work is stacked on historical #1236 `3e9bdb4a`, not a protected coherent
 release. No route/default/schema, deployment/source grant, worker/pin, report,
-genuine Hardy choice or Apply mutation. QA assignment7only future Apply tests.
+genuine Hardy choice or Apply mutation. QA assignment 7 only for future Apply tests.
 Actual owner integration/provider-amenity/economic resolution/server selection/
 coherent publication/durable workers-terminal pin retirement/licensed larger
 areas and retrospective/live Hardy acceptance remain incomplete.
@@ -457,17 +621,32 @@ route/default/migration, source grant, worker/pin, accepted report, genuine Hard
 choice, production deployment or Apply mutation. QA assignment 7 only for future
 Apply tests; the full roadmap and live acceptance remain incomplete.
 
-Stacked on exact-decimal #1235 at historical `35fa4064`, not an integrated
-protected release. Actual dependency-order protected parent integration/main
-retargeting/fresh exact-head CI and ordinary included review remain required.
-Independently, #1232's actual included review processed all eight files through
-`603e674c`, found no actionable comments, passed all five pre-merge checks
-(82.61% docstrings) and finished at 15:04:07Z. Fresh protected main/ruleset/no
-bypass/mergeability/all 14 exact checks/no unresolved findings were revalidated;
-normal expected-head merge became `bd22d944a80e0af97b25e81bdc9c0f82dd943f75`
-at 15:05:14Z. That is a dormant-stage merge, not activation or licensed/live
-acceptance. Next ordinary included review is conservatively not before 16:08Z,
-based on actual completion; no paid/forced quota or required-check bypass.
+Initial stacked head `3e9bdb4a` used the historical #1235 parent `35fa4064`.
+Its cloud-only 60,001 / 250,000 synthetic run test actually passed, as did the
+initial full server, frontend and native suites. Those historical receipts do
+not verify a later protected-parent-integrated head.
+
+On 2026-10-10, #1235's actual included incremental review
+`4d3a8503-b83f-4f13-b397-7f79ec200e5b` covered exact `c95b8021`, reported no
+actionable comments, and finished at 10:12:24Z. All 14 exact-head checks passed;
+fresh main, active strict rules, no bypass actors, clean mergeability and all
+resolved findings were independently checked. Its normal expected-head protected
+merge is `85ade496a8da29daa6da3d08a558e5a96a5b0df1`. This carries the reviewed
+median-centered public contract and the actual prior CAD/transaction fixes.
+#1236 was retargeted to MAIN BEFORE any synchronize push, then integrated that
+actual protected parent without conflicts. The derived-run implementation is
+unchanged and uses the corrected public distribution contract.
+The integrated run/kernel/CAD/transaction/package/stock tests passed 123 tests,
+with zero failures and one intentionally cloud-only synthetic test skipped
+locally (1353.6505ms). Native fixture syntax and diff checks passed. No heavy
+suite or database ran locally.
+
+Fresh integrated-head required security/native/full-suite cloud checks and
+ACTUAL included review remain mandatory before protected merging. The next
+ordinary included request is conservatively not before 11:17:24Z, subject to
+fresh repository-wide invocation/allowance preflight; a newer actual review moves
+the gate later. No paid/forced review, quota or required-check bypass. This is
+not activation, current selected-union authority or licensed/live acceptance.
 
 ## Exact-decimal bounded distribution primitive (2026-10-09, not activated)
 
@@ -483,7 +662,8 @@ counts and have identical complete ordered digests, including empty streams.
 No full observation array or average of page statistics is built.
 
 Whole-observed-population Type-7 Q1/median/Q3 are exact finite decimals, including
-14-place quartile interpolation. Mean, mean absolute deviation, coverage and
+14-place quartile interpolation. Mean, mean absolute deviation **from the exact
+median** (`mean_absolute_deviation_from_median`), coverage and
 descriptive COD percent are reduced exact rationals, not arbitrarily rounded
 display numbers. A zero median yields null COD; no observations and an explicit
 empty population retain distinct denominators. Observed, missing, invalid,
@@ -511,11 +691,51 @@ cleanup and mutable-page detachment. Lazy synthetic DATA streams exercised
 page. Those tests took less than a second locally; no database/full-server/
 frontend suite ran locally. This is not an actual licensed >50k acquisition,
 whole selected-union owner, native sort/run integration or production SLA.
-Cloud full-suite verification is pending for this new head.
+Initial STACKED `35fa40644be7a0ddf0e57aedfed506400bf3fb0b` cloud execution was
+independently verified: foundation37945516947/native113870625955 passed 417
+migration/8 index/1 subject/1 edge/2 bootstrap tests, zero failures/skips;
+index285792.682688ms. Server113870625703 passed10569, failed0, with62 separately
+DB-gated skips; frontend113870625545 passed3959, failed/skipped0,97873.019653ms
+plus typecheck/lint/source-quality/build; redteam113870625778 and Sales37945516908
+passed. These historical receipts are not the protected-parent-integrated head.
 
-This work is stacked on whole-native-package #1234 at historical `0e7afb4e`.
-Actual protected parent integration/main retargeting/fresh exact-head checks and
-included review remain required. No route/default/deploy, source grant, worker,
+On 2026-10-10, #1234 was normally protected-merged as
+`13586d3670411ddf31460c0a099f02ada8b2e92e` after exact a052 passed all 14 checks and
+actual included review 3e45a7e8-1bf2-41df-bef3-8704caccd2b7, no actionable
+comments, completed 06:44:20Z. Its bounded-count correction and actual parent
+fixes were integrated here as 34129a8edc5c4c2083f02b959a5673a98cc3a5c5 without
+conflicts. #1235 was retargeted to MAIN BEFORE any synchronize push. Exact
+decimal implementation semantics are unchanged.
+111 focused integrated kernel/transaction-plan/package/stock/current-owner
+tests passed, zero failed/skipped (1384.1753ms); no heavy suite ran locally.
+Source/native fixture syntax and diff checks passed. Exact integrated f1269036
+passed all 14 required/security/native/full-suite checks; native 114155863245
+passed 417 migration / 8 index / 1 subject / 1 edge / 2 bootstrap tests, 0 failures
+and 0 skips, index 443617.344804ms; frontend 114155863252 passed 3959 tests,
+0 failures and 0 skips, 96954.670416ms plus all checks.
+Actual included review b2005cfb-3cb1-4235-9ad8-2e7d130fca27 covered f1269036,
+completed 07:52:44Z, and found 4236925906: the public deviation field did not name
+its center. This correction explicitly names the exact median in the exposed
+field AND content-addressed definition; the BigInt calculation is unchanged.
+For the asymmetric 1/2/4 regression (median 2, mean 7/3), mean absolute deviation
+from the median is 1, not the 10/9 deviation from the mean. It checks absence of
+the ambiguous alias and independently reconciles the median-deviation rational
+over all existing odd/even/page oracles.
+No installed consumer/accepted report or legacy Number field is renamed.
+All 122 focused corrected-head kernel/transaction-plan/package/stock/current-owner
+tests passed, 0 failures and 0 skips, 1359.9381ms; no heavy suite ran locally.
+Diff checks passed.
+Fresh corrected-head required security/native/full-suite gates and ACTUAL included
+review remain mandatory before normal expected-head protected merge; the previous
+head's green checks/review and automatic review SKIP are not new-head authority.
+The ordinary included request after the conservative 08:58Z allowance gate
+produced actual review 9f836df3-afa2-4cf5-9936-850ab141edb1 of c6ce7972, finished
+09:02:19Z. It found documentation spacing issue 4237112764, corrected here without
+changing the reported values or implementation. This new head still requires
+fresh checks and actual review; the next ordinary request is conservatively not
+before 10:07Z plus fresh repository-wide invocation/allowance preflight. Newer
+actual reviews move it later.
+No paid/forced quota or required-check bypass. No route/default/deploy, source grant, worker,
 pin, report, genuine Hardy choice or Apply change. Full roadmap/live acceptance
 remains incomplete; QA assignment 7 only for future Apply tests.
 
@@ -531,8 +751,10 @@ accepted. Reading cannot finish a prerequisite, prepare a cache miss, advance a
 checkpoint or issue a head.
 
 Fixed indexed SQL takes one next original-stock source seed in exact native
-BIGINT order and independently counts every native source, sale and link row
-before materializing its complete package. A separate C-text keyset reads each
+BIGINT order and independently counts native source, sale and link rows up to
+251 per kind before materializing a package. Every admitted count is exact;
+a cap+1 sentinel rejects the whole oversized package, never claiming an exact
+over-limit population count or scanning all its matching rows. A separate C-text keyset reads each
 source-less legacy sale whose exact original account belongs to stock. Each
 count must equal all independently reconciled delivered rows. A package is never
 split into a silently accepted prefix. The installed generation/profile/kind/
@@ -570,13 +792,90 @@ The authored small native actual-owner fixture traverses all three seeded
 packages and one source-less sale, independently matches all source/sale/link
 identities to the issued graph, and exercises initial/ending authority,
 partial/unissued/corrupt prerequisites, cache refusal and lost-COMMIT reopen.
-**New package SQL/native execution is pending cloud CI.** Focused DATA tests and
-authored fixtures are not executed native or licensed/live acceptance.
+Historical pre-integration `0e7afb4e98dd2d6cb9f8d3e161e634a15b63b25c`
+actually passed foundation `37944800016` / native `113868187062`: 417 migration,
+8 index, 1 subject, 1 edge and 2 bootstrap tests, zero failures/skips (index
+315010.257989ms). The actual whole-package owner marker traversed 3 source
+packages and 1 source-less sale, reconciling 3 source / 3 sale / 4 link originals
+to the issued one-hop graph, with ending current-authority/cache refusal,
+lost-COMMIT reopen and zero original payload reads, typed copies or checkpoint/
+head writes. Server `113868187314` passed 10,560 tests, zero failed, 62 separately
+DB-gated skips; frontend `113868186797` passed 3,959 without failures/skips,
+plus typecheck/lint/source-quality/build. All five stacked checks succeeded.
+Those historical small native receipts are not licensed/live acceptance or
+fresh protected-parent integrated-head readiness.
 
-This work is stacked on retained-temporal #1233 at historical `d47486af`, not a
-protected release. Real parent integration, main retargeting, fresh exact-head
-native/full-suite required checks and actual included review remain necessary
-before a normal protected merge. No production grant/deploy/activation, worker,
+After explicit human resume, protected #1233 merged normally as
+`d3f8ceeac94f0b8999d5535491d4e79aa239ca33` at 2026-10-10T04:16:49Z. Its exact
+`a30cd990` passed all 14 checks; native `113913035317` actually executed
+417 migration / 8 index / 1 subject / 1 edge / 2 bootstrap tests without
+failures/skips (index 361550.635506ms), including current-authorized retained
+temporal projection and ending refusal without copies or writes. The actual
+included review through `f78185eb` and resolved minor documentation finding
+were rechecked; `a30cd990` changed only documentation/comments. Current main,
+strict ruleset 21594102 (no bypass), exact checks and resolved threads were
+revalidated immediately before expected-head merge. Newer optional refactoring
+notes were evaluated separately; no new review or performance acceptance was
+claimed. No required check or included-review allowance was bypassed.
+
+This package branch now integrates that actual protected parent. The sole merge
+conflict was historical receipt wording in this document; the protected receipts
+are retained. Main was retargeted before synchronize push. Fresh integrated
+exact-head native/full-suite/security checks and an actual included review remain
+required before normal protected merge. The integrated focused owner/stock/shared
+typing/temporal/package suite passed 111 tests, zero failed/skipped (13984.6933ms);
+source/native-fixture syntax and diff checks passed. This local check is not
+fresh native/full-suite or licensed/live acceptance.
+
+The actual integrated included review completed at 2026-10-10T04:25:52Z
+through `b3fa3bca`, which passed all 14 cloud checks. It found one valid
+pre-admission count scan issue. The correction bounds each independent count
+at cap+1; payloads still require the complete exact sum to fit 250. Focused
+regressions reject sentinel counts without delivering a prefix. A separate
+corrected focused run passed 111 tests, zero failures/skips (1293.2042ms),
+with source/helper/native-fixture syntax and diff checks passing. A separate
+rolled-back TEMP DATA native SQL fixture covers 250, 251, 1,000 sales plus
+1,000 links, actual EXPLAIN counter limits, zero oversized payload members,
+fresh empty probes and the legacy plan. This plan fixture is not an issued
+owner, licensed acquisition or production-speed receipt; the actual issued
+owner fixture remains independently required. Corrected exact head
+`b70f91211f2a7418b2ede6629c3a8b391948b1d4` passed all 14 cloud checks,
+including native, frontend, server and required security checks. These are
+completed corrected-code receipts, not a pending run or licensed/live acceptance.
+
+The first corrected-head native run (`b1e1bc47`, job `114132708094`) refused
+the new plan regression because it inspected the first child, a one-row
+chosen-source InitPlan, instead of the main counter input. Both Limit nodes
+had already returned exactly 251, and oversized packets had zero payloads.
+The plan inspector now identifies the `Outer` input explicitly, with focused
+synthetic plan tests for either InitPlan order, oversized input, payload leakage,
+missing counters and absent/ambiguous inputs. Native SQL coverage also includes
+mixed-kind exact-250 and 251 sums. The prior native run is a failure (7 of 8
+index tests passed), not merge readiness. The fresh corrected `b70f9121` native
+job `114134920428` actually passed 417 migration, 8 index, 1 subject, 1 edge and
+2 bootstrap tests, zero failures/skips (index 442273.258508ms). Its new TEMP
+plan marker verified main counter inputs of 251, mixed-kind 250/251 sums and
+zero oversized payload delivery. Separate actual issued-owner markers verified
+complete native packages and ending guards, not merely the TEMP DATA plan.
+Frontend `114134920586` passed 3959 tests, zero failures/skips (96628.544012ms),
+typecheck/lint/source quality/build; server `114134920530` succeeded. The actual issued owner fixture
+did execute successfully in that failed run, with its no-copy/no-write and
+ending-authority guards intact. No production behavior changed for this
+test-inspection correction. The expanded focused suite passed 114 tests with
+zero failures/skips (1187.7446ms); this is not fresh native execution.
+
+The ordinary included correction review (`19f79c13-b611-45db-b91e-0761996cfedf`)
+covered `b3fa3bca` through `b70f9121`, submitted at 05:36:37Z on 2026-10-10;
+invocation `6094231751` finished at 05:36:44Z. It acknowledged the count fix and
+raised only stale check-status wording (finding `4236575529`), corrected here.
+No implementation, SQL, profile, assertion or authorization behavior changes in
+this documentation-only disposition. No new review is claimed for these prose
+edits. Fresh exact documentation-head required checks remain necessary, followed
+by current head/base/rules/checks/review-thread revalidation before normal
+expected-head protected merge. Next ordinary included review is conservatively
+not before 06:41Z plus a repository allowance preflight; no paid/forced retry.
+
+No production grant/deploy/activation, worker,
 HTTP default, accepted report, genuine Hardy choice or Apply changes. Provider/
 amenity meaning and economic transaction resolution, server-owned selection,
 exact complete-population selected-union medians/COD/quarters, coherent
@@ -626,18 +925,41 @@ assertion expected a downstream permission error instead of the actual earlier
 `custom_cohort_job_actor_access_revoked` refusal. The current actor reload correctly
 refused delivery after real role removal. Only the test expectation is corrected,
 and it now also requires the actual page query before ending refusal; no production
-authorization guard is changed or relaxed. Historical corrected pre-integration
-head `d47486af4bc06171aa08588acc7da269e6b0c85b` passed foundation `37890613643` /
-native `113690469943`: 417 migration, eight index, one subject, one edge and
-two bootstrap tests without failures/skips. Its actual owner marker confirmed
-three source, three sale and four link rows, actual retained dates/period, old/
-outside evidence, no fallback or invented link date, ending authorization/cache
-refusal and lost-COMMIT reopen with zero original/copy/cache/checkpoint/head
-writes. Server passed 10,550 tests with 62 separately database-gated skips;
-frontend passed 3,959 without skips. These historical small-fixture receipts
-do not verify a later integrated head, full licensed acquisition or live speed.
-Actual protected-parent integration, fresh exact-head required checks and actual
-review remain necessary before normal merge.
+authorization guard is changed or relaxed. Corrected historical `d47486af` cloud
+execution actually passed: foundation `37890613643`, native `113690469943`, all
+417 migration/8 index/1 subject/1 edge/2 bootstrap tests, zero failures/skips;
+index 444332.303691ms. Actual server: 10,550 passed, zero failed, 62 separately
+DB-gated skips (281267.60689ms); frontend: 3,959 passed, zero failed/skipped
+(57012.939587ms). Those are historical pre-integration receipts, not fresh
+protected-head readiness. Small native/synthetic tests are not licensed/live
+acceptance.
+
+Actual protected #1232 merge `bd22d944a80e0af97b25e81bdc9c0f82dd943f75`
+was integrated without conflicts on 2026-10-09 after its actual included review
+completed all eight files through `603e674c`, no actionable comments, all five
+pre-merge checks (82.61% docstrings), at 15:04:07Z. Fresh main/ruleset21594102/no
+bypass/all14exactchecks/cleanmergeability/no unresolved findings preceded its
+normal expected-head merge at15:05:14Z. Current temporal implementation is
+unchanged from historical `d47486af`; comments now document the bounded helper
+and owner contracts. Re-ran 95 focused integrated owner/page/temporal tests,
+all passed without failures/skips (1721.6782ms). Syntax/diff checks passed.
+Retarget main BEFORE synchronize push so all main-required cloud workflows run.
+Integrated head `f78185ebfff1915edac378fcb13a0fd0abc3d6d0` actually passed all
+14 exact-head checks. Fresh foundation `37949774072` / native `113885218711`
+executed 417 migration/8 index/1 subject/1 edge/2 bootstrap tests without failures
+or skips (index 441527.481999ms). Server: 10,550 passed, zero failed, 62 separately
+DB-gated skips (256609.417425ms); frontend: 3,959 passed, zero failed/skipped
+(59801.597364ms), plus typecheck, lint, source-quality and build.
+An actual ordinary included review remained a separate merge prerequisite; it
+was requested at16:08:21Z and completed at16:14:09Z, covering all six files through
+`f78185eb`. Its one minor finding was this stale readiness wording. The separate
+72.73% docstring warning is addressed by documenting the three synthetic test
+helpers; no executable behavior, source rights or authorization guard is changed.
+No new review or recalculated coverage is claimed for those comment-only fixes.
+Fresh exact-head protected checks and current findings/thread disposition are
+still required before normal expected-head merge; historical green is not the
+later head's readiness. Next ordinary included review conservatively NOT BEFORE
+17:18Z after actual completion; no forced/paid allowance or required-check bypass.
 Source/amenity meaning, complete transaction/association resolution, server-owned
 selection, exact selected-union statistics, coherent publication, durable workers/
 terminal pin transfer and licensed large-area/retrospective/live acceptance remain.
@@ -686,8 +1008,20 @@ forged cells/headers/order, and full-250/short/empty tails. The authored small
 native actual-issued owner fixture checks SQL one-hop scope (including exclusion
 of second-hop source 502), missing-cache/partial-head refusal, ending current
 rights/actor/subject/claim/cancel/cache denial, corrupt prerequisites and
-lost-COMMIT replay, with no original reads or durable mutations. **New native
-transaction-page execution is pending cloud CI.** No source grant, activation,
+lost-COMMIT replay, with no original reads or durable mutations. Historical
+pre-integration head `663dbe0ff6013c5ae22819ebe61f7e50fb8d86c6` passed foundation
+`37887917411` / native `113681975953`: 417 migration, eight index, one subject,
+one edge and two bootstrap tests without failures/skips. The actual issued-owner
+marker confirmed three source, three sale and four link rows, all-date retention,
+outside/unresolved and source-less evidence, second-hop exclusion, ending
+authorization/cache refusal and lost-COMMIT reopen without original reads,
+copies or durable writes. Server passed 10,543 tests with 62 separately
+database-gated skips; frontend passed 3,959 with no skips. These are historical
+small-fixture receipts, not later integrated-head readiness or licensed/live
+acceptance. This branch incorporates protected #1231 merge
+`3b69696e16709f6c0408ab969dcb62b78f6b5819`; fresh exact-head checks and actual
+review are verified separately before normal protected merge.
+No source grant, activation,
 worker, HTTP default, genuine Hardy choice, report or Apply mutation occurs.
 Transaction resolution, server-owned selection, exact complete-population
 selected-union medians/COD/quarters, coherent publication, durable workers/pin
@@ -732,21 +1066,40 @@ cloud fixtures are authored: a small actual-issued owner test with both-end
 rights/auth/subject/claim/cancellation/cache refusal and lost-COMMIT replay;
 and a separate SQL DATA fixture with an actual missing primary account, future
 year, native false, duplicated secondary numbers and full-tail empty probe.
-PR #1231 exact head `2e008744c5c6715ba9e7ce66fad50b7e57367f36` passed foundation
-`37886170941`, native job `113676551197`: 417 migration, eight native index,
-one subject, one edge and two bootstrap tests, zero failures/skips. The actual
-issued-owner marker confirmed two stock accounts, three secondary originals,
-retained date/issued prerequisites, ending separate rights and cache refusal,
-lost-COMMIT replay and zero original reads/copies/checkpoint/head writes. The
-separate missing-primary DATA marker confirmed one missing primary among two
-accounts, native false, two duplicate secondary rows, future-year rejection,
-one neutral header and full-tail empty probing. Server passed 10,537 with 62
-separately DB-gated skips; frontend passed 3,959 without skips. Neither fixture is a
+Historical pre-integration head
+`2e008744c5c6715ba9e7ce66fad50b7e57367f36` passed foundation `37886170941` /
+native `113676551197`: 417 migration, eight index, one subject, one edge and
+two bootstrap tests without failures/skips. The actual-issued owner marker
+confirmed both-end current rights and prerequisites, retained-date provenance,
+ending refusal and lost-COMMIT reopen without original reads or durable writes.
+The separate SQL DATA marker confirmed two stock accounts, one missing primary,
+native false, duplicate secondary rows, invalid future year and an empty tail;
+it explicitly did not issue a graph or current-actor owner receipt. Server
+passed 10,537 tests with 62 separately database-gated skips; frontend passed
+3,959 without skips. These historical receipts do not verify a later integrated
+head. This branch incorporates protected #1230 merge
+`6200a01714c30efe68193b28d3b40045e67fa684`; current exact-head CI and actual
+review are verified separately before normal protected merge. Neither fixture is a
 production source license, full licensed acquisition, housing/type dictionary,
 selected-union statistics, retrospective accuracy or live speed acceptance.
 Transaction resolution, server-owned selection, exact full medians/COD/quarters,
 coherent publication, durable workers/pin transfer and licensed/live acceptance
 remain mandatory.
+
+Integrated #1231 head `0cc81988678403465723a27634cefaef36925e79` passed all
+14 exact-head checks. Foundation `37934705468` / native `113833737470` actually
+passed all 417/eight/one/one/two tests without failures/skips. Its actual-issued
+current CAD account owner and distinct missing-primary SQL DATA markers repeated
+the guards above; the DATA fixture explicitly did not issue a graph or current
+actor-owner receipt. Server `113833737922` passed 10,537 tests with 62 separately
+database-gated skips; frontend `113833738338` passed 3,959 without skips.
+Included review `04c398c4-5137-44e2-be9e-1c671ce21eeb` covered all six changed
+files without actionable findings; all five pre-merge checks passed, including
+91.67% docstring coverage. Current protected checks, head, main rules and lack
+of unresolved findings were revalidated before normal expected-head merge as
+`3b69696e16709f6c0408ab969dcb62b78f6b5819`. No activation or production change
+occurred. These small native/synthetic receipts are not licensed acquisition,
+complete-population statistics, retrospective truth or live speed acceptance.
 
 ## Current-authorized CAD syntax page owner (2026-10-08, not activated)
 
@@ -787,20 +1140,51 @@ native fixture is authored for actual issued V2 prerequisites, separate current
 organization grants, stock-account exclusion, duplicate secondary IDs and NULL,
 both-end CAD/legacy revocation/expiry/revision, roles/subject/claim/cancellation,
 ending cache refusal, unissued/partial/corrupt receipt refusal, unchanged durable
-heads/checkpoint and lost-COMMIT-acknowledgement reopen. Corrected PR #1230 head
-`0155194363100b2b3540f6614f7d5e302d74b3ba` passed foundation `37885832103`,
-native job `113675512593`: 417 migration, seven native index, one subject, one
-edge and two bootstrap tests without failures/skips. Its actual owner marker
-confirmed two stock accounts, two primary/three secondary rows, no outside
-accounts, duplicate numbers, actual issued prerequisites, separate current
-purpose, ending authorization/cache refusal, corrupt-head rejection, lost-COMMIT
-reopen and zero original reads/copies/durable writes. Server passed 10,533 with
-61 separately DB-gated skips; frontend passed 3,959 without skips. The initial
-run failed because the fixture cleared its ending-header fault too early;
-the harness correction leaves production guards unchanged. This is not licensed
-scale or production speed acceptance. Explicit provider/type/transaction resolution, complete selected
+heads/checkpoint and lost-COMMIT-acknowledgement reopen. Historical pre-integration
+head `0155194363100b2b3540f6614f7d5e302d74b3ba` passed foundation `37885832103`
+and native job `113675512593`: 417 migration, seven index, one subject, one edge
+and two bootstrap tests, zero failures/skips. The actual
+`native-shared-CAD-page-owner-v1` marker confirmed two stock accounts, two primary
+and three secondary rows, no outside rows, both current rights and issued V2
+prerequisites, ending authorization/cache refusal and lost-COMMIT reopen,
+without original reads, payload copies or durable checkpoint/head writes.
+Server passed 10,533 tests with 61 separately database-gated skips; frontend
+passed 3,959 with no skips. These are historical execution receipts, not a claim
+that a later integrated head is verified. The branch incorporates protected
+#1229 merge `12217cbf1415243055f002a8b8815d3c4d1a70fd`; current exact-head CI
+and actual review are verified separately before normal protected merge.
+Neither small native execution nor synthetic DATA is licensed scale or
+production speed acceptance. Explicit provider/type/transaction resolution, complete selected
 union calculations, coherent publication, workers/pin transfer and live
 large-area/retrospective acceptance remain unfinished.
+
+Integrated head `b56a9064e5113cedc61b90a421c6cf64e494a0e1` passed all 14 checks.
+Foundation `37925194494` / native `113802328075` actually passed all
+417/seven/one/one/two tests without failures/skips, repeating the actual issued
+owner and both-end authorization/cache refusal markers above. Server
+`113802328180` passed 10,533 tests with 61 separately database-gated skips;
+frontend `113802327929` passed 3,959 without skips. Included review
+`a4a7f74f-6690-4d41-bbc0-def5b1f95578` covered all four changed files without
+actionable implementation findings. Its 66.67% docstring warning is addressed
+by documenting the new internal reader and its enclosing owner/stage contracts;
+this is a comment/documentation-only correction, not a claimed recalculated
+coverage score or a new review. Every later head still requires fresh exact-head
+protected checks before normal merge. These small fixtures do not establish
+licensed acquisition, housing/amenity meaning or live acceptance.
+
+Comment/documentation-only correction
+`96e23fa3e6f77447b7bf400b54fddf904f346c52` passed all 14 fresh exact-head checks.
+Foundation `37932773100` / native `113827315754` actually repeated all
+417/seven/one/one/two tests without failures/skips (index 437181.547822ms),
+including actual issued owner prerequisites, separate current CAD and legacy
+decisions at both ends, ending-cache refusal and zero original/copy/head writes.
+Full server/frontend protected statuses also passed; the earlier numerical
+receipts remain explicitly tied to b56a9064. With current main/checks/review
+threads/ruleset revalidated, #1230 normally protected-merged as
+`6200a01714c30efe68193b28d3b40045e67fa684` at 2026-10-09T13:05Z. No new review
+or recalculated docstring score is inferred from a later skipped status; the
+reviewed implementation is unchanged, and no quota or required-check bypass
+occurred. This remains small native protocol evidence, not licensed/live acceptance.
 
 ## Bounded pinned-stock CAD syntax pages (2026-10-08, not activated)
 
@@ -831,15 +1215,25 @@ missing-not-no-amenity, installed boolean/numeric interpretation, bounds,
 full-tail probing, malformed cache/cells, cancellation and both ending fences.
 The authored small native fixture verifies one pinned stock account, its primary
 and duplicate-number secondary rows, outside-account exclusion, the empty tail
-and ending-cache refusal. PR #1229 exact integrated head
+and ending-cache refusal. Historical pre-integration head
 `9dd993d9e6eeeca159c26d62d6757b7ddfd54df4` passed foundation `37884485761`,
-native job `113671294979`: 417 migration, seven index, one subject, one edge and
-two bootstrap tests, zero failures/skips. Actual page marker confirmed one
-stock account, one primary/two secondary rows, no outside accounts, duplicate
-numbers, full-tail probe and ending-cache refusal, zero original reads/writes.
-Server passed 10,532 with 61 separately DB-gated skips; frontend passed 3,959
-without skips. Its
-artificial graph reference is explicitly DATA, not an issued owner receipt.
+native `113671294979`: 417 migration, seven index, one subject, one edge and
+two bootstrap tests, zero failures/skips. Its actual page marker confirmed one
+stock account, one primary and two secondary rows, outside-account exclusion,
+full-tail probing and ending-cache refusal without original reads or writes.
+Server passed 10,532 tests with 61 separately database-gated skips; frontend
+passed 3,959 without skips. The later integrated exact head
+`84076fbc0f8d5f1d07943726f253f8ce249a000a` passed all 14 checks. Foundation
+`37918811478` / native `113781480416` repeated all 417/seven/one/one/two tests
+without failures/skips, including the actual bounded CAD page and retirement
+markers. Server `113781480469` passed 10,532 tests with 61 separately
+database-gated skips; frontend `113781480677` passed 3,959 with no skips.
+Actual included review `35bd403f-f373-46d6-9f91-1d75cb383b4a` covered all five
+changed files without actionable findings; its pre-merge checks passed,
+including 92.31% docstring coverage. After current protected-check and review
+revalidation, #1229 normally merged as
+`12217cbf1415243055f002a8b8815d3c4d1a70fd`. Its artificial graph reference
+remains explicitly DATA, not an issued owner receipt.
 The future owner still must reload current actor/assignment/subject and actual
 issued V2 graph/geographic/identity heads, plus the separate exact additional
 CAD purpose and current source decision at both ends. No endpoint, worker,
@@ -878,15 +1272,40 @@ cross-denials, re-read/revocation/expiry, separately granted exposures, stable
 legacy hashes and sanitized errors. A small disposable PostgreSQL helper is
 wired into cloud native CI to verify actual bounded namespace SQL, unrelated
 metadata exclusion, no policy writes, revoked/expired/mismatched/oversized
-refusal and rollback of its synthetic owner metadata. PR #1228 exact head
+refusal and rollback of its synthetic owner metadata. Historical exact head
 `99a7e1d333f31e2ce7d05223614cfb51da821c7b` passed foundation `37884486668`,
-native job `113671298030`: 417 migration, seven index, one subject, one edge and
-two bootstrap tests, zero failures/skips. Actual policy marker confirmed eight
-bounded namespace reads, no unrelated metadata transfer/policy writes, and
-wall-clock expiry/revocation/exact-projection refusal. Server passed 10,526
-with 61 separately DB-gated skips; frontend passed 3,959 without skips.
-This is not a production license or source
-acquisition receipt. The future consumer still must independently reload the
+native job `113671298030`: 417 migration, seven index, one subject, one edge
+and two bootstrap tests, zero failures/skips. Its actual policy marker confirmed
+eight bounded namespace reads, no unrelated metadata transfer or policy writes,
+wall-clock expiry/revocation refusal and exact projection requirements. Server
+passed 10,526 with 61 separately database-gated skips; frontend passed 3,959
+without skips. This branch now incorporates the exact protected #1227 merge
+below. Documentation conflicts retained the newer protected receipts; added helper
+contract comments do not alter implementation. The reviewed integrated head
+`b32aa04ec1d59e0c69da17536ddb7e4943e60f5b` passed all 14 exact-head checks.
+Foundation `37909487537`, native `113750924087` actually executed 417 migration,
+seven index, one subject, one edge and two bootstrap tests with zero failures or
+skips (native index 433704.169322 ms). Its policy marker confirms eight namespace
+reads, no unrelated metadata transfer or policy grant writes, wall-clock expiry/
+revocation refusal and exact projection requirements. Server `113750924025`
+passed 10,526 tests with zero failures and 61 separately database-gated skips;
+frontend `113750923623` passed 3,959 with zero failures/skips plus typecheck,
+lint, source-quality and build. Actual included review
+`d9a51015-6839-43f8-bdf9-8d6d9a0083c5` covered all five changed files through
+that exact head at 10:07Z on 2026-10-09. Its sole minor finding concerned the
+ambiguous pending-status sentence, corrected here; docstring coverage was 100%.
+The documentation-only fix `95506ca74c7216ef48d92944febe51854e685de5` passed
+all 14 fresh exact-head checks. Foundation `37917035439`, native `113775650821`
+actually executed the same 417/seven/one/one/two suites with no failures/skips
+(native index 329780.363193 ms), including the eight-read policy marker. Full
+server/frontend protected check statuses also passed; their earlier numerical
+receipts above remain explicitly tied to b32aa04e. Review thread
+`PRRT_kwDOQP6PrM6qvBvd` was resolved and the reviewer confirmed the correction.
+#1228 normally protected-merged as `a62ccd07899df7a027e40b53fe435d7b01106d5f`
+after exact-head check/thread/current-main/ruleset revalidation, without bypass.
+Neither the historical nor integrated receipt is a production
+license, complete licensed acquisition or production-speed acceptance. The
+future consumer still must independently reload the
 current database actor/assignment/subject, actual issued graph/geographic/
 identity heads, exact live claim/pin/stock, and this additional decision at both
 transaction ends. Issued companion provenance, explicit provider/type resolution
@@ -926,18 +1345,33 @@ acknowledgement/count/CAS failure and two-layer completion. The authored small
 native fixture tests actual 7-original cache storage, ending rollback,
 lost-successful-COMMIT reopen, altered original refusal, incomplete-prefix
 refusal, immutable completion, zero-original/zero-write metadata reuse and
-partial-cache/pinned retirement. PR #1227 exact corrected head
+partial-cache/pinned retirement. Historical exact head
 `8035062aac1af93797212a891f1f30a9ed072b56` passed foundation `37884454741`,
 native job `113671200374`: 417 migration, seven index, one subject, one edge and
-two bootstrap tests, zero failures/skips. Actual shared-CAD marker confirmed
-seven originals/seven typed rows, zero hash mismatches, rollback, lost actual
-COMMIT acknowledgement reopen, altered-payload/incomplete-prefix refusal,
-immutable completion and zero-original/zero-write reuse. Actual retirement
-removed the unpinned companion and preserved pinned originals. Server passed
-10,503 with 61 separately DB-gated skips; frontend passed 3,959 without skips.
-Initial native tests guessed FK diagnostics incorrectly; the corrected test
-reads the actual validated FK and RESTRICT actions from `pg_constraint`, checks
-all originals remain, and verifies TRUNCATE refusals without disabling guards.
+two bootstrap tests, zero failures/skips. The native companion marker confirmed
+seven originals/seven typed rows with zero hash mismatches, rollback, lost-COMMIT
+reopen, forged-prefix and immutability refusal, zero-original/zero-write completed
+reuse, and unpinned retirement while pinned originals remained intact. Server
+passed 10,503 with 61 separately database-gated skips; frontend passed 3,959
+without skips. The branch now incorporates the exact protected #1226 merge
+below, plus helper-contract comments; implementation remains unchanged from
+that historical head. Integrated head
+`5a8d44080ea00bf53eead3f0cf048deff51cbad0` passed all sixteen exact-head checks.
+Foundation `37903030997`, native job `113729795344`, passed the same complete
+417/seven/one/one/two suites with zero failures/skips (index 436,687.939056ms).
+The actual shared-CAD marker again confirmed seven originals/seven typed rows,
+zero hash mismatches, rollback, lost-COMMIT recovery, exact-payload and prefix
+refusal, immutable completion and zero-original/zero-write completed reuse.
+Retirement preserved pinned originals. Server `113729795613` passed 10,503 with
+61 separately database-gated skips; frontend `113729795538` passed 3,959 without
+skips, plus typecheck/lint/source-quality/build. Included CodeRabbit review
+`2ba0ca55-d8c6-407c-8eb5-7b1df8822240` processed all nine changed files through
+that exact head at 2026-10-09T08:54Z with no actionable findings or review threads;
+all five pre-merge checks passed, including 83.33% docstring coverage. With all
+current protected checks revalidated, #1227 normally merged as
+`0d1c1cc6abf3d5ea47e7ca80147eb1fac74ac596` at 2026-10-09T09:05Z. No quota,
+paid/forced review or required-check bypass. These are small native protocol
+receipts, not licensed acquisition, amenity resolution or production speed acceptance.
 The offline owner must authorize the whole original projection at both ends.
 This builder does not grant extra-field rights, extend issued job graphs,
 resolve amenities, prove licensed acquisition or publish report/statistics.
@@ -967,13 +1401,38 @@ housing inference, retrospective assertion or measured/at-sale GLA claim.
 Both existing seven-kind V1/V2 profile hashes stay unchanged. Focused tests check
 exact decimals, unsafe wrong-type numeric tokens, year/count rules, NULL/false,
 duplicate identities, bounded labels, hostile inputs and frozen profiles.
-PR #1226 head `caf1eba04f3c95e4fc4d0771a08192d21a13bec3` passed UAD foundation
-run `37881428131`. Native job `113661760318` passed 417 migration, seven index,
-one subject, one edge and two bootstrap tests without failures/skips. The actual
-`native-typed-CAD-improvement-syntax` marker confirmed seven exact originals,
-zero hash mismatches, the installed profile, missing pool not false, duplicate
-identities retained and zero job-cache writes. Server passed 10,496 tests with
-61 separately DB-gated skips; frontend passed 3,959 without skips.
+The seven-original native fixture checks the actual stored JSONB text hashes
+and literal observations. Historical exact head
+`caf1eba04f3c95e4fc4d0771a08192d21a13bec3` passed foundation `37881428131`,
+native job `113661760318`: 417 migration, seven native index, one subject, one
+edge and two bootstrap tests, zero failures/skips. Its actual
+`native-typed-CAD-improvement-syntax` marker confirms seven originals, zero hash
+mismatches, missing boolean not false, duplicate identities and no job-cache
+writes. Server passed 10,496 with 61 separately database-gated skips; frontend
+passed 3,959 without skips. The branch now incorporates the exact protected
+#1225 merge below. Twenty-two focused compiler/profile tests passed again with
+zero failures/skips (167.3825ms). Integrated head
+`228238dba6d59b2106af5bb6a3e4f573c65dbd58` passed all fourteen exact-head check
+runs. Foundation `37895808933`, native job `113706774910`, passed 417 migration,
+seven index, one subject, one edge and two bootstrap tests with zero failures/
+skips; the actual syntax marker again confirmed seven originals and zero hash
+mismatches. Native index duration was 291,789.463589ms. Server job `113706775035`
+passed 10,496 with 61 separately database-gated skips; frontend job `113706774717`
+passed 3,959 without skips, plus typecheck/lint/source-quality/build.
+Included CodeRabbit review `1f6c285e-bd9e-404f-aa2f-2eede0998a8f` completed on that
+exact head at 2026-10-09T07:37Z, processing all four changed files with no actionable
+code findings or review threads. Its sole documentation-coverage warning is
+addressed by helper contract comments and this receipt update, with no implementation
+token, profile, SQL, behavior or test change. Comments/documentation-only head
+`720578ffd743263cdf63237b8a04679f57ce8200` then passed all fourteen fresh exact-head
+checks. Foundation `37901425551`, native job `113724647061`, passed the same
+417/seven/one/one/two suites with zero failures/skips, including the actual
+seven-original syntax marker and zero hash mismatches (index 429,507.515862ms).
+With no unresolved threads, #1226 normally protected-merged as
+`0abdbbf4d9b459f5ae250c683dbfd9a189d316b6` at 2026-10-09T08:05Z. The actual
+included review covered the unchanged implementation; a later skipped review
+status is not another actual review. The warning percentage was not independently
+recalculated; no extra paid/forced review, quota or required-check bypass occurred.
 This pure DATA compiler does not extend the previously issued
 seven-layer job graph, authorize the extra projection, materialize an amenities
 cache or establish acquisition/statistics/report publication. Shared bounded
@@ -1020,18 +1479,32 @@ counts, cursors, malformed/oversized pages, cancellation/deadlines and lost
 acknowledgements. The authored small PostgreSQL fixture checks exact decimal,
 NULL and boolean retention, duplicate numbers, forged payload/count refusal,
 rollback before publication, completed-capture backfill refusal, hashes,
-immutability and pinned/unpinned retirement. Corrected PR #1225 head
-`95b38123a390328e5d9b39506ed86cd2a9c8b62b` passed foundation run `37881040663`:
-native job `113660559850` passed 417 migration, seven index, one subject, one
-edge and two bootstrap tests, zero failures/skips. The actual original marker
-confirmed three primary and four secondary rows, duplicate numbers retained,
-exact decimal/NULL/boolean literals, zero hash mismatches, same snapshot,
-forged-payload/count refusal and owner rollback. Actual retirement preserved
-pinned originals and removed the unpinned companion. Server passed 10,487 with
-61 separately DB-gated skips; frontend passed 3,959 without skips; mobile passed
-3/3 without skips. An initial isolated GENERATED-expression failure was fixed
-with exact SQL-derived columns/CHECKs, not a false IMMUTABLE declaration; the
-failed stage was never deployed. This is original retention groundwork, not amenity resolution,
+immutability and pinned/unpinned retirement. Exact head `95b38123a390328e5d9b39506ed86cd2a9c8b62b`
+passed native job `113660559850` in UAD run `37881040663`: 417 migration, seven
+native index, one subject, one edge and two bootstrap tests, zero failures/skips.
+The small native companion fixture retained three primary/four secondary originals
+with zero hash mismatches and passed rollback, lost-COMMIT reopen, forged payload/
+prefix refusal, immutability and pinned/unpinned retirement. Server passed 10,487
+with 61 separately database-gated skips; frontend passed 3,959 without skips.
+After integration of the protected #1224 merge, exact head
+`b47abacd84b2d6ab61cce665185869407326b32e` passed all 16 check runs. Native
+job `113685643265` in foundation run `37889072247` passed the same complete
+417/seven/one/one/two suites with zero failures/skips. Actual companion/retirement
+markers passed; server passed 10,487 with 61 separately database-gated skips,
+and frontend passed 3,959 without skips. Included CodeRabbit review
+`e19f59a9-e653-4151-aee5-3d1a5ad6e5b2` completed on that exact head at
+2026-10-09T06:25Z, processed all ten changed files and generated no actionable
+code findings or review threads. Its documentation-coverage warning is addressed
+by documenting helper contracts without changing implementation tokens.
+Comments/receipt-only head `72a35ffd15828b76840dc81d4a79569a73e42c18` then passed
+all 16 fresh exact-head checks. Native job `113702454955` in foundation
+`37894442484` passed the same complete zero-skip suites, with the actual
+companion and retirement markers; native index duration was 429,737.540182ms.
+With no unresolved threads, #1225 normally protected-merged as
+`cacb539a630e7f5d268422c3a19818b12dc2e50e` at 2026-10-09T06:50Z. The actual
+included review covered the unchanged implementation; later skipped review
+status is not an additional actual review. No required checks or quota bypass.
+This is original retention groundwork, not amenity resolution,
 licensed acquisition, selected-union statistics, report publication or live
 speed acceptance. The offline owner still needs whole-source authority and
 activation prerequisites; this module does not establish a source grant.
@@ -1070,16 +1543,26 @@ refusals and closed hostile-input admission. The authored small native fixture
 requires all three real issued heads, refuses unissued/partial identity before
 cache I/O, runs actual metric SQL, checks mixed old/future-year resolution and
 malformed-cell refusal, and injects ending license/role/subject/claim/cancel
-failures. PR #1224 head `ec189d47e6ae9fcf1eed1705474ffc8bb7eb9ed2` passed
-actual UAD foundation run `37879463758`: job `113655557287` ran 417/417 migration
-and 7/7 native index tests, zero failures/skips. The
-`native-shared-stock-owner-v2` marker confirmed two accounts, actual issued
-graph/geography/identity requirement, effective-year projection, both-end
-rights/subject/claim/cancel refusal, zero original payload reads, zero per-job
-typed copies and zero checkpoint writes. Server tests passed 10,472 with 61
-separately DB-gated skips; frontend passed 3,959 without skips. Parent dependency
-integration and normal included review remain pending. DATA-only alternate dates
-do not establish historical stock or change an authorized report's date.
+failures. Native job `113655557287` (UAD run `37879463758`, commit `ec189d47`)
+passed this small synthetic fixture. After integrating the protected parent
+merge, exact head `f9790f2754f92f72b31365f71a1bd1077e7d41f3` also passed native
+job `113678177909` in UAD run `37886697187`: 417 migration, seven native index,
+one subject, one edge and two bootstrap tests, with zero failures/skips.
+Documentation-corrected head `feb05078f668f143ab22cf2ad9480ccf45757d26` passed
+fresh native job `113682287221` in UAD run `37888013320` with the same zero-skip
+suite and all fourteen protected exact-head check runs successful. PR #1224
+normally protected-merged as `706fcf39e3133f3e3364fce4126f93a834b1c070` after
+included CodeRabbit review of all six implementation files at `f9790f27` and
+the sole documentation finding was corrected and resolved; no code changed
+between that review and `feb05078`. The actual owner marker confirms two
+accounts, issued prerequisites, effective-year projection and both-end rights/
+subject/claim/cancel refusal, with zero original reads/typed copies/checkpoint
+writes. Original `ec189d47` server/frontend receipts were 10,472 passed with 61
+separately DB-gated skips and 3,959 passed without skips, respectively.
+These receipts do not replace fresh exact-head protected CI after any further
+change and are not licensed acquisition or production-speed acceptance.
+DATA-only alternate dates do not establish historical stock or change an
+authorized report's date.
 
 Remaining work includes improvement/amenity lineage, exact transaction resolution
 with retained observation-period policy, server-owned selection, complete-population
@@ -1132,15 +1615,22 @@ reopen, V1 separation, transaction/budget checks, bad acknowledgements and bound
 completion. The authored small PostgreSQL fixture tests actual storage, ending
 rollback, lost successful COMMIT, exact original mismatch refusal, immutability,
 no-date metadata reuse, preserved V1 cache and pinned/partial-cache retirement.
-PR #1223 head `5d68b29a09fff69f181b838b9be125b8e017a83e` passed actual cloud
-native/migration job `113652681029` in UAD foundation run `37878562403`:
-417/417 migration tests and 7/7 native index tests, zero failures or skips.
-`native-shared-typed-generation-v2` recorded 14 originals, one cache header,
-zero original hash mismatches, ending rollback, lost-COMMIT reopen, immutable
-completion and zero-original/zero-write metadata reuse. The retirement marker
-confirmed unpinned partial-cache retirement and pinned complete preservation.
-CodeRabbit manual review remains pending; green skipped-review status is not
-that review. The fixture is not licensed >50k or
+PR #1223 head `5d68b29a09fff69f181b838b9be125b8e017a83e` passed all 16 GitHub
+checks. UAD foundation run `37878562403`, native job `113652681029`, passed
+417 migration, 7 native index, 1 subject, 1 edge and 2 bootstrap tests without
+failures or skips. The actual `native-shared-typed-generation-v2` marker confirmed
+14 originals, one shared header, zero hash mismatches, ending rollback,
+lost-COMMIT-ACK reopen, immutable completion, zero-original/zero-write completed
+reuse and preserved V1 cache behavior. Native retirement confirmed unpinned
+partial cache removal and pinned complete cache preservation. Server passed
+10,467 tests with 61 separately DB-gated skips; frontend passed 3,959 without
+skips. The included CodeRabbit review examined all 11 implementation files;
+its sole stale-documentation finding was corrected by documentation-only
+`7956d1c2742fa8c17c31e343df3479b7fb60762a` and resolved. All 16 exact-head
+checks passed before normal protected merge
+`4c37ad1180118c8d9bc729060244699ec1f22e12`. These receipts verify the small
+native protocol only, not activation.
+The fixture is not licensed >50k or
 5-mile/10-mile/city/retrospective acquisition, report integration or live speed
 acceptance. The existing synthetic 60,001-row V1 cache fixture does not prove this
 new V2 cache at that scale.

@@ -71,6 +71,8 @@ import { runCustomNeighborhoodCadImprovementPolicyDatabaseChecks }
   from './helpers/customNeighborhoodCadImprovementPolicyDatabaseChecks.js';
 import { runNeighborhoodStockOriginalCellDatabaseChecks }
   from './helpers/neighborhoodStockOriginalCellDatabaseChecks.js';
+import { runNeighborhoodOriginalTransactionPackageDatabaseChecks }
+  from './helpers/neighborhoodOriginalTransactionPackageDatabaseChecks.js';
 import { createCustomNeighborhoodCadImprovementSourcePolicy,CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_RIGHTS_KEY as CAD_RIGHTS_KEY,
   CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_PURPOSE as CAD_PURPOSE,CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_DATASET as CAD_DATASET }
   from '../src/security/customNeighborhoodCadImprovementSourcePolicy.js';
@@ -81,6 +83,8 @@ import { NEIGHBORHOOD_SHARED_JOB_TRANSACTION_V2_PAGE_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSharedJobTransactionPagesV2.js';
 import { NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSharedTransactionPackagesV1.js';
+import { NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL }
+  from '../src/services/neighborhoodAssessment/neighborhoodOriginalTransactionPackagesV2.js';
 
 // Disposable native fixture only, never production rights provisioning. The
 // real evaluator reads current organization metadata/time on every admission.
@@ -149,6 +153,7 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     try {
       await runCustomNeighborhoodCadImprovementPolicyDatabaseChecks(policyClient);
       await runNeighborhoodStockOriginalCellDatabaseChecks(policyClient);
+      await runNeighborhoodOriginalTransactionPackageDatabaseChecks(policyClient);
     }finally {policyClient.release();}
     await pool.query(NEIGHBORHOOD_CACHED_SOURCE_SCHEMA);
     // The isolated UAD fixture has bedroom/bath and secondary rows but omits
@@ -1688,6 +1693,15 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       refsCalls.push(config.text);
       if(config.text.includes('neighborhood-cohort-blob:insert */'))refsBlobPuts.push(config.values[3]);
       const result=await client.query(config);
+      if(Object.values(NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL).includes(config.text)
+        &&['tx_original_mismatch','tx_original_missing','tx_original_text'].includes(refsFault)){
+        const fault=refsFault;refsFault=null;const rows=JSON.parse(result.rows[0].packet_json);
+        const row=rows.find(r=>r.kind==='source_records');
+        if(fault==='tx_original_mismatch')row.typed.observations.normalized_year_built={state:'observed',exact_value:'1900',unit:'year',reason:null};
+        if(fault==='tx_original_missing')row.typed=null;
+        if(fault==='tx_original_text')row.original_text=JSON.stringify({...JSON.parse(row.original_text),synthetic_transport_corruption:true});
+        return {...result,rows:[{...result.rows[0],packet_json:JSON.stringify(rows)}]};
+      }
       if([NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL,NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL].includes(config.text)
         &&['stock_cells_mismatch','stock_cells_missing','stock_cells_original'].includes(refsFault)){
         // Corrupt only the transient transport, never the immutable original or
@@ -1719,6 +1733,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         ||config.text===NEIGHBORHOOD_SHARED_JOB_CAD_PAGE_SQL||config.text===NEIGHBORHOOD_SHARED_JOB_CAD_ACCOUNT_PAGE_SQL
         ||config.text===NEIGHBORHOOD_SHARED_JOB_TRANSACTION_V2_PAGE_SQL||config.text===NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL
         ||config.text===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL
+        ||Object.values(NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL).includes(config.text)
         ||Object.values(NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL).includes(config.text)){
         // The ending-header fault is consumed by the later second metadata
         // read, not by the page query. Keep it armed like the COMMIT fault.
@@ -1760,6 +1775,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     const temporalMethod='readSharedFrozenCaptureJobTransactionTemporalReferencesV2';
     const packageMethod='readSharedFrozenCaptureJobTransactionPackagesReferencesV2',packageOptions={...refsOptions,
       transactionPackagePage:{kind:'source_record',cursor:''}};
+    const originalPackageMethod='readOriginalFrozenCaptureJobTransactionPackagesReferencesV2';
     const stockCellsMethod='readSharedFrozenCaptureJobStockOriginalCellsReferencesV2',stockCellsOptions={...refsOptions,
       stockOriginalCellPage:{kind:'parcels',cursor:'',rowLimit:1}};
     const stockAccountMethod='readSharedFrozenCaptureJobStockAccountPackagesReferencesV2',stockAccountOptions={...refsOptions,
@@ -2223,6 +2239,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await assert.rejects(freshRefsOwner()[packageMethod](refsInput,packageOptions),/checkpoint_conflict/);
     await assert.rejects(freshRefsOwner()[stockCellsMethod](refsInput,stockCellsOptions),/checkpoint_conflict/);
     await assert.rejects(freshRefsOwner()[stockAccountMethod](refsInput,stockAccountOptions),/checkpoint_conflict/);
+    await assert.rejects(freshRefsOwner()[originalPackageMethod](refsInput,packageOptions),/checkpoint_conflict/);
     assert.ok(!refsCalls.slice(identityFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
     assert.ok(!refsCalls.slice(identityFrom).includes(NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL));
     assert.ok(!refsCalls.slice(identityFrom).some(sql=>/neighborhood-frozen-job-identity:|stock-originals:|neighborhood-frozen-job-closure:/.test(sql)));
@@ -2270,6 +2287,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await assert.rejects(freshRefsOwner()[packageMethod](refsInput,packageOptions),/unfinished_identity_verification/);
     await assert.rejects(freshRefsOwner()[stockCellsMethod](refsInput,stockCellsOptions),/unfinished_identity_verification/);
     await assert.rejects(freshRefsOwner()[stockAccountMethod](refsInput,stockAccountOptions),/unfinished_identity_verification/);
+    await assert.rejects(freshRefsOwner()[originalPackageMethod](refsInput,packageOptions),/unfinished_identity_verification/);
     assert.ok(!refsCalls.slice(partialIdentityFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
     assert.ok(!refsCalls.slice(partialIdentityFrom).includes(NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL));
     assert.deepEqual(await readRefsCheckpoint(),identityFirst);assert.deepEqual(await readIdentityAnchor(),identityFirstAnchor);
@@ -2355,6 +2373,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     await assert.rejects(freshRefsOwner()[temporalMethod](refsInput,transactionOptions),/invalid_result/);
     await assert.rejects(freshRefsOwner()[stockCellsMethod](refsInput,stockCellsOptions),/invalid_result/);
     await assert.rejects(freshRefsOwner()[stockAccountMethod](refsInput,stockAccountOptions),/invalid_result/);
+    await assert.rejects(freshRefsOwner()[originalPackageMethod](refsInput,packageOptions),/invalid_result/);
     assert.ok(!refsCalls.slice(noCacheFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
     assert.ok(!refsCalls.slice(noCacheFrom).includes(NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL));
     assert.ok(!refsCalls.slice(noCacheFrom).some(sql=>/shared-typed-v2:begin|shared-typed-v2:rows|shared-v2-stock-metrics:page|checkpoint-save/.test(sql)));
@@ -2589,6 +2608,60 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       partial_unissued_corrupt_prerequisites_refused:true,ending_current_authorization_cache_refusal:true,lost_commit_reopen:true,
       original_payload_reads:0,typed_copies:0,checkpoint_or_head_writes:0,provider_parcel_completeness:false,
       economic_equivalence:false,transaction_eligibility:false,licensed_population:false,report_update:false,production_speed:false});
+    // New actual owner replays every original BEFORE the unchanged package's
+    // retained temporal/native association projection. No cache/hash/count shortcut.
+    const originalPackageFrom=refsCalls.length,originalPackages=[];
+    for(const kind of ['source_record','legacy_sale']){
+      let cursor='',ended=false,steps=0;
+      while(!ended){
+        const page=await freshRefsOwner()[originalPackageMethod](refsInput,{...packageOptions,transactionPackagePage:{kind,cursor}});
+        assert.equal(page.status,'original_reconciled_native_transaction_package_page');
+        assert.equal(page.original_reconciliation,'every_package_original_recompiled_before_retained_projection');
+        assert.deepEqual(page.identity_verification_reference,identityIssued.receipt_reference);
+        assert.equal(page.original_package_profile.profile_ref.id,'neighborhood-original-transaction-packages-v2');
+        if(page.package){originalPackages.push(page.package);assert.equal(page.end_of_kind,false);}
+        cursor=page.next_cursor;ended=page.end_of_kind;assert.ok(++steps<=4);
+      }
+      assert.equal(steps,kind==='source_record'?4:2);
+    }
+    assert.deepEqual(originalPackages,packages,'original replay preserves every original native identity/date/outside/unresolved row');
+    for(const kind of ['source_records','sales','sale_links']){
+      const ids=originalPackages.flatMap(p=>p.rows).filter(e=>e.projection.kind===kind).map(e=>e.projection.row_key).sort();
+      assert.deepEqual(ids,expected[kind]);
+    }
+    assert.doesNotMatch(JSON.stringify(originalPackages),/original_text|cached_account_id/);
+    for(const fault of ['tx_original_mismatch','tx_original_missing','tx_original_text']){
+      refsFault=fault;await assert.rejects(freshRefsOwner()[originalPackageMethod](refsInput,packageOptions),/original_mismatch/);
+      assert.equal(refsFault,null);await assertTransactionUnchanged();
+    }
+    for(const [fault,reason] of [['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],
+      ['subject',/subject_changed/],['claim',/claim_lost/],['cancel',/cancelled/],['transaction_header',/cache_unavailable/]]){
+      refsAbort=new AbortController();refsFault=fault;const from=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[originalPackageMethod](refsInput,{...packageOptions,signal:refsAbort.signal}),reason,`original package ending ${fault}`);
+      assert.equal(refsFault,null);assert.ok(refsCalls.slice(from).includes(NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL.source_record));
+      await assertTransactionUnchanged();
+      if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+      if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    }
+    refsFault='commit';await assert.rejects(freshRefsOwner()[originalPackageMethod](refsInput,packageOptions),e=>e.outcome_unknown===true);
+    await assertTransactionUnchanged();assert.deepEqual((await freshRefsOwner()[originalPackageMethod](refsInput,packageOptions)).package,firstPackage);
+    for(const fault of ['missing_receipt','corrupt_receipt','missing_geo_receipt','corrupt_geo_receipt','missing_identity_receipt','corrupt_identity_receipt']){
+      refsFault=fault;const from=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[originalPackageMethod](refsInput,packageOptions),/checkpoint_conflict|storage_conflict|invalid_receipt/);
+      assert.equal(refsFault,null);assert.ok(!refsCalls.slice(from).some(sql=>Object.values(NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL).includes(sql)));
+      await assertTransactionUnchanged();
+    }
+    await assert.rejects(freshRefsOwner()[originalPackageMethod](sourceInput,{...packageOptions,captureJobClaim:sourceClaim}),/checkpoint_conflict/);
+    assert.ok(!refsCalls.slice(originalPackageFrom).some(sql=>/ST_DWithin|neighborhood-frozen-job-closure:|shared-typed-v2:(?:page|begin|rows|progress)|checkpoint-save|anchor-(?:advance|insert)/.test(sql)));
+    console.info('[native-original-reconciled-transaction-packages-owner-v2]',{source_packages:3,legacy_packages:1,
+      source_records:3,sales:3,sale_links:4,every_original_recompiled_before_projection:true,
+      entire_cache_native_identity_hash_bytes_compared:true,original_graph_identities_reconciled:true,
+      all_date_outside_unresolved_evidence_retained:true,retained_year_period_before_association:true,
+      partial_unissued_corrupt_prerequisites_refused:true,current_and_ending_rights_cache_refusal:true,
+      unchanged_hash_count_forgeries_refused:true,lost_commit_reopen:true,fresh_empty_probes:true,
+      original_payload_copies:0,typed_copies:0,checkpoint_or_head_writes:0,
+      provider_membership:false,economic_equivalence:false,eligibility:false,selected_union:false,
+      licensed_acquisition:false,production_speed:false,report_update:false});
     // New real owner page: replay EACH retained original payload, not cached
     // cells plus matching hashes/counts. This small native fixture does not
     // materialize a complete selected-union cell index or establish large-area QA.

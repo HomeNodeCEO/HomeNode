@@ -1,5 +1,56 @@
 # Complete larger-area Custom neighborhood studies
 
+## Original-reconciled native transaction packages (2026-10-10, not activated)
+
+`readOriginalFrozenCaptureJobTransactionPackagesReferencesV2` extends the actual
+bounded database owner. It requires the independently issued DONE original graph,
+geographic and identity heads, immutable complete neutral cache, original stock
+and exact one-hop seed index. Current database actor/assignment/private draft/
+retained subject/source-purpose/claim/pin authorization repeats at both ends.
+Only a closed `transactionPackagePage: {kind, cursor}` is admitted; callers cannot
+provide original readers, accounts, periods, profiles, counts or completeness.
+
+Fixed indexed SQL counts each ORIGINAL source/sale/link kind at cap+1 (251)
+before admitting the entire package, maximum total 250. Over-limit packages
+deliver zero payload rows. Original/envelope/transport/output caps are 1 MB,
+2.1 MB, 8 MB and 2.1 MB respectively. Every original is recompiled; the ENTIRE
+neutral cache, native identities, recomputed hash and byte length must agree
+before the unchanged native-association/retained-temporal projection runs.
+Missing cache rows refuse rather than shrink the denominator. Original payload
+text does not escape to the consumer and no payload copy is stored.
+
+Source packages follow exact BIGINT stock-seed order, including above 2^53.
+Legacy sales first scan at most 250 RAW original C-text keys BEFORE source-less
+and stock-membership filtering. A full sparse empty prefix advances its watermark
+without claiming end. When a package is found, continuation uses THAT consumed
+key, never the last scanned key, so later eligible members cannot be skipped.
+Every nonempty package still requires a fresh terminal probe; an end/cursor does
+not prove earlier traversal. All old/outside/unresolved native observations
+remain; multiple native sale IDs do not become one economic transaction.
+No provider membership, currency, price allocation or eligibility is inferred.
+
+The old typed-only V1 consumer remains separate and unchanged in meaning. Both
+fixed methods on one reader share a single-use 32-MB all-nested-result, 128-query,
+60-second and five-second-query budget. No migration, phase, default/public route,
+cache-miss repair, worker, selected head, report or production activation is added.
+129 focused local tests passed (zero failed/skipped, 1,339.6563 ms); actual compiler
+replay, exact values, all-date/outside/unknown associations, whole packet caps,
+unchanged-hash/count forgeries, sparse scan/no-skip, hostile input, cancellation,
+single-use and ending-cache refusal are covered. New native tests are authored
+for original admission/query-plan bounds and the actual issued current-authorized
+owner, including prerequisites, ending rights/cache and lost-COMMIT reopening.
+NEW native/full-suite execution is pending, not established by local DATA tests.
+
+This is not provider acquisition, economic resolution, complete selected-union
+authority, immutable full-population ordinal cells, exact union medians/CODs/
+calendar-quarter checks, coherent publication or durable large-area work/pin
+retirement. Protected parents must be integrated in order, retargeted to main
+BEFORE synchronize pushes, with fresh required security/native/full-suite checks
+and actual included review of integrated heads. Licensed >50k/5-mile/10-mile/city/
+retrospective and live Hardy saved-map reload acceptance remain outstanding.
+Internal stages remain inactive; accepted reports and genuine Hardy choices are
+unchanged. No local database/full-server/frontend suites or Indexer were started.
+
 ## Complete single-account original packages (2026-10-10, not activated)
 
 `readSharedFrozenCaptureJobStockAccountPackagesReferencesV2` extends the actual
@@ -50,8 +101,18 @@ and two account originals), outside parts, exact conflicts/no sums, unsupported
 currency, current/ending rights/cache/prerequisite refusal and lost-COMMIT reopen.
 A separate rolled-back TEMP SQL DATA fixture checks exact total 250/whole 251
 refusal, both counters capped at 251, no oversized payload delivery, whole byte
-refusal, missing-cache preservation and fresh empty probes. Native/cloud execution
-for this NEW slice is pending, not claimed by the earlier original-page receipt.
+refusal, missing-cache preservation and fresh empty probes. The exact initial
+stacked head b2d9be42 passed foundation run 38028070588: native job 114143065145
+actually passed 417 migration, eight index, one subject, one edge and two bootstrap
+tests, all zero failed/skipped; index duration 446,426.360994 ms. Its decoded
+`native-stock-account-package-admission-DATA-v2` marker verifies both 251 counter
+inputs/two loops and zero oversized original delivery. Separate
+`native-reconciled-stock-account-packages-owner-v2` verifies the actual issued
+two-account/three-parcel/two-account-original graph and all authored owner fences.
+Frontend job 114143065085 passed 3,959 tests, zero failed/skipped (73,934.16451 ms),
+plus typecheck/lint/source quality/build; server/redteam jobs also succeeded.
+These initial stacked receipts do not replace future integrated-head protected
+checks/actual review or licensed/live acceptance.
 
 This establishes neither complete selected-union traversal nor an issued selected
 revision, immutable full-population ordinal cell source, amenities/transaction

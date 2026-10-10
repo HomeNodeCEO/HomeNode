@@ -2,22 +2,30 @@
 
 ## Protected account-package merge / transaction integration (2026-10-10)
 
-PR #1239 exactc7a43142 passed all14 fresh exact-head checks and ACTUAL included
+PR #1239 exact c7a43142 passed all 14 fresh exact-head checks and ACTUAL included
 review edabdc0e-c0af-474d-882f-dce00283a6da of all seven changed files against
-protectedd2930c13. Review finished15:56:51 UTC with no actionable comments;
+protected d2930c13. Review finished 15:56:51 UTC with no actionable comments;
 exact coverage was `reviewed`, not an automatic skip. Fresh strict ruleset,
 main/head/CI and unresolved-thread checks preceded normal expected-head merge
-at15:58:06, actual protected merge244c1fd97fcec9b3c143b23273632c5408e876c0.
+at 15:58:06, actual protected merge 244c1fd97fcec9b3c143b23273632c5408e876c0.
 
-PR #1240 was retargeted to MAIN at15:58:20 BEFORE synchronization. Its actual
-protected parent244c1fd9 was merged locally ase498a467; the sole test-import
+PR #1240 was retargeted to MAIN at 15:58:20 BEFORE synchronization. Its actual
+protected parent 244c1fd9 was merged locally as e498a467; the sole test-import
 conflict kept BOTH independent original-admission and transaction-plan checks.
-124 focused tests passed, zero failures/skips (1412.5138ms). Fresh integrated
+124 focused tests passed, zero failures/skips (1412.5138 ms). Fresh integrated
 required security/native/full-suite cloud checks and actual included review
-remain required; older stacked0ddddc43 proofs are historical, not integrated
-acceptance. Last actual included review finished15:56:51; next conservative
-request gate is NOT BEFORE17:01:51 UTC AND a fresh repository-wide actual
+remain required; older stacked 0ddddc43 proofs are historical, not integrated
+acceptance. That actual included review finished 15:56:51; its conservative
+request gate was NOT BEFORE 17:01:51 UTC AND a fresh repository-wide actual
 review-activity preflight. No early, paid, forced or required-check bypass.
+
+Integrated #1240 head 39d5b594 subsequently passed all 14 exact-head checks,
+including decoded native original-transaction reconciliation. Actual included
+review d44e25a1-6443-413f-bc68-7ac45c178f02 covered all nine changed files and
+finished at 17:08:32 UTC. Its sole finding was missing spaces in the prose above,
+now corrected. The changed documentation head needs fresh checks and actual
+review; the next conservative request gate is 18:13:32 UTC, also subject to a
+fresh repository-wide actual-review activity check. No protected merge is claimed.
 
 All internal stages remain inactive. No production deployment, grant, worker,
 scheduler, generation pin, accepted report, genuine Hardy choice or Apply was

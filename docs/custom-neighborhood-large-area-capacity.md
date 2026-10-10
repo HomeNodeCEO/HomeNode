@@ -56,7 +56,7 @@ actual included review3e45a7e8-1bf2-41df-bef3-8704caccd2b7, no actionable
 comments, completed06:44:20Z. Its bounded-count correction and actual parent
 fixes were integrated here as34129a8edc5c4c2083f02b959a5673a98cc3a5c5 without
 conflicts. #1235 was retargeted to MAIN BEFORE any synchronize push. Exact
-decimal implementation semantics are unchanged. Fresh integrated-head required
+decimal implementation semantics are unchanged.
 111 focused integrated kernel/transaction-plan/package/stock/current-owner
 tests passed, zero failed/skipped (1384.1753ms); no heavy suite ran locally.
 Source/native fixture syntax and diff checks passed. Fresh integrated-head required

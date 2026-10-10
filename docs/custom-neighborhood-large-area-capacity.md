@@ -1,5 +1,103 @@
 # Complete larger-area Custom neighborhood studies
 
+## Native fixture failure-budget correction (2026-10-10 23:40 UTC; inactive)
+
+Exact head `19071fd2fb842153d8daf06470d6476146050111` passed the
+417-migration and subject tests but the isolated index again passed only 11/13.
+The two nonempty cases now reached seventh-row retention and failed when the
+fixture tried a sixth ordinary claim: pre-selection, union, fifth and sixth
+failure injections had already consumed the unchanged five-attempt ceiling.
+`claimDue` correctly returned no replacement; the fixture dereferenced it.
+Decoded native job `114337826302` in run `38094605761` was inspected in full
+(2,482,164 characters); this was not an Actions incident or a successful
+nonempty/complete-population acceptance. The explicit EMPTY case alone finished.
+
+The independent B-only fixture now exercises the extra fifth failure; the
+both-account fixture exercises the extra sixth failure. Both still exercise
+pre-selection/union history and the seventh ordinary failure, plus every
+existing rollback, lost REAL COMMIT ACK and current/ending authority refusal.
+Explicit native assertions require attempt4 before seventh failure, retry status,
+and the genuine final attempt5. No counter reset, extra attempt, weakened guard,
+copied graph or required-check bypass is introduced. Fresh exact-head cloud
+verification and integrated protected review/security/full suites remain required.
+
+## Seventh-pass native correction (2026-10-10 23:18 UTC; inactive)
+
+Exact head `593fb7d67b354933554fb695c21d44a7ae82d38f` passed the
+417-migration suite and subject test, but its isolated-index suite passed only
+11 of 13 tests. The two nonempty seventh-pass cases refused before their
+expected actual head-write rollback: PostgreSQL interpreted the unparenthesized
+`row_body->'metrics'-ARRAY[...]` expression as subtraction from the key literal,
+raising invalid JSON token `metrics`. The explicit EMPTY case alone passed;
+that is not complete selected-population acceptance. The decoded native job
+`114333602246` (foundation run `38093174306`, 2,409,512 characters) was inspected.
+The guard now explicitly extracts `(row_body->'metrics')` before removing its
+allowed keys, with a focused regression. Fresh exact-head cloud verification
+is required; no failed check is bypassed, no rerun is substituted for a fix,
+and nothing is activated or deployed.
+
+## Durable selected reported-metric traversal (2026-10-10, authored; inactive)
+
+The seventh pass now extends the actual bounded original-reopening database
+owner. Each step derives the next ordinal from the native metric head, requires
+the actual DONE union/fifth/sixth parents, and reopens the complete original
+graph plus every selected stock/CAD/whole all-date transaction original and
+required subject original against the ENTIRE cache. Current and ending source,
+actor/assignment/private draft/subject/claim/pin/workspace and native-entry
+checks precede every write. No caller roster, cursor, row, callback, count or
+hash acknowledgement supplies original or selected-union authority.
+
+Only after these checks, one closed4096-byte reported-value row, receipt, native
+ordinal ledger/head, exact thirteen-root checkpoint and single-use continuation
+are retained in the same caller transaction. The prior twelve roots remain
+unchanged. Native deferred guards refuse orphan rows or progress; immutable
+rows bind the exact command, native member, DONE parents, dates, subject housing
+and closed four-cell grammar. Null/incomplete and genuine site zero remain
+distinct; verified GLA and market currency remain unsupported. A fresh terminal
+EMPTY probe requires all native selected ordinals and exact fifth-pass complete
+eligibility counts; it creates no value row. Ordinary higher-attempt reclaim
+preserves history. Existing readers remain strict and refuse the new phase.
+
+The finite continuation ceiling is seven passes of at most2,000,001 transitions
+(14,000,007), not an increase to any source or per-step budget. The unchanged
+250 aggregate original,256 SQL,32MB,60s and16KB limits still apply. New native
+B-only/EMPTY/both coverage is AUTHORED, not yet cloud-run: whole-state rollback,
+actual ending reassignment/archive, row/head/checkpoint/yield faults, orphan REAL
+COMMIT, lost REAL COMMIT acknowledgement, higher-attempt reclaim and fresh EMPTY.
+Eleven focused local files passed77 tests, zero failures/cancellations/skips
+(443.6219ms); owner/native-fixture syntax and diff checks passed. All four older
+source SQL plans are byte-identical to the parent. These local protocol/DATA
+checks are not native or acquisition proof. Native forged-row probes also
+require rejection of changed dates/parents/member/subject, incoherent eligibility,
+noncanonical decimals, future years and unsupported currency with full rollback.
+
+This pass establishes neither statistics nor publication: exact original-
+reconciled complete-population medians/CODs/calendar quarters, coherent context
+publication, terminal pin transfer/retirement, durable production workers,
+licensed>50k/5-mile/10-mile/city/retrospective and live/speed acceptance remain
+outstanding. It has no HTTP route, worker/scheduler or production activation.
+Protected-parent integration, exact integrated checks and actual included review
+remain required; skipped review is not review and no paid/forced request is made.
+
+The first seventh-pass cloud attempt at2fbfe1fb failed before native execution:
+the PL/pgSQL condition's CASE expression required parentheses so its THEN did
+not prematurely terminate the IF expression. The migration is corrected and a
+focused regression pins the parenthesized form. Fresh exact-head cloud/native
+verification is required; the failed attempt is not acceptance and is not retried
+as an incident-cancelled run.
+
+## Closed first-metric candidate passed native cloud verification (2026-10-10)
+
+This supersedes the older pending/authored candidate notes below. Exact
+`9956d91b422ee6c578f04265e00a82356d147041` (#1274), foundation38090713132,
+native job114326386230 passed417migration/1subject/13index/1edge/2bootstrap
+tests with zero failures/cancellations/skips. Complete decoded native logs
+(2,412,093 characters) were inspected; B-only/EMPTY/both candidate markers
+appeared at22:25:12.474/22:26:04.774/22:27:14.235 UTC. All five available
+exact-head stacked checks passed. The candidate was read-only and not retained.
+This is not seventh-pass native verification, protected-main security/review
+clearance, full licensed acquisition, complete statistics or live-speed acceptance.
+
 ## Closed first-metric row candidate inside the actual owner (2026-10-10, authored)
 
 The bounded first-metric original-reopening owner now constructs a detached,

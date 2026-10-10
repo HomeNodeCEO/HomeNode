@@ -4,11 +4,11 @@
 // or cached membership. Each whole source package includes outside/unresolved
 // rows; source-less sales retain their own native ID. All required stock and
 // transaction originals share ONE250 cap BEFORE any payload materialization.
-function sql(withCad,nextEvidence=false,completedEvidence=false){
+function sql(withCad,nextEvidence=false,completedEvidence=false,nextMetrics=false){
   const admission=`(SELECT count(*) FROM anchors)<=$5::integer AND (SELECT coalesce(sum(n),0) FROM all_totals)<=$5::integer
       AND (NOT $10::boolean OR EXISTS(SELECT 1 FROM subject_account))`;
   const encodingAdmission=`${admission} AND NOT (SELECT oversize FROM raw_gate)`;
-  const evidenceJoins=nextEvidence||completedEvidence?`
+  const evidenceJoins=nextEvidence||completedEvidence||nextMetrics?`
   JOIN app.neighborhood_custom_cohort_v2_selection_intents command ON command.operation_id=job.operation_id
     AND command.organization_id=job.organization_id
   JOIN app.neighborhood_custom_cohort_selected_eligibility_v2_heads fifth ON fifth.operation_id=job.operation_id
@@ -20,8 +20,12 @@ function sql(withCad,nextEvidence=false,completedEvidence=false){
     AND evidence.organization_id=job.organization_id
   LEFT JOIN app.neighborhood_cohort_evidence_blobs evidence_body ON evidence_body.organization_id=evidence.organization_id
     AND evidence_body.content_sha256=evidence.receipt_reference->>'content_sha256'
-    AND evidence_body.canonical_utf8_bytes::text=evidence.receipt_reference->>'canonical_utf8_bytes' AND evidence_body.canonical_utf8_bytes<=16000`:'';
-  const evidenceAdmission=nextEvidence||completedEvidence?`
+    AND evidence_body.canonical_utf8_bytes::text=evidence.receipt_reference->>'canonical_utf8_bytes' AND evidence_body.canonical_utf8_bytes<=16000${nextMetrics?`
+  LEFT JOIN app.neighborhood_custom_cohort_selected_metrics_v2_heads metrics ON metrics.operation_id=job.operation_id AND metrics.organization_id=job.organization_id
+  LEFT JOIN app.neighborhood_cohort_evidence_blobs metrics_body ON metrics_body.organization_id=metrics.organization_id
+    AND metrics_body.content_sha256=metrics.receipt_reference->>'content_sha256'
+    AND metrics_body.canonical_utf8_bytes::text=metrics.receipt_reference->>'canonical_utf8_bytes' AND metrics_body.canonical_utf8_bytes<=16000`:''}`:'';
+  const evidenceAdmission=nextEvidence||completedEvidence||nextMetrics?`
     AND job.status='running' AND job.claim_token IS NOT NULL AND job.lease_expires_at>clock_timestamp()
     AND job.cancellation_requested_at IS NULL AND job.context_sha256 IS NULL
     AND head.command_id=command.command_id AND fifth.command_id=command.command_id
@@ -32,9 +36,17 @@ function sql(withCad,nextEvidence=false,completedEvidence=false){
     AND fifth_body.canonical_utf8::jsonb->'after'->>'done'='true'
     AND fifth_body.canonical_utf8::jsonb->'selected_stock_count'=body.canonical_utf8::jsonb->'after_selected_count'
     AND fifth_body.canonical_utf8::jsonb->'after'->'selected_ordinal'=body.canonical_utf8::jsonb->'after_selected_count'
-    AND ${completedEvidence?`(evidence.command_id=command.command_id AND evidence.union_reference=head.receipt_reference
+    AND ${completedEvidence||nextMetrics?`(evidence.command_id=command.command_id AND evidence.union_reference=head.receipt_reference
         AND evidence.eligibility_reference=fifth.receipt_reference
-        AND app.neighborhood_selected_evidence_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)
+        AND ${nextMetrics?`((metrics.operation_id IS NULL
+          AND app.neighborhood_selected_evidence_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint))
+          OR (metrics.command_id=command.command_id AND metrics.union_reference=head.receipt_reference
+            AND metrics.eligibility_reference=fifth.receipt_reference AND metrics.evidence_reference=evidence.receipt_reference
+            AND app.neighborhood_selected_metrics_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)
+            AND metrics_body.canonical_utf8::jsonb->>'format'='cohort_selected_metrics_receipt_v2'
+            AND metrics_body.canonical_utf8::jsonb->>'sequence'=metrics.sequence::text
+            AND metrics_body.canonical_utf8::jsonb->'after'->>'done'='false'))`:
+          'app.neighborhood_selected_evidence_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)'}
         AND evidence_body.canonical_utf8::jsonb->>'format'='cohort_selected_evidence_receipt_v2'
         AND evidence_body.canonical_utf8::jsonb->>'sequence'=evidence.sequence::text
         AND evidence_body.canonical_utf8::jsonb->'after'->>'done'='true'
@@ -47,7 +59,7 @@ function sql(withCad,nextEvidence=false,completedEvidence=false){
         AND evidence_body.canonical_utf8::jsonb->>'format'='cohort_selected_evidence_receipt_v2'
         AND evidence_body.canonical_utf8::jsonb->>'sequence'=evidence.sequence::text
         AND evidence_body.canonical_utf8::jsonb->'after'->>'done'='false'))`}`:'';
-  return `/* neighborhood-${completedEvidence?'first-selected-metric':nextEvidence?'next-selected-combined-evidence':`first-selected-${withCad?'combined-evidence':'transaction'}`}-original-package-v2 */
+  return `/* neighborhood-${nextMetrics?'next-selected-metric':completedEvidence?'first-selected-metric':nextEvidence?'next-selected-combined-evidence':`first-selected-${withCad?'combined-evidence':'transaction'}`}-original-package-v2 */
 WITH next_account AS MATERIALIZED (
   SELECT a.account_id,a.parcel_count FROM app.neighborhood_custom_cohort_capture_jobs job
   JOIN app.neighborhood_custom_cohort_selected_union_v2_heads head USING(operation_id,organization_id)
@@ -57,8 +69,8 @@ WITH next_account AS MATERIALIZED (
   JOIN app.neighborhood_custom_cohort_selected_union_v2_rows r
     ON r.operation_id=job.operation_id AND r.organization_id=job.organization_id
   JOIN app.neighborhood_custom_cohort_stock_accounts a ON a.operation_id=r.operation_id AND a.account_id=r.account_id
-  WHERE job.operation_id=$1::uuid AND r.ordinal=${nextEvidence?'coalesce(evidence.sequence,0)+1':'1'} AND $4::text=''
-    ${nextEvidence||completedEvidence?evidenceAdmission.trim(): 'AND app.neighborhood_selected_union_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)'}
+  WHERE job.operation_id=$1::uuid AND r.ordinal=${nextMetrics?'coalesce(metrics.sequence,0)+1':nextEvidence?'coalesce(evidence.sequence,0)+1':'1'} AND $4::text=''
+    ${nextEvidence||completedEvidence||nextMetrics?evidenceAdmission.trim(): 'AND app.neighborhood_selected_union_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)'}
     AND body.canonical_utf8::jsonb->>'format'='cohort_selected_union_receipt_v2'
     AND body.canonical_utf8::jsonb->'after'->>'done'='true'
 ), subject_account AS MATERIALIZED (
@@ -211,3 +223,7 @@ export const NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL=sql(tru
 // every required original/ENTIRE cache; the sixth acknowledgement supplies
 // no numerical cells or membership authority. No distribution is established.
 export const NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL=sql(true,false,true);
+
+// Seventh-pass native next ordinal only; full original/ENTIRE-cache/current-rights
+// owner remains mandatory. Existing first/sixth plan strings are unchanged.
+export const NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL=sql(true,false,false,true);

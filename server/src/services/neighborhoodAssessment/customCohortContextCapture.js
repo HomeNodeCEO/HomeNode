@@ -68,6 +68,8 @@ import { createCustomCohortSelectedEligibilityV2Repository } from './customCohor
 import { prepareCohortSelectedEligibilityReceiptV2, SELECTED_RECORDED_ELIGIBILITY_METRICS } from './cohortSelectedEligibilityReceiptV2.js';
 import { createCustomCohortSelectedEvidenceV2Repository } from './customCohortSelectedEvidenceV2Repository.js';
 import { prepareCohortSelectedEvidenceReceiptV2 } from './cohortSelectedEvidenceReceiptV2.js';
+import { createCustomCohortSelectedMetricsV2Repository } from './customCohortSelectedMetricsV2Repository.js';
+import { prepareCohortSelectedMetricsReceiptV2 } from './cohortSelectedMetricsReceiptV2.js';
 import { prepareCohortSelectedMetricRowV2, SELECTED_REPORTED_METRIC_ROW_V2_BASIS } from './cohortSelectedMetricRowV2.js';
 import { encodeCohortDiagnosticCompressedJsonV1 } from './cohortDiagnosticCompressedJsonV1.js';
 import { createCustomCohortV2ContinuationRepository } from './customCohortV2ContinuationRepository.js';
@@ -265,6 +267,11 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true,
     readingSelectedUnionFirstAmenities: true, readingSelectedUnionFirstTransactions: true, readingSelectedMetricSource: true,
     allowedPhases: ['frozen_selected_evidence_refs_v2'] },
+  original_selected_metrics_progress_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
+    readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true,
+    readingSelectedUnionFirstAmenities: true, readingSelectedUnionFirstTransactions: true, readingSelectedMetricSource: true,
+    progressingSelectedMetrics: true, allowedPhases: ['frozen_selected_evidence_refs_v2','frozen_selected_metrics_refs_v2'] },
 });
 function fail(reason, detail, captureCounts) {
   const error = Object.assign(new Error(`custom_cohort_capture_${reason}`), {
@@ -1699,7 +1706,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,
       resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,partitioningRecordedGroups=false,
-      readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,readingSelectedUnionFirstEligibility=false,readingSelectedUnionFirstAmenities=false,readingSelectedUnionFirstTransactions=false,progressingSelectedEligibility=false,progressingSelectedEvidence=false,readingSelectedMetricSource=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
+      readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,readingSelectedUnionFirstEligibility=false,readingSelectedUnionFirstAmenities=false,readingSelectedUnionFirstTransactions=false,progressingSelectedEligibility=false,progressingSelectedEvidence=false,readingSelectedMetricSource=false,progressingSelectedMetrics=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     const readingCadSource=readingCadPages||readingSelectedUnionFirstAmenities;
     if(referencesV2){
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
@@ -1774,7 +1781,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       }
       const checkpoint=await jobs.readCheckpoint(claim,jobOptions);
       if(!checkpoint || !allowedPhases.includes(checkpoint.phase)
-        ||checkpoint.evidence_refs.length!==({frozen_stock_v1:2,frozen_source_v1:3,frozen_source_refs_v2:3,frozen_verify_refs_v2:4,frozen_geo_verify_refs_v2:5,frozen_identity_refs_v2:6,frozen_stock_traversal_refs_v2:7,frozen_recorded_partition_refs_v2:8,frozen_recorded_catalog_refs_v2:9,frozen_selected_union_refs_v2:10,frozen_selected_eligibility_refs_v2:11,frozen_selected_evidence_refs_v2:12,frozen_verify_v1:4,frozen_geo_verify_v1:5,frozen_identity_v1:6,frozen_typed_v1:7}[checkpoint.phase]))
+        ||checkpoint.evidence_refs.length!==({frozen_stock_v1:2,frozen_source_v1:3,frozen_source_refs_v2:3,frozen_verify_refs_v2:4,frozen_geo_verify_refs_v2:5,frozen_identity_refs_v2:6,frozen_stock_traversal_refs_v2:7,frozen_recorded_partition_refs_v2:8,frozen_recorded_catalog_refs_v2:9,frozen_selected_union_refs_v2:10,frozen_selected_eligibility_refs_v2:11,frozen_selected_evidence_refs_v2:12,frozen_selected_metrics_refs_v2:13,frozen_verify_v1:4,frozen_geo_verify_v1:5,frozen_identity_v1:6,frozen_typed_v1:7}[checkpoint.phase]))
         fail('checkpoint_conflict');
       const subjects=createCustomCohortSubjectRepository(client,canonicalAssessmentJson(scope));
       const blobs=createNeighborhoodCohortBlobRepository(client,scope.organization_id);
@@ -1807,7 +1814,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(readingRetainedSelectionIntent)issuedSelectionIntent=await createCustomCohortV2SelectionIntentRepository(client)
         .readRetained(claim,{...jobOptions,workspaceTarget:selectionWorkspaceTarget});
       if(replayingSelectedUnion)issuedSelectionIntent=await createCustomCohortV2SelectionIntentRepository(client)
-        [progressingSelectedEvidence||readingSelectedMetricSource?'readForEvidence':progressingSelectedEligibility?'readForEligibility':'readForReplay'](claim,{...jobOptions,workspaceTarget:selectionWorkspaceTarget});
+        [progressingSelectedMetrics?'readForMetrics':progressingSelectedEvidence||readingSelectedMetricSource?'readForEvidence':progressingSelectedEligibility?'readForEligibility':'readForReplay'](claim,{...jobOptions,workspaceTarget:selectionWorkspaceTarget});
       // Never let an early known-ID error become a revoked-license catalog
       // oracle. This fixed lookup is permitted only AFTER current source policy
       // at BOTH ends. Choices come from the immutable native command, not body
@@ -2195,7 +2202,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         unionStore=null,unionAnchor=null,unionCounts=null,unionExpected=null,unionIssued=null,unionPlan=null,subjectHousingResult=null,unionSubjectHousing=null,
         unionAccountEligibility=null,unionExpectedSelected=false,firstSelectedEntry=null,
         eligibilityStore=null,eligibilityAnchor=null,eligibilityIssued=null,eligibilityPlan=null,
-        evidenceStore=null,evidenceAnchor=null,evidenceIssued=null,evidencePlan=null;
+        evidenceStore=null,evidenceAnchor=null,evidenceIssued=null,evidencePlan=null,
+        metricsStore=null,metricsAnchor=null,metricsIssued=null,metricsExpected=null,metricsBefore=null,metricsCounts=null,metricsRowCandidate=null;
       if(partitioningRecordedGroups||readingRecordedPartition||catalogingRecordedGroups){
         const baseExpected={binding,source_reference:reference,root,graph_verification_reference:verificationReference,
           stock_verification_reference:stockVerificationReference,identity_verification_reference:identityVerificationReference,
@@ -2311,14 +2319,34 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             }
             if(readingSelectedMetricSource&&!evidenceIssued)fail('unfinished_selected_evidence');
           }
-          firstSelectedEntry=await (readingSelectedMetricSource?evidenceStore.readFirstMetricEntry():progressingSelectedEvidence?evidenceStore.readNextSelectedEntry():
+          if(progressingSelectedMetrics){
+            metricsExpected={...evidenceExpected,evidence_reference:evidenceAnchor.receipt_reference};
+            metricsBefore={selected_ordinal:0,done:false};metricsCounts=Object.fromEntries(SELECTED_RECORDED_ELIGIBILITY_METRICS.map(k=>[k,0]));
+            metricsStore=createCustomCohortSelectedMetricsV2Repository({client,claim,scope,actorUserId:input.auth.userId,
+              command_id:issuedSelectionIntent.command_id,union_reference:unionAnchor.receipt_reference,
+              eligibility_reference:eligibilityAnchor.receipt_reference,evidence_reference:evidenceAnchor.receipt_reference});
+            metricsAnchor=await metricsStore.read();
+            if(checkpoint.phase==='frozen_selected_evidence_refs_v2'?metricsAnchor!==null:
+              metricsAnchor===null||!same(metricsAnchor.receipt_reference,checkpoint.evidence_refs[12]))fail('checkpoint_conflict');
+            if(metricsAnchor){
+              const text=await blobs.get(metricsAnchor.receipt_reference.content_sha256,metricsAnchor.receipt_reference.canonical_utf8_bytes);
+              if(text===null||Buffer.byteLength(text)>16000)fail('checkpoint_conflict');
+              try{metricsIssued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
+              metricsIssued=prepareCohortSelectedMetricsReceiptV2(metricsIssued,metricsExpected);
+              if(metricsIssued.sequence!==metricsAnchor.sequence)fail('checkpoint_conflict');
+              if(metricsIssued.after.done)fail('selected_metrics_finished');
+              metricsBefore=metricsIssued.after;metricsCounts=metricsIssued.after_counts;
+            }
+            eligibilityBefore=metricsBefore;
+          }
+          firstSelectedEntry=await (progressingSelectedMetrics?metricsStore.readNextSelectedEntry():readingSelectedMetricSource?evidenceStore.readFirstMetricEntry():progressingSelectedEvidence?evidenceStore.readNextSelectedEntry():
             progressingSelectedEligibility?eligibilityStore.readNextSelectedEntry():unionStore.readFirstSelectedEntry());
           if((firstSelectedEntry===null)!==(eligibilityBefore.selected_ordinal===unionCounts.selected_count)
             ||firstSelectedEntry!==null&&firstSelectedEntry.ordinal!==eligibilityBefore.selected_ordinal+1)fail('selected_union_original_mismatch');
           const preferred=resolveCustomCohortRetainedSubjectHousing(retained.subject.material,retained.subject.target,{check:budget.check}),
             graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))},
             paired=await createNeighborhoodSharedStockOriginalCellsV2(client,stockOptions,graph,context.effective_date)
-              [readingSelectedMetricSource?'subjectAndFirstSelectedMetricAccountPackage':progressingSelectedEvidence?'subjectAndNextSelectedCombinedAccountPackage':
+              [progressingSelectedMetrics?'subjectAndNextSelectedMetricAccountPackage':readingSelectedMetricSource?'subjectAndFirstSelectedMetricAccountPackage':progressingSelectedEvidence?'subjectAndNextSelectedCombinedAccountPackage':
                 readingSelectedUnionFirstTransactions&&readingSelectedUnionFirstAmenities?'subjectAndFirstSelectedCombinedAccountPackage':
                 readingSelectedUnionFirstTransactions?'subjectAndFirstSelectedTransactionAccountPackage':
                 readingSelectedUnionFirstAmenities?'subjectAndFirstSelectedAmenityAccountPackage':
@@ -2378,22 +2406,24 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           if(readingSelectedMetricSource){
             // Numerical cells come only from THIS fresh original/ENTIRE-cache
             // replay, never from the metadata-only sixth acknowledgement.
-            // Fixed ordinal1 is not a distribution or complete metric ledger.
+            // The read-only stage stays fixed at ordinal1; the seventh stage
+            // uses only the newly reopened native next ordinal, not a roster.
             const metricRowMetadata=firstSelectedEntry===null?null:{command_id:issuedSelectionIntent.command_id,
               union_reference:unionAnchor.receipt_reference,eligibility_reference:eligibilityAnchor.receipt_reference,
               evidence_reference:evidenceAnchor.receipt_reference,selected_entry:Object.fromEntries(
                 ['account_id','ordinal','partition_ordinal','entry_reference'].map(k=>[k,firstSelectedEntry[k]])),
               effective_date:context.effective_date,observation_period:input.observationPeriod,subject_housing:subjectHousing,
               housing_comparison:decision.housing.state};
-            // A closed future-ledger row candidate, derived INSIDE the actual
-            // bounded original owner. It is not retained or a capability; the
-            // unchanged ending fences below MUST pass before it can escape.
+            // Closed row derived INSIDE this bounded original owner. It is not
+            // a capability. The read-only stage never retains it; the seventh
+            // stage writes only AFTER all unchanged ending fences below pass.
             const metricRowCandidate=metricRowMetadata===null?null:prepareCohortSelectedMetricRowV2({
               format:'cohort_selected_reported_metric_row_v2',...metricRowMetadata,
               metrics:Object.fromEntries(Object.entries(decision.metrics).map(([k,c])=>[k,Object.fromEntries(
                 ['recorded_comparison_eligible','complete_observed_parts','exact_value','unit'].map(field=>[field,c[field]]))])),
               basis:SELECTED_REPORTED_METRIC_ROW_V2_BASIS},metricRowMetadata);
-            subjectHousingResult={status:'current_authorized_first_selected_metric_originals_reopened',operation_id:input.operationId,
+            if(progressingSelectedMetrics)metricsRowCandidate=metricRowCandidate;
+            subjectHousingResult={status:progressingSelectedMetrics?'current_authorized_next_selected_metric_originals_reopened':'current_authorized_first_selected_metric_originals_reopened',operation_id:input.operationId,
               command_id:issuedSelectionIntent.command_id,union_reference:unionAnchor.receipt_reference,
               eligibility_reference:eligibilityAnchor.receipt_reference,evidence_reference:evidenceAnchor.receipt_reference,
               selected_entry:firstSelectedEntry,subject,subject_original_fallback:preferred===null,
@@ -2401,7 +2431,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
               reported_comparison:decision,metric_row_candidate:metricRowCandidate,metric_row_retained:false,
               retained_effective_date:context.effective_date,retained_observation_period:input.observationPeriod,
               original_reconciliation:'every_selected_stock_CAD_whole_all_date_transaction_and_required_subject_original_entire_cache_partition_catalog_reopened',
-              coverage:'fixed_first_native_selected_ordinal_only_after_DONE_union_fifth_and_sixth',empty_selected_union:firstSelectedEntry===null,
+              coverage:progressingSelectedMetrics?'native_next_selected_ordinal_after_DONE_union_fifth_and_sixth':'fixed_first_native_selected_ordinal_only_after_DONE_union_fifth_and_sixth',empty_selected_union:firstSelectedEntry===null,
               shared_budget:'one_single_use_child_one_aggregate_250_original_transport_output_SQL_deadline_budget',
               numerical_basis:'current_reported_comparison_not_verified_GLA_currency_historical_housing_or_economic_transaction',
               complete_selected_union_metric_population:false,statistics:'not_established',publication:'not_established',
@@ -2711,16 +2741,43 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         client,input,scopeJson:canonicalAssessmentJson(scope),checkBudget:budget.check}),selectionWorkspaceTarget))fail('workspace_target_changed');
       budget.check();
       if(replayingSelectedUnion){
-        const ending=await createCustomCohortV2SelectionIntentRepository(client)[progressingSelectedEvidence||readingSelectedMetricSource?'readForEvidence':progressingSelectedEligibility?'readForEligibility':'readForReplay'](claim,
+        const ending=await createCustomCohortV2SelectionIntentRepository(client)[progressingSelectedMetrics?'readForMetrics':progressingSelectedEvidence||readingSelectedMetricSource?'readForEvidence':progressingSelectedEligibility?'readForEligibility':'readForReplay'](claim,
           {...jobOptions,workspaceTarget:selectionWorkspaceTarget});
         if(!same(ending,issuedSelectionIntent)||!same(await unionStore.read(),unionAnchor)
           ||!same(await unionStore.counts(),unionCounts))fail('selected_union_original_mismatch');
-        if(readingSelectedUnionFirstEligibility&&!same(await (readingSelectedMetricSource?evidenceStore.readFirstMetricEntry():progressingSelectedEvidence?evidenceStore.readNextSelectedEntry():progressingSelectedEligibility
+        if(readingSelectedUnionFirstEligibility&&!same(await (progressingSelectedMetrics?metricsStore.readNextSelectedEntry():readingSelectedMetricSource?evidenceStore.readFirstMetricEntry():progressingSelectedEvidence?evidenceStore.readNextSelectedEntry():progressingSelectedEligibility
           ?eligibilityStore.readNextSelectedEntry():unionStore.readFirstSelectedEntry()),firstSelectedEntry))
           fail('selected_union_original_mismatch');
         if((progressingSelectedEligibility||progressingSelectedEvidence||readingSelectedMetricSource)&&!same(await eligibilityStore.read(),eligibilityAnchor))fail('checkpoint_conflict');
         if((progressingSelectedEvidence||readingSelectedMetricSource)&&!same(await evidenceStore.read(),evidenceAnchor))fail('checkpoint_conflict');
+        if(progressingSelectedMetrics&&!same(await metricsStore.read(),metricsAnchor))fail('checkpoint_conflict');
         budget.check();
+        if(progressingSelectedMetrics){
+          // ALL originals, ENTIRE caches, issued native parents/member, current
+          // and ending rights passed above. No caller row/source callback.
+          const afterCounts=Object.fromEntries(SELECTED_RECORDED_ELIGIBILITY_METRICS.map(k=>[k,
+            metricsCounts[k]+Number(metricsRowCandidate?.metrics[k].recorded_comparison_eligible??false)]));
+          if(firstSelectedEntry===null&&!same(afterCounts,eligibilityIssued.after_counts))fail('selected_metric_eligibility_mismatch');
+          const rowReference=metricsRowCandidate===null?null:await blobs.put(canonicalAssessmentJson(metricsRowCandidate));
+          const plan=prepareCohortSelectedMetricsReceiptV2({format:'cohort_selected_metrics_receipt_v2',...metricsExpected,
+            sequence:(metricsAnchor?.sequence??0)+1,previous:metricsAnchor?.receipt_reference??null,before:metricsBefore,
+            after:{selected_ordinal:metricsBefore.selected_ordinal+Number(firstSelectedEntry!==null),done:firstSelectedEntry===null},
+            selected_entry:metricsRowCandidate?.selected_entry??null,row_reference:rowReference,
+            before_counts:metricsCounts,after_counts:afterCounts},metricsExpected);
+          const receiptReference=await blobs.put(canonicalAssessmentJson(plan));
+          metricsAnchor=await metricsStore.advance(metricsAnchor,receiptReference,rowReference);
+          await jobs.saveCheckpoint(claim,jobOptions,{phase:'frozen_selected_metrics_refs_v2',
+            evidence_refs:[...checkpoint.evidence_refs.slice(0,12),receiptReference]});
+          const continuation=await createCustomCohortV2ContinuationRepository(client).yieldIssued(claim,jobOptions);
+          const result={...subjectHousingResult,status:'original_selected_reported_metric_progress_retained',
+            metrics_reference:receiptReference,metric_row_reference:rowReference,metric_row_retained:rowReference!==null,
+            progress:plan.after,recorded_comparison_counts:afterCounts,read_only:false,
+            coverage:'one_native_selected_ordinal_or_fresh_terminal_empty_probe',
+            empty_selected_union:unionCounts.selected_count===0,complete_selected_union_metric_population:plan.after.done,
+            original_reconciled_reported_metric_rows_complete:plan.after.done,statistics:'not_established',publication:'not_established',continuation};
+          if(Buffer.byteLength(JSON.stringify(result))>16000)fail('byte_limit');
+          budget.check();return freeze(result);
+        }
         if(progressingSelectedEvidence){
           // Every original, full issued lineage and ending authorization has
           // passed. Receipt/head/exact12 roots/single-use yield share one TX.
@@ -3152,6 +3209,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     // retained metric rows, population statistics or publication authority.
     readOriginalFrozenCaptureJobFirstSelectedMetricReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_selected_first_metric_refs_v2'),
+    // Dormant seventh pass; no HTTP/worker activation. Original-reconciled
+    // rows/head/exact13 roots/continuation are retained in ONE caller TX.
+    progressOriginalFrozenCaptureJobSelectedMetricReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'original_selected_metrics_progress_refs_v2'),
     async capture(value, options = {}) {
     if (!options || Object.getPrototypeOf(options) !== Object.prototype)
       fail('invalid_options');

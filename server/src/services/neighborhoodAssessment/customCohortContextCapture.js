@@ -2145,8 +2145,14 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           :catalogingRecordedGroups?catalogIssued?.after??{after_account:'',account_count:0,done:false}
           :issued?.after??{after_account:'',account_count:0,done:false},
           graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
-        const packet=await createNeighborhoodSharedStockOriginalCellsV2(client,stockOptions,graph,context.effective_date)
-          .recordedGroupAccountPackage({cursor:before.after_account});
+        const accountOriginals=createNeighborhoodSharedStockOriginalCellsV2(client,stockOptions,graph,context.effective_date);
+        // Future selection eligibility must not reopen the same account for
+        // housing under a second child budget. The pending-target reader gets
+        // every retained-date cell, full recorded label and housing state from
+        // this ONE original/ENTIRE-neutral-cache reconciliation. No membership
+        // or human intent is inferred from these account facts.
+        const packet=await accountOriginals[readingSelectionWorkspaceTarget
+          ?'recordedGroupAndHousingAccountPackage':'recordedGroupAccountPackage']({cursor:before.after_account});
         if(before.done&&!packet.end_of_accounts)fail('checkpoint_conflict');
         let receipt=issued,advanced=false;
         if(!readingRecordedPartition&&!catalogingRecordedGroups&&!before.done){
@@ -2221,6 +2227,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             if(readingSelectionWorkspaceTarget)partitionResult={...partitionResult,
               status:'original_reconciled_selection_workspace_target_account',selection_workspace_target:selectionWorkspaceTarget,
               selection_target_reconciliation:'current_exact_pending_job_study_and_prior_V7_head_fenced_both_ends',
+              account_fact_reconciliation:'retained_date_metrics_recorded_group_and_housing_from_one_whole_original_packet',
               prior_active_choice:'not_carried_into_new_study',genuine_new_group_choice:'not_established'};
             if(Buffer.byteLength(JSON.stringify(partitionResult))>NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_LIMITS.output_utf8_bytes)fail('byte_limit');
             budget.check();

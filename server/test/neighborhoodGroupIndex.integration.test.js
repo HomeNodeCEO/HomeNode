@@ -5053,6 +5053,11 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             }
             // Normal failure/reclaim, preserving existing native progress and
             // all prior error history; never reset attempts for success steps.
+            // Independent fixtures divide extra fifth/sixth failure injection:
+            // B-only exercises fifth; both-account exercises sixth. Including
+            // pre-selection, union and seventh, each retains the REAL five-
+            // attempt ceiling rather than spending a sixth failure claim.
+            if(!allSelected){
             await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client)
               .failClaim(liveClaim,'synthetic_eligibility_reclaim',{retrySeconds:1}));
             await new Promise(resolve=>setTimeout(resolve,1100));
@@ -5060,15 +5065,16 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             assert.equal(replacement.operation_id,refsOperation);assert.equal(replacement.attempts,subjectJob.attempts+1);
             liveClaim={operation_id:replacement.operation_id,claim_token:replacement.claim_token,attempts:replacement.attempts};
             assert.deepEqual(await readEligibility(),pending.heads);
+            }
             const terminalEligibility=await eligibilityStep();
             assert.deepEqual(terminalEligibility.progress,{selected_ordinal:selectedCount,done:true});assert.equal(terminalEligibility.selected_entry,null);
             assert.equal(terminalEligibility.empty_selected_union,false);
             assert.equal(terminalEligibility.decision,null);assert.equal(terminalEligibility.distinct_original_count,observedHousingFixture?0:3);
             assert.equal(terminalEligibility.complete_selected_recorded_comparison_pass,true);
             assert.equal(terminalEligibility.complete_selected_union_eligibility,false);assert.equal(terminalEligibility.issued_eligibility_progress,true);
-            assert.equal(terminalEligibility.continuation.attempts,subjectJob.attempts+1);assert.equal(terminalEligibility.read_only,false);
+            assert.equal(terminalEligibility.continuation.attempts,subjectJob.attempts+Number(!allSelected));assert.equal(terminalEligibility.read_only,false);
             assert.deepEqual(terminalEligibility.recorded_comparison_counts,pendingBody.after_counts);
-            liveClaim=await consume();assert.equal(liveClaim.attempts,subjectJob.attempts+1);
+            liveClaim=await consume();assert.equal(liveClaim.attempts,subjectJob.attempts+Number(!allSelected));
           }else{assert.equal(firstEligibilityBody.selected_entry,null);assert.equal(firstEligibilityBody.eligible,null);}
           const completedEligibility=await eligibilitySnapshot(),finishedFrom=refsCalls.length;
           await assert.rejects(eligibilityStep(),/selected_eligibility_finished/);await eligibilityUnchanged(completedEligibility);
@@ -5089,7 +5095,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             one_aggregate250_original_packet_not250_each_and_no_value_or_decision_copies:true,
             actual_head_insert_update_yield_rollback_and_orphan_real_COMMIT_refused:true,
             lost_real_COMMIT_ack_fresh_consumed_continuation_no_duplicate_selected_ordinal:true,
-            ordinary_higher_failure_attempt_preserves_progress_and_fresh_terminal_EMPTY_no_prior_decision:selectionWaitFixture!=='union-empty',
+            ordinary_higher_failure_attempt_preserves_progress_and_fresh_terminal_EMPTY_no_prior_decision:selectionWaitFixture==='union',
             exact_first_ten_roots_old_readers_strict_unknown_denominator_counts_not_authority:true,
             current_rights_before_source_intent_and_native_member_reads_all_ending_fences:true,
             maximum_whole_owner_sql_queries:Math.max(...eligibilityQueries),whole_owner_limits:ORIGINAL_OWNER_LIMITS,
@@ -5220,7 +5226,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             ['evidence_orphan_commit',/orphan_progress/]]){
             refsFault=fault;await assert.rejects(evidenceStep(),reason);assert.equal(refsFault,null);await evidenceUnchanged(pending);
           }
-          if(selectedCount){
+          if(allSelected){
             await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client)
               .failClaim(liveClaim,'synthetic_evidence_reclaim',{retrySeconds:1}));
             await new Promise(resolve=>setTimeout(resolve,1100));
@@ -5473,10 +5479,13 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             refsFault=fault;await assert.rejects(metricsStep(),reason);assert.equal(refsFault,null);await metricsUnchanged(pendingMetrics);
           }
           if(selectedCount){
-            await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).failClaim(liveClaim,'synthetic_metrics_reclaim',{retrySeconds:1}));
+            assert.equal(pendingMetrics.job.attempts,4,'independent native fixture reserves the final REAL failure attempt for seventh');
+            const failedMetrics=await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).failClaim(liveClaim,'synthetic_metrics_reclaim',{retrySeconds:1}));
+            assert.equal(failedMetrics.status,'retry');
             await new Promise(resolve=>setTimeout(resolve,1100));
             const [replacement]=await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900}));
-            assert.equal(replacement.operation_id,refsOperation);assert.equal(replacement.attempts,pendingMetrics.job.attempts+1);
+            assert.ok(replacement,'ordinary reclaim must have one remaining failure attempt');
+            assert.equal(replacement.operation_id,refsOperation);assert.equal(replacement.attempts,5);
             liveClaim={operation_id:replacement.operation_id,claim_token:replacement.claim_token,attempts:replacement.attempts};
             assert.deepEqual(await readMetrics(),pendingMetrics.heads);assert.deepEqual(await readMetricRows(),pendingMetrics.rows);
           }

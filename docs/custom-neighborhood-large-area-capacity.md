@@ -1,5 +1,26 @@
 # Complete larger-area Custom neighborhood studies
 
+## Native fixture failure-budget correction (2026-10-10 23:40 UTC; inactive)
+
+Exact head `19071fd2fb842153d8daf06470d6476146050111` passed the
+417-migration and subject tests but the isolated index again passed only 11/13.
+The two nonempty cases now reached seventh-row retention and failed when the
+fixture tried a sixth ordinary claim: pre-selection, union, fifth and sixth
+failure injections had already consumed the unchanged five-attempt ceiling.
+`claimDue` correctly returned no replacement; the fixture dereferenced it.
+Decoded native job `114337826302` in run `38094605761` was inspected in full
+(2,482,164 characters); this was not an Actions incident or a successful
+nonempty/complete-population acceptance. The explicit EMPTY case alone finished.
+
+The independent B-only fixture now exercises the extra fifth failure; the
+both-account fixture exercises the extra sixth failure. Both still exercise
+pre-selection/union history and the seventh ordinary failure, plus every
+existing rollback, lost REAL COMMIT ACK and current/ending authority refusal.
+Explicit native assertions require attempt4 before seventh failure, retry status,
+and the genuine final attempt5. No counter reset, extra attempt, weakened guard,
+copied graph or required-check bypass is introduced. Fresh exact-head cloud
+verification and integrated protected review/security/full suites remain required.
+
 ## Seventh-pass native correction (2026-10-10 23:18 UTC; inactive)
 
 Exact head `593fb7d67b354933554fb695c21d44a7ae82d38f` passed the

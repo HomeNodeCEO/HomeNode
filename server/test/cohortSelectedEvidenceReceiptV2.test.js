@@ -147,6 +147,18 @@ test('native sixth fault injection stays armed until actual source-ending, DML o
   assert.ok(fixture.includes("'evidence_orphan_commit'].includes(refsFault)"));
 });
 
+test('native sixth fresh EMPTY preserves explicit-null subject precedence and exact zero-original admission',()=>{
+  const fixture=readFileSync(new URL('./neighborhoodGroupIndex.integration.test.js',import.meta.url),'utf8'),
+    start=fixture.indexOf("const terminalFrom=refsCalls.length,done=await evidenceStep()"),
+    end=fixture.indexOf('liveClaim=await consume();const completedEvidence=',start),block=fixture.slice(start,end);
+  assert.ok(start>=0&&end>start);
+  assert.ok(fixture.includes("if(selectionWaitFixture==='union-empty')subjectData.custom_property_snapshot.housing_profile=null"));
+  assert.ok(block.includes("assert.equal(done.subject_original_fallback,selectionWaitFixture!=='union-empty'&&!observedHousingFixture"));
+  assert.ok(block.includes("assert.equal(done.distinct_original_count,selectionWaitFixture==='union-empty'||observedHousingFixture?0:3)"));
+  assert.ok(block.includes('done.selected_entry,null'));
+  assert.ok(block.includes('NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL).length,1'));
+});
+
 test('native intent truncate proof includes every command FK child without bypassing triggers or weakening refusal',()=>{
   const fixture=readFileSync(new URL('./neighborhoodGroupIndex.integration.test.js',import.meta.url),'utf8'),
     statement=fixture.match(/'TRUNCATE app\.neighborhood_custom_cohort_v2_selection_intents, ([^']+)'/);

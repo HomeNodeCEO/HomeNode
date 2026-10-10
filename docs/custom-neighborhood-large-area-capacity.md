@@ -1,5 +1,24 @@
 # Complete larger-area Custom neighborhood studies
 
+## Sixth empty-selection assertion corrected after actual native run (2026-10-10)
+
+Exact `5a170e8d` native job 114309675712 passed 417 migration and one subject
+test. Its 13-case index suite passed 12 and failed only the explicit-empty
+selection case: the sixth terminal assertion expected three subject originals
+although this independently retained subject has explicit-null housing, which
+correctly blocks original fallback. The B-only and both-selected sixth traversal
+markers executed successfully; this is not an all-cases native pass.
+
+The assertion now requires zero originals for either explicit-null or observed
+retained subjects, three only for genuinely absent preferred subject material,
+and checks the exact fallback flag. A focused wiring regression preserves the
+null fixture and fresh single next-combined EMPTY query. No production owner,
+subject precedence, source right, native guard or budget changed. A new exact-head
+cloud run is required; downstream edge/bootstrap suites were not reached by the
+failed run. All stages remain inactive and licensed/live acceptance is outstanding.
+The corrected eight-file focused run passed 106 tests, zero failures/cancellations/
+skips (784.5579 ms); native fixture syntax and diff checks passed locally.
+
 ## Sixth native predecessor test corrected; full rerun required (2026-10-10)
 
 Exact `077f4d59` cloud native job 114303783811 passed 417 migration tests and

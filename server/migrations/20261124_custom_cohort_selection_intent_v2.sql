@@ -46,18 +46,17 @@ BEGIN
   IF receipt->>'format' IS DISTINCT FROM 'cohort_recorded_catalog_receipt_v2'
     OR receipt->>'sequence' IS DISTINCT FROM head.sequence::text OR receipt->'after'->>'done' IS DISTINCT FROM 'true' THEN
     RAISE EXCEPTION 'neighborhood_v2_selection_intent_catalog_conflict' USING ERRCODE='55000'; END IF;
-  -- These are only known catalog ID choices, never authoritative group counts
-  -- or eligibility. Complete original reconciliation remains the real owner.
+  -- Pure ID shape only before current source policy. Known-ID lookup is
+  -- deliberately deferred: a revoked license must not probe group existence
+  -- through an early native error. The actual owner checks it after policy at
+  -- both ends; the commit trigger is a second structural safeguard only.
   IF jsonb_array_length(NEW.included_group_ids)>2049
     OR (SELECT count(*) FROM jsonb_array_elements(NEW.included_group_ids) AS items(v) WHERE jsonb_typeof(v)<>'string')<>0
     OR EXISTS(SELECT 1 FROM jsonb_array_elements_text(NEW.included_group_ids) AS ids(id)
       WHERE id !~ '^(recorded-cad:[a-f0-9]{64}|discovery:unassigned)$')
     OR (SELECT count(*) FROM jsonb_array_elements_text(NEW.included_group_ids) AS ids(id) WHERE id<>'discovery:unassigned')>2048
     OR (SELECT count(*) FROM jsonb_array_elements_text(NEW.included_group_ids))
-      <>(SELECT count(DISTINCT id) FROM jsonb_array_elements_text(NEW.included_group_ids) AS ids(id))
-    OR EXISTS(SELECT 1 FROM jsonb_array_elements_text(NEW.included_group_ids) AS ids(id)
-      WHERE NOT EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_recorded_catalog_v2_groups g
-        WHERE g.operation_id=job.operation_id AND g.organization_id=job.organization_id AND g.group_id=id)) THEN
+      <>(SELECT count(DISTINCT id) FROM jsonb_array_elements_text(NEW.included_group_ids) AS ids(id)) THEN
     RAISE EXCEPTION 'neighborhood_v2_selection_intent_group_conflict' USING ERRCODE='55000'; END IF;
   SELECT revision,section_value INTO STRICT workspace FROM app.custom_appraisal_workfile_sections
     WHERE assignment_file_id=job.assignment_file_id AND section_key='neighborhood_workspace' FOR SHARE NOWAIT;
@@ -86,6 +85,10 @@ BEGIN
     OR job.attempts<>NEW.issued_attempts OR job.lease_expires_at<=clock_timestamp() OR job.cancellation_requested_at IS NOT NULL
     OR job.context_sha256 IS NOT NULL OR job.request_sha256<>NEW.request_sha256 OR job.checkpoint IS DISTINCT FROM NEW.checkpoint THEN
     RAISE EXCEPTION 'neighborhood_v2_selection_intent_orphan_resume' USING ERRCODE='55000'; END IF;
+  IF EXISTS(SELECT 1 FROM jsonb_array_elements_text(NEW.included_group_ids) AS ids(id)
+    WHERE NOT EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_recorded_catalog_v2_groups g
+      WHERE g.operation_id=job.operation_id AND g.organization_id=job.organization_id AND g.group_id=id)) THEN
+    RAISE EXCEPTION 'neighborhood_v2_selection_intent_group_conflict' USING ERRCODE='55000'; END IF;
   RETURN NULL;
 END $$;
 CREATE CONSTRAINT TRIGGER neighborhood_cohort_v2_selection_intent_commit AFTER INSERT

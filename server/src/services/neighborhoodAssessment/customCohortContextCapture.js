@@ -1702,6 +1702,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       const requested={operation_id:input.operationId,observation_period:input.observationPeriod,discovery:input.discovery};
       let selectionWorkspaceTarget=null,issuedSelectionIntent=null;
       if(selectingCatalogIntent){
+        authorizePublicCadastralCatalogRead(input.auth,input.accountId,{workflows:['custom_appraisal'],
+          permissionChecker:(auth,workflow,permission)=>hasApplicationPermission(auth,workflow,permission,scope.organization_id)});
         // The authenticated principal is supplied by the HTTP owner, never body
         // auth. Both current DB authorization and the exact pending V7/prior
         // head precede a provisional immutable command/fresh lease. Every later
@@ -1747,6 +1749,26 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       // retention and all-date one-hop fields. Retained grant metadata is not
       // authority: current policy must allow before any licensed original.
       const decision=await boundedPolicy(authorizeMarketData,client,input.auth,context,purpose,budget);
+      // Never let an early known-ID error become a revoked-license catalog
+      // oracle. This fixed lookup is permitted only AFTER current source policy
+      // at BOTH ends. Choices come from the immutable native command, not body
+      // IDs; existence is structural intent admission, NOT group semantics.
+      const checkSelectionIntentKnownGroups=async()=>{
+        const row=one(await client.query(`/* custom-cohort-v2-selection-intent:known-groups */
+          SELECT NOT EXISTS(SELECT 1 FROM jsonb_array_elements_text(command.included_group_ids) AS ids(id)
+            WHERE NOT EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_recorded_catalog_v2_groups g
+              WHERE g.operation_id=job.operation_id AND g.organization_id=job.organization_id AND g.group_id=id)) AS known
+          FROM app.neighborhood_custom_cohort_capture_jobs job
+          JOIN app.neighborhood_custom_cohort_v2_selection_intents command USING(operation_id,organization_id)
+          WHERE job.operation_id=$1::uuid AND job.claim_token=$2::uuid AND job.attempts=$3::integer
+            AND job.organization_id=$4::uuid AND job.report_file_id=$5::uuid AND job.assignment_file_id=$6::bigint
+            AND job.account_id=$7 AND job.actor_user_id=$8::uuid AND job.status='running'
+            AND job.lease_expires_at>clock_timestamp() AND job.cancellation_requested_at IS NULL`,
+        [claim.operation_id,claim.claim_token,claim.attempts,scope.organization_id,scope.report_file_id,scope.assignment_file_id,
+          scope.account_id,input.auth.userId]));
+        if(row.known!==true)fail('selection_group_unavailable');
+      };
+      if(selectingCatalogIntent)await checkSelectionIntentKnownGroups();
       // The old seven-layer grant cannot authorize the companion projection.
       // This exact additional purpose is derived only from the actual reopened
       // stock/subject/selection, never a caller grant, date, field list or head.
@@ -2292,6 +2314,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       authorizePublicCadastralCatalogRead(input.auth,input.accountId,{workflows:['custom_appraisal'],
         permissionChecker:(auth,workflow,permission)=>hasApplicationPermission(auth,workflow,permission,scope.organization_id)});
       if(!same(await boundedPolicy(authorizeMarketData,client,input.auth,context,purpose,budget),decision)) fail('market_policy_changed');
+      if(selectingCatalogIntent)await checkSelectionIntentKnownGroups();
       if(readingCadPages&&!same(await boundedPolicy(authorizeCadImprovementData,client,input.auth,context,cadPurpose,budget),cadDecision))
         fail('CAD_source_policy_changed');
       if(!same(await jobs.readRequest(claim,jobOptions),requested)||!same(await stockStore.read(),stock)) fail('checkpoint_conflict');

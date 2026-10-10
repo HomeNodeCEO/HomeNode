@@ -30,6 +30,10 @@ subject/claim/cache/head/count/workspace/prior-head checks. Ending command and
 claim equality are checked too. Every failure rolls back BOTH command and
 lease; one unchanged 256-query/32MB/60s executor includes command/native work
 and every authority/original/ending query, with stricter child limits intact.
+Known catalog-ID existence is checked only AFTER current source policy at BOTH
+ends, with a native deferred commit safeguard. Pure ID syntax can be checked
+earlier, but a revoked license cannot probe known versus unknown group IDs
+through a provisional native error. This is still not membership semantics.
 
 Lost real COMMIT acknowledgment may replay only the identical command against
 the same still-live claim and unchanged pending workspace, with all original

@@ -4117,13 +4117,17 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
         /selection_intent_orphan_resume/);await assertWaitingUnchanged();
         for(const [bad,reason] of [[{...selectionIntent,workspace_revision:2},/workspace_changed/],
           [{...selectionIntent,catalog_reference:{...selectionIntent.catalog_reference,content_sha256:'a'.repeat(64)}},/checkpoint_changed/],
-          [{...selectionIntent,included_recorded_group_ids:['recorded-cad:'+'a'.repeat(64)]},/selection_intent_group_conflict/]]){
+          [{...selectionIntent,included_recorded_group_ids:['recorded-cad:'+'a'.repeat(64)]},/selection_group_unavailable/]]){
           await assert.rejects(freshRefsOwner()[intentMethod](refsInput,{selectionIntent:bad}),reason);await assertWaitingUnchanged();
         }
         await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
-        const deniedFrom=refsCalls.length;
-        await assert.rejects(freshRefsOwner()[intentMethod](refsInput,intentOptions),/market_data_access_denied/);
-        assert.ok(!refsCalls.slice(deniedFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));await assertWaitingUnchanged();
+        for(const deniedIntent of [selectionIntent,{...selectionIntent,included_recorded_group_ids:['recorded-cad:'+'a'.repeat(64)]}]){
+          const deniedFrom=refsCalls.length;
+          await assert.rejects(freshRefsOwner()[intentMethod](refsInput,{selectionIntent:deniedIntent}),/market_data_access_denied/);
+          assert.ok(!refsCalls.slice(deniedFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
+          assert.ok(!refsCalls.slice(deniedFrom).some(sql=>sql.includes('selection-intent:known-groups')));
+          await assertWaitingUnchanged();
+        }
         await setFixtureGrant(pool,organization,fixtureGrant(organization));
         for(const [fault,reason] of [['catalog_owner_bytes_ending',/original_account_owner_byte_limit/],
           ['catalog_prior_head_ending',/group_workspace_selection_changed/],['catalog_workspace_revision_ending',/workspace_target_changed/],
@@ -4156,6 +4160,7 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
         assert.deepEqual(resumedJob.checkpoint,waiting.checkpoint);assert.deepEqual(resumedJob.run_after,waiting.run_after);
         assert.equal(intentCalls.filter(sql=>sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,1);
         assert.equal(intentCalls.filter(sql=>sql.includes('custom-cohort-v2-selection-intent:insert')).length,1);
+        assert.equal(intentCalls.filter(sql=>sql.includes('custom-cohort-v2-selection-intent:known-groups')).length,2);
         assert.ok(intentCalls.length-3<=ORIGINAL_OWNER_LIMITS.sql_queries);
         const replayFrom=refsCalls.length,replayed=await freshRefsOwner()[intentMethod](refsInput,intentOptions);
         assert.equal(replayed.replayed,true);assert.equal(replayed.claim.claim_token,resumedJob.claim_token);assert.equal(replayed.claim.attempts,2);
@@ -4194,6 +4199,7 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
           exact_nine_roots_catalog_profile_request_pending_workspace_and_prior_head:true,
           same_whole_owner_budget_current_rights_subject_original_cache_partition_and_ending_fences:true,
           all_ending_refusals_rollback_provisional_command_and_fresh_lease:true,
+          revoked_license_known_and_unknown_IDs_refuse_before_any_known_ID_lookup:true,
           native_orphan_resume_immutable_command_update_delete_truncate_and_free_success_root_change_refused:true,
           real_resume_DML_rollback_lost_real_COMMIT_ack_and_exact_read_only_replay:true,
           fresh_single_claim_retains_attempt2_prior_error_schedule_roots_pins:true,

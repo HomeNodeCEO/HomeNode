@@ -9,7 +9,7 @@ retained-subject/source-purpose/claim/pin/head/cache fence before releasing a
 success continuation in that SAME transaction. No caller supplies a checkpoint,
 phase, progress reference, count, DONE, retry count, token or source callback.
 
-Registered additive20261120 retains a separate successful-continuation sequence
+Registered additive 20261120 retains a separate successful-continuation sequence
 and the actual independently issued native head/root checkpoint. A progress
 reference can yield only once; free/unissued checkpoints, orphan progress without
 job release, changed scope/study, duplicate DONE and attempts regression refuse.
@@ -24,14 +24,28 @@ existing legacy worker is NOT switched to this path: fixed V2 worker dispatch,
 the remaining original-backed catalog/selection/metric/publication stages and
 terminal retention handoff must be implemented and verified before activation.
 
-109 focused tests PASS0fail0skip587.5861ms, including closed admission, fifth-
+109 focused tests passed, 0 failures and 0 skips (587.5861ms), including closed admission, fifth-
 attempt preservation, autocommit refusal before writes, fresh-token/bounded-claim
 mechanics, unchanged old profiles and registered native/deferred guards. Actual
 PostgreSQL assertions are AUTHORED for original/current-ending refusals, same-TX
 orphan refusal, lost-COMMIT pending recovery, stale claim, concurrent single
 consume, duplicate DONE refusal, unchanged heads/root/pins and actual failure
-claims reaching the unchanged fifth-claim terminal. NEW native/full cloud
-execution is PENDING; SQL doubles are not database/source authority. No local
+claims reaching the unchanged fifth-claim terminal. The initial b74a206a native
+execution passed: Foundation 38039343149, native 114176298905, 417 migration /
+8 index / 1 subject / 1 edge / 2 bootstrap tests, 0 failures and 0 skips;
+index 482617.405903ms. The continuation marker executed at 09:02:24Z. Frontend
+114176298846 passed 3959 tests with 0 failures/skips (74535.837703ms); server,
+redteam, Sales, Mobile and GSE also passed. That initial continuation fixture
+covered release after a completed head's fresh empty probe.
+
+The extended actual native fixture now also authors NONEMPTY account progression:
+all ending refusals roll back the new entry, blobs, head, checkpoint and release;
+lost COMMIT leaves exactly one newly appended account and pending continuation;
+the stale claim refuses, a fresh token preserves the attempt, and the next owner
+resumes at the distinct terminal empty probe. A second distinct success advances
+the continuation sequence without spending or refunding failure attempts. New
+exact-head native/full cloud execution is PENDING; the initial receipt does not
+verify these new assertions. SQL doubles are not database/source authority. No local
 heavy suite, source acquisition, selector/report/Apply/production change or
 Indexer operation. QA7 only future Apply. Protected integration, exact-head
 security/native/full suites and ACTUAL included review remain required.

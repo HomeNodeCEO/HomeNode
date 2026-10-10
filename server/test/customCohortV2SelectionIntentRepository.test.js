@@ -79,9 +79,10 @@ function retainedSetup({patch={},auto=false,endAuto=false,missing=false}={}){
   const calls=[];let transactions=0;
   return {calls,owner:repository({async query(sql,values){calls.push({sql,values});
     if(sql.includes(':transaction'))return {rowCount:1,rows:[{transaction_id:String(auto?++transactions:endAuto&&++transactions===3?9:8)}]};
-    if(sql.includes(':retained-read')||sql.includes(':replay-read')||sql.includes(':eligibility-read'))return {rowCount:missing?0:1,rows:missing?[]:[{...structuredClone(command),
+    if(sql.includes(':retained-read')||sql.includes(':replay-read')||sql.includes(':eligibility-read')||sql.includes(':evidence-read'))return {rowCount:missing?0:1,rows:missing?[]:[{...structuredClone(command),
       job_request_sha256:command.request_sha256,job_checkpoint:structuredClone(checkpoint),
-      ...(sql.includes(':replay-read')?{replay_binding:true}:{}),...(sql.includes(':eligibility-read')?{eligibility_binding:true}:{}),...patch}]};
+      ...(sql.includes(':replay-read')?{replay_binding:true}:{}),...(sql.includes(':eligibility-read')?{eligibility_binding:true}:{}),
+      ...(sql.includes(':evidence-read')?{evidence_binding:true}:{}),...patch}]};
     assert.fail(sql);
   }})};
 }
@@ -182,4 +183,42 @@ test('fifth-pass command reader requires actual DONE union/consumed continuation
   await assert.rejects(retainedSetup({auto:true}).owner.readForEligibility(fresh,workerOptions),/caller_transaction_required/);
   const cp={phase:'frozen_selected_union_refs_v2',evidence_refs:[...checkpoint.evidence_refs,ref]};
   await assert.rejects(retainedSetup({endAuto:true,patch:{job_checkpoint:cp}}).owner.readForEligibility(fresh,workerOptions),/caller_transaction_required/);
+});
+
+test('sixth-pass reader requires BOTH DONE native parents and exact eleven/twelve roots without widening old readers',async()=>{
+  const fresh={...currentClaim,claim_token:id(9)};
+  for(const n of [11,12]){
+    const progressed={phase:n===11?'frozen_selected_eligibility_refs_v2':'frozen_selected_evidence_refs_v2',
+      evidence_refs:[...checkpoint.evidence_refs,...Array(n-9).fill(ref)]},
+      {owner,calls}=retainedSetup({patch:{job_checkpoint:progressed}}),result=await owner.readForEvidence(fresh,workerOptions);
+    assert.deepEqual(result.claim,fresh);assert.equal(result.command_id,intent.command_id);
+    const sql=calls.find(c=>c.sql.includes(':evidence-read')).sql;
+    for(const s of ['fifth.union_reference=u.receipt_reference','h.eligibility_reference=fifth.receipt_reference',
+      'neighborhood_selected_eligibility_v2_checkpoint_matches','neighborhood_selected_evidence_v2_checkpoint_matches',
+      "union_body.canonical_utf8::jsonb->'after'->>'done'='true'","fifth_body.canonical_utf8::jsonb->'after'->>'done'='true'",
+      'c.progress_reference=fifth.receipt_reference','c.progress_reference=h.receipt_reference',
+      'c.consumed_claim_token IS NOT NULL','job.claim_token=c.consumed_claim_token','job.attempts>c.issued_attempts',
+      'job.claim_token<>command.resume_claim_token','FOR SHARE OF job,command NOWAIT'])assert.ok(sql.includes(s),s);
+    assert.doesNotMatch(sql,/INSERT INTO|UPDATE app\.|DELETE FROM/);
+    for(const patch of [{evidence_binding:false},{job_checkpoint:checkpoint},
+      {job_checkpoint:{...progressed,evidence_refs:[ref]}},{job_checkpoint:{...progressed,phase:'free_done'}},
+      {job_checkpoint:{...progressed,evidence_refs:[{...ref,content_sha256:'d'.repeat(64)},...progressed.evidence_refs.slice(1)]}},
+      {issued_attempts:6},{workspace_revision:2},{profile_reference:ref}])
+      await assert.rejects(retainedSetup({patch:{job_checkpoint:progressed,...patch}}).owner.readForEvidence(fresh,workerOptions));
+    await assert.rejects(owner.readForEvidence(currentClaim,workerOptions),/claim_lost/);
+    await assert.rejects(owner.readRetained(fresh,workerOptions),/checkpoint_changed/);
+    await assert.rejects(owner.readForReplay(fresh,workerOptions),/checkpoint_changed/);
+    if(n===12)await assert.rejects(owner.readForEligibility(fresh,workerOptions),/checkpoint_changed/);
+  }
+  for(const n of [9,10,13]){
+    const cp={phase:'frozen_selected_evidence_refs_v2',evidence_refs:Array(n).fill(ref)};
+    await assert.rejects(retainedSetup({patch:{job_checkpoint:cp}}).owner.readForEvidence(fresh,workerOptions),/checkpoint_changed/);
+  }
+  for(const raw of [{...workerOptions,ordinal:1},{...workerOptions,readOriginal:()=>{}},
+    new Proxy(workerOptions,{getPrototypeOf(){assert.fail('proxy');}}),{...workerOptions,get actorUserId(){assert.fail('getter');}}]){
+    const {owner,calls}=retainedSetup();await assert.rejects(owner.readForEvidence(fresh,raw));assert.equal(calls.length,0);
+  }
+  await assert.rejects(retainedSetup({auto:true}).owner.readForEvidence(fresh,workerOptions),/caller_transaction_required/);
+  const cp={phase:'frozen_selected_eligibility_refs_v2',evidence_refs:[...checkpoint.evidence_refs,ref,ref]};
+  await assert.rejects(retainedSetup({endAuto:true,patch:{job_checkpoint:cp}}).owner.readForEvidence(fresh,workerOptions),/caller_transaction_required/);
 });

@@ -4,22 +4,54 @@
 // or cached membership. Each whole source package includes outside/unresolved
 // rows; source-less sales retain their own native ID. All required stock and
 // transaction originals share ONE250 cap BEFORE any payload materialization.
-function sql(withCad){
+function sql(withCad,nextEvidence=false){
   const admission=`(SELECT count(*) FROM anchors)<=$5::integer AND (SELECT coalesce(sum(n),0) FROM all_totals)<=$5::integer
       AND (NOT $10::boolean OR EXISTS(SELECT 1 FROM subject_account))`;
   const encodingAdmission=`${admission} AND NOT (SELECT oversize FROM raw_gate)`;
-  return `/* neighborhood-first-selected-${withCad?'combined-evidence':'transaction'}-original-package-v2 */
+  const evidenceJoins=nextEvidence?`
+  JOIN app.neighborhood_custom_cohort_v2_selection_intents command ON command.operation_id=job.operation_id
+    AND command.organization_id=job.organization_id
+  JOIN app.neighborhood_custom_cohort_selected_eligibility_v2_heads fifth ON fifth.operation_id=job.operation_id
+    AND fifth.organization_id=job.organization_id
+  JOIN app.neighborhood_cohort_evidence_blobs fifth_body ON fifth_body.organization_id=fifth.organization_id
+    AND fifth_body.content_sha256=fifth.receipt_reference->>'content_sha256'
+    AND fifth_body.canonical_utf8_bytes::text=fifth.receipt_reference->>'canonical_utf8_bytes' AND fifth_body.canonical_utf8_bytes<=16000
+  LEFT JOIN app.neighborhood_custom_cohort_selected_evidence_v2_heads evidence ON evidence.operation_id=job.operation_id
+    AND evidence.organization_id=job.organization_id
+  LEFT JOIN app.neighborhood_cohort_evidence_blobs evidence_body ON evidence_body.organization_id=evidence.organization_id
+    AND evidence_body.content_sha256=evidence.receipt_reference->>'content_sha256'
+    AND evidence_body.canonical_utf8_bytes::text=evidence.receipt_reference->>'canonical_utf8_bytes' AND evidence_body.canonical_utf8_bytes<=16000`:'';
+  const evidenceAdmission=nextEvidence?`
+    AND job.status='running' AND job.claim_token IS NOT NULL AND job.lease_expires_at>clock_timestamp()
+    AND job.cancellation_requested_at IS NULL AND job.context_sha256 IS NULL
+    AND head.command_id=command.command_id AND fifth.command_id=command.command_id
+    AND fifth.union_reference=head.receipt_reference
+    AND body.canonical_utf8::jsonb->>'sequence'=head.sequence::text
+    AND fifth_body.canonical_utf8::jsonb->>'format'='cohort_selected_recorded_eligibility_receipt_v2'
+    AND fifth_body.canonical_utf8::jsonb->>'sequence'=fifth.sequence::text
+    AND fifth_body.canonical_utf8::jsonb->'after'->>'done'='true'
+    AND fifth_body.canonical_utf8::jsonb->'selected_stock_count'=body.canonical_utf8::jsonb->'after_selected_count'
+    AND fifth_body.canonical_utf8::jsonb->'after'->'selected_ordinal'=body.canonical_utf8::jsonb->'after_selected_count'
+    AND ((evidence.operation_id IS NULL
+        AND app.neighborhood_selected_eligibility_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint))
+      OR (evidence.command_id=command.command_id AND evidence.union_reference=head.receipt_reference
+        AND evidence.eligibility_reference=fifth.receipt_reference
+        AND app.neighborhood_selected_evidence_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)
+        AND evidence_body.canonical_utf8::jsonb->>'format'='cohort_selected_evidence_receipt_v2'
+        AND evidence_body.canonical_utf8::jsonb->>'sequence'=evidence.sequence::text
+        AND evidence_body.canonical_utf8::jsonb->'after'->>'done'='false'))`:'';
+  return `/* neighborhood-${nextEvidence?'next-selected-combined-evidence':`first-selected-${withCad?'combined-evidence':'transaction'}`}-original-package-v2 */
 WITH next_account AS MATERIALIZED (
   SELECT a.account_id,a.parcel_count FROM app.neighborhood_custom_cohort_capture_jobs job
   JOIN app.neighborhood_custom_cohort_selected_union_v2_heads head USING(operation_id,organization_id)
   JOIN app.neighborhood_cohort_evidence_blobs body ON body.organization_id=head.organization_id
     AND body.content_sha256=head.receipt_reference->>'content_sha256'
-    AND body.canonical_utf8_bytes::text=head.receipt_reference->>'canonical_utf8_bytes' AND body.canonical_utf8_bytes<=16000
+    AND body.canonical_utf8_bytes::text=head.receipt_reference->>'canonical_utf8_bytes' AND body.canonical_utf8_bytes<=16000${evidenceJoins}
   JOIN app.neighborhood_custom_cohort_selected_union_v2_rows r
     ON r.operation_id=job.operation_id AND r.organization_id=job.organization_id
   JOIN app.neighborhood_custom_cohort_stock_accounts a ON a.operation_id=r.operation_id AND a.account_id=r.account_id
-  WHERE job.operation_id=$1::uuid AND r.ordinal=1 AND $4::text=''
-    AND app.neighborhood_selected_union_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)
+  WHERE job.operation_id=$1::uuid AND r.ordinal=${nextEvidence?'coalesce(evidence.sequence,0)+1':'1'} AND $4::text=''
+    ${nextEvidence?evidenceAdmission.trim(): 'AND app.neighborhood_selected_union_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)'}
     AND body.canonical_utf8::jsonb->>'format'='cohort_selected_union_receipt_v2'
     AND body.canonical_utf8::jsonb->'after'->>'done'='true'
 ), subject_account AS MATERIALIZED (
@@ -161,3 +193,9 @@ export const NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL=sql
 // associations join the SAME original admission before any payload read. The
 // actual owner must additionally authorize/fence the separate CAD purpose.
 export const NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL=sql(true);
+// Sixth-pass candidate plan ONLY. Not mounted or used by an owner yet: the new
+// exact native head/checkpoint migration, separate current-authorized admission,
+// original reconciliation, atomic head/receipt/continuation and cloud-native
+// coverage must be implemented before any runtime use or acceptance claim.
+// Existing first-selected SQL remains byte-for-byte unchanged.
+export const NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL=sql(true,true);

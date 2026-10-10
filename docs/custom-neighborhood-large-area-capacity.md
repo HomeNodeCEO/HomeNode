@@ -1,5 +1,149 @@
 # Complete larger-area Custom neighborhood studies
 
+## Whole native transaction association packages (2026-10-09, not activated)
+
+`readSharedFrozenCaptureJobTransactionPackagesReferencesV2` is a separate dormant
+internal consumer. It requires the actual independently issued DONE V2 graph,
+geography and identity prerequisites and reloads current DB actor/assignment/
+draft/subject/original source rights, live request/claim/pin/stock and issued
+heads at both ends. The only request extension is a closed package kind/cursor;
+no caller rows, counts, completion claim, profile, date, selection or grant is
+accepted. Reading cannot finish a prerequisite, prepare a cache miss, advance a
+checkpoint or issue a head.
+
+Fixed indexed SQL takes one next original-stock source seed in exact native
+BIGINT order and independently counts native source, sale and link rows up to
+251 per kind before materializing a package. Every admitted count is exact;
+a cap+1 sentinel rejects the whole oversized package, never claiming an exact
+over-limit population count or scanning all its matching rows. A separate C-text keyset reads each
+source-less legacy sale whose exact original account belongs to stock. Each
+count must equal all independently reconciled delivered rows. A package is never
+split into a silently accepted prefix. The installed generation/profile/kind/
+source and native-key indexes are reused without a migration or original payload
+read. Outside/unresolved links remain present; outside accounts do not become
+new source seeds or CAD lookup accounts. The last delivered package still needs
+a fresh empty probe, and a terminal kind probe does not prove that earlier
+packages were consumed.
+
+Every neutral original is independently reconciled and projected under the
+owner's actual retained effective year and inclusive closing period before link
+disposition. All older/outside/missing/invalid/unsupported observations remain.
+Distinct native sale IDs stay distinct; multiple native sales for one source
+are explicitly unresolved, never collapsed, summed or price-allocated. Native
+link positions must be unique. A literal native resolved flag is not verified
+provider parcel membership, economic equivalence or sale eligibility. No
+normalized/reported/date/currency/GLA fallback or housing dictionary is invented.
+
+One step permits at most 250 complete-package rows, 66,752 bytes per SQL envelope,
+2.1 MB each of packet and package projection, 32 MB of all query results, 128
+queries including every nested stock/seed fence, 60 seconds and five seconds
+per query. An over-limit package refuses as a whole; there is no large-package
+segmentation or hidden truncation in this version. Missing/unfinished/changed
+cache metadata refuses without repair. This version establishes complete native
+row coverage for **one** package only, not provider completeness or complete
+population traversal/statistics.
+
+121 expanded focused owner/stock/shared-typing/temporal/package tests passed
+without failures/skips (1588.6794ms),
+including exact >2^53 identities/decimals, multiple native sales, old and
+source-less sales, outside/unresolved members, 250 and one-over bounds, missing
+rows, changed counts, foreign associations, duplicate positions, hostile inputs,
+unanchored/contradictory membership, cancellation and ending-cache refusal.
+The authored small native actual-owner fixture traverses all three seeded
+packages and one source-less sale, independently matches all source/sale/link
+identities to the issued graph, and exercises initial/ending authority,
+partial/unissued/corrupt prerequisites, cache refusal and lost-COMMIT reopen.
+Historical pre-integration `0e7afb4e98dd2d6cb9f8d3e161e634a15b63b25c`
+actually passed foundation `37944800016` / native `113868187062`: 417 migration,
+8 index, 1 subject, 1 edge and 2 bootstrap tests, zero failures/skips (index
+315010.257989ms). The actual whole-package owner marker traversed 3 source
+packages and 1 source-less sale, reconciling 3 source / 3 sale / 4 link originals
+to the issued one-hop graph, with ending current-authority/cache refusal,
+lost-COMMIT reopen and zero original payload reads, typed copies or checkpoint/
+head writes. Server `113868187314` passed 10,560 tests, zero failed, 62 separately
+DB-gated skips; frontend `113868186797` passed 3,959 without failures/skips,
+plus typecheck/lint/source-quality/build. All five stacked checks succeeded.
+Those historical small native receipts are not licensed/live acceptance or
+fresh protected-parent integrated-head readiness.
+
+After explicit human resume, protected #1233 merged normally as
+`d3f8ceeac94f0b8999d5535491d4e79aa239ca33` at 2026-10-10T04:16:49Z. Its exact
+`a30cd990` passed all 14 checks; native `113913035317` actually executed
+417 migration / 8 index / 1 subject / 1 edge / 2 bootstrap tests without
+failures/skips (index 361550.635506ms), including current-authorized retained
+temporal projection and ending refusal without copies or writes. The actual
+included review through `f78185eb` and resolved minor documentation finding
+were rechecked; `a30cd990` changed only documentation/comments. Current main,
+strict ruleset 21594102 (no bypass), exact checks and resolved threads were
+revalidated immediately before expected-head merge. Newer optional refactoring
+notes were evaluated separately; no new review or performance acceptance was
+claimed. No required check or included-review allowance was bypassed.
+
+This package branch now integrates that actual protected parent. The sole merge
+conflict was historical receipt wording in this document; the protected receipts
+are retained. Main was retargeted before synchronize push. Fresh integrated
+exact-head native/full-suite/security checks and an actual included review remain
+required before normal protected merge. The integrated focused owner/stock/shared
+typing/temporal/package suite passed 111 tests, zero failed/skipped (13984.6933ms);
+source/native-fixture syntax and diff checks passed. This local check is not
+fresh native/full-suite or licensed/live acceptance.
+
+The actual integrated included review completed at 2026-10-10T04:25:52Z
+through `b3fa3bca`, which passed all 14 cloud checks. It found one valid
+pre-admission count scan issue. The correction bounds each independent count
+at cap+1; payloads still require the complete exact sum to fit 250. Focused
+regressions reject sentinel counts without delivering a prefix. A separate
+corrected focused run passed 111 tests, zero failures/skips (1293.2042ms),
+with source/helper/native-fixture syntax and diff checks passing. A separate
+rolled-back TEMP DATA native SQL fixture covers 250, 251, 1,000 sales plus
+1,000 links, actual EXPLAIN counter limits, zero oversized payload members,
+fresh empty probes and the legacy plan. This plan fixture is not an issued
+owner, licensed acquisition or production-speed receipt; the actual issued
+owner fixture remains independently required. Corrected exact head
+`b70f91211f2a7418b2ede6629c3a8b391948b1d4` passed all 14 cloud checks,
+including native, frontend, server and required security checks. These are
+completed corrected-code receipts, not a pending run or licensed/live acceptance.
+
+The first corrected-head native run (`b1e1bc47`, job `114132708094`) refused
+the new plan regression because it inspected the first child, a one-row
+chosen-source InitPlan, instead of the main counter input. Both Limit nodes
+had already returned exactly 251, and oversized packets had zero payloads.
+The plan inspector now identifies the `Outer` input explicitly, with focused
+synthetic plan tests for either InitPlan order, oversized input, payload leakage,
+missing counters and absent/ambiguous inputs. Native SQL coverage also includes
+mixed-kind exact-250 and 251 sums. The prior native run is a failure (7 of 8
+index tests passed), not merge readiness. The fresh corrected `b70f9121` native
+job `114134920428` actually passed 417 migration, 8 index, 1 subject, 1 edge and
+2 bootstrap tests, zero failures/skips (index 442273.258508ms). Its new TEMP
+plan marker verified main counter inputs of 251, mixed-kind 250/251 sums and
+zero oversized payload delivery. Separate actual issued-owner markers verified
+complete native packages and ending guards, not merely the TEMP DATA plan.
+Frontend `114134920586` passed 3959 tests, zero failures/skips (96628.544012ms),
+typecheck/lint/source quality/build; server `114134920530` succeeded. The actual issued owner fixture
+did execute successfully in that failed run, with its no-copy/no-write and
+ending-authority guards intact. No production behavior changed for this
+test-inspection correction. The expanded focused suite passed 114 tests with
+zero failures/skips (1187.7446ms); this is not fresh native execution.
+
+The ordinary included correction review (`19f79c13-b611-45db-b91e-0761996cfedf`)
+covered `b3fa3bca` through `b70f9121`, submitted at 05:36:37Z on 2026-10-10;
+invocation `6094231751` finished at 05:36:44Z. It acknowledged the count fix and
+raised only stale check-status wording (finding `4236575529`), corrected here.
+No implementation, SQL, profile, assertion or authorization behavior changes in
+this documentation-only disposition. No new review is claimed for these prose
+edits. Fresh exact documentation-head required checks remain necessary, followed
+by current head/base/rules/checks/review-thread revalidation before normal
+expected-head protected merge. Next ordinary included review is conservatively
+not before 06:41Z plus a repository allowance preflight; no paid/forced retry.
+
+No production grant/deploy/activation, worker,
+HTTP default, accepted report, genuine Hardy choice or Apply changes. Provider/
+amenity meaning and economic transaction resolution, server-owned selection,
+exact complete-population selected-union medians/COD/quarters, coherent
+publication, durable workers/terminal pin transfer-retirement and licensed
+>50k/5-mile/10-mile/city/retrospective/live acceptance remain mandatory. QA
+assignment 7 remains the sole Apply-test target.
+
 ## Retained transaction temporal projection (2026-10-09, not activated)
 
 `readSharedFrozenCaptureJobTransactionTemporalReferencesV2` is a separate dormant

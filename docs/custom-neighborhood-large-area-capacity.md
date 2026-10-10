@@ -1,5 +1,77 @@
 # Complete larger-area Custom neighborhood studies
 
+## Exact calendar-quarter numerical checks (2026-10-09, not activated)
+
+`checkExactCalendarQuarterAreasV1` is a separate dormant mathematical checker,
+not a replacement for the legacy Number/dense 3,000-account area heuristic or
+an actual large-area selected-union owner. It requires one actual in-process
+exact-decimal calculation receipt for every calendar quarter intersecting the
+retained inclusive period. First/last intervals are clipped exactly; empty
+quarters cannot disappear or be masked by a strong total elsewhere. The period
+must end no later than the retained effective date, with at most 100 quarters
+and the existing 250,000 total numerical-member ceiling.
+
+The checker preserves the numerical 50-observed-row and 5%-median-area review
+targets. All area arithmetic uses BigInt, including exact 13/14-place finite
+medians, absolute difference and cross-multiplied tolerance. Exactly 5% passes;
+any amount above it fails without an epsilon or display-rounding shortcut.
+Deviation percent is a reduced exact rational. A missing/invalid/conflicting/
+unsupported subject stays unavailable after all quarter receipts are validated;
+zero or invented subject units are refused. Empty/unobserved quarters never pass.
+
+The sole supported area basis is current CAD **reported** residential area in
+`reported_sqft`, explicitly NOT verified at-sale GLA. Local numerical receipt
+identity rejects copied/serialized/forged result envelopes, but an arbitrary
+DATA producer can calculate a valid numerical receipt: it does NOT establish
+source rights, membership, unit homogeneity, economic sale eligibility or a
+nonduplicated transaction partition. The actual current-authorized owner must
+verify the complete selected set union, eligible transaction-to-quarter
+assignment, original source lineage, same area basis and all five counts before
+this checker is used. Neither the numerical row target nor this receipt is a
+market-reliability, sale-completion or licensed-acquisition assertion. No
+coherent publication or automatic selection is wired by this change.
+
+31 combined focused kernel/run/quarter and unchanged legacy area tests passed
+with zero failures and one deliberately cloud-only large-run test skipped
+locally (703.5476ms). New cases
+cover exact 5% boundaries and one-trillionth beyond, 49 versus 50 observed rows,
+all five denominator states, empty cross-year/partial quarters, unsupported
+subjects, >2^53 fractional even medians and rational deviation, hostile DATA,
+nested detachment, cancellation/ending deadlines and exact 100-quarter/250,000
+member bounds with one-over refusal. Syntax/diff checks passed; new-head full
+cloud execution is pending. No local database/full-server/frontend suite ran.
+
+Independently, actual integrated #1233 `f78185eb` passed all 14 exact checks:
+foundation 37949774072 / native 113885218711 executed all 417 migration / 8 index /
+1 subject / 1 edge / 2 bootstrap tests, zero failures/skips; index 441527.481999 ms.
+The actual retained temporal owner marker executed 3 source / 3 sale / 4 link rows,
+retained old/outside evidence and independent dates, refused partial/unissued/
+corrupt prerequisites and ending current authorization/cache changes, recovered
+lost COMMIT, and made zero original reads/typed copies/checkpoint/head writes.
+Actual server: 10550 pass, 0 fail, 62 separately DB-gated skips, 256609.417425 ms;
+frontend: 3959 pass, 0 fail, 0 skip, 59801.597364 ms. Included review remains required, not before
+16:08Z after prior actual completion; automatic skipped reviews are not reviews.
+
+Exact #1236 `3e9bdb4a` also passed all five initial stacked checks. Actual
+foundation 37949414839 / native 113883990588 repeated all 417 / 8 / 1 / 1 / 2 tests without
+failures/skips; index 367013.905351 ms, actual issued-current-authorized whole
+package marker: 3 source packages (1 legacy) / 3 sources / 3 sales / 4 links /
+independent counts / fresh-empty probes / prerequisite-current-rights-cache refusal /
+lost COMMIT, and zero original reads/copies/durable writes. Actual server: 10579 pass,
+0 fail, 62 DB-gated skips, 166358.938711 ms; includes the new cloud-only 60001/250000
+decimal-run test actually executed, not skipped; frontend: 3959 pass, 0 fail,
+0 skip, 59519.539539 ms. Main-only security,
+real protected-parent integration and included review are still outstanding.
+Synthetic large numerical tests and small native protocols are not licensed
+population acquisition, selected-union owner or live production SLA acceptance.
+
+This work is stacked on historical #1236 `3e9bdb4a`, not a protected coherent
+release. No route/default/schema, deployment/source grant, worker/pin, report,
+genuine Hardy choice or Apply mutation. QA assignment 7 only for future Apply tests.
+Actual owner integration/provider-amenity/economic resolution/server selection/
+coherent publication/durable workers-terminal pin retirement/licensed larger
+areas and retrospective/live Hardy acceptance remain incomplete.
+
 ## Exact-decimal original-reconciled derived runs (2026-10-09, not activated)
 
 `createExactDecimalObservationRunStoreV1` is a distinct dormant DATA run store,

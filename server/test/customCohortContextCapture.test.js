@@ -314,7 +314,8 @@ test(`${method} admits only the live claim and bounded operation, not caller con
 });
 
 for(const method of ['readSharedFrozenCaptureJobStockAccountPackagesReferencesV2','readOriginalFrozenCaptureJobAccountHousingReferencesV2',
-  'readOriginalFrozenCaptureJobAccountRecordedGroupReferencesV2','readOriginalFrozenCaptureJobRecordedPartitionAccountReferencesV2'])
+  'readOriginalFrozenCaptureJobAccountRecordedGroupReferencesV2','readOriginalFrozenCaptureJobRecordedPartitionAccountReferencesV2',
+  'readOriginalFrozenCaptureJobRecordedCatalogAccountReferencesV2'])
 test(`${method} admits only a cursor, never caller account/value/date/count/housing authority`,async()=>{
   const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
     claim={operation_id:base.operationId,claim_token:'70000000-0000-4000-8000-000000000002',attempts:1};
@@ -322,13 +323,17 @@ test(`${method} admits only a cursor, never caller account/value/date/count/hous
   const service=createCustomCohortContextCapture({pool:{connect(){assert.fail('must not connect');}},sourceMode:'combined-witness2-v1',
     authorizeMarketData:()=>assert.fail('must not authorize')});
   await assert.rejects(setup()[method](base,opts),/frozen_source_profile_unsupported/);
-  for(const key of ['effective_date','profile','housingProfile','housingInterpretation','county','category','sourceGrant','originals','count','selectedAccounts','issuedHead','readOriginal','stockOriginalCellPage'])
+  for(const key of ['effective_date','profile','housingProfile','housingInterpretation','county','category','sourceGrant','originals','count','selectedAccounts','issuedHead','readOriginal','stockOriginalCellPage',
+    'catalogReference','catalogCounts','includedRecordedGroupIds','originalCellAtOrdinal','done','phase'])
     await assert.rejects(service[method](base,{...opts,[key]:()=>assert.fail('caller callback')}),/invalid_options/);
   for(const page of [undefined,{cursor:' A'},{cursor:'',account_id:'A'},{cursor:'',rowLimit:1},new Proxy({cursor:''},{}),
     {get cursor(){assert.fail('getter');}}])
     await assert.rejects(service[method](base,{...opts,stockAccountPackagePage:page}),/invalid_/);
   await assert.rejects(service[method](base,{captureJobClaim:claim,get stockAccountPackagePage(){assert.fail('getter');}}),/invalid_options/);
   await assert.rejects(service[method]({...base,operationId:claim.claim_token},opts),/operation_conflict/);
+  const controller=new AbortController();controller.abort();
+  await assert.rejects(service[method](base,{...opts,signal:controller.signal}),/cancelled/);
+  await assert.rejects(service[method](base,{...opts,deadline:0}),/deadline_exceeded/);
 });
 
 test('recorded-group selection refreshes current roles before retained facts or head reads/writes', async () => {

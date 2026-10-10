@@ -1,5 +1,79 @@
 # Complete larger-area Custom neighborhood studies
 
+## Explicit NEW-study intent and native resume (2026-10-10, not activated)
+
+The actual bounded original database owner has a new, separate internal command
+stage. Its caller must supply an authenticated principal separately from body
+fields and an explicit command ID, exact issued catalog reference, expected
+pending-workspace revision and bounded recorded-group IDs. Explicit empty is
+preserved; IDs are neither inferred from the old active choice nor selected by
+a worker claim. No caller roster, claim, profile, head, source callback, lease,
+schedule or retry reset is admitted. There is no HTTP/default/worker activation.
+
+Current database actor, writable private draft, assignment/subject target and
+the exact pending V7 workspace/prior active head are checked first. In that
+SAME transaction a provisional immutable command binds the actual job request,
+all nine issued roots, actual recorded-group profile, entire tiny prior V7
+checkpoint/revision and explicit IDs. Native guards require the actual catalog
+DONE receipt and known distinct catalog IDs (2048 recorded plus unassigned),
+but those structural checks are NOT catalog/membership semantic authority.
+The one command per operation installs one fresh native 120-second claim while
+preserving attempts, prior error, schedule, request, roots and generation pins.
+An orphan command cannot commit; update/delete/truncate, free success, root
+change, re-wait and cancelled-job retry escape are refused.
+
+The actual original owner then reopens issued graph/geography/identity/stock/
+traversal/partition/catalog, checks current source policy, performs a fresh
+server-chosen terminal whole-original/ENTIRE-neutral-cache/ENTIRE-partition
+empty probe, and repeats ALL current rights/actor/assignment/private draft/
+subject/claim/cache/head/count/workspace/prior-head checks. Ending command and
+claim equality are checked too. Every failure rolls back BOTH command and
+lease; one unchanged 256-query/32MB/60s executor includes command/native work
+and every authority/original/ending query, with stricter child limits intact.
+Known catalog-ID existence is checked only AFTER current source policy at BOTH
+ends, with a native deferred commit safeguard. Pure ID syntax can be checked
+earlier, but a revoked license cannot probe known versus unknown group IDs
+through a provisional native error. This is still not membership semantics.
+
+Lost real COMMIT acknowledgment may replay only the identical command against
+the same still-live claim and unchanged pending workspace, with all original
+and current ending fences again. Replay is read-only: it never extends the
+lease, erases attempts/errors or changes choices. An expired/replaced claim,
+changed command/IDs/catalog/workspace refuses. Later bounded worker execution
+must reopen the retained intent and current authority; it is not implemented
+or activated by this slice.
+
+130 focused tests pass, zero failures/skips (670.525ms); source/native-fixture
+syntax and diff checks pass. SQL doubles are storage mechanics only. A third
+independently built actual CI graph is AUTHORED to test orphan COMMIT refusal,
+native known-ID checks, provisional command/lease rollback under every ending
+fault, lost real COMMIT acknowledgment, exact read-only replay, immutable
+commands, native success/root/re-wait refusal and retained attempt2/prior error/
+schedule/roots/pins/workspace/history/reports. New-head native/full execution is
+PENDING. No heavy local database/server/frontend suite was run.
+
+This command establishes explicit intent ONLY. Complete original-reconciled
+catalog semantic replay, exact distinct COMPLETE selected union/eligibility
+and metric ordinals, medians/COD/calendar-quarter statistics, coherent
+publication, finite whole-run dispatcher, terminal pin transfer/retirement,
+licensed >50k/5-mile/10-mile/city/retrospective and live Hardy saved-map reload
+acceptance all remain. No original/source or job-typed copies, full-population
+arrays, source grants, accepted-report changes, genuine Hardy-choice changes
+or Apply. Protected parents integrate in order; retarget main BEFORE sync,
+then fresh required integrated-head security/native/full checks and actual
+included review, without paid/forced/early/quota/check bypass.
+
+Parent waiting exact `86d5c5bc` is independently cloud-verified: Foundation
+38050249985 all four jobs, Sales38050249953/Mobile38050249954/GSE38050249965
+succeeded. Native114207768169 passed 417 migration / 9 index / 1 subject /
+1 edge / 2 bootstrap tests with zero failures/skips; the 12:10:07Z waiting
+marker verifies actual release rollback/lost real COMMIT acknowledgment,
+current both-end fences, stale-claim/both-claimer exclusion and retained native
+roots/history/pins/workspace/reports. Frontend114207768294 passed3959 tests,
+zero failures/skips plus type/lint/source/build. Small parent protocol evidence
+is not new-head, protected-integration, licensed, speed or live acceptance.
+Same heartbeat remains ACTIVE; the roadmap is incomplete.
+
 ## Issued-catalog selection waiting boundary (2026-10-10, not activated)
 
 The actual bounded original owner now has a separate internal waiting stage.

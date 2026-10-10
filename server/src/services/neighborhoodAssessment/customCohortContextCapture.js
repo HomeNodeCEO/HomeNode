@@ -180,6 +180,8 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingStockAccountPackages: true, allowedPhases: ['frozen_identity_refs_v2'] },
   original_account_housing_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingStockAccountPackages: true, resolvingStockAccountHousing: true, allowedPhases: ['frozen_identity_refs_v2'] },
+  original_account_recorded_group_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    readingStockAccountPackages: true, resolvingStockAccountRecordedGroup: true, allowedPhases: ['frozen_identity_refs_v2'] },
   original_stock_traversal_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     traversingStock: true, allowedPhases: ['frozen_identity_refs_v2', 'frozen_stock_traversal_refs_v2'] },
 });
@@ -1615,7 +1617,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,
-      resolvingStockAccountHousing=false,traversingStock=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
+      resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     if(referencesV2){
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
       const descriptors=Object.getOwnPropertyDescriptors(options),keys=Reflect.ownKeys(descriptors);
@@ -1997,6 +1999,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
         const originals=createNeighborhoodSharedStockOriginalCellsV2(client,stockOptions,graph,context.effective_date);
         stockMetricResult=await (readingStockOriginalCells?originals.page(originalCellInput)
+          :resolvingStockAccountRecordedGroup?originals.recordedGroupAccountPackage(stockAccountInput)
           :resolvingStockAccountHousing?originals.housingAccountPackage(stockAccountInput):originals.accountPackage(stockAccountInput));
         // resumeCustomCohortSubjectCheckpoint already matched the original
         // immutable intent's housing marker, never a caller/current default
@@ -2318,6 +2321,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * report fact, source grant, new phase or large-area acceptance. */
     readOriginalFrozenCaptureJobAccountHousingReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_account_housing_refs_v2'),
+    /** Resolve exact original county/subdivision labels, including512-byte
+     * text unavailable in128-byte neutral markers, AFTER every whole-account
+     * original/cache replay and both-end issued V2/current-rights fences.
+     * No complete catalog, selected union, new phase or authority is issued. */
+    readOriginalFrozenCaptureJobAccountRecordedGroupReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'original_account_recorded_group_refs_v2'),
     /** Commit one server-owned original traversal step with independent issued
      * CAS head and retention-root checkpoint. No caller continuation, selected
      * union/statistic, public route, scheduler activation or report update. */

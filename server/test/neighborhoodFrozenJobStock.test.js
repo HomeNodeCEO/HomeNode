@@ -1400,3 +1400,45 @@ test('housing cannot bypass complete original replay, whole bounds, ending fence
   for(const value of [new Proxy([],{}),[,],{rows:[]},[{get kind(){assert.fail('getter');}}]])
     assert.throws(()=>resolveNeighborhoodOriginalAccountHousingV2(value,()=>{}),/invalid_input/);
 });
+
+test('original recorded-group reader resolves512-byte labels only after whole original/ENTIRE cache replay without changing legacy bytes',async()=>{
+  const f=await stockOriginalCellFixture(),long='Synthetic '+ 'x'.repeat(502);
+  f.rows.accounts=[stockOriginalCell('accounts','STOCK-A',{subdivision:long})];
+  f.rows.parcels=f.rows.parcels.map((r,i)=>stockOriginalCell('parcels',String(i+1),{subdivision_name:long}));
+  const p=await f.pages().recordedGroupAccountPackage({cursor:''});
+  assert.equal(p.status,'reconciled_stock_account_recorded_group');assert.equal(p.recorded_group.state,'assigned');
+  assert.equal(p.recorded_group.candidate_groups[0].normalized_label,long.toLowerCase());
+  assert.equal(p.recorded_group.parcel_source_row_count,'2');assert.equal(p.geographic_parcel_count,'1');
+  assert.equal(p.rows[0].typed.markers.subdivision.state,'oversize');assert.equal(p.rows[0].typed.markers.subdivision.value_text,null);
+  assert.equal(p.rows[0].original_recorded_labels.subdivision.raw,long,'hash/128byte marker is not substituted for the512byte original');
+  const legacy=await f.pages().accountPackage({cursor:''});
+  assert.equal(Object.hasOwn(legacy,'recorded_group'),false);assert.ok(legacy.rows.every(r=>!Object.hasOwn(r,'original_recorded_labels')));
+  assert.deepEqual(p.rows.map(({original_recorded_labels,...r})=>r),legacy.rows);
+  assert.equal(p.selected_union,'not_established');assert.equal(p.report_update,'none');
+  f.rows.parcels[1]=stockOriginalCell('parcels','2',{subdivision_name:'Other outside name'});
+  assert.equal((await f.pages().recordedGroupAccountPackage({cursor:''})).recorded_group.state,'unassigned');
+  f.rows.parcels[1]=stockOriginalCell('parcels','2',{subdivision_name:'x'.repeat(513)});
+  await assert.rejects(f.pages().recordedGroupAccountPackage({cursor:''}),/recorded_label_text_limit/);
+});
+
+test('recorded-group reader cannot bypass unchanged-hash/count original/cache forgeries, whole bounds, empty probes or the single-use budget',async()=>{
+  for(const change of [r=>r.typed.markers.subdivision_name.value_text='forged',r=>r.original_text=r.original_text.replace('Literal only','Forged value'),
+    r=>r.original_payload_sha256='e'.repeat(64),r=>r.typed=null]){
+    const f=await stockOriginalCellFixture();f.rows.parcels[0]=structuredClone(f.rows.parcels[0]);change(f.rows.parcels[0]);
+    await assert.rejects(f.pages().recordedGroupAccountPackage({cursor:''}),/original_mismatch/);
+  }
+  for(const change of [{packet_oversize:true},{invalid_count:1},{original_counts:{parcels:251,accounts:0},page_count:0,page_json:'[]'}]){
+    const f=await stockOriginalCellFixture(({text,rows})=>text===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL?
+      result({account_id:'STOCK-A',geographic_parcel_count:'1',original_counts:{parcels:2,accounts:1},page_count:3,invalid_count:0,
+        packet_oversize:false,page_json:JSON.stringify([...rows.accounts,...rows.parcels]),...change}):null);
+    await assert.rejects(f.pages().recordedGroupAccountPackage({cursor:''}),/invalid_result|account_package_(?:byte|row)_limit/);
+  }
+  let headers=0;const ending=await stockOriginalCellFixture(({text,sharedHeader})=>text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read&&++headers===2?
+    result({...sharedHeader,status:'building'}):null);
+  await assert.rejects(ending.pages().recordedGroupAccountPackage({cursor:''}),/cache_unavailable/);
+  const f=await stockOriginalCellFixture(),reader=f.pages();await reader.recordedGroupAccountPackage({cursor:''});
+  for(const method of ['accountPackage','housingAccountPackage','recordedGroupAccountPackage'])await assert.rejects(reader[method]({cursor:''}),/single_use/);
+  const old=f.pages();await old.accountPackage({cursor:''});await assert.rejects(old.recordedGroupAccountPackage({cursor:''}),/single_use/);
+  const end=await f.pages().recordedGroupAccountPackage({cursor:'STOCK-A'});
+  assert.equal(end.recorded_group,null);assert.equal(end.end_of_accounts,true);assert.equal(end.next_cursor,'STOCK-A');assert.deepEqual(end.rows,[]);
+});

@@ -44,7 +44,7 @@ import { projectNeighborhoodTransactionTemporalV1, prepareNeighborhoodTransactio
 import { createNeighborhoodSharedTransactionPackagesV1, prepareNeighborhoodTransactionPackagePageV1 }
   from './neighborhoodSharedTransactionPackagesV1.js';
 import { createNeighborhoodSharedStockOriginalCellsV2, prepareNeighborhoodStockOriginalCellPageV2,
-  prepareNeighborhoodStockAccountPackagePageV2 }
+  prepareNeighborhoodStockAccountPackagePageV2, NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_LIMITS }
   from './neighborhoodSharedStockOriginalCellsV2.js';
 import { createCohortOriginalSourceChainV1Store, COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS }
   from './cohortOriginalSourceChainV1.js';
@@ -202,6 +202,9 @@ const FROZEN_SOURCE_STAGES = freeze({
     catalogingRecordedGroups: true, allowedPhases: ['frozen_recorded_partition_refs_v2', 'frozen_recorded_catalog_refs_v2'] },
   original_recorded_catalog_continue_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, yieldingV2Progress: true, allowedPhases: ['frozen_recorded_partition_refs_v2', 'frozen_recorded_catalog_refs_v2'] },
+  original_recorded_catalog_account_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    readingStockAccountPackages: true, readingRecordedPartition: true, readingRecordedCatalog: true,
+    allowedPhases: ['frozen_recorded_catalog_refs_v2'] },
 });
 function fail(reason, detail, captureCounts) {
   const error = Object.assign(new Error(`custom_cohort_capture_${reason}`), {
@@ -1636,7 +1639,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,
       resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,partitioningRecordedGroups=false,
-      readingRecordedPartition=false,yieldingV2Progress=false,catalogingRecordedGroups=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
+      readingRecordedPartition=false,readingRecordedCatalog=false,yieldingV2Progress=false,catalogingRecordedGroups=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     if(referencesV2){
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
       const descriptors=Object.getOwnPropertyDescriptors(options),keys=Reflect.ownKeys(descriptors);
@@ -2108,7 +2111,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           if(issued.sequence!==partitionAnchor.sequence)fail('checkpoint_conflict');}
         if((readingRecordedPartition||catalogingRecordedGroups)&&issued?.after.done!==true)fail('unfinished_recorded_partition');
         let catalogIssued=null,catalogExpected=null;
-        if(catalogingRecordedGroups){
+        if(catalogingRecordedGroups||readingRecordedCatalog){
           catalogExpected={...expected,partition_reference:partitionAnchor.receipt_reference};
           catalogStore=createCustomCohortRecordedCatalogV2Repository({client,claim,scope,actorUserId:input.auth.userId,
             source_reference:reference,root_reference:root,graph_reference:verificationReference,geographic_reference:stockVerificationReference,
@@ -2122,6 +2125,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             try{catalogIssued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
             catalogIssued=prepareCohortRecordedCatalogReceiptV2(catalogIssued,catalogExpected);
             if(catalogIssued.sequence!==catalogAnchor.sequence)fail('checkpoint_conflict');}
+          if(readingRecordedCatalog&&catalogIssued?.after.done!==true)fail('unfinished_recorded_catalog');
           catalogCounts=await catalogStore.counts();
           if(!same(catalogCounts,catalogIssued?.after_counts??{assigned_accounts:0,unassigned_accounts:0,assigned_groups:0}))fail('catalog_original_mismatch');
         }
@@ -2184,6 +2188,17 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             current_authorized_owner:'V2_issued_graph_geography_identity_traversal_partition_and_current_original_source_rights',
             partition_reconciliation:'entire_derived_entry_compared_to_every_current_authorized_original_and_entire_neutral_cache',
             selected_union:'not_established',statistics:'not_established',report_update:'none'};
+          if(readingRecordedCatalog){
+            partitionResult={...partitionResult,
+              status:'original_reconciled_recorded_catalog_account',coverage:'one_original_reconciled_catalog_account_only',
+              catalog_reference:catalogAnchor.receipt_reference,
+              current_authorized_owner:'V2_issued_graph_geography_identity_traversal_partition_catalog_and_current_original_source_rights',
+              catalog_reconciliation:'issued_complete_head_and_native_counts_fenced_both_ends_not_complete_original_catalog_replay',
+              complete_catalog_original_replay:false,catalog_membership_counts:'not_delivered_as_semantic_authority',
+              selection_intent:'not_established',publication:'not_established'};
+            if(Buffer.byteLength(JSON.stringify(partitionResult))>NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_LIMITS.output_utf8_bytes)fail('byte_limit');
+            budget.check();
+          }
         }
         if(catalogingRecordedGroups){
           let catalogReceipt=catalogIssued,advanced=false;
@@ -2524,6 +2539,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * not a selected-union capability or a hash/count-only group reader. */
     readOriginalFrozenCaptureJobRecordedPartitionAccountReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_recorded_partition_account_refs_v2'),
+    /** Reopen ONE whole original/ENTIRE cache/ENTIRE partition entry only after
+     * independently issued catalog DONE. Same aggregate/current-ending fences;
+     * no source authority from catalog counts, selection, new head or release. */
+    readOriginalFrozenCaptureJobRecordedCatalogAccountReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'original_recorded_catalog_account_refs_v2'),
     async capture(value, options = {}) {
     if (!options || Object.getPrototypeOf(options) !== Object.prototype)
       fail('invalid_options');

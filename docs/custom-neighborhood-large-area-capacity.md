@@ -99,8 +99,10 @@ rolled-back TEMP DATA native SQL fixture covers 250, 251, 1,000 sales plus
 1,000 links, actual EXPLAIN counter limits, zero oversized payload members,
 fresh empty probes and the legacy plan. This plan fixture is not an issued
 owner, licensed acquisition or production-speed receipt; the actual issued
-owner fixture remains independently required. Fresh corrected-head checks
-and ordinary included review remain pending; no early merge is authorized.
+owner fixture remains independently required. Corrected exact head
+`b70f91211f2a7418b2ede6629c3a8b391948b1d4` passed all 14 cloud checks,
+including native, frontend, server and required security checks. These are
+completed corrected-code receipts, not a pending run or licensed/live acceptance.
 
 The first corrected-head native run (`b1e1bc47`, job `114132708094`) refused
 the new plan regression because it inspected the first child, a one-row
@@ -110,12 +112,29 @@ The plan inspector now identifies the `Outer` input explicitly, with focused
 synthetic plan tests for either InitPlan order, oversized input, payload leakage,
 missing counters and absent/ambiguous inputs. Native SQL coverage also includes
 mixed-kind exact-250 and 251 sums. The prior native run is a failure (7 of 8
-index tests passed), not merge readiness; a fresh corrected-head full native
-run and actual included review are mandatory. The actual issued owner fixture
+index tests passed), not merge readiness. The fresh corrected `b70f9121` native
+job `114134920428` actually passed 417 migration, 8 index, 1 subject, 1 edge and
+2 bootstrap tests, zero failures/skips (index 442273.258508ms). Its new TEMP
+plan marker verified main counter inputs of 251, mixed-kind 250/251 sums and
+zero oversized payload delivery. Separate actual issued-owner markers verified
+complete native packages and ending guards, not merely the TEMP DATA plan.
+Frontend `114134920586` passed 3959 tests, zero failures/skips (96628.544012ms),
+typecheck/lint/source quality/build; server `114134920530` succeeded. The actual issued owner fixture
 did execute successfully in that failed run, with its no-copy/no-write and
 ending-authority guards intact. No production behavior changed for this
 test-inspection correction. The expanded focused suite passed 114 tests with
 zero failures/skips (1187.7446ms); this is not fresh native execution.
+
+The ordinary included correction review (`19f79c13-b611-45db-b91e-0761996cfedf`)
+covered `b3fa3bca` through `b70f9121`, submitted at 05:36:37Z on 2026-10-10;
+invocation `6094231751` finished at 05:36:44Z. It acknowledged the count fix and
+raised only stale check-status wording (finding `4236575529`), corrected here.
+No implementation, SQL, profile, assertion or authorization behavior changes in
+this documentation-only disposition. No new review is claimed for these prose
+edits. Fresh exact documentation-head required checks remain necessary, followed
+by current head/base/rules/checks/review-thread revalidation before normal
+expected-head protected merge. Next ordinary included review is conservatively
+not before 06:41Z plus a repository allowance preflight; no paid/forced retry.
 
 No production grant/deploy/activation, worker,
 HTTP default, accepted report, genuine Hardy choice or Apply changes. Provider/

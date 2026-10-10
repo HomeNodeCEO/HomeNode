@@ -1,5 +1,62 @@
 # Complete larger-area Custom neighborhood studies
 
+## Original-reconciled bounded recorded catalog (2026-10-10, not activated)
+
+`advanceOriginalFrozenCaptureJobRecordedCatalogReferencesV2` is a new fixed
+actual database-owner stage, not a caller callback or a loop over per-account
+public helpers. It requires the independently issued DONE graph, geography,
+identity, traversal and recorded partition. Its own native head chooses ONE
+next account under the existing aggregate 32MB / 128-query / 60s step budget.
+Every complete original account (including outside parts), ENTIRE neutral cache
+and ENTIRE immutable partition entry is reconciled again before any catalog DML.
+
+Registered additive 20261121 retains only bounded normalized group identities
+and exact account counts, plus an independently issued linked receipt/head and
+nine-reference retention checkpoint in the SAME transaction. All unassigned
+accounts remain an explicit denominator; their conflicting candidate groups
+never become memberships. Every raw label/county variant, reason and partial
+observation remains in the complete original/partition lineage, not duplicated
+or truncated into this summary. Native guards enforce the exact next immutable
+partition ordinal, one count increment, stable normalized identity, at most 2048
+assigned groups (whole-step refusal, not truncation), a distinct terminal empty
+probe and refusal of orphan summaries/heads without the root checkpoint.
+
+Both-end current database actor/assignment/private-draft/subject/source-purpose/
+claim/pin/prerequisite-head/cache fences, an exact ending partition-entry reread,
+and ending catalog head/count equality share that one budget. Lost COMMIT must
+resume at the next account, not duplicate a contribution. Completed reopen must
+still perform fresh original/cache and partition empty probes. No dense account
+roster, original payload copy, job-typed copy, selected union, statistic,
+publication, worker activation, pin transfer, accepted report or Apply mutation.
+Future semantic consumers still must reopen originals and reconcile the whole
+catalog/selection lineage; matching counts, hashes or DONE are not authority.
+
+Focused receipt/repository/current-owner/partition/continuation tests pass;
+actual PostgreSQL assertions are authored for outside conflicts, original/cache/
+partition corruption, ending authority/cache/count failures and atomic rollback,
+native skipped/orphan contribution and head-without-root refusal, lost-COMMIT
+resume, fresh terminal/reopen and unchanged prerequisite rows/pins. NEW native
+and full cloud execution is PENDING. Initial exact 510666ff native cloud reached
+the catalog assertions but FAILED the query-shape assertion: its broad
+`array_agg` ban also rejected the mandatory current actor's bounded role list.
+The first repair (e9a30862) still FAILED: its broad `jsonb_agg` ban rejected the
+mandatory bounded subject-section witness. The corrected test now independently
+checks the ENTIRE SQL and bound values of the ONLY two permitted aggregates:
+the exact current actor/organization role read and the exact assignment's three
+fixed material sections under the existing 1,500,000-byte cap. Both-end reads
+remain mandatory. Focused regression tests refuse spoofed tags, changed SQL,
+additional aggregates, expanded sections/caps, foreign scope and missing end
+reads. Population/original aggregates and spatial/job-typed paths still refuse.
+Production implementation and authorization are unchanged. Fresh cloud execution
+of the corrected head is required; neither failed run is acceptance.
+The small two-account fixture does not
+execute the 2048-group boundary, repeated assigned-group updates, licensed
+>50k/5-mile/10-mile/city/retrospective acquisition or production latency. These
+remain acceptance work, as do genuine current-authenticated selection, exact
+distinct selected-union metric ordinals, exact statistics/calendar quarters,
+coherent publication, fixed finite workers and terminal retention handoff.
+Internal stages remain inactive; QA assignment 7 only for future Apply tests.
+
 ## Issued-progress successful continuations (2026-10-10, not activated)
 
 The dormant traversal/recorded-partition `continueOriginalFrozenCaptureJob...ReferencesV2`
@@ -44,8 +101,14 @@ lost COMMIT leaves exactly one newly appended account and pending continuation;
 the stale claim refuses, a fresh token preserves the attempt, and the next owner
 resumes at the distinct terminal empty probe. A second distinct success advances
 the continuation sequence without spending or refunding failure attempts. New
-exact-head native/full cloud execution is PENDING; the initial receipt does not
-verify these new assertions. SQL doubles are not database/source authority. No local
+exact-head bbcf68bf native/full cloud execution now passed: Foundation 38040473706
+all four jobs succeeded; native 114179537683 passed 417 migration / 8 index /
+1 subject / 1 edge / 2 bootstrap tests, 0 failures and 0 skips (migration
+119034.133428ms; index 384383.154294ms). The extended continuation marker ran
+at 09:19:32Z, including actual nonempty atomic release/rollback/lost-COMMIT resume
+and two distinct success sequences preserving attempt 1. These are historical
+parent receipts, not verification of the new catalog head. SQL doubles are not
+database/source authority. No local
 heavy suite, source acquisition, selector/report/Apply/production change or
 Indexer operation. QA7 only future Apply. Protected integration, exact-head
 security/native/full suites and ACTUAL included review remain required.

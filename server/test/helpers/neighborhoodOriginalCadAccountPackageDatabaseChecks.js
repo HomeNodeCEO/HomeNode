@@ -28,6 +28,11 @@ export async function runNeighborhoodOriginalCadAccountPackageDatabaseChecks(cli
     await client.query(`INSERT INTO pg_temp.cad_originals SELECT $1::uuid,k.kind,(1000000+n)::text,'A',
       '{"SQL_DATA_only":true}'::jsonb,$2::text,22 FROM (VALUES ('primary'),('secondary')) k(kind)
       CROSS JOIN generate_series(1,1000) n`,[generation,profile]);
+    // Unrelated native keys make an account-index probe distinguishable from
+    // a fortunate prefix/whole-generation scan in this plan-only DATA fixture.
+    await client.query(`INSERT INTO pg_temp.cad_originals SELECT $1::uuid,k.kind,(2000000+n)::text,'OUTSIDE-'||n::text,
+      '{"SQL_DATA_only":true}'::jsonb,$2::text,22 FROM (VALUES ('primary'),('secondary')) k(kind)
+      CROSS JOIN generate_series(1,10000) n`,[generation,profile]);
     for(const table of ['cad_stock','cad_originals','cad_typed'])await client.query(`ANALYZE pg_temp.${table}`);
     const huge=await read();assert.deepEqual(huge.counts,{primary:'251',secondary:'251'});assert.equal(huge.row_count,0);assert.equal(huge.packet_json,'[]');
     const plan=(await client.query(`EXPLAIN (ANALYZE,FORMAT JSON) ${sql}`,values)).rows[0]['QUERY PLAN'][0].Plan,nodes=[];

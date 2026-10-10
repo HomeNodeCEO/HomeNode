@@ -1,5 +1,41 @@
 # Complete larger-area Custom neighborhood studies
 
+## Statistics-source original reconciliation (2026-10-10; authored, inactive)
+
+The next read-only boundary requires exact thirteen original-preserving roots
+and actual DONE union, recorded-eligibility, evidence and metric traversal
+parents. Separate native command admission retains the current consumed
+continuation or ordinary higher failure attempt; older readers are not widened.
+A distinct fixed-first-ordinal query reopens the complete issued original graph
+and all selected stock/CAD/whole all-date transaction and required subject
+originals, reconciling their ENTIRE caches under the unchanged aggregate250
+original,256 whole-owner SQL,32MB,60-second and16KB response limits.
+
+Inside that same current-authorized owner, the exact native seventh-row identity
+is read from the union/partition ledger. Every closed metadata field and metric
+cell is compared to THIS freshly original-derived row. A canonical retained
+blob, matching hash, selected count or incomplete null is never source
+authority. Fresh original comparison reason states remain separate from the
+intentionally lossy stored incomplete cells. Current and ending source, actor,
+assignment, private draft, subject, workspace, claim, graph, native entry and all
+four parent fences precede return. No row/head/checkpoint/continuation write,
+lease extension, report change or pin transfer is performed.
+
+Authored cloud-native B-only, EMPTY and both-account coverage exercises unfinished
+parent refusal before original SQL, actual same-transaction reassignment/archive
+ending refusals, original/ENTIRE-cache changes, changed member/partition identity,
+and canonical forged metric blobs with changed cells/dates/membership. All
+refused calls must roll back and preserve complete prior state. All five older
+original SQL exports remain byte-for-byte unchanged. Native execution and
+protected integrated-head review/security/full suites remain pending.
+
+This is fixed-first source reconciliation ONLY, not the eighth complete semantic
+traversal, frequency ledger, exact medians/CODs, economic transaction/calendar
+quarter eligibility, coherent publication, durable workers or terminal pin
+transfer/retirement. Licensed >50k/5-mile/10-mile/city/retrospective acquisition
+and live Hardy reload/production-speed acceptance remain unfinished. No worker,
+HTTP route, source grant, default, deployment or genuine choice is activated.
+
 ## Native fixture failure-budget correction (2026-10-10 23:40 UTC; inactive)
 
 Exact head `19071fd2fb842153d8daf06470d6476146050111` passed the

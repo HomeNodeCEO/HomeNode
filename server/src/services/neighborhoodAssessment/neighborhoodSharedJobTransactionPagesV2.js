@@ -11,16 +11,24 @@ export const NEIGHBORHOOD_SHARED_JOB_TRANSACTION_V2_LIMITS=Object.freeze({rows:2
   page_utf8_bytes:2100000,read_utf8_bytes:32000000,queries:128,step_ms:60000,query_ms:5000});
 const L=NEIGHBORHOOD_SHARED_JOB_TRANSACTION_V2_LIMITS,PROFILE=getNeighborhoodFrozenTypedOriginalV2Profile();
 const ALL_KINDS=['parcels','accounts','source_records','sales','sale_links','sync_state','sync_runs'];
+/** Refuse a fixed read/admission reason without disclosing source observations. */
 const fail=r=>{throw new TypeError(`neighborhood_shared_transaction_v2_${r}`);};
+/** Compare only closed validated DATA using the shared canonical encoding. */
 const same=(a,b)=>canonicalAssessmentJson(a)===canonicalAssessmentJson(b);
+/** Freeze the owned validated response tree before read-only delivery. */
 const freeze=v=>{if(v&&typeof v==='object'&&!Object.isFrozen(v)){Object.values(v).forEach(freeze);Object.freeze(v);}return v;};
+/** Admit exactly the expected own data properties, rejecting proxies and accessors. */
 function data(v,keys){if(!v||isProxy(v)||Object.getPrototypeOf(v)!==Object.prototype)fail('invalid_input');
   const d=Object.getOwnPropertyDescriptors(v),names=Reflect.ownKeys(d);
   if(names.length!==keys.length||!keys.every(k=>d[k]?.enumerable&&Object.hasOwn(d[k],'value')))fail('invalid_input');
   return Object.fromEntries(keys.map(k=>[k,d[k].value]));}
+/** Validate the initial empty cursor or an exact native BIGINT-text key. */
 function cursor(v){if(v==='')return v;if(typeof v!=='string'||!/^[1-9][0-9]{0,18}$/.test(v)||BigInt(v)>9223372036854775807n)fail('invalid_cursor');return v;}
+/** Require a single metadata/result envelope, not a partial or duplicated result. */
 const one=r=>{if(r?.rowCount!==1||r.rows?.length!==1)fail('invalid_result');return r.rows[0];};
+/** Validate a bounded canonical SQL count without rounding through Number. */
 const count=(v,max)=>typeof v==='string'&&/^(?:0|[1-9][0-9]{0,18})$/.test(v)&&BigInt(v)<=BigInt(max);
+/** Admit only one fixed kind, native cursor and bounded row limit; no caller facts. */
 export function prepareNeighborhoodSharedTransactionPageV2(value){
   const p=data(value,['kind','cursor','rowLimit']);cursor(p.cursor);
   if(!NEIGHBORHOOD_TYPED_TRANSACTION_V2_KINDS.includes(p.kind)||!Number.isInteger(p.rowLimit)||p.rowLimit<1||p.rowLimit>L.rows)fail('invalid_page');
@@ -38,6 +46,7 @@ const DEFINITION=freeze({id:'neighborhood-shared-job-one-hop-transaction-pages-v
 const definitionText=canonicalAssessmentJson(DEFINITION),definitionRef=prepareNeighborhoodCohortBlob(definitionText);
 const PAGE_PROFILE=freeze({profile_ref:{id:DEFINITION.id,revision:'1',content_sha256:definitionRef.content_sha256},
   definition_blob:{ref:definitionRef,canonical_json:definitionText}});
+/** Return the immutable exact page profile, not source or authorization authority. */
 export function getNeighborhoodSharedTransactionPageV2Profile(){return PAGE_PROFILE;}
 
 // Generation/profile/kind/row-key index plus exact prepared seed/account PKs.
@@ -72,7 +81,9 @@ export function createNeighborhoodSharedJobTransactionPagesV2(client,rawOptions,
   const root=prepareNeighborhoodCohortBlobReference(r.content_sha256,r.canonical_utf8_bytes),layers=data(g.layer_counts,ALL_KINDS);
   if(!Object.values(layers).every(n=>Number.isInteger(n)&&n>=0&&n<=2000000))fail('invalid_input');
   const graph=freeze({root,layer_counts:layers});let used=false,queries=0,bytes=0,started;
+  /** Recheck the caller's live budget and this single-use step's fixed deadline. */
   const check=()=>{options.checkBudget();if(performance.now()-started>L.step_ms)fail('deadline');};
+  /** Count every nested query and transported result against the same bounded read. */
   const execute=async(text,values)=>{
     check();if(++queries>L.queries)fail('query_limit');
     const q=typeof text==='string'?{text,values,query_timeout:L.query_ms}:{...text,query_timeout:L.query_ms};
@@ -81,7 +92,9 @@ export function createNeighborhoodSharedJobTransactionPagesV2(client,rawOptions,
     bytes+=Buffer.byteLength(encoded);if(bytes>L.read_utf8_bytes)fail('byte_limit');check();return result;
   };
   const seeds=createNeighborhoodFrozenJobSourceSeeds({query:execute},options);
-  return Object.freeze({async page(rawPage){
+  return Object.freeze({
+    /** Read one admitted page with both-end source/seed/cache consistency fences. */
+    async page(rawPage){
     const page=prepareNeighborhoodSharedTransactionPageV2(rawPage);if(used)fail('single_use');used=true;started=performance.now();
     const seed=await seeds.read(),stock=seed.stock,original=stock.original;
     const source=prepareNeighborhoodSharedTypedSource(await execute(NEIGHBORHOOD_SHARED_TYPED_V2_SQL.source,[stock.generation_id]),stock.generation_id);
@@ -90,6 +103,7 @@ export function createNeighborhoodSharedJobTransactionPagesV2(client,rawOptions,
       layer_counts:original.layer_counts,row_count:original.row_count,payload_utf8_bytes:original.payload_utf8_bytes};
     if(!same(source,expected)||Object.entries(layers).some(([k,n])=>n>Number(source.layer_counts[k].row_count)))fail('source_mismatch');
     const binding=assessmentEvidenceDigest({source,profile:PROFILE}),values=[stock.generation_id,PROFILE.profile_ref.content_sha256];
+    /** Require the exact installed complete cache; a read never prepares a miss. */
     const validate=raw=>{
       const h=data(raw,['binding_sha256','source_metadata','definition_json','progress','status','completed_at']);
       const p=data(h.progress,['format','binding_sha256','kind_index','after','layer_rows','typed_rows','typed_utf8_bytes']);

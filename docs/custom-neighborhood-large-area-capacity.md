@@ -1,5 +1,42 @@
 # Complete larger-area Custom neighborhood studies
 
+## Original-derived native catalog group identity (2026-10-10, not activated)
+
+The actual completed-catalog account reader now reconciles the native catalog
+group row as well as the ENTIRE original/cache/partition packet. Only the group
+ID freshly derived from that same original packet selects one PK-scoped storage
+row. The original normalized county and full label (up to 512 UTF-8 bytes) must
+match exactly; missing, wrong or malformed rows refuse the whole account. The
+native last ordinal must include this partition ordinal and remain within the
+actual retained stock denominator. The same row is re-read after all existing
+current-authority/head/count ending fences. No extra original reader, per-metric
+budget reset, source payload copy, population array or new mutation is added.
+
+Storage counts and ordinals are consistency fences, not semantic count or
+membership authority. Neither the native row nor its count is delivered as a
+catalog summary. The existing explicit ONE-account coverage, complete-envelope
+cap, current source/actor/assignment/private draft/subject/claim checks and
+unestablished complete catalog/selection/statistics/publication flags remain.
+This does not substitute for a complete original-reconciled catalog/selected
+union, a genuine authenticated exact-study command or licensed/live acceptance.
+
+79 focused tests pass, zero failures/skips (572.6662ms). New storage tests cover
+exact claim/scope/key SQL, detached output, missing rows, hostile keys/getters,
+malformed identities/counts/ordinals and the exact 512-byte label boundary.
+Native assertions now require both-end original-derived assigned/unassigned
+row reads, no group read for the fresh empty probe, and refusal for missing or
+changed group ID/county/label/ordinal/count/ending rows with unchanged durable
+state. New-head native/full cloud execution remains pending; no heavy local
+suite ran. UNPROTECTED parent #1251 at `8b01575a` independently passed native
+417 migration / 8 index / 1 subject / 1 edge / 2 bootstrap tests with zero
+failures/skips, plus frontend 3959 tests and server/redteam/Sales checks. Its
+small original-account marker ran at 10:36:48Z; that receipt does not verify
+this newer extension. Protected dependency-order integration, fresh exact-head
+security/native/full suites and actual included review remain required. No
+route/default/worker/activation/source grant/report/genuine Hardy choice/Apply
+mutation; QA assignment 7 only for future Apply tests. Roadmap incomplete,
+same heartbeat active.
+
 ## Completed-catalog original account replay (2026-10-10, not activated)
 
 `readOriginalFrozenCaptureJobRecordedCatalogAccountReferencesV2` extends the

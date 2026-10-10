@@ -1802,6 +1802,20 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       else if(config.text.includes('custom-cohort-recorded-catalog-v2:anchor-read')&&refsFault==='catalog_head_mismatch_after_first'){
         refsFault=null;return {...result,rows:result.rows.map(r=>({...r,sequence:r.sequence+1}))};
       }
+      if(config.text.includes('custom-cohort-recorded-catalog-v2:group-read')&&refsFault?.startsWith('catalog_group_')){
+        const fault=refsFault;
+        if(fault==='catalog_group_ending'){refsFault='catalog_group_count_after_first';return result;}
+        if(fault==='catalog_group_ending_missing'){refsFault='catalog_group_missing';return result;}
+        refsFault=null;const row={...result.rows[0]};
+        if(fault==='catalog_group_missing')return {...result,rows:[Object.fromEntries(Object.keys(row).map(k=>[k,null]))]};
+        if(fault==='catalog_group_label')row.normalized_label+=' changed';
+        if(fault==='catalog_group_county')row.normalized_county='other county';
+        if(fault==='catalog_group_id')row.group_id='recorded-cad:'+'0'.repeat(64);
+        if(fault==='catalog_group_ordinal')row.last_ordinal=1;
+        if(fault==='catalog_group_count')row.member_count=0;
+        if(fault==='catalog_group_count_after_first')row.member_count++;
+        return {...result,rows:[row]};
+      }
       if(['partition_missing_blob','partition_corrupt_blob'].includes(refsFault)&&config.text.includes('neighborhood-cohort-blob:read */')
         &&config.values[1]===(await client.query("SELECT entry_reference->>'content_sha256' AS hash FROM app.neighborhood_custom_cohort_recorded_partition_v2_rows WHERE operation_id=$1 AND account_id='CLOSURE-A'",[refsOperation])).rows[0]?.hash){
         const fault=refsFault;refsFault=null;
@@ -3710,11 +3724,19 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       catalogReplayEnd=await freshRefsOwner()[catalogReadMethod](refsInput,{...stockAccountOptions,stockAccountPackagePage:{cursor:catalogReplayB.next_cursor}});
     assert.equal(refsCalls.slice(catalogReadFrom).filter(sql=>sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,3,
       'one original packet per call, with no reset-budget second reader');
+    const catalogIdentityReads=refsCalls.slice(catalogReadFrom).flatMap((sql,i)=>sql.includes('custom-cohort-recorded-catalog-v2:group-read')
+      ?[{sql,values:refsQueryParameters[catalogReadFrom+i]}]:[]);
+    assert.equal(catalogIdentityReads.length,4,'one exact original-derived group storage row at both ends of each NONEMPTY account');
+    assert.deepEqual(catalogIdentityReads.map(c=>c.values[8]),['discovery:unassigned','discovery:unassigned',
+      groupB.recorded_group.assigned_group_id,groupB.recorded_group.assigned_group_id]);
+    for(const {sql,values} of catalogIdentityReads){assert.equal(values.length,9);assert.ok(sql.includes('g.group_id=$9'));
+      assert.ok(!/array_agg|jsonb_agg|\bIN\s*\(/.test(sql));}
     for(const [actual,expected,ordinal] of [[catalogReplayA,groupA,1],[catalogReplayB,groupB,2]]){
       assert.equal(actual.status,'original_reconciled_recorded_catalog_account');assert.equal(actual.partition_ordinal,ordinal);
       assert.deepEqual(actual.rows,expected.rows);assert.deepEqual(actual.observations,expected.observations);
       assert.deepEqual(actual.recorded_group,expected.recorded_group);assert.deepEqual(actual.catalog_reference,catalogFinal.receipt_reference);
       assert.equal(actual.coverage,'one_original_reconciled_catalog_account_only');assert.equal(actual.complete_catalog_original_replay,false);
+      assert.equal(actual.catalog_group_identity_reconciliation,'one_original_derived_exact_group_and_normalized_literals_fenced_both_ends_not_group_count_authority');
       for(const key of ['counts','assigned_accounts','unassigned_accounts','assigned_groups','includedRecordedGroupIds'])assert.equal(Object.hasOwn(actual,key),false);
       assert.equal(actual.selected_union,'not_established');assert.equal(actual.selection_intent,'not_established');
       assert.equal(actual.statistics,'not_established');assert.equal(actual.publication,'not_established');assert.equal(actual.report_update,'none');
@@ -3722,6 +3744,14 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     }
     assert.equal(catalogReplayEnd.end_of_accounts,true);assert.equal(catalogReplayEnd.partition_ordinal,null);
     assert.deepEqual(catalogReplayEnd.rows,[]);assert.equal(catalogReplayEnd.recorded_group,null);await assertCatalogReadUnchanged();
+    for(const fault of ['catalog_group_missing','catalog_group_label','catalog_group_county','catalog_group_id',
+      'catalog_group_ordinal','catalog_group_count','catalog_group_ending','catalog_group_ending_missing']){
+      refsFault=fault;const from=refsCalls.length;
+      await assert.rejects(freshRefsOwner()[catalogReadMethod](refsInput,
+        {...stockAccountOptions,stockAccountPackagePage:{cursor:catalogReplayA.next_cursor}}),/catalog_original_mismatch|recorded_catalog_v2_corrupt/);
+      assert.equal(refsFault,null);assert.equal(refsCalls.slice(from).filter(sql=>sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,1);
+      await assertCatalogReadUnchanged();
+    }
     for(const [fault,reason] of [['stock_cells_mismatch',/original_mismatch/],['stock_cells_missing',/original_mismatch/],['stock_cells_original',/original_mismatch/],
       ['partition_entry_missing',/partition_original_mismatch/],['partition_entry_ordinal',/partition_original_mismatch/],
       ['partition_entry_ref',/partition_original_mismatch/],['partition_entry_state',/partition_original_mismatch/],['partition_entry_ending',/partition_original_mismatch/],
@@ -3758,6 +3788,8 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       exactly_one_whole_original_packet_per_call:true,every_original_entire_neutral_cache_entire_partition_entry_reconciled:true,
       retained_date_original_metric_cells_and_outside_label_conflicts_preserved:true,unissued_partial_and_corrupt_heads_refused_before_original_packet:true,
       both_end_current_rights_actor_assignment_subject_claim_cache_cancel_and_catalog_head_counts_fenced:true,
+      original_derived_native_group_identity_and_512byte_normalized_literals_fenced_both_ends:true,
+      missing_wrong_group_county_label_ordinal_and_ending_row_refused:true,group_counts_not_semantic_authority:true,
       fresh_original_and_partition_empty_probe:true,lost_commit_fresh_reopen:true,output_utf8_cap:2100000,
       original_copies:0,job_typed_copies:0,checkpoint_head_entry_count_or_release_writes:0,pins_roots_retry_history_unchanged:true,
       complete_catalog_original_replay:false,genuine_selection_intent:false,selected_union:false,statistics:false,publication:false,

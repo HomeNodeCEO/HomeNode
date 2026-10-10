@@ -22,6 +22,9 @@ function anchorOf(v){if(v===null)return null;const a=data(v,[...BINDINGS,'receip
   if(!Number.isInteger(a.sequence)||a.sequence<1||a.sequence>2000001)fail('corrupt');
   return Object.freeze({...Object.fromEntries([...BINDINGS,'receipt_reference'].map(k=>[k,ref(a[k])])),sequence:a.sequence});}
 function one(r){if(r?.rowCount!==1||r.rows?.length!==1)fail('claim_lost');return r.rows[0];}
+function groupId(v){if(typeof v!=='string'||!/^(?:recorded-cad:[a-f0-9]{64}|discovery:unassigned)$/.test(v))fail('invalid_group');return v;}
+function normalized(v){return typeof v==='string'&&v.length>0&&v.isWellFormed()&&Buffer.byteLength(v)<=512
+  &&v===v.trim().replace(/\s+/gu,' ').toLowerCase()&&!/[\u0000-\u0008\u000e-\u001f\u007f]/.test(v);}
 /** Storage only, not original/current-rights authority. No full account roster
  * or caller continuation. The actual owner must replay ONE whole original and
  * ENTIRE immutable partition entry, then fence both ends in the SAME bounded TX. */
@@ -53,15 +56,29 @@ export function createCustomCohortRecordedCatalogV2Repository(raw){
     const c=data(row,['assigned_accounts','unassigned_accounts','assigned_groups']);
     if(!Object.values(c).every(n=>Number.isInteger(n)&&n>=0&&n<=2000000)||c.assigned_accounts+c.unassigned_accounts>2000000
       ||c.assigned_groups>2048||c.assigned_groups>c.assigned_accounts)fail('corrupt');return Object.freeze(c);};
-  return Object.freeze({read,counts,async contribute(rawExpected,rawEntry){
+  // ONE PK-scoped storage row, not complete catalog semantics or membership.
+  // Only the actual owner supplies the ID derived from its whole original
+  // packet, compares BOTH normalized literals and rechecks this row at exit.
+  const readGroup=async rawGroup=>{const key=groupId(data(rawGroup,['group_id']).group_id),
+    row=data(one(await client.query(`/* custom-cohort-recorded-catalog-v2:group-read */
+      SELECT g.group_id,g.normalized_county,g.normalized_label,g.member_count,g.last_ordinal
+      FROM app.neighborhood_custom_cohort_capture_jobs job LEFT JOIN app.neighborhood_custom_cohort_recorded_catalog_v2_groups g
+        ON g.operation_id=job.operation_id AND g.organization_id=job.organization_id AND g.group_id=$9
+      WHERE ${FENCE}`,[...values,key])),['group_id','normalized_county','normalized_label','member_count','last_ordinal']);
+    if(Object.values(row).every(v=>v===null))return null;
+    if(row.group_id!==key||!Number.isInteger(row.member_count)||row.member_count<1||row.member_count>2000000
+      ||!Number.isInteger(row.last_ordinal)||row.last_ordinal<row.member_count||row.last_ordinal>2000000
+      ||(key==='discovery:unassigned'?row.normalized_county!==null||row.normalized_label!==null
+        :![row.normalized_county,row.normalized_label].every(normalized)))fail('corrupt');
+    return Object.freeze(row);};
+  return Object.freeze({read,counts,readGroup,async contribute(rawExpected,rawEntry){
     const expected=anchorOf(rawExpected),e=data(rawEntry,['account_id','ordinal','group_id','normalized_county','normalized_label']);
     if(!Number.isInteger(e.ordinal)||e.ordinal!==(expected?.sequence??0)+1
       ||typeof e.account_id!=='string'||!e.account_id||e.account_id.length>64||!e.account_id.isWellFormed()
       ||e.account_id.trim()!==e.account_id||/[\u0000-\u001f\u007f]/.test(e.account_id)
       ||typeof e.group_id!=='string'||!(/^(?:recorded-cad:[a-f0-9]{64}|discovery:unassigned)$/.test(e.group_id))
       ||(e.group_id==='discovery:unassigned'?e.normalized_county!==null||e.normalized_label!==null
-        :![e.normalized_county,e.normalized_label].every(v=>typeof v==='string'&&v.length>0&&v.isWellFormed()
-          &&Buffer.byteLength(v)<=512&&v===v.trim().replace(/\s+/gu,' ').toLowerCase()&&!/[\u0000-\u0008\u000e-\u001f\u007f]/.test(v))))fail('invalid_entry');
+        :![e.normalized_county,e.normalized_label].every(normalized)))fail('invalid_entry');
     const started=await tx();if(await tx()!==started)fail('caller_transaction_required');if(!same(await read(),expected))fail('conflict');
     const r=one(await client.query(`/* custom-cohort-recorded-catalog-v2:contribute */
       INSERT INTO app.neighborhood_custom_cohort_recorded_catalog_v2_groups

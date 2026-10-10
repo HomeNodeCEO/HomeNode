@@ -2079,7 +2079,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           selected_union:'not_established',statistics:'not_established',source_acquisition:'not_established',report_update:'none'};
       }
       let partitionStore=null,partitionAnchor=null,partitionResult=null,partitionReadCursor=null,partitionReadEntry=null,
-        catalogStore=null,catalogAnchor=null,catalogCounts=null,catalogResult=null;
+        catalogStore=null,catalogAnchor=null,catalogCounts=null,catalogResult=null,catalogReadGroup=null,catalogReadGroupKey=null;
       if(partitioningRecordedGroups||readingRecordedPartition||catalogingRecordedGroups){
         const baseExpected={binding,source_reference:reference,root,graph_verification_reference:verificationReference,
           stock_verification_reference:stockVerificationReference,identity_verification_reference:identityVerificationReference,
@@ -2189,11 +2189,23 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             partition_reconciliation:'entire_derived_entry_compared_to_every_current_authorized_original_and_entire_neutral_cache',
             selected_union:'not_established',statistics:'not_established',report_update:'none'};
           if(readingRecordedCatalog){
+            if(partitionReadEntry){
+              const group=packet.recorded_group,candidate=group.state==='assigned'?group.candidate_groups[0]:null;
+              if(group.state==='assigned'&&group.candidate_groups.length!==1)fail('catalog_original_mismatch');
+              catalogReadGroupKey={group_id:group.assigned_group_id??'discovery:unassigned'};
+              catalogReadGroup=await catalogStore.readGroup(catalogReadGroupKey);
+              if(catalogReadGroup===null||catalogReadGroup.normalized_county!==(candidate?.normalized_county??null)
+                ||catalogReadGroup.normalized_label!==(candidate?.normalized_label??null)
+                ||catalogReadGroup.last_ordinal<partitionReadEntry.ordinal
+                ||catalogReadGroup.last_ordinal>Number(stock.population.account_count)
+                ||catalogReadGroup.member_count>Number(stock.population.account_count))fail('catalog_original_mismatch');
+            }
             partitionResult={...partitionResult,
               status:'original_reconciled_recorded_catalog_account',coverage:'one_original_reconciled_catalog_account_only',
               catalog_reference:catalogAnchor.receipt_reference,
               current_authorized_owner:'V2_issued_graph_geography_identity_traversal_partition_catalog_and_current_original_source_rights',
               catalog_reconciliation:'issued_complete_head_and_native_counts_fenced_both_ends_not_complete_original_catalog_replay',
+              catalog_group_identity_reconciliation:'one_original_derived_exact_group_and_normalized_literals_fenced_both_ends_not_group_count_authority',
               complete_catalog_original_replay:false,catalog_membership_counts:'not_delivered_as_semantic_authority',
               selection_intent:'not_established',publication:'not_established'};
             if(Buffer.byteLength(JSON.stringify(partitionResult))>NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_LIMITS.output_utf8_bytes)fail('byte_limit');
@@ -2249,6 +2261,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(partitionStore&&!same(await partitionStore.read(),partitionAnchor))fail('checkpoint_conflict');
       if((readingRecordedPartition||catalogingRecordedGroups)&&!same(await partitionStore.readNextEntry(partitionReadCursor),partitionReadEntry))fail('partition_original_mismatch');
       if(catalogStore&&(!same(await catalogStore.read(),catalogAnchor)||!same(await catalogStore.counts(),catalogCounts)))fail('catalog_original_mismatch');
+      if(catalogReadGroupKey&&!same(await catalogStore.readGroup(catalogReadGroupKey),catalogReadGroup))fail('catalog_original_mismatch');
       budget.check();
       if(yieldingV2Progress){
         // Only after EVERY original/current-authority ending fence, in this

@@ -45,7 +45,9 @@ export async function runNeighborhoodOriginalTransactionPackageDatabaseChecks(cl
     assert.equal(cap.length,1);const main=cap[0].Plans.filter(n=>n['Parent Relationship']==='Outer');
     assert.equal(main.length,1);assert.equal(main[0]['Actual Rows'],251);
     await client.query("DELETE FROM pg_temp.tx_originals WHERE kind<>'sales' OR row_key>'1000249'");
-    await client.query(`INSERT INTO pg_temp.tx_originals VALUES($1,'source_records',$2,'A',$2,'{"SQL_admission_DATA_only":true}')`,[generation,source]);
+    // The same exact identity occupies both C-text and BIGINT columns. Declare
+    // both types instead of asking PostgreSQL to infer one incompatible $2 type.
+    await client.query(`INSERT INTO pg_temp.tx_originals VALUES($1::uuid,'source_records',$2::text,'A',$2::bigint,'{"SQL_admission_DATA_only":true}')`,[generation,source]);
     await client.query(`INSERT INTO pg_temp.tx_typed SELECT generation_id,$1,kind,row_key,account_id,source_record_id,$1,
       '{"SQL_admission_DATA_only":true}'::jsonb FROM pg_temp.tx_originals`,[profile]);
     const full=await read();assert.deepEqual(full.counts,{source_records:'1',sales:'249',sale_links:'0'});

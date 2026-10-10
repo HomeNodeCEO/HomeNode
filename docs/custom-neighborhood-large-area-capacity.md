@@ -39,7 +39,16 @@ unchanged-hash/count forgeries, sparse scan/no-skip, hostile input, cancellation
 single-use and ending-cache refusal are covered. New native tests are authored
 for original admission/query-plan bounds and the actual issued current-authorized
 owner, including prerequisites, ending rights/cache and lost-COMMIT reopening.
-NEW native/full-suite execution is pending, not established by local DATA tests.
+Initial cloud head `d3148be4` passed server, frontend (3,959 tests, zero failed/
+skipped), redteam and Sales CI. Its actual issued-owner original-reconciled
+transaction-package block passed: three source packages, one legacy package,
+three source/three sale/four link originals, full replay, both-end fences,
+forgeries, prerequisites, lost-COMMIT reopen and zero copies/checkpoint writes.
+The overall native job FAILED (seven of eight index tests passed): the separate
+TEMP admission fixture reused one uncast SQL parameter for text and BIGINT
+columns (`42P08`), before its whole-package/plan assertions could finish.
+The fixture now explicitly casts both uses; no implementation guard or assertion
+was removed. Fresh exact-head native/full-suite execution remains required.
 
 This is not provider acquisition, economic resolution, complete selected-union
 authority, immutable full-population ordinal cells, exact union medians/CODs/

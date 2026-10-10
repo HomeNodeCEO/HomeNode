@@ -1,5 +1,56 @@
 # Complete larger-area Custom neighborhood studies
 
+## Issued-catalog selection waiting boundary (2026-10-10, not activated)
+
+The actual bounded original owner now has a separate internal waiting stage.
+It admits only its actual completed nine-reference V2 catalog checkpoint,
+reopens the server-derived terminal original/entire neutral-cache and partition
+empty probes, and checks all current actor, assignment, private draft, subject,
+source purpose, claim, issued prerequisite heads, catalog and pending V7
+workspace/prior-head fences at both ends. Only then, in that same transaction
+and under the unchanged whole-owner budget, does it release its worker lease
+into the explicit `awaiting_selection` state. It does not park an automatically
+claimable retry, invent a human choice or carry forward prior selected groups.
+
+An additive native guard requires the live claim and actual issued catalog
+DONE receipt with the exact stock/source/graph/geography/identity/traversal/
+partition/catalog checkpoint references. Request, nine roots, attempts, error
+history, schedule, context-null state and generation pins remain unchanged.
+Both worker claimers exclude waiting jobs. Until a later immutable authenticated
+NEW-study command and native resume protocol are implemented, only scoped
+cancellation can leave waiting; direct requeue, success, attempt reset,
+checkpoint/error/schedule mutation and deletion refuse. Completed-catalog
+cancellation also freezes the terminal job tuple so cancellation cannot become
+a two-step escape back to retry/running. Cancellation retains the evidence and
+pins, and is not terminal pin retirement.
+
+123 focused tests pass, zero failures/skips (574.8153ms); actual source and
+native-fixture syntax checks pass. Cloud-native assertions are authored, not
+yet execution evidence: an independently built second actual graph preserves
+a real prior failure/attempt2 through waiting, current-ending refusals, actual
+release rollback, lost real COMMIT acknowledgment, stale-claim exclusion,
+native mutation refusal and scoped cancellation. The original independent
+five-failure terminal fixture is retained unchanged. New-head native/full CI
+remains pending; no heavy local suite was run.
+
+This is a dormant lease boundary, NOT genuine selection intent/resumption,
+complete original-reconciled catalog semantics, a selected union, statistic,
+coherent publication, full V2 dispatcher, terminal pin transfer/retirement,
+licensed acquisition or production-speed/live acceptance. No route/default/
+worker activation, source grants, accepted reports, genuine Hardy choices or
+Apply changes. Protected dependency integration and fresh exact-head checks
+plus actual included review are still mandatory before protected merges.
+
+Parent combined-facts exact `a8b2239a` is now independently cloud-verified:
+Foundation 38049037213 all four jobs and Sales 38049037140 succeeded. Native
+114204272412 passed 417 migration / 8 index / 1 subject / 1 edge / 2 bootstrap
+tests with zero failures/skips; its 11:47:35Z marker confirms the same original
+packet supplies housing/full recorded labels/retained-date metrics and outside
+conflict/unknown housing is not made eligible by an assigned group. Frontend
+114204272366 passed 3959 tests with zero failures/skips plus type/lint/source/
+build checks. These small parent receipts are not new-head or licensed/live
+acceptance. Same heartbeat remains active.
+
 ## One original packet for pending-target account facts (2026-10-10, not activated)
 
 The actual completed-catalog pending workspace-target reader now derives the

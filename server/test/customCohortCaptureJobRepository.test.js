@@ -15,6 +15,17 @@ const scope = { organization_id: organization, report_file_id: report,
 const request = { operation_id: operation, observation_period: {
   start_date: '2024-01-01', end_date: '2024-12-31' } };
 
+test('waiting status is not success and scoped cancellation does not reset retained history or requeue',async()=>{
+  const calls=[],repository=createCustomCohortCaptureJobRepository({async query(sql,values){calls.push({sql,values});
+    return {rowCount:1,rows:[sql.includes('custom-cohort-job:cancel')?{status:'cancelled'}:
+      {status:'awaiting_selection',attempts:5,cancellation_requested:false,context_sha256:null}]};}});
+  assert.deepEqual(await repository.status(scope,operation),{operation_id:operation,status:'awaiting_selection',attempts:5,cancellation_requested:false});
+  assert.deepEqual(await repository.cancel(scope,operation),{status:'cancelled'});
+  const c=calls[1];assert.deepEqual(c.values,[operation,organization,report,'17','SYNTHETIC-ACCOUNT']);
+  assert.match(c.sql,/status IN \('queued','retry','awaiting_selection'\) THEN 'cancelled'/);
+  assert.doesNotMatch(c.sql,/SET\s+attempts|,\s*(?:attempts|run_after|checkpoint|last_error_code|context_sha256)\s*=/);
+});
+
 test('original job request is reopened under exact live scope/actor/claim, never taken from a replacement worker',async()=>{
   const claim={operation_id:operation,claim_token:token,attempts:1};
   const calls=[];

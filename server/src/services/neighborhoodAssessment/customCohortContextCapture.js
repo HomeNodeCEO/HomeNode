@@ -63,6 +63,7 @@ import { createCustomCohortRecordedPartitionV2Repository } from './customCohortR
 import { createCustomCohortRecordedCatalogV2Repository } from './customCohortRecordedCatalogV2Repository.js';
 import { prepareCohortRecordedCatalogReceiptV2 } from './cohortRecordedCatalogReceiptV2.js';
 import { createCustomCohortV2ContinuationRepository } from './customCohortV2ContinuationRepository.js';
+import { createCustomCohortV2SelectionWaitRepository } from './customCohortV2SelectionWaitRepository.js';
 import { createCustomCohortOriginalAccountOwnerBudget,
   CUSTOM_COHORT_ORIGINAL_ACCOUNT_OWNER_LIMITS } from './customCohortOriginalAccountOwnerBudget.js';
 import { getNeighborhoodOriginalRecordedGroupV2Profile } from './neighborhoodOriginalRecordedGroupV2.js';
@@ -210,6 +211,8 @@ const FROZEN_SOURCE_STAGES = freeze({
   original_selection_workspace_target_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingStockAccountPackages: true, readingRecordedPartition: true, readingRecordedCatalog: true,
     readingSelectionWorkspaceTarget: true, allowedPhases: ['frozen_recorded_catalog_refs_v2'] },
+  original_catalog_selection_wait_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    catalogingRecordedGroups: true, awaitingSelection: true, allowedPhases: ['frozen_recorded_catalog_refs_v2'] },
 });
 function fail(reason, detail, captureCounts) {
   const error = Object.assign(new Error(`custom_cohort_capture_${reason}`), {
@@ -1644,7 +1647,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,
       resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,partitioningRecordedGroups=false,
-      readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
+      readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     if(referencesV2){
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
       const descriptors=Object.getOwnPropertyDescriptors(options),keys=Reflect.ownKeys(descriptors);
@@ -1692,7 +1695,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       const jobs=createCustomCohortCaptureJobRepository(client),jobOptions={scope,actorUserId:input.auth.userId};
       const requested={operation_id:input.operationId,observation_period:input.observationPeriod,discovery:input.discovery};
       if(!same(await jobs.readRequest(claim,jobOptions),requested)) fail('operation_conflict');
-      const selectionWorkspaceTarget=readingSelectionWorkspaceTarget?await readCustomCohortFrozenSelectionWorkspaceTarget({
+      const selectionWorkspaceTarget=readingSelectionWorkspaceTarget||awaitingSelection?await readCustomCohortFrozenSelectionWorkspaceTarget({
         client,input,scopeJson:canonicalAssessmentJson(scope),checkBudget:budget.check}):null;
       const checkpoint=await jobs.readCheckpoint(claim,jobOptions);
       if(!checkpoint || !allowedPhases.includes(checkpoint.phase)
@@ -2135,7 +2138,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             try{catalogIssued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
             catalogIssued=prepareCohortRecordedCatalogReceiptV2(catalogIssued,catalogExpected);
             if(catalogIssued.sequence!==catalogAnchor.sequence)fail('checkpoint_conflict');}
-          if(readingRecordedCatalog&&catalogIssued?.after.done!==true)fail('unfinished_recorded_catalog');
+          if((readingRecordedCatalog||awaitingSelection)&&catalogIssued?.after.done!==true)fail('unfinished_recorded_catalog');
           catalogCounts=await catalogStore.counts();
           if(!same(catalogCounts,catalogIssued?.after_counts??{assigned_accounts:0,unassigned_accounts:0,assigned_groups:0}))fail('catalog_original_mismatch');
         }
@@ -2283,9 +2286,19 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if((readingRecordedPartition||catalogingRecordedGroups)&&!same(await partitionStore.readNextEntry(partitionReadCursor),partitionReadEntry))fail('partition_original_mismatch');
       if(catalogStore&&(!same(await catalogStore.read(),catalogAnchor)||!same(await catalogStore.counts(),catalogCounts)))fail('catalog_original_mismatch');
       if(catalogReadGroupKey&&!same(await catalogStore.readGroup(catalogReadGroupKey),catalogReadGroup))fail('catalog_original_mismatch');
-      if(readingSelectionWorkspaceTarget&&!same(await readCustomCohortFrozenSelectionWorkspaceTarget({
+      if((readingSelectionWorkspaceTarget||awaitingSelection)&&!same(await readCustomCohortFrozenSelectionWorkspaceTarget({
         client,input,scopeJson:canonicalAssessmentJson(scope),checkBudget:budget.check}),selectionWorkspaceTarget))fail('workspace_target_changed');
       budget.check();
+      if(awaitingSelection){
+        // The server chose the issued DONE cursor; a fresh whole original/cache
+        // and partition empty probe plus ALL current ending fences ran above.
+        // Release ONLY the lease. No groups, publication or old choice carried.
+        const waiting=await createCustomCohortV2SelectionWaitRepository(client).awaitSelection(claim,jobOptions);
+        budget.check();return freeze({...waiting,operation_id:input.operationId,selection_workspace_target:selectionWorkspaceTarget,
+          original_reconciliation:'fresh_terminal_original_cache_and_partition_empty_probe_after_issued_catalog_DONE',
+          complete_catalog_semantic_replay:'not_established',selected_union:'not_established',statistics:'not_established',
+          publication:'not_established',source_acquisition:'not_established',report_update:'none'});
+      }
       if(yieldingV2Progress){
         // Only after EVERY original/current-authority ending fence, in this
         // same TX. The native continuation guard derives the actual issued
@@ -2584,6 +2597,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     // group command; no selection is inferred from the prior active head.
     readOriginalFrozenCaptureJobSelectionWorkspaceTargetReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_selection_workspace_target_refs_v2'),
+    // Dormant lease-neutral boundary, not an HTTP/worker activation or a human
+    // command. Only a later authenticated NEW-study command may enable resume.
+    awaitOriginalFrozenCaptureJobSelectionReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'original_catalog_selection_wait_refs_v2'),
     async capture(value, options = {}) {
     if (!options || Object.getPrototypeOf(options) !== Object.prototype)
       fail('invalid_options');

@@ -5562,6 +5562,39 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           assert.equal(statistics.status,'current_authorized_first_selected_statistics_originals_reconciled');
           assert.deepEqual(statistics.metric_row_candidate,metric.metric_row_candidate);
           assert.deepEqual(statistics.reported_comparison,metric.reported_comparison);
+          assert.equal(statistics.statistics_contribution_retained,false);
+          const contribution=statistics.statistics_contribution_candidate;
+          if(selectedCount){
+            assert.equal(contribution.format,'cohort_selected_statistics_contribution_v2');
+            assert.equal(contribution.policy,'current_reported_complete_matching_recorded_housing_one_selected_account_v2');
+            assert.deepEqual(contribution.selected_entry,metric.metric_row_candidate.selected_entry);
+            assert.deepEqual(contribution.metrics_reference,finishedMetrics.heads[0].receipt_reference);
+            assert.deepEqual(contribution.metric_row_reference,finishedMetrics.rows[0].row_reference);
+            assert.equal(contribution.effective_date,metric.retained_effective_date);
+            assert.deepEqual(contribution.observation_period,refsInput.observationPeriod);
+            assert.equal(contribution.housing_comparison,metric.reported_comparison.housing.state);
+            assert.deepEqual(Object.fromEntries(Object.entries(contribution.metrics).map(([key,cell])=>[key,cell.reported_value_state])),
+              {reported_year_built:allSelected?'observed':'invalid',reported_residential_area:allSelected?'conflicting':'invalid',
+                reported_site_area:'observed',reported_market_value:allSelected?'unsupported':'missing'});
+            for(const [key,cell] of Object.entries(contribution.metrics)){
+              const comparison=statistics.reported_comparison.metrics[key];
+              assert.equal(cell.source_part_count,allSelected?2:1,'parts are NOT selected-account multiplicities');
+              assert.deepEqual(cell.part_counts,comparison.part_counts);
+              assert.equal(cell.complete_observed_parts,comparison.complete_observed_parts);
+              assert.equal(cell.recorded_comparison_eligible,comparison.recorded_comparison_eligible);
+              assert.equal(cell.contribution_exact_value,comparison.recorded_comparison_eligible?comparison.exact_value:null);
+              assert.equal(cell.contribution_unit,comparison.recorded_comparison_eligible?comparison.unit:null);
+              assert.deepEqual(cell.exclusion_reasons,comparison.reasons);assert.ok(Object.isFrozen(cell.exclusion_reasons));
+            }
+            assert.equal(contribution.metrics.reported_year_built.contribution_exact_value,null);
+            assert.equal(contribution.metrics.reported_residential_area.contribution_exact_value,null);
+            assert.equal(contribution.metrics.reported_site_area.contribution_exact_value,null,
+              'fixed-first A has conflicting housing and fixed-first B unknown housing; genuine site0 is not promoted');
+            assert.equal(statistics.metric_row_candidate.metrics.reported_site_area.exact_value,allSelected?'8000':'0');
+            assert.equal(contribution.metrics.reported_market_value.contribution_exact_value,null);
+            assert.equal(contribution.statistics,'not_established');assert.equal(contribution.publication,'not_established');
+            assert.ok(Buffer.byteLength(canonicalAssessmentJson(contribution))<=4096);
+          }else assert.equal(contribution,null,'EMPTY has no prior account or inferred missing observation');
           assert.equal(statistics.retained_metric_row_reconciled,selectedCount>0);
           assert.deepEqual(statistics.metrics_reference,finishedMetrics.heads[0].receipt_reference);
           assert.equal(statistics.selected_entry?.ordinal??null,selectedCount?1:null);
@@ -5580,6 +5613,13 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             canonical_forged_blob_not_original_authority_refused_and_rolled_back:selectedCount>0,
             actual_same_TX_assignment_archive_ending_refusals_and_all_prior_state_unchanged:true,
             maximum_whole_owner_sql_queries:Math.max(...statisticsQueries),whole_owner_limits:ORIGINAL_OWNER_LIMITS,
+            statistics:false,publication:false,licensed_acquisition:false,production_speed:false,worker_activation:false});
+          console.info('[native-first-selected-statistics-contribution-policy-v2]',{fixed_first_only_after_DONE_seventh:true,
+            explicit_empty:selectedCount===0,fresh_original_states_not_lossy_seventh_nulls:selectedCount>0,
+            one_state_per_selected_account_never_parts_or_overlapping_reasons:selectedCount>0,
+            incomplete_observed_distinct_from_invalid_conflicting_and_unsupported:selectedCount>0,
+            current_and_ending_full_original_rights_and_all_prior_state_unchanged:true,
+            contribution_not_retained:true,complete_contribution_traversal:false,frequency_ledger:false,
             statistics:false,publication:false,licensed_acquisition:false,production_speed:false,worker_activation:false});
           if(selectedCount)for(const sql of [
             'UPDATE app.neighborhood_custom_cohort_selected_metrics_v2_rows SET row_reference=entry_reference WHERE operation_id=$1',

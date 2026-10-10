@@ -1,5 +1,39 @@
 # Complete larger-area Custom neighborhood studies
 
+## Original-derived statistical contribution policy (2026-10-10; authored, inactive)
+
+The actual current-authorized fixed-first statistics-source owner now derives
+one closed contribution candidate AFTER every retained seventh-row field matches
+THIS fresh complete original/ENTIRE-cache replay. Its versioned policy preserves
+five exclusive account-level reported value states: observed, missing, invalid,
+conflicting and unsupported. Original source-part counts and overlapping
+exclusion reasons remain separate from selected-account denominators. In
+particular, an observed value with missing/invalid/unsupported parts is not a
+complete eligible observation. Known different and unresolved recorded housing
+remain excluded independently of the value state; currency stays unsupported.
+Only complete equal supported reported parts with matching recorded housing
+contribute one canonical exact number. Genuine zero site area is not missing;
+values beyond JavaScript's safe integer range are never rounded or summed.
+
+The candidate binds native membership, all prior parent references, the DONE
+metric head and exact native row reference, retained dates and subject housing.
+It is at most4096 bytes and stays under the unchanged whole-owner16KB response,
+250-original/256-SQL/32MB/60-second limits. All ending rights and native fences
+still precede return. No candidate is retained; EMPTY returns null, never a
+prior account or guessed missing observation. The structural helper and any
+caller source-shaped DATA grant no authority outside this actual owner.
+
+Focused adversarial policy tests cover all five states, mixed incomplete
+observations, housing exclusions, exact fractions/>2^53/zero, mismatched fresh
+rows/bindings and hostile DATA. Authored cloud-native assertions extend the
+same independently issued B-only/EMPTY/both graph and complete prior-state
+checks without extra owner queries. Cloud execution remains pending.
+This does NOT implement the eighth complete contribution/frequency traversal,
+medians/CODs/quarters, coherent publication, workers or terminal pin retirement.
+Protected parent integration/actual included review/security/full suites and
+licensed >50k/5-mile/10-mile/city/retrospective plus live acceptance remain required.
+No route, default, grant, source payload copy, deployment or genuine choice changes.
+
 ## Statistics-source original reconciliation (2026-10-10; authored, inactive)
 
 The next read-only boundary requires exact thirteen original-preserving roots

@@ -71,6 +71,7 @@ import { prepareCohortSelectedEvidenceReceiptV2 } from './cohortSelectedEvidence
 import { createCustomCohortSelectedMetricsV2Repository } from './customCohortSelectedMetricsV2Repository.js';
 import { prepareCohortSelectedMetricsReceiptV2 } from './cohortSelectedMetricsReceiptV2.js';
 import { prepareCohortSelectedMetricRowV2, SELECTED_REPORTED_METRIC_ROW_V2_BASIS } from './cohortSelectedMetricRowV2.js';
+import { prepareCohortSelectedStatisticsContributionV2 } from './cohortSelectedStatisticsContributionV2.js';
 import { encodeCohortDiagnosticCompressedJsonV1 } from './cohortDiagnosticCompressedJsonV1.js';
 import { createCustomCohortV2ContinuationRepository } from './customCohortV2ContinuationRepository.js';
 import { createCustomCohortV2SelectionWaitRepository } from './customCohortV2SelectionWaitRepository.js';
@@ -2430,6 +2431,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
                 ['recorded_comparison_eligible','complete_observed_parts','exact_value','unit'].map(field=>[field,c[field]]))])),
               basis:SELECTED_REPORTED_METRIC_ROW_V2_BASIS},metricRowMetadata);
             if(progressingSelectedMetrics)metricsRowCandidate=metricRowCandidate;
+            let statisticsContribution=null;
             if(readingSelectedStatisticsSource&&firstSelectedEntry!==null){
               const text=await blobs.get(firstSelectedEntry.row_reference.content_sha256,firstSelectedEntry.row_reference.canonical_utf8_bytes);
               if(text===null||Buffer.byteLength(text)>4096)fail('selected_metric_original_mismatch');
@@ -2439,10 +2441,20 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
               // original replay, retaining its separate original reason states.
               try{row=prepareCohortSelectedMetricRowV2(row,metricRowMetadata);}catch{fail('selected_metric_original_mismatch');}
               if(!same(row,metricRowCandidate))fail('selected_metric_original_mismatch');
+              // Preserve the original five-way value states, complete-part
+              // and housing exclusions separately. Never classify a retained
+              // null as missing or count source parts as selected accounts.
+              statisticsContribution=prepareCohortSelectedStatisticsContributionV2({subject:subjectHousing,
+                housing:{state:packet.recorded_housing.state,category:packet.recorded_housing.category,
+                  county_state:packet.recorded_housing.county_state,source_part_count:packet.recorded_housing.source_part_count,
+                  part_states:packet.recorded_housing.part_states},original_counts:packet.original_counts,
+                observations:packet.observations},row,{metric_metadata:metricRowMetadata,
+                metrics_reference:metricsAnchor.receipt_reference,metric_row_reference:firstSelectedEntry.row_reference});
             }
             subjectHousingResult={status:progressingSelectedMetrics?'current_authorized_next_selected_metric_originals_reopened':'current_authorized_first_selected_metric_originals_reopened',operation_id:input.operationId,
               ...(readingSelectedStatisticsSource?{status:'current_authorized_first_selected_statistics_originals_reconciled',
-                metrics_reference:metricsAnchor.receipt_reference,retained_metric_row_reconciled:firstSelectedEntry!==null}:{}),
+                metrics_reference:metricsAnchor.receipt_reference,retained_metric_row_reconciled:firstSelectedEntry!==null,
+                statistics_contribution_candidate:statisticsContribution,statistics_contribution_retained:false}:{}),
               command_id:issuedSelectionIntent.command_id,union_reference:unionAnchor.receipt_reference,
               eligibility_reference:eligibilityAnchor.receipt_reference,evidence_reference:evidenceAnchor.receipt_reference,
               selected_entry:firstSelectedEntry,subject,subject_original_fallback:preferred===null,

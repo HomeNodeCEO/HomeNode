@@ -26,6 +26,7 @@ import { NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodOriginalTransactionPackagesV2.js';
 import { createNeighborhoodSharedStockOriginalCellsV2, prepareNeighborhoodStockOriginalCellPageV2,
   prepareNeighborhoodStockAccountPackagePageV2, NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL, NEIGHBORHOOD_STOCK_SUBJECT_HOUSING_PACKAGE_V2_SQL,
+  NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,
   getNeighborhoodStockAccountPackageV2Profile,
   NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL, getNeighborhoodStockOriginalCellsV2Profile }
   from '../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
@@ -1121,6 +1122,17 @@ async function stockOriginalCellFixture(hook=()=>{}){
     const supplied=await hook({...call,source,sharedHeader,rows});if(supplied)return supplied;
     if(call.text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.source)return result(source);
     if(call.text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read)return result(structuredClone(sharedHeader));
+    if(call.text===NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL){
+      const originals=Object.values(rows).flat(),ids=[...new Set(originals.map(r=>r.account_id))].sort((a,b)=>Buffer.compare(Buffer.from(a),Buffer.from(b))),
+        next=ids.find(id=>Buffer.compare(Buffer.from(id),Buffer.from(call.values[3]))>0)??null,
+        subject=call.values[9]&&ids.includes(options.scope.account_id)?options.scope.account_id:null,
+        packet=originals.filter(r=>r.account_id===next||r.account_id===subject).sort((a,b)=>
+          Buffer.compare(Buffer.from(`${a.account_id}\u0000${a.kind}\u0000${a.row_key}`),Buffer.from(`${b.account_id}\u0000${b.kind}\u0000${b.row_key}`))),
+        n=(id,kind)=>id===null?0:packet.filter(r=>r.account_id===id&&r.kind===kind).length;
+      return result({account_id:next,geographic_parcel_count:next?'1':null,subject_account_id:subject,subject_geographic_parcel_count:subject?'1':null,
+        next_parcels:n(next,'parcels'),next_accounts:n(next,'accounts'),subject_parcels:n(subject,'parcels'),subject_accounts:n(subject,'accounts'),
+        original_count:packet.length,page_count:packet.length,invalid_count:0,packet_oversize:false,page_json:JSON.stringify(packet)});
+    }
     if([NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL,NEIGHBORHOOD_STOCK_SUBJECT_HOUSING_PACKAGE_V2_SQL].includes(call.text)){
       const chosen=call.text===NEIGHBORHOOD_STOCK_SUBJECT_HOUSING_PACKAGE_V2_SQL
         ?call.values[3]==='STOCK-A'?'STOCK-A':null:Buffer.compare(Buffer.from('STOCK-A'),Buffer.from(call.values[3]))>0?'STOCK-A':null;
@@ -1271,6 +1283,78 @@ test('subject fallback refuses absent stock, wrong account, incomplete cache and
   let headers=0;const f=await stockOriginalCellFixture(({text,sharedHeader})=>text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read&&++headers===2
     ?result({...sharedHeader,status:'building'}):null);
   await assert.rejects(f.pages().subjectHousingAccountPackage(),/cache_unavailable/);
+});
+
+test('paired subject and next originals deduplicate the same account under one lifetime and aggregate packet',async()=>{
+  const f=await stockOriginalCellFixture(),reader=f.pages(),from=f.calls.length,
+    p=await reader.subjectAndRecordedGroupHousingAccountPackage({cursor:''},{includeSubject:true});
+  assert.equal(p.account_id,'STOCK-A');assert.equal(p.subject_equals_next,true);assert.equal(p.subject,null);
+  assert.equal(p.distinct_original_count,3);assert.equal(p.next.rows.length,3);
+  assert.deepEqual(p.next.original_counts,{parcels:2,accounts:1});
+  assert.equal(p.next.observations.reported_year_built.invalid_part_count,'1');
+  assert.equal(p.next.observations.reported_year_built.observed_part_count,'1');
+  assert.equal(p.eligibility,'not_established','observed with an invalid part is not promoted to eligibility');
+  assert.ok(Buffer.byteLength(JSON.stringify(p))<=2100000);
+  assert.ok(Object.isFrozen(p.next.recorded_group));assert.ok(Object.isFrozen(p.next.recorded_housing));
+  const calls=f.calls.slice(from),packets=calls.filter(c=>c.text===NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL);
+  assert.equal(packets.length,1);assert.equal(packets[0].values[9],true);assert.equal(packets[0].values[4],250);
+  assert.ok(!calls.some(c=>[NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL,NEIGHBORHOOD_STOCK_SUBJECT_HOUSING_PACKAGE_V2_SQL].includes(c.text)));
+  for(const run of [()=>reader.subjectHousingAccountPackage(),()=>reader.accountPackage({cursor:''}),
+    ()=>reader.subjectAndRecordedGroupHousingAccountPackage({cursor:''},{includeSubject:true})])await assert.rejects(run(),/single_use/);
+});
+
+test('paired originals reconcile two different accounts, omit blocked fallback and keep a fresh empty next probe',async()=>{
+  const f=await stockOriginalCellFixture();
+  f.rows.parcels[0]=stockOriginalCell('parcels','1',{class_code:'A11'});
+  f.rows.parcels[1]=stockOriginalCell('parcels','2',{class_code:'A12'});
+  f.rows.parcels.push(stockOriginalCell('parcels','3',{account_id:'STOCK-B',class_code:'A11',residential_year_built:1960}));
+  const p=await f.pages().subjectAndRecordedGroupHousingAccountPackage({cursor:'STOCK-A'},{includeSubject:true});
+  assert.equal(p.account_id,'STOCK-B');assert.equal(p.subject_equals_next,false);assert.equal(p.distinct_original_count,4);
+  assert.equal(p.next.rows.length,1);assert.equal(p.next.account_original_state,'absent');
+  assert.equal(p.subject.account_id,'STOCK-A');assert.equal(p.subject.rows.length,3);
+  assert.equal(p.subject.recorded_housing.state,'conflicting');assert.equal(p.subject.recorded_housing.category,null);
+  assert.equal(p.next.recorded_housing.state,'unknown','subject county/housing cannot fill the other account');
+  assert.ok([...p.next.rows,...p.subject.rows].every(r=>!Object.hasOwn(r,'original_text')));
+  const blocked=await f.pages().subjectAndRecordedGroupHousingAccountPackage({cursor:'STOCK-A'},{includeSubject:false});
+  assert.equal(blocked.subject,null);assert.equal(blocked.subject_included,false);assert.equal(blocked.distinct_original_count,1);
+  const terminal=await f.pages().subjectAndRecordedGroupHousingAccountPackage({cursor:'STOCK-B'},{includeSubject:true});
+  assert.equal(terminal.end_of_accounts,true);assert.equal(terminal.next,null);assert.equal(terminal.next_cursor,'STOCK-B');
+  assert.equal(terminal.subject.account_id,'STOCK-A');assert.equal(terminal.distinct_original_count,3);
+  const empty=await f.pages().subjectAndRecordedGroupHousingAccountPackage({cursor:'STOCK-B'},{includeSubject:false});
+  assert.equal(empty.next,null);assert.equal(empty.subject,null);assert.equal(empty.distinct_original_count,0);
+});
+
+test('paired original guards refuse aggregate overflow, absent/wrong subject, forged metadata/cache and changed ending source',async()=>{
+  const valid={account_id:'STOCK-A',geographic_parcel_count:'1',subject_account_id:'STOCK-A',subject_geographic_parcel_count:'1',
+    next_parcels:2,next_accounts:1,subject_parcels:2,subject_accounts:1,original_count:3,page_count:3,invalid_count:0,packet_oversize:false};
+  for(const [changes,reason] of [[{subject_account_id:null},/subject_not_in_issued_stock/],
+    [{subject_account_id:'WRONG'},/invalid_result/],[{subject_parcels:1},/invalid_result/],
+    [{original_count:6},/invalid_result/],[{invalid_count:1},/invalid_result/],
+    [{packet_oversize:true},/account_package_byte_limit/],
+    [{account_id:'STOCK-B',next_parcels:125,next_accounts:1,subject_parcels:124,subject_accounts:1,original_count:251,page_count:0,page_json:'[]'},/account_package_row_limit/],
+    [{next_parcels:251,next_accounts:0,subject_parcels:251,subject_accounts:0,original_count:251,page_count:0,page_json:'[]'},/account_package_row_limit/]]){
+    const f=await stockOriginalCellFixture(({text,rows})=>text===NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL
+      ?result({...valid,page_json:JSON.stringify([...rows.accounts,...rows.parcels]),...changes}):null);
+    await assert.rejects(f.pages().subjectAndRecordedGroupHousingAccountPackage({cursor:''},{includeSubject:true}),reason);
+  }
+  for(const mutate of [r=>r.typed=null,r=>r.typed.observations.reported_site_area.exact_value='2',
+    r=>r.original_text=r.original_text.replace('2050','2040')]){
+    const f=await stockOriginalCellFixture();f.rows.parcels[0]=structuredClone(f.rows.parcels[0]);mutate(f.rows.parcels[0]);
+    await assert.rejects(f.pages().subjectAndRecordedGroupHousingAccountPackage({cursor:''},{includeSubject:true}),/original_mismatch/);
+  }
+  let reads=0;const f=await stockOriginalCellFixture(({text,sharedHeader})=>text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read&&++reads===2
+    ?result({...sharedHeader,status:'building'}):null);
+  await assert.rejects(f.pages().subjectAndRecordedGroupHousingAccountPackage({cursor:''},{includeSubject:true}),/cache_unavailable/);
+  for(const bad of [{includeSubject:'true'},{includeSubject:true,accountId:'CALLER'},new Proxy({includeSubject:true},{}),
+    {get includeSubject(){assert.fail('getter');}}]){
+    const from=f.calls.length;await assert.rejects(f.pages().subjectAndRecordedGroupHousingAccountPackage({cursor:''},bad),/invalid_input/);
+    assert.equal(f.calls.length,from);
+  }
+  assert.throws(()=>f.pages().subjectAndRecordedGroupHousingAccountPackage({cursor:''},{includeSubject:true},()=>{}),/invalid_input/);
+  assert.match(NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,/SELECT \* FROM next_account UNION SELECT \* FROM subject_account/);
+  assert.match(NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,/LIMIT \(\$5::integer\+1\)/);
+  assert.match(NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,/\(SELECT sum\(n\) FROM totals\)<=\$5::integer/);
+  assert.doesNotMatch(NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,/FROM core\.|array_agg|jsonb_agg|ST_DWithin|INSERT|UPDATE|DELETE/);
 });
 
 test('whole stock account resolves all original parts after retained-year replay without sums or currency inference',async()=>{

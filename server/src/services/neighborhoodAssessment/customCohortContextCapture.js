@@ -66,7 +66,7 @@ import { createCustomCohortSelectedUnionV2Repository } from './customCohortSelec
 import { prepareCohortSelectedUnionReceiptV2 } from './cohortSelectedUnionReceiptV2.js';
 import { createCustomCohortSelectedEligibilityV2Repository } from './customCohortSelectedEligibilityV2Repository.js';
 import { prepareCohortSelectedEligibilityReceiptV2, SELECTED_RECORDED_ELIGIBILITY_METRICS } from './cohortSelectedEligibilityReceiptV2.js';
-import { encodeCohortDiagnosticFieldTuplesV2 } from './cohortDiagnosticFieldTuplesV2.js';
+import { encodeCohortDiagnosticCompressedJsonV1 } from './cohortDiagnosticCompressedJsonV1.js';
 import { createCustomCohortV2ContinuationRepository } from './customCohortV2ContinuationRepository.js';
 import { createCustomCohortV2SelectionWaitRepository } from './customCohortV2SelectionWaitRepository.js';
 import { createCustomCohortV2SelectionIntentRepository, prepareCustomCohortV2SelectionIntent } from './customCohortV2SelectionIntentRepository.js';
@@ -2384,12 +2384,13 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             context_complete:false,pin_transfer:false,source_acquisition:'not_established',report_update:'none'};
           if(readingSelectedUnionFirstTransactions&&readingSelectedUnionFirstAmenities){
             // Lossless JSON presentation after complete original/cache replay.
-            // Repeated object-key shapes are declared once, not observations
-            // omitted or replaced by hashes. The separate source methods stay
-            // unchanged; the combined consumer explicitly declares its format.
-            subjectHousingResult={...subjectHousingResult,combined_diagnostic_encoding:'cohort_diagnostic_field_tuples_v2',
-              selected_CAD:encodeCohortDiagnosticFieldTuplesV2(selectedCadResult),
-              selected_transactions:encodeCohortDiagnosticFieldTuplesV2(selectedTransactions)};
+            // Entire closed V2 JSON is compressed only for transport. Shapes,
+            // strings and every observation expand exactly, never omitted or
+            // replaced by hashes. Separate source methods stay unchanged; the
+            // dormant combined consumer explicitly declares this format.
+            subjectHousingResult={...subjectHousingResult,combined_diagnostic_encoding:'cohort_diagnostic_compressed_json_v1',
+              selected_CAD:encodeCohortDiagnosticCompressedJsonV1(selectedCadResult),
+              selected_transactions:encodeCohortDiagnosticCompressedJsonV1(selectedTransactions)};
           }
           if(Buffer.byteLength(JSON.stringify(subjectHousingResult))>16000)fail('byte_limit');
         }else if(readingSelectedUnionSubjectHousing){

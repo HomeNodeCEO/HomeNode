@@ -61,6 +61,26 @@ selected-union replay/statistics, licensed acquisition or production speed.
 All internal stages remain inactive. No source rights, worker, scheduler, pin,
 accepted report, genuine Hardy choice, production or Apply changes are made.
 
+## Combined diagnostic byte-cap failure and bounded lossless transport (2026-10-10)
+
+The 500d0d87 V2 field/string-table native run still FAILED the explicit-selection
+combined reader at its unchanged 16 KB response cap: foundation 38078360890,
+native 114289968488. Migration 417/417 and subject 1/1 passed; index 12 passed,
+one failed, zero skips (832187.960753 ms). EMPTY and both-account combined fixtures
+passed, but that is not combined acceptance. No incident retry is appropriate.
+
+Only the combined CAD/transaction diagnostic presentation now uses declared
+`cohort_diagnostic_compressed_json_v1`: bounded raw-deflate/base64 of the ENTIRE
+closed V2 JSON, with its exact uncompressed UTF-8 length. Existing closed-input,
+node/depth/shape/string and 2.1 MB bounds run before compression; the actual owner
+still refuses over its unchanged total 16 KB cap. There are no dropped fields,
+original payload copies, widened limits or changed rights/reconciliation. The
+test-only decoder enforces both fixed maximum and exact expanded length, then
+native tests compare every expanded value with the independently original-
+reconciled CAD/transaction responses. Separate source responses remain unchanged.
+Fresh native verification is required; this change is not acquisition, full
+selected-union eligibility/statistics, activation, production speed or live proof.
+
 ## One aggregate selected stock/CAD/transaction packet (2026-10-10, not activated)
 
 The subsequent f40e3981 field-shape-only encoding run also FAILED one nonempty

@@ -1,5 +1,22 @@
 # Complete larger-area Custom neighborhood studies
 
+## Standalone CAD and selected-amenity raw-byte gates (2026-10-10, not activated)
+
+The same encode-before-byte-refusal risk also existed in the actual standalone
+CAD account and fixed selected-amenity SQL plans. Both now retain ONLY byte
+lengths under their unchanged complete-original count admission, then refuse
+raw-over-limit packets before either source family builds JSON envelopes. The
+selected-amenity plan keeps ONE aggregate subject/selected stock/CAD budget and
+the required-subject gate. Exact encoded-byte checks remain mandatory after raw
+admission; counts, profiles, source rights and full original/cache reconciliation
+are unchanged. 108 focused synthetic tests pass, zero failures/skips (1564.172 ms).
+Cloud-only rolled-back TEMP plan assertions are AUTHORED NOT EXECUTED for these
+changes: 250 raw-size rows/zero encoded rows over 8 MB, per-original 1 MB refusal,
+raw-fit/exact-encoding-over refusal, 251 originals reading zero raw/encoded rows,
+missing cache/subject and fresh EMPTY. TEMP substitution is not authority proof;
+the existing full issued-original-owner tests remain required. These changes do
+not activate internal stages or establish licensed acquisition/live acceptance.
+
 ## Selected packet raw-byte gates (2026-10-10, not activated)
 
 Inspection after the actual #1240 review found the same encode-before-byte-refusal

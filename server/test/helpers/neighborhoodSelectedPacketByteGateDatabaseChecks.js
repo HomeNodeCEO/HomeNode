@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL as TRANSACTION,
   NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL as COMBINED }
   from '../../src/services/neighborhoodAssessment/neighborhoodSelectedTransactionOriginalPackageV2.js';
+import { NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL as AMENITY }
+  from '../../src/services/neighborhoodAssessment/neighborhoodSelectedAmenityOriginalPackageV2.js';
 import { NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_LIMITS as L }
   from '../../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
 
@@ -49,16 +51,21 @@ export async function runNeighborhoodSelectedPacketByteGateDatabaseChecks(client
       JSON.stringify({content_sha256:profile,canonical_utf8_bytes:String(bytes)})]);
     await client.query('INSERT INTO pg_temp.selected_gate_blobs VALUES($1,$2,$3,$4)',[organization,profile,bytes,body]);
     await client.query("INSERT INTO pg_temp.selected_gate_union VALUES($1,$2,'B',1)",[operation,organization]);
-    for(const withCad of [false,true]){
+    for(const {withCad,transactions,statement} of [
+      {withCad:false,transactions:true,statement:TRANSACTION},
+      {withCad:true,transactions:true,statement:COMBINED},
+      {withCad:true,transactions:false,statement:AMENITY}]){
       for(const name of ['selected_gate_originals','selected_gate_typed','selected_gate_cad','selected_gate_cad_typed'])
         await client.query(`DELETE FROM pg_temp.${name}`);
       await client.query(`INSERT INTO pg_temp.selected_gate_originals
         SELECT $1,k.kind,k.row_key,k.account_id,k.source_id,'{"SQL_DATA_only":true}'::jsonb
-        FROM (VALUES ('parcels','A-part','A',NULL::bigint),('parcels','B-part','B',NULL::bigint),('accounts','B','B',NULL::bigint),
-          ('source_records','10','B',10::bigint),('sales','20','B',10::bigint),('sale_links','30','B',10::bigint)) k(kind,row_key,account_id,source_id)`,[generation]);
+        FROM (VALUES ('parcels','A-part','A',NULL::bigint),('parcels','B-part','B',NULL::bigint),('accounts','B','B',NULL::bigint)) k(kind,row_key,account_id,source_id)`,[generation]);
+      if(transactions)await client.query(`INSERT INTO pg_temp.selected_gate_originals
+        SELECT $1,k.kind,k.row_key,'B',10,'{"SQL_DATA_only":true}'::jsonb
+        FROM (VALUES ('source_records','10'),('sales','20'),('sale_links','30')) k(kind,row_key)`,[generation]);
       if(withCad)await client.query(`INSERT INTO pg_temp.selected_gate_cad
         SELECT $1,CASE WHEN n=1 THEN 'primary' ELSE 'secondary' END,n::text,'B','{"SQL_DATA_only":true}'::jsonb,$2,22
-        FROM generate_series(1,244)n`,[generation,cadProfile]);
+        FROM generate_series(1,$3::integer)n`,[generation,cadProfile,transactions?244:247]);
       else await client.query(`INSERT INTO pg_temp.selected_gate_originals
         SELECT $1,'sales',(100+n)::text,'B',10,'{"SQL_DATA_only":true}'::jsonb FROM generate_series(1,244)n`,[generation]);
       await client.query(`INSERT INTO pg_temp.selected_gate_typed SELECT generation_id,$1,kind,row_key,account_id,source_record_id,$1,
@@ -66,7 +73,7 @@ export async function runNeighborhoodSelectedPacketByteGateDatabaseChecks(client
       await client.query(`INSERT INTO pg_temp.selected_gate_cad_typed SELECT generation_id,$1,kind,row_key,account_id,$1,
         '{"SQL_DATA_only":true}'::jsonb FROM pg_temp.selected_gate_cad`,[cadProfile]);
       for(const name of Object.values(tableNames))await client.query(`ANALYZE pg_temp.${name}`);
-      const sql=substitute(withCad?COMBINED:TRANSACTION),values=[operation,generation,profile,'',L.rows,L.page_utf8_bytes,
+      const sql=substitute(statement),values=[operation,generation,profile,'',L.rows,L.page_utf8_bytes,
         L.row_utf8_bytes,L.original_utf8_bytes,L.output_utf8_bytes,true,...(withCad?[cadProfile]:[])],
         read=async(overrides={})=>{const args=[...values];for(const [i,v] of Object.entries(overrides))args[Number(i)]=v;
           const r=await client.query(sql,args);assert.equal(r.rowCount,1);return r.rows[0];},
@@ -108,7 +115,8 @@ export async function runNeighborhoodSelectedPacketByteGateDatabaseChecks(client
       const empty=await read({3:'nonempty-cursor',9:false});assert.equal(empty.account_id,null);assert.equal(empty.original_count,0);
       assert.equal(empty.page_count,0);assert.equal(empty.packet_oversize,false);assert.equal(empty.page_json,'[]');
     }
-    console.info('[native-selected-transaction-combined-raw-byte-gate-DATA-v2]',{both_fixed_plans:true,original_cap:250,
+    console.info('[native-selected-transaction-combined-raw-byte-gate-DATA-v2]',{both_fixed_plans:true,
+      separate_selected_amenity_fixed_plan:true,total_fixed_plans:3,original_cap:250,
       mixed_families_share_one_byte_gate:true,actual_raw_size_rows:250,actual_raw_over_limit_encoded_rows:0,
       count_251_reads_zero_raw_sizes_and_zero_encoded_members:true,original_1MB_gate:true,
       raw_fit_exact_encoding_over_refused:true,missing_cache_not_skipped:true,missing_subject_zero_payload:true,

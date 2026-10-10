@@ -86,3 +86,14 @@ test('closed CAD DATA inputs, single fixed original indexed query and cancellati
   assert.doesNotMatch(SQL,/FROM (?:core|gis)\.|ST_DWithin|INSERT|UPDATE|DELETE|AVG\(/);
   assert.equal(getNeighborhoodOriginalCadAccountPackageV2Profile().profile_ref.id,'neighborhood-original-CAD-account-packages-v2');
 });
+
+test('CAD raw-size admission precedes encoding but never replaces exact envelope gates',()=>{
+  const raw=SQL.split('),raw_sizes AS MATERIALIZED (')[1].split('),raw_gate AS MATERIALIZED (')[0];
+  assert.match(raw,/octet_length\(o\.payload::text\)/);assert.match(raw,/octet_length\(t\.typed::text\)/);
+  assert.match(raw,/\(SELECT sum\(n\) FROM totals\)<=\$5::integer/);
+  assert.doesNotMatch(raw,/jsonb_build_object|AS encoded|string_agg/);
+  const members=SQL.split('),members AS MATERIALIZED (')[1].split('),sized AS MATERIALIZED')[0];
+  assert.match(members,/AND NOT \(SELECT oversize FROM raw_gate\) OFFSET 0/);
+  assert.match(SQL,/\(SELECT oversize FROM raw_gate\) OR coalesce\(max\(bytes\),0\)>\$7::integer/);
+  assert.match(SQL,/CASE WHEN NOT \(SELECT oversize FROM raw_gate\)[\s\S]+sum\(bytes\+1\)[\s\S]+ELSE '\[\]'/);
+});

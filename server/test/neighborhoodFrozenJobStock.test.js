@@ -1466,11 +1466,24 @@ test('stock plus CAD originals refuse as ONE aggregate 250-row packet before pay
   const sql=NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL;
   assert.match(sql,/r\.ordinal=1/);assert.match(sql,/selected_union_v2_checkpoint_matches/);
   assert.match(sql,/SELECT \* FROM next_account UNION SELECT \* FROM subject_account/);
-  assert.equal((sql.match(/SELECT sum\(n\) FROM totals/g)??[]).length,2);
+  assert.equal((sql.match(/SELECT sum\(n\) FROM totals/g)??[]).length,4);
   assert.match(sql,/frozen_cad_improvement_rows o[\s\S]+frozen_typed_cad_rows t/);
   assert.match(sql,/sum\(bytes\+1\)/);assert.match(sql,/sum\(2\*coalesce\(typed_bytes,0\)\+1024\)/);
   assert.doesNotMatch(sql,/FROM core\.|ST_DWithin|array_agg|INSERT|UPDATE|DELETE/);
 });
+test('selected amenity raw byte lengths share stock-subject/CAD admission before either family encodes',()=>{
+  const sql=NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL,
+    raw=sql.split('), raw_sizes AS MATERIALIZED (')[1].split('), raw_gate AS MATERIALIZED (')[0],
+    members=sql.split('), members AS MATERIALIZED (')[1].split('), sized AS MATERIALIZED')[0];
+  assert.equal((raw.match(/SELECT sum\(n\) FROM totals/g)??[]).length,2);
+  assert.equal((raw.match(/NOT \$10::boolean OR EXISTS\(SELECT 1 FROM subject_account\)/g)??[]).length,2);
+  assert.match(raw,/frozen_source_rows o/);assert.match(raw,/frozen_cad_improvement_rows o/);
+  assert.doesNotMatch(raw,/jsonb_build_object|AS encoded|string_agg/);
+  assert.equal((members.match(/AND NOT \(SELECT oversize FROM raw_gate\) OFFSET 0/g)??[]).length,2);
+  assert.match(sql,/\(SELECT oversize FROM raw_gate\) OR coalesce\(max\(bytes\),0\)>\$7::integer/);
+  assert.match(sql,/CASE WHEN NOT \(SELECT oversize FROM raw_gate\)[\s\S]+sum\(bytes\+1\)[\s\S]+ELSE '\[\]'/);
+});
+
 test('selected amenity cache prerequisites and ending metadata share stock child budgets and refuse changes',async()=>{
   for(const fault of ['initial','ending','metadata']){
     let reads=0;const f=await stockOriginalCellFixture(({text,cadHeader,cadSource})=>{

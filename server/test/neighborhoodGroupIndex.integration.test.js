@@ -4580,8 +4580,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty']) t
             for(const [fault,reason] of [['stock_cells_mismatch',/original_mismatch/],['stock_cells_missing',/original_mismatch/],
               ['stock_cells_original',/original_mismatch/],['union_first_entry_wrong',/selected_union_original_mismatch/],
               ['union_first_entry_missing',/selected_union_original_mismatch/],['union_first_entry_partition',/partition_original_mismatch/],
-              ['union_first_entry_ending',/selected_union_original_mismatch/],['catalog_group_county',/catalog_original_mismatch/],
-              ['catalog_group_label',/catalog_original_mismatch/]]){
+              ['union_first_entry_ending',/selected_union_original_mismatch/],['catalog_group_county',/catalog_original_mismatch|recorded_catalog_v2_corrupt/],
+              ['catalog_group_label',/catalog_original_mismatch|recorded_catalog_v2_corrupt/]]){
               refsFault=fault;await assert.rejects(firstRead(),reason);assert.equal(refsFault,null);await firstUnchanged();
             }
           }

@@ -81,13 +81,20 @@ export function createCustomCohortSelectedSemanticV2Repository(raw){
     o.actorUserId,o.command_id,...REFS.map(k=>json(refs[k]))];
   const tx=async()=>{const id=one(await client.query('/* custom-cohort-selected-semantic-v2:transaction */ SELECT txid_current()::text AS transaction_id')).transaction_id;
     if(typeof id!=='string'||!/^[1-9][0-9]{0,19}$/.test(id))fail('caller_transaction_required');return id;};
-  const read=async()=>{
-    const r=data(one(await client.query(`/* custom-cohort-selected-semantic-v2:head-read */
-      SELECT head.command_id::text,head.union_reference,head.eligibility_reference,head.evidence_reference,head.metrics_reference,
+  // Internal-only transaction binding. The id is obtained from PostgreSQL,
+  // never interpolated or caller-supplied. Coalesce the two existing head reads
+  // with the pre-DML and post-DML transaction checks instead of extra trips.
+  const read=async(expectedTransaction=null,mismatch='caller_transaction_required')=>{
+    const withTransaction=expectedTransaction!==null,
+      result=data(one(await client.query(`/* custom-cohort-selected-semantic-v2:head-read */
+      SELECT ${withTransaction?'txid_current()::text AS transaction_id,':''}head.command_id::text,head.union_reference,head.eligibility_reference,head.evidence_reference,head.metrics_reference,
         head.statistics_reference,head.numeric_reference,head.receipt_reference,head.sequence
       ${PARENTS}
       LEFT JOIN app.neighborhood_custom_cohort_selected_semantic_v2_heads head ON head.operation_id=job.operation_id AND head.organization_id=job.organization_id
-      WHERE ${FENCE} AND ${DONE}`,bound)),HEAD);
+      WHERE ${FENCE} AND ${DONE}`,bound)),withTransaction?['transaction_id',...HEAD]:HEAD);
+    if(withTransaction&&(typeof result.transaction_id!=='string'||!/^[1-9][0-9]{0,19}$/.test(result.transaction_id)
+      ||result.transaction_id!==expectedTransaction))fail(mismatch);
+    const r=withTransaction?Object.fromEntries(HEAD.map(k=>[k,result[k]])):result;
     if(Object.values(r).every(v=>v===null))return null;const a=anchor(r);
     if(a.command_id!==o.command_id||REFS.some(k=>!same(a[k],refs[k])))fail('binding_changed');return a;
   };
@@ -124,8 +131,8 @@ export function createCustomCohortSelectedSemanticV2Repository(raw){
     async advance(...args){
       if(args.length!==2)fail('invalid_input');
       const expected=anchor(args[0]),receipt=ref(args[1],4096),sequence=(expected?.sequence??0)+1,started=await tx();
-      if(sequence>2000001)fail('corrupt');if(await tx()!==started)fail('caller_transaction_required');
-      if(!same(await read(),expected))fail('conflict');
+      if(sequence>2000001)fail('corrupt');
+      if(!same(await read(started),expected))fail('conflict');
       // Always derive the next actual ninth-joined eighth row; an actual EMPTY inserts zero.
       // The receipt does not choose the member, decide DONE or inject a row.
       const row=await client.query(`/* custom-cohort-selected-semantic-v2:row-insert */
@@ -160,7 +167,7 @@ export function createCustomCohortSelectedSemanticV2Repository(raw){
             AND head.evidence_reference=$12::jsonb AND head.metrics_reference=$13::jsonb AND head.statistics_reference=$14::jsonb
             AND head.numeric_reference=$15::jsonb AND head.receipt_reference=$18::jsonb AND head.sequence=$19::integer RETURNING head.sequence`,
           [...bound,json(receipt),sequence,json(expected.receipt_reference),expected.sequence]);
-      if(one(r).sequence!==sequence)fail('corrupt');const stored=await read();
-      if(!same(stored,{command_id:o.command_id,...refs,receipt_reference:receipt,sequence})||await tx()!==started)fail('corrupt');return stored;
+      if(one(r).sequence!==sequence)fail('corrupt');const stored=await read(started,'corrupt');
+      if(!same(stored,{command_id:o.command_id,...refs,receipt_reference:receipt,sequence}))fail('corrupt');return stored;
     }});
 }

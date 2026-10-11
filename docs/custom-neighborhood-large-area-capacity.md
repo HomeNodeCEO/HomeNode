@@ -1,5 +1,38 @@
 # Complete larger-area Custom neighborhood studies
 
+## Five actual native graphs PASS; bounded transaction headroom follow-up (2026-10-11)
+
+Feature headadc8b8ab passes all SEVEN checks. The FULL3,144,619-character native
+log run38118747291/job114408915055 has migration417/subject1/index15/edge1/
+bootstrap2 passes, ZERO failures/cancellations/skips, successful idempotence and
+every job step SUCCESS. All FIVE independently captured tenth-owner graphs pass.
+The added positive/zero graph proves actual nonempty prefix fourth-to-fifth
+ordinary failure/reclaim, stale-token/current-source refusal, retained first
+member and exact16 checkpoint/reference/continuation/error history, then second
+original and separate EMPTY without duplicate member or rerank. Existing four
+graphs and their seventh/eighth/ninth/EMPTY recovery proofs remain intact.
+Whole-owner query maxima remain253/248/253/253/253, NOT production-speed evidence.
+
+The next inactive follow-up reduces the semantic reference writer's seven query
+round trips to FIVE by reading native transaction identity in BOTH existing
+expected-head and post-DML readback SELECTs. The separate starting txid remains.
+Autocommit still MUST fail before any DML, and post-write head/transaction mismatch
+still MUST fail; no public transaction-id parameter or wider head grammar is
+introduced. Real PostgreSQL autocommit-before-DML probes are authored for all
+five actual graphs, along with one standalone/two coalesced transaction-read
+assertions and a stricter251 whole-owner-query ceiling. That improvement is
+AUTHORED/locally checked, not native-accepted until the NEW exact-head job passes.
+No original/source/member/current-ending fence, native deferred constraint,
+256-query/32MB/60-second/250-original budget,180-second fixture,120-second
+statement timeout or two-client pool limit was removed or raised.
+
+This is still inactive reported-comparison statistics. Economic transactions/
+calendar quarters, historical/at-sale/currency authority, coherent publication,
+large-area workers/terminal pin transfer and licensed/live acceptance remain OPEN.
+All protected parents remain unmerged; actual included review and fresh integrated-
+main required security/native/full checks are still required. No activation,
+deployment, grants, production operation, report/choice/pin or Apply changes.
+
 ## Complete original statistics native PASS; nonempty recovery follow-up authored (2026-10-11)
 
 Exact feature head338da089 of draft PR1286 passes all SEVEN cloud checks.

@@ -13,10 +13,12 @@ const id=n=>`70000000-0000-4000-8000-${String(n).padStart(12,'0')}`,ref=n=>({con
   member={account_id:'B',ordinal:1,partition_ordinal:2,entry_reference:ref(4),state:'unassigned',assigned_group_id:null,row_reference:ref(5),
     contribution_row_reference:ref(6),numeric_index_ordinal:1,numeric_population_ordinal:1,
     reported_year_built:null,reported_residential_area:'9007199254740993.000000000001',reported_site_area:'0'};
-function setup({next=member,auto=false,readback=false,rows=1}={}){
+function setup({next=member,auto=false,readback=false,rows=1,lateTransaction=false,badTransaction=false}={}){
   let head=null,tx=8;const calls=[],options={client:{async query(text,values){calls.push({text,values});
     if(text.includes(':transaction'))return {rowCount:1,rows:[{transaction_id:String(auto?++tx:tx)}]};
-    if(text.includes(':head-read'))return {rowCount:1,rows:[head??{command_id:null,...Object.fromEntries(keys.map(k=>[k,null])),receipt_reference:null,sequence:null}]};
+    if(text.includes(':head-read'))return {rowCount:1,rows:[{
+      ...(text.includes('txid_current()::text AS transaction_id,')?{transaction_id:badTransaction?'0':head&&lateTransaction?'999':String(auto?++tx:tx)}:{}),
+      ...(head??{command_id:null,...Object.fromEntries(keys.map(k=>[k,null])),receipt_reference:null,sequence:null})}]};
     if(text.includes(':next-selected-entry'))return {rowCount:1,rows:[next??Object.fromEntries(Object.keys(member).map(k=>[k,null]))]};
     if(text.includes(':row-insert'))return {rowCount:rows,rows:Array.from({length:rows},()=>({ordinal:values[15]}))};
     if(text.includes(':head-insert')){head={command_id:values[8],...Object.fromEntries(keys.map((k,i)=>[k,JSON.parse(values[i+9])])),
@@ -54,6 +56,21 @@ test('closed storage rejects caller ordinal/value/summary authority, missing nin
   await assert.rejects(setup({next:{...member,get ordinal(){assert.fail('getter');}}}).owner.readNextSelectedEntry());
   await assert.rejects(setup({auto:true}).owner.advance(null,ref(7)),/caller_transaction_required/);
   await assert.rejects(setup({readback:true}).owner.advance(null,ref(7)),/binding_changed/);
+});
+
+test('coalesced native transaction identities retain pre-DML autocommit refusal and post-DML same-transaction readback in five queries',async()=>{
+  const success=setup();assert.equal((await success.owner.advance(null,ref(7))).sequence,1);
+  assert.equal(success.calls.length,5);assert.equal(success.calls.filter(c=>c.text.includes(':transaction')).length,1);
+  assert.equal(success.calls.filter(c=>c.text.includes(':head-read')&&c.text.includes('txid_current()::text AS transaction_id,')).length,2);
+  assert.ok(!Object.hasOwn(await success.owner.read(),'transaction_id'),'public head shape remains exact, never exposes internal tx identity');
+  for(const options of [{auto:true},{badTransaction:true}]){
+    const denied=setup(options);await assert.rejects(denied.owner.advance(null,ref(7)),/caller_transaction_required/);
+    assert.equal(denied.calls.length,2);assert.ok(!denied.calls.some(c=>/:row-insert|:head-insert|:head-advance/.test(c.text)),
+      'transaction mismatch is refused BEFORE any reference DML');
+  }
+  const late=setup({lateTransaction:true});await assert.rejects(late.owner.advance(null,ref(7)),/corrupt/);
+  assert.equal(late.calls.length,5);assert.ok(late.calls.some(c=>c.text.includes(':row-insert')));
+  assert.ok(late.calls.some(c=>c.text.includes(':head-insert')),'post-write transaction/readback mismatch must not return success');
 });
 
 test('tenth checkpoint is exact16 before SQL and does not broaden strict15 ninth grammar',async()=>{
@@ -131,6 +148,11 @@ test('cloud tenth probes are nonvacuous actual-owner and native grammar tests ac
     'pending.job.checkpoint,semanticFinished.job.checkpoint','replacement.attempts,expectedAttempt',
     'replacement.claim_token,stale.claim_token','recovered.job.attempts,expectedAttempt','liveClaim.attempts,5',
     'semanticQueries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries)'])assert.ok(probe.includes(text),text);
+  for(const text of ['semanticAutocommitCalls.push(text)','return pool.query(text,values)',
+    'semanticAutocommitCalls.length,2','semanticUnchanged(semanticInitial)',
+    'txid_current()::text AS transaction_id,','Math.max(...semanticQueries)<=251',
+    'custom-cohort-selected-semantic-v2:transaction',
+    'custom-cohort-selected-semantic-v2:head-read'])assert.ok(probe.includes(text),text);
   for(const text of ['semanticRecoveryFixture&&ordinal===1','retained.semantic_rows.length,1',
     'selected_ordinal:1,done:false','retained.job.attempts,4',".failClaim(liveClaim,'synthetic_semantic_prefix_reclaim'",
     "pending.job.status,'retry'",'pending.job.claim_token,null','pending.job.lease_expires_at,null',

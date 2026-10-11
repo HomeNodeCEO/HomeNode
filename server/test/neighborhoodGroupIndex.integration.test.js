@@ -6418,6 +6418,21 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
               return {...prior,semantic_heads:heads.rows,semantic_rows:rows.rows};},
             semanticUnchanged=async state=>{assert.deepEqual(await semanticSnapshot(),state);await numericParents();};
           const semanticInitial=await semanticSnapshot();assert.deepEqual(semanticInitial.semantic_heads,[]);assert.deepEqual(semanticInitial.semantic_rows,[]);
+          // REAL PostgreSQL autocommit calls have different native txids.
+          // The coalesced expected-head read must refuse BEFORE any DML; an
+          // orphan/FK failure after a write is not an acceptable substitute.
+          const semanticAutocommitCalls=[],semanticNumericHead=finishedNumeric.numeric_heads[0],
+            semanticParents=Object.fromEntries(['union_reference','eligibility_reference','evidence_reference','metrics_reference','statistics_reference']
+              .map(key=>[key,semanticNumericHead[key]]));
+          await assert.rejects(createCustomCohortSelectedSemanticV2Repository({
+            client:{async query(text,values){semanticAutocommitCalls.push(text);return pool.query(text,values);}},
+            claim:liveClaim,scope,actorUserId:actor,command_id:semanticNumericHead.command_id,
+            ...semanticParents,numeric_reference:semanticNumericHead.receipt_reference}).advance(null,absentRankRef),/caller_transaction_required/);
+          assert.equal(semanticAutocommitCalls.length,2);
+          assert.ok(semanticAutocommitCalls[0].includes(':transaction'));
+          assert.ok(semanticAutocommitCalls[1].includes(':head-read')&&semanticAutocommitCalls[1].includes('txid_current()::text AS transaction_id,'));
+          assert.ok(!semanticAutocommitCalls.some(sql=>/:row-insert|:head-insert|:head-advance/.test(sql)));
+          await semanticUnchanged(semanticInitial);
           await assert.rejects(freshRefsOwner()[semanticMethod](refsInput,{captureJobClaim:liveClaim}),/CAD_source_policy_required/);
           for(const key of ['ordinal','ranks','values','counts','done','readOriginal','selected_accounts','summary']){
             const from=refsCalls.length;await assert.rejects(cadOwner()[semanticMethod](refsInput,{captureJobClaim:liveClaim,[key]:true}),/invalid_options/);
@@ -6475,6 +6490,10 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             }else semanticTerminal=await semanticStep();
             const state=await semanticSnapshot(),issued=JSON.parse(state.semantic_heads[0].canonical_utf8),summary=JSON.parse(state.semantic_heads[0].summary_text),
               account=ordinal<=selectedCount?finishedNumeric.numeric_population_rows[ordinal-1]:null;
+            assert.equal(refsCalls.slice(from).filter(sql=>sql.includes('custom-cohort-selected-semantic-v2:transaction')).length,1);
+            assert.equal(refsCalls.slice(from).filter(sql=>sql.includes('custom-cohort-selected-semantic-v2:head-read')
+              &&sql.includes('txid_current()::text AS transaction_id,')).length,2,
+              'real advance keeps both same-transaction head fences while removing two standalone round trips');
             assert.equal(state.semantic_heads[0].sequence,ordinal);assert.equal(issued.sequence,ordinal);
             assert.deepEqual(issued.after,{selected_ordinal:Math.min(ordinal,selectedCount),done:ordinal===selectedCount+1});
             assert.equal(issued.selected_entry?.account_id??null,account?.account_id??null);
@@ -6580,6 +6599,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             assert.equal(liveClaim.attempts,5);
           }
           assert.ok(semanticQueries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries));
+          assert.ok(Math.max(...semanticQueries)<=251,'actual whole-owner SQL headroom improves without raising256 or removing any original/authority fence');
           console.info('[native-selected-semantic-original-owner-v2]',{actual_bounded_database_owner:true,
             independently_issued_selected_accounts:selectedCount,every_selected_complete_original_ENTIRE_cache_and_every_seventh_eighth_index_ninth_field:true,
             all_current_and_ending_authority_before_atomic_writes:true,reference_only_members:true,bounded_exact_aggregate_summaries:true,
@@ -6588,6 +6608,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             native_rank_sum_deviation_observed_reason_forgery_refused:positiveIndexedSourceFixture,
             actual_terminal_EMPTY_ordinary_failure_fifth_claim_recovery:selectionWaitFixture==='union-empty',
             actual_nonempty_prefix_ordinary_failure_fifth_claim_resume:semanticRecoveryFixture,
+            actual_autocommit_refused_before_DML_and_two_coalesced_transaction_head_reads:true,
             maximum_whole_owner_sql_queries:Math.max(...semanticQueries),whole_owner_limits:ORIGINAL_OWNER_LIMITS,
             calendar_quarters:false,publication:false,licensed_acquisition:false,production_speed:false,worker_activation:false});
 

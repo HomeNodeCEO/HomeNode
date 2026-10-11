@@ -78,7 +78,9 @@ test('actual frequency boundary freshly replays originals and compares EVERY ret
     "fail('selected_contribution_original_mismatch')",'retained_contribution_reconciled:firstSelectedEntry!==null',
     'frequency_ledger:false,exact_distributions:false,complete_selected_union_metric_population:false',
     'readOriginalFrozenCaptureJobFirstSelectedFrequencyReferencesV2'])assert.ok(s.includes(v),v);
-  const returned=s.slice(nativeEnding,result+900);
+  const nextWrite=s.indexOf('if(progressingSelectedStatistics){',result);
+  assert.ok(nextWrite>result,'the read-only result precedes the contribution write branch');
+  const returned=s.slice(nativeEnding,nextWrite+36);
   assert.ok(returned.includes('statistics_contribution_candidate,metric_row_candidate,reported_comparison,...presentation'));
   assert.ok(returned.indexOf("status:'current_authorized_first_selected_frequency_originals_reconciled'")<returned.indexOf('if(progressingSelectedStatistics){'));
 });

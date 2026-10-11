@@ -1,5 +1,67 @@
 # Complete larger-area Custom neighborhood studies
 
+## Exact native contribution index (2026-10-11; authored, inactive)
+
+An additive numerical observation index is a structural CHILD of each actual
+eighth-pass contribution write, not a ninth semantic replay or source grant.
+The existing bounded owner still freshly reopens the complete original graph,
+every required original and ENTIRE neutral cache, compares EVERY seventh-row
+field, derives the contribution and finishes ALL current and ending source,
+actor, assignment, draft, subject, claim, workspace and native-parent fences
+before the same atomic contribution transaction creates its indexed child.
+No caller projection API, roster, ordinal, callback, count or hash substitutes
+for this source authority. Owner client-query count and all aggregate original,
+SQL, decoded-byte, response, deadline, continuation and failure ceilings stay
+unchanged. Native trigger/index work remains inside the same bounded transaction;
+its large-area runtime is not established by authored tests.
+
+One immutable native row per selected account retains three eligible exact
+numerics: reported year built, reported residential area and reported site area.
+The unconstrained PostgreSQL numeric cast follows canonical nonnegative decimal
+validation (at most30 digits and12 fractional places); no scale rounding, float,
+exponent, currency inference or full-population array is used. Three partial
+native B-tree indexes order operation/value/ordinal, preserving equal-value
+account multiplicities and genuine eligible site zero. Ineligible or incomplete
+cells remain NULL, distinct from zero. Contribution FK, native row/reference
+equality, immutable guards, actual deferred COMMIT and the fresh terminal EMPTY
+selected/eligible-count reconciliation prevent partial projection retention.
+Existing exact14 checkpoint and single-use continuation guards remain intact.
+
+There is deliberately NO historical backfill: old receipts/counts cannot acquire
+numerical source authority. Partial pre-index operations missing earlier indexed
+children cannot pass the new terminal completeness guard; a future semantic
+consumer must require a newly complete original-reconciled population. Completed
+legacy heads alone are not index completeness or source authority. Every later
+rank/deviation/statistics semantic pass must independently reopen complete
+originals/ENTIRE caches and compare EVERY retained seventh/eighth field AGAIN
+under current and ending authorization. The fixed-first frequency-source reader
+is not that complete-population traversal.
+
+Authored cloud B-only/EMPTY/both fixtures include the numerical index in ALL
+existing source/ending-rights/row/head/checkpoint/yield/orphan-real-COMMIT/lost-
+successful-COMMIT-acknowledgment rollback snapshots. Small separate native DATA
+checks cover exact ordering above double precision,12-place fractions, stable
+ties, canonical refusal and partial-index definitions; they do not prove source
+acquisition. Actual issued fixtures compare every indexed number to its freshly
+original-derived contribution and terminal eligible totals. Cloud execution is
+pending; tiny fixtures are not licensed >50k or production-speed acceptance.
+
+Both parent native reruns previously stopped at an older combined row-TRUNCATE
+negative probe omitting the new eighth FK child. The isolated parent correction
+includes the missing child in both affected probes and adds automatic transitive
+FK-coverage regression checks; specific immutability assertions are unchanged.
+The new numerical child is included in all three affected row probes as well.
+No CASCADE, disabled guard, relaxed error assertion, retry reset or raised budget
+was introduced. Fresh exact-head cloud native verification remains required.
+
+This is NOT compact frequency/rank/deviation ownership, medians/CODs, calendar
+quarter/transaction resolution, coherent publication, workers or terminal pin
+transfer/retirement. Protected parent integration, fresh integrated exact-head
+security/native/full suites and ACTUAL included review remain required. Licensed
+>50k/5-mile/10-mile/city/retrospective and live Hardy reload acceptance remain
+unfinished. No route/default/worker/grant/deployment/pin/Apply/accepted-report or
+genuine Hardy choice changed; internal stages remain inactive.
+
 ## Frequency-source original reconciliation (2026-10-11; authored, inactive)
 
 The next read-only boundary requires exact fourteen original-preserving roots

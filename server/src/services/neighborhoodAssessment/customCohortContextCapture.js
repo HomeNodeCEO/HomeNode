@@ -2851,6 +2851,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           // row field and ALL current+ending authorization fences above.
           // This ledger retains one contribution/account and closed counters,
           // NOT frequencies, medians, COD, quarters or publication.
+          // The additive native numeric-index hook is a structural child of
+          // this SAME original-reconciled transaction, after ALL ending fences.
+          // It does not mint enduring source/selection/statistics authority;
+          // every later semantic pass MUST reopen complete originals again.
           const afterCounts=advanceCohortSelectedStatisticsCountsV2(statisticsCounts,statisticsBefore.selected_ordinal,statisticsCandidate?.metrics??null);
           if(firstSelectedEntry===null&&SELECTED_RECORDED_ELIGIBILITY_METRICS.some(k=>
             afterCounts[k].eligible_count!==metricsIssued.after_counts[k]||afterCounts[k].eligible_count!==eligibilityIssued.after_counts[k]))

@@ -141,3 +141,12 @@ test('positive first-index native success is coupled to genuine original contrib
     'complete_indexed_population:false,frequency_ledger:false,rank_queries:false,medians_COD:false,calendar_quarters:false',
     'publication:false,licensed_acquisition:false,production_speed:false,worker_activation:false'])assert.ok(indexed.includes(v),v);
 });
+
+test('positive native duplicate-reason probe reaches PostgreSQL with a real duplicate, never undefined eligible-site DATA',()=>{
+  const s=readFileSync(new URL('./neighborhoodGroupIndex.integration.test.js',import.meta.url),'utf8');
+  assert.ok(s.includes('c=>{const reasons=c.reported_year_built.exclusion_reasons;'));
+  assert.ok(s.includes("assert.ok(reasons.length>0,'duplicate-reason probe uses an actually excluded year, never eligible site reasons')"));
+  assert.ok(s.includes('reasons.push(reasons[0]);'));
+  assert.doesNotMatch(s,/reported_site_area\.exclusion_reasons\.push\(c\.reported_site_area\.exclusion_reasons\[0\]\)/);
+  assert.ok(s.includes('canonicalAssessmentJson(cells)]),/statistics_v2_(cell|parts|reason)_conflict/'));
+});

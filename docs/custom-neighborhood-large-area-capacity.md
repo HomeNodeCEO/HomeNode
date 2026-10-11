@@ -1,5 +1,20 @@
 # Complete larger-area Custom neighborhood studies
 
+## Positive native duplicate-reason probe correction (2026-10-11; cloud pending)
+
+Full decoded positive-fixture head46b3d937 job114363101732 was inspected:
+migration417 and subject1 PASS; index11/14 PASS, with the two older unlabeled
+indexed rejection failures plus a separate positive-graph `json_object` error.
+The positive graph correctly has NO site exclusion reasons. The old negative
+counter probe appended its nonexistent first site reason (`undefined`), so
+canonical JSON rejected the test input BEFORE PostgreSQL could test its guard.
+The probe now duplicates an ACTUAL excluded year-built reason and asserts that
+it exists. All independent graphs retain incomplete/invalid year exclusions.
+The native database rejection expectation and complete rollback/state assertions
+are unchanged. This fixes the malformed TEST input only; fresh cloud execution
+must still verify the whole graph and indexed rejection diagnosis. No runtime,
+source/selection authority, guards, aggregate budgets or production changed.
+
 ## Eligible-positive indexed-source coverage (2026-10-11; authored, inactive)
 
 A FOURTH independently captured/issued native graph retains matching housing

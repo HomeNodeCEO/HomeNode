@@ -5768,7 +5768,9 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
               c=>{c.reported_site_area.part_counts.observed++;},
               c=>{c.reported_site_area.source_part_count++;},
               c=>{c.reported_site_area.reported_value_state='missing';},
-              c=>{c.reported_site_area.exclusion_reasons.push(c.reported_site_area.exclusion_reasons[0]);},
+              c=>{const reasons=c.reported_year_built.exclusion_reasons;
+                assert.ok(reasons.length>0,'duplicate-reason probe uses an actually excluded year, never eligible site reasons');
+                reasons.push(reasons[0]);},
               c=>{c.reported_site_area.complete_observed_parts=!c.reported_site_area.complete_observed_parts;} ]){
               const cells=structuredClone(contribution.metrics);mutate(cells);
               await assert.rejects(pool.query('SELECT app.neighborhood_selected_statistics_v2_next_counts(NULL,$1::jsonb)',

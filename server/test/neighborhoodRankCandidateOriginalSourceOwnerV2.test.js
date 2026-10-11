@@ -103,3 +103,21 @@ test('authored native seam probes require fresh EMPTY, all four independently is
     'first_account_ONLY_not_complete_original_reconciled_rank_population:true',
     'statistics:false,medians_COD:false,calendar_quarters:false,publication:false,licensed_acquisition:false'])assert.ok(s.includes(text),text);
 });
+
+test('native seam injects actual post-original subject, claim and CAD-rights mutations at the generic authority hook',()=>{
+  const s=readFileSync(new URL('./neighborhoodGroupIndex.integration.test.js',import.meta.url),'utf8'),
+    start=s.indexOf("if(config.text.includes('neighborhood-frozen-job-closure:parcels')"),
+    end=s.indexOf('if(config.text===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read&&++cadHeaderReads',start),
+    hook=s.slice(start,end);
+  assert.ok(start>0&&end>start);
+  assert.ok(hook.includes('||config.text===NEIGHBORHOOD_FIRST_COMPLETED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL'),
+    'specific cell fault hooks cannot substitute for this generic current-authority hook');
+  for(const text of ["if(fault==='subject')await client.query",'UPDATE app.appraisal_subject_snapshots SET subject_data=jsonb_set',
+    "if(fault==='claim')await client.query",'UPDATE app.neighborhood_custom_cohort_capture_jobs SET claim_token=',
+    "if(fault==='cad_license')await setCadFixtureGrant",'revoked_at:cadGrant.valid_from'])assert.ok(hook.includes(text),text);
+  const probe=s.slice(s.indexOf('rank seam actual original/current-ending refusal'),s.indexOf('const rankSourceFrom=',s.indexOf('rank seam actual original/current-ending refusal')));
+  assert.ok(probe.includes("assert.equal(refsFault,null,'nonvacuous rank seam fault consumed')"));
+  assert.ok(probe.includes("afterOriginalAuthorityFault=['subject','claim','cad_license'].includes(fault)"));
+  assert.ok(probe.includes("fault.endsWith('_ending')||afterOriginalAuthorityFault?1:0"));
+  assert.ok(probe.includes('await numericUnchanged(rankBefore)'));
+});

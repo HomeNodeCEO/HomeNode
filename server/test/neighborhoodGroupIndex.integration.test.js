@@ -2139,6 +2139,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         ||config.text===NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL
         ||config.text===NEIGHBORHOOD_NEXT_SELECTED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL
         ||Object.values(NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL).includes(config.text)
+        ||config.text===NEIGHBORHOOD_FIRST_COMPLETED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL
         ||Object.values(NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL).includes(config.text)){
         // The ending-header fault is consumed by the later second metadata
         // read, not by the page query. Keep it armed like the COMMIT fault.
@@ -6359,7 +6360,11 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             await assert.rejects(rankSourceStep(),reason,`rank seam actual original/current-ending refusal ${fault}`);
             assert.equal(refsFault,null,'nonvacuous rank seam fault consumed');
             const candidateQueries=refsCalls.slice(from).filter(sql=>sql.includes('custom-cohort-selected-numeric-rank-candidates-v2:read')).length;
-            assert.equal(candidateQueries,fault.endsWith('_ending')?1:0,
+            // These mutations happen after the full-original package query,
+            // so the provisional candidate query is attempted before the
+            // ending subject/rights fences (or denied by its own claim fence).
+            const afterOriginalAuthorityFault=['subject','claim','cad_license'].includes(fault);
+            assert.equal(candidateQueries,fault.endsWith('_ending')||afterOriginalAuthorityFault?1:0,
               'early original failures precede candidates; ending authority/member failures refuse AFTER the candidate read');
             await numericUnchanged(rankBefore);
             if(fault==='cad_license')await setCadFixtureGrant(pool,organization,cadGrant);

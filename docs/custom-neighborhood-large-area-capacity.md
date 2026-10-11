@@ -1,5 +1,29 @@
 # Complete larger-area Custom neighborhood studies
 
+## Ninth original owner native verified; recovery followup still needs fresh cloud execution (2026-10-11)
+
+The integrated owner at `cb70d60fc5de71dfbf88255d24c23c06a70181b9`
+passes the entire native job114378112847/run38108210330. The FULL decoded
+2,846,540-character log was inspected: migration417, subject1, index14, edge1
+and bootstrap2 all PASS, zero failures/cancellations/skips, with idempotence
+and every later job step successful. All FOUR independently issued graphs
+execute the actual ninth bounded owner through fresh terminal EMPTY: B-only,
+explicit EMPTY, both-selected exclusions, and genuine first eligible8000/later0.
+Whole-owner maxima are246/241/247/247 queries within the unchanged256-query,
+32,000,000-byte/60-second budget. Complete originals/ENTIRE caches, every
+seventh/eighth/index cell, all current+ending authority, exact15 atomic native
+reference progress, real rollback/orphan COMMIT/lost COMMIT acknowledgment,
+strict old readers and preserved reports/choices/pins all execute successfully.
+
+This is small native PROTOCOL evidence, not licensed population acquisition,
+production speed, medians/COD/quarters, publication or worker activation. The
+same head still has a separate full-server failure (six other checks PASS).
+The locally reproduced old-phase continuation-ceiling fix, new actual ninth
+ordinary-failure/fifth-claim recovery coverage and installed metadata correction
+are followups requiring fresh exact-head cloud validation. Actual review and
+included-review allowance remain absent. No protected merge, deployment,
+activation or genuine appraisal choice changed; the full roadmap remains open.
+
 ## Ninth bounded original-owner integration implemented; cloud validation pending (2026-10-11)
 
 Follow-up authored native recovery coverage reserves the independent positive

@@ -1,5 +1,44 @@
 # Complete larger-area Custom neighborhood studies
 
+## Eligible-positive indexed-source coverage (2026-10-11; authored, inactive)
+
+A FOURTH independently captured/issued native graph retains matching housing
+for BOTH whole A parcel parts before freezing its own originals/neutral caches.
+It retains the older B-only/EMPTY/both conflicting-housing graphs unchanged;
+no prior job, pin, root, row, head, count, original or claim is cloned/rebound.
+Only the pristine disposable source class literal changes before capture.
+
+This graph drives the SAME complete actual bounded owners through geographic,
+identity/shared neutral typing, partition/catalog, server-owned union, eligibility,
+amenity/transaction, seventh metrics, eighth contribution/index, first frequency
+and first indexed-source original reconciliation. The genuine first A site8000
+is eligible; later B site0 is independently eligible. Year incompleteness,
+residential-area conflict and unsupported currency remain excluded. Fifth,
+seventh, eighth and native indexed eligible site totals must independently be2,
+while no account is counted by its two original source parts.
+
+The same original/cache/row/ending-authority/rollback/refusal suite runs for this
+graph under unchanged budgets and real five-attempt ceiling. Extra nonvacuous
+negative probes change the eligible positive index to NULL or zero; the actual
+fresh-original comparison must refuse both and preserve ALL retained state.
+Successful reads must keep values internal, remain read-only and cannot claim
+complete indexed population, rank/median/COD/quarters, publication or activation.
+
+Authored native coverage is PENDING cloud execution, not established by static
+unit assertions. This is still a tiny disposable protocol fixture, NOT licensed
+acquisition, >50k/5-mile/10-mile/city/retrospective or live Hardy speed acceptance.
+Complete actual population semantics and the rest of the roadmap remain open.
+
+Separately, numeric-index parent#1280 exact3a1cc0ae now passed ALL seven reported
+cloud checks. Full decoded native job114358525717/run38101618520 was inspected:
+417 migration,1 subject,13 index,1 edge and2 bootstrap tests PASS, zero failures,
+cancellations or skips. All THREE original issued numeric-index markers retain
+1/0/2 actual selected rows with fresh-original equality, terminal eligible counts,
+real-COMMIT/rollback/lost-ack state and unchanged owner SQL243/237/244. Tiny
+native arithmetic ordering/precision DATA evidence is explicitly separate from
+source authority. This does not verify the newer indexed-source owner or fourth
+positive graph, full statistics, licensed/live acceptance or actual review.
+
 ## Native indexed-source reconciliation (2026-10-11; authored, inactive)
 
 A separate fixed-first indexed-source entry extends the ACTUAL bounded original
@@ -30,9 +69,11 @@ forgeries, ending index changes, fresh original/seventh/eighth forgeries, actual
 same-transaction source/actor/assignment/draft/subject/claim ending refusals and
 complete prior-state/index preservation. Tiny fixtures and structural unit DATA
 are not full licensed/positive-valued population or production-speed acceptance.
-The selected first members in these issued fixtures are excluded; the prior
-complete traversal independently verifies eligible genuine site zero later in
-the both-selected population. Full indexed semantic traversal remains required.
+The selected first members in the original THREE issued fixtures are excluded;
+the fourth eligible-positive graph above is authored but not yet verified.
+The prior complete traversal independently verifies eligible genuine site zero
+later in the both-selected population. Full indexed semantic traversal remains
+required regardless of these small protocol outcomes.
 
 Corrected parent#1278 a2b8021b and source#1279 5267f9f0 now have successful native
 cloud jobs114356968045/114357047708; full decoded logs were inspected. Both passed

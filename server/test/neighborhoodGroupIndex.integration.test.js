@@ -1352,11 +1352,12 @@ test('isolated PostgreSQL: freezes a complete 60001-account original source popu
 // Independent real-native captures: preserve the original five-failure terminal
 // test, and build an entirely new issued graph for the waiting boundary. Never
 // clone/rebind job roots, summaries, original payloads or caller DONE metadata.
-for(const selectionWaitFixture of [false,true,'intent','union','union-empty','union-all']) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
-  +(['intent','union','union-empty','union-all'].includes(selectionWaitFixture)?` with explicit new-study selection ${selectionWaitFixture}`:selectionWaitFixture?' with issued selection waiting':''),{
+for(const selectionWaitFixture of [false,true,'intent','union','union-empty','union-all','union-all-site-positive']) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
+  +(['intent','union','union-empty','union-all','union-all-site-positive'].includes(selectionWaitFixture)?` with explicit new-study selection ${selectionWaitFixture}`:selectionWaitFixture?' with issued selection waiting':''),{
   skip:!process.env.DATABASE_URL,timeout:180_000,
 },async()=>{
-  const observedHousingFixture=selectionWaitFixture==='union-all';
+  const positiveIndexedSourceFixture=selectionWaitFixture==='union-all-site-positive',
+    observedHousingFixture=selectionWaitFixture==='union-all'||positiveIndexedSourceFixture;
   const target=await prepareNeighborhoodCiDatabase();const {default:pg}=await import('pg');
   const pool=new pg.Pool({connectionString:target.connectionString,max:2,statement_timeout:120_000});
   try {
@@ -1394,6 +1395,10 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     await pool.query(`UPDATE gis.dcad_parcels SET class_code=CASE object_id WHEN 1 THEN 'A11' WHEN 4 THEN 'A12' ELSE '101' END,
       structure_type=CASE WHEN object_id=2 THEN '1' ELSE NULL END WHERE object_id IN (1,2,4)`);
     if(observedHousingFixture)await pool.query("UPDATE gis.dcad_parcels SET class_code='A11' WHERE object_id=2");
+    // A fourth independent graph captures genuinely matching A housing BEFORE
+    // freezing originals/caches. The original conflicting-housing graphs above
+    // remain unchanged. No existing root/row/head/pin/claim is copied or edited.
+    if(positiveIndexedSourceFixture)await pool.query("UPDATE gis.dcad_parcels SET class_code='A11' WHERE object_id=4");
     await pool.query(`INSERT INTO core.primary_improvements(account_id,bedroom_count,bath_count,pool)
       VALUES ('CLOSURE-A',3,2.00,true),('CLOSURE-B',4,NULL,NULL),('CLOSURE-OUTSIDE',NULL,NULL,false)`);
     await pool.query(`INSERT INTO core.secondary_improvements(id,account_id,sec_imp_number,sec_imp_type,sec_imp_sqft)
@@ -1963,10 +1968,10 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       }
       if(config.text.includes('custom-cohort-selected-statistics-v2:first-indexed-frequency-entry')){
         if(refsFault==='indexed_value_ending'){refsFault='indexed_value_after_first';return result;}
-        if(['indexed_value_after_first','indexed_value_wrong','indexed_value_zero','indexed_native_child_missing'].includes(refsFault)){
+        if(['indexed_value_after_first','indexed_value_wrong','indexed_value_zero','indexed_value_null','indexed_native_child_missing'].includes(refsFault)){
           const fault=refsFault;refsFault=null;
           return {...result,rows:result.rows.map(r=>({...r,...(fault==='indexed_native_child_missing'?{numeric_index_ordinal:null}:
-            {reported_site_area:fault==='indexed_value_zero'?'0':'1'})}))};
+            {reported_site_area:fault==='indexed_value_null'?null:fault==='indexed_value_zero'?'0':'1'})}))};
         }
       }
       if(config.text.includes('custom-cohort-selected-eligibility-v2:head-read')){
@@ -3184,9 +3189,11 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       housingEnd=await freshRefsOwner()[housingMethod](refsInput,{...stockAccountOptions,stockAccountPackagePage:{cursor:housingB.next_cursor}});
     assert.deepEqual(housingA.rows,accountA.rows);assert.deepEqual(housingB.rows,accountB.rows);
     assert.equal(housingA.status,'reconciled_stock_account_recorded_housing');
-    assert.equal(housingA.recorded_housing.state,'conflicting');assert.equal(housingA.recorded_housing.category,null);
+    assert.equal(housingA.recorded_housing.state,positiveIndexedSourceFixture?'observed':'conflicting');
+    assert.equal(housingA.recorded_housing.category,positiveIndexedSourceFixture?'detached_single_family':null);
     assert.deepEqual(housingA.recorded_housing.parts,[{row_key:'1',state:'observed',category:'detached_single_family'},
-      {row_key:'4',state:'observed',category:'townhouse'}],'outside geometry contradiction is not dropped or majority resolved');
+      {row_key:'4',state:'observed',category:positiveIndexedSourceFixture?'detached_single_family':'townhouse'}],
+      'BOTH whole original parts, including outside geometry, determine housing without dropping or majority resolving one');
     assert.equal(housingA.recorded_housing.source_part_count,'2');assert.equal(housingA.geographic_parcel_count,'1');
     assert.equal(housingA.recorded_housing.part_states.observed,'2');assert.equal(housingA.recorded_housing.county_state,'observed');
     assert.equal(housingB.recorded_housing.state,observedHousingFixture?'observed':'unknown');
@@ -4183,7 +4190,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     }
     assert.deepEqual(targetA.recorded_housing,housingA.recorded_housing);
     assert.deepEqual(targetB.recorded_housing,housingB.recorded_housing);
-    assert.equal(targetA.recorded_housing.state,'conflicting','outside geometry housing contradiction survives the catalog/target owner');
+    assert.equal(targetA.recorded_housing.state,positiveIndexedSourceFixture?'observed':'conflicting',
+      'outside geometry whole original housing survives the catalog/target owner');
     assert.equal(targetB.recorded_housing.state,observedHousingFixture?'observed':'unknown',
       'only B whole original A11 literal, never its assigned recorded group label, can establish its recorded category');
     assert.equal(targetEnd.recorded_housing,null);
@@ -4311,8 +4319,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       assert.equal(await pinCount(),pinsBeforeContinuation);assert.deepEqual(await readTargetWorkspace(),targetWorkspace);
       assert.deepEqual(await readTargetHistory(),targetHistory);assert.deepEqual(await readTargetReport(),targetReport);
       assert.deepEqual(await readTargetWorkfile(),targetWorkfile);assert.deepEqual(await readPriorTargetMetadata(),priorTargetMetadata);
-      if(['intent','union','union-empty','union-all'].includes(selectionWaitFixture)){
-        const allSelected=selectionWaitFixture==='union-all',selectedCount=selectionWaitFixture==='union-empty'?0:allSelected?2:1;
+      if(['intent','union','union-empty','union-all','union-all-site-positive'].includes(selectionWaitFixture)){
+        const allSelected=selectionWaitFixture==='union-all'||positiveIndexedSourceFixture,selectedCount=selectionWaitFixture==='union-empty'?0:allSelected?2:1;
         const intentMethod='resumeOriginalFrozenCaptureJobSelectionIntentReferencesV2',
           selectionIntent={command_id:randomUUID(),catalog_reference:catalogFinal.receipt_reference,workspace_revision:1,
             included_recorded_group_ids:selectionWaitFixture==='union-empty'?[]:allSelected
@@ -4769,9 +4777,10 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             assert.equal(firstEligibility.selected_entry.partition_ordinal,allSelected?1:2);
             assert.equal(firstEligibility.subject_equals_selected,allSelected&&!observedHousingFixture);
             if(!allSelected)assert.deepEqual(firstEligibility.decision,oneDecision.decision);
-            assert.deepEqual(firstEligibility.decision.housing.reasons,observedHousingFixture?['account_housing_conflicting']
+            assert.deepEqual(firstEligibility.decision.housing.reasons,positiveIndexedSourceFixture?[]:observedHousingFixture?['account_housing_conflicting']
               :['subject_housing_conflicting',allSelected?'account_housing_conflicting':'account_housing_unknown']);
-            assert.ok(Object.values(firstEligibility.decision.metrics).every(m=>m.recorded_comparison_eligible===false));
+            for(const [key,cell] of Object.entries(firstEligibility.decision.metrics))
+              assert.equal(cell.recorded_comparison_eligible,positiveIndexedSourceFixture&&key==='reported_site_area');
             for(const [fault,reason] of [['stock_cells_mismatch',/original_mismatch/],['stock_cells_missing',/original_mismatch/],
               ['stock_cells_original',/original_mismatch/],['union_first_entry_wrong',/selected_union_original_mismatch/],
               ['union_first_entry_missing',/selected_union_original_mismatch/],['union_first_entry_partition',/partition_original_mismatch/],
@@ -5065,7 +5074,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           assert.deepEqual(firstEligibilityBody.subject_housing,{state:subjectHousing.subject.state,category:subjectHousing.subject.category});
           assert.equal(firstEligibilityBody.after.selected_ordinal,selectionWaitFixture==='union-empty'?0:1);
           assert.equal(firstEligibilityBody.after.done,selectionWaitFixture==='union-empty');
-          assert.deepEqual(firstEligibilityBody.after_counts,{reported_year_built:0,reported_residential_area:0,reported_site_area:0});
+          assert.deepEqual(firstEligibilityBody.after_counts,{reported_year_built:0,reported_residential_area:0,reported_site_area:Number(positiveIndexedSourceFixture)});
           assert.equal(firstEligibilityState.blobs,eligibilityInitial.blobs+1);
           assert.ok(!firstEligibilityState.heads[0].canonical_utf8.includes('exact_value'));
           await stablePrior();await assert.rejects(eligibilityStep(),/claim_lost/);await eligibilityUnchanged(firstEligibilityState);
@@ -5095,7 +5104,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
               assert.deepEqual(body.before,{selected_ordinal:1,done:false});assert.deepEqual(body.after,{selected_ordinal:2,done:false});
               assert.deepEqual(body.before_counts,firstEligibilityBody.after_counts);
               assert.deepEqual(body.eligible,{reported_year_built:false,reported_residential_area:false,reported_site_area:true});
-              assert.deepEqual(body.after_counts,{reported_year_built:0,reported_residential_area:0,reported_site_area:1});
+              assert.deepEqual(body.after_counts,{reported_year_built:0,reported_residential_area:0,reported_site_area:positiveIndexedSourceFixture?2:1});
               assert.ok(!secondEligibilityState.heads[0].canonical_utf8.includes('exact_value'));
               assert.deepEqual(secondEligibilityState.job.checkpoint.evidence_refs.slice(0,10),subjectJob.checkpoint.evidence_refs);
               assert.equal(secondEligibilityState.blobs,firstEligibilityState.blobs+1);await stablePrior();
@@ -5535,7 +5544,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             assert.deepEqual(row.subject_housing,{state:metric.subject.state,category:metric.subject.category});
             assert.equal(row.metrics.reported_year_built.exact_value,null);assert.equal(row.metrics.reported_residential_area.exact_value,null);
             assert.equal(row.metrics.reported_site_area.exact_value,account==='CLOSURE-A'?'8000':'0');
-            assert.equal(row.metrics.reported_site_area.recorded_comparison_eligible,account==='CLOSURE-B'&&observedHousingFixture);
+            assert.equal(row.metrics.reported_site_area.recorded_comparison_eligible,
+              account==='CLOSURE-A'?positiveIndexedSourceFixture:observedHousingFixture);
             assert.deepEqual(row.metrics.reported_market_value,{recorded_comparison_eligible:false,complete_observed_parts:false,exact_value:null,unit:null});
             assert.ok(Buffer.byteLength(state.rows.at(-1).canonical_utf8)<=4096);
             assert.ok(!/original_text|typed_value|diagnostic|source_records|payload/.test(state.rows.at(-1).canonical_utf8));
@@ -5639,8 +5649,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             }
             assert.equal(contribution.metrics.reported_year_built.contribution_exact_value,null);
             assert.equal(contribution.metrics.reported_residential_area.contribution_exact_value,null);
-            assert.equal(contribution.metrics.reported_site_area.contribution_exact_value,null,
-              'fixed-first A has conflicting housing and fixed-first B unknown housing; genuine site0 is not promoted');
+            assert.equal(contribution.metrics.reported_site_area.contribution_exact_value,positiveIndexedSourceFixture?'8000':null,
+              'only the independently matching original graph admits positive site8000; excluded site0 is never promoted');
             assert.equal(statistics.metric_row_candidate.metrics.reported_site_area.exact_value,allSelected?'8000':'0');
             assert.equal(contribution.metrics.reported_market_value.contribution_exact_value,null);
             assert.equal(contribution.statistics,'not_established');assert.equal(contribution.publication,'not_established');
@@ -5854,7 +5864,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           if(selectedCount)assert.deepEqual(terminalContribution.after_counts,JSON.parse(pendingContributions.heads[0].canonical_utf8).after_counts);
           for(const [key,c] of Object.entries(doneContribution.contribution_counts)){
             assert.equal(Object.values(c.value_states).reduce((a,b)=>a+b,0),selectedCount);assert.equal(c.eligible_count+c.excluded_count,selectedCount);
-            assert.equal(c.eligible_count,key==='reported_site_area'&&allSelected?1:0);
+            assert.equal(c.eligible_count,key==='reported_site_area'&&allSelected?(positiveIndexedSourceFixture?2:1):0);
             if(key!=='reported_market_value')assert.equal(c.eligible_count,finishedMetrics.rows.length?JSON.parse(finishedMetrics.heads[0].canonical_utf8).after_counts[key]:0);
           }
           assert.equal(refsCalls.slice(terminalContributionFrom).filter(sql=>sql===NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL).length,1);
@@ -6008,7 +6018,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
               .map(f=>[f,/selected_contribution_original_mismatch/]),
             ['indexed_native_child_missing',/numeric_index_missing_or_corrupt/],['indexed_value_wrong',/selected_numeric_original_mismatch/],
             ['indexed_value_ending',/selected_union_original_mismatch/],
-            ['indexed_value_zero',/selected_numeric_original_mismatch/]]){
+            ['indexed_value_zero',/selected_numeric_original_mismatch/],
+            ...(positiveIndexedSourceFixture?[['indexed_value_null',/selected_numeric_original_mismatch/]]:[])]){
             refsFault=fault;await assert.rejects(indexedStep(),reason);assert.equal(refsFault,null);
             await contributionUnchanged(finishedContributions);
           }
@@ -6017,6 +6028,14 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           assert.equal(indexed.retained_numeric_index_reconciled,selectedCount>0);assert.equal(indexed.complete_indexed_metric_population,false);
           assert.deepEqual(indexed.contribution_row_reference,finishedContributions.rows[0]?.row_reference??null);
           assert.deepEqual(indexed.selected_entry,frequency.selected_entry,'indexed numbers stay internal, never copied into the response');
+          if(positiveIndexedSourceFixture){
+            assert.equal(contribution.metrics.reported_site_area.recorded_comparison_eligible,true);
+            assert.equal(contribution.metrics.reported_site_area.contribution_exact_value,'8000');
+            assert.equal(finishedContributions.numeric_index[0].reported_site_area,'8000');
+            assert.equal(finishedContributions.numeric_index[1].reported_site_area,'0');
+            assert.deepEqual(finishedContributions.numeric_index.map(r=>r.account_id),['CLOSURE-A','CLOSURE-B']);
+            assert.equal(doneContribution.contribution_counts.reported_site_area.eligible_count,2);
+          }
           for(const key of ['frequency_ledger','exact_distributions','complete_selected_union_metric_population','context_complete','pin_transfer','lease_extended'])
             assert.equal(indexed[key],false,key);
           assert.equal(indexed.read_only,true);assert.equal(indexed.statistics,'not_established');assert.equal(indexed.publication,'not_established');
@@ -6032,6 +6051,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             fixed_first_only:true,explicit_empty:selectedCount===0,complete_original_graph_and_ENTIRE_caches_reopened_AGAIN:true,
             EVERY_seventh_eighth_field_and_native_indexed_value_null_compared_to_THIS_fresh_original:true,
             missing_native_numeric_child_wrong_value_and_actual_ending_index_change_refused:selectedCount>0,
+            independently_issued_matching_first_positive_site_and_later_eligible_zero:positiveIndexedSourceFixture,
+            eligible_positive_to_NULL_and_zero_forgeries_refused:positiveIndexedSourceFixture,
             current_and_same_TX_ending_source_actor_assignment_draft_subject_claim_parents_rechecked:true,
             every_prior_state_and_native_numeric_index_unchanged:true,no_DML_no_lease_extension_no_new_source_copy:true,
             maximum_whole_owner_sql_queries:Math.max(...indexedQueries),whole_owner_limits:ORIGINAL_OWNER_LIMITS,

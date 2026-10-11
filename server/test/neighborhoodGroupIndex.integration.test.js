@@ -1970,8 +1970,12 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         if(refsFault==='indexed_value_ending'){refsFault='indexed_value_after_first';return result;}
         if(['indexed_value_after_first','indexed_value_wrong','indexed_value_zero','indexed_value_null','indexed_native_child_missing'].includes(refsFault)){
           const fault=refsFault;refsFault=null;
-          return {...result,rows:result.rows.map(r=>({...r,...(fault==='indexed_native_child_missing'?{numeric_index_ordinal:null}:
-            {reported_site_area:fault==='indexed_value_null'?null:fault==='indexed_value_zero'?'0':'1'})}))};
+          return {...result,rows:result.rows.map(r=>{
+            const patch=fault==='indexed_native_child_missing'?{numeric_index_ordinal:null}:
+              {reported_site_area:fault==='indexed_value_null'?null:fault==='indexed_value_zero'?'0':'1'};
+            for(const [key,value] of Object.entries(patch))assert.notEqual(r[key],value,`nonvacuous indexed transport probe ${fault}: ${key}`);
+            return {...r,...patch};
+          })};
         }
       }
       if(config.text.includes('custom-cohort-selected-eligibility-v2:head-read')){
@@ -6003,7 +6007,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           for(const [fault,reason] of [['metric_assignment_ending',/assignment_access_denied/],['metric_draft_ending',/private_source_read_only/],
             ['subject',/subject_changed/],['claim',/claim_lost/],['cad_header',/CAD_cache_unavailable/],['transaction_header',/cache_unavailable/],
             ['cad_license',/market_data_access_denied/],['license',/market_data_access_denied/],['freq_head_ending',/checkpoint_conflict/]]){
-            refsFault=fault;await assert.rejects(indexedStep(),reason);assert.equal(refsFault,null);
+            refsFault=fault;await assert.rejects(indexedStep(),reason,`indexed authority probe ${fault}`);assert.equal(refsFault,null);
             await contributionUnchanged(finishedContributions);assert.deepEqual(await readEvidenceAuthority(),frequencyAuthority);
             if(fault==='cad_license')await setCadFixtureGrant(pool,organization,cadGrant);
             if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
@@ -6020,7 +6024,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             ['indexed_value_ending',/selected_union_original_mismatch/],
             ['indexed_value_zero',/selected_numeric_original_mismatch/],
             ...(positiveIndexedSourceFixture?[['indexed_value_null',/selected_numeric_original_mismatch/]]:[])]){
-            refsFault=fault;await assert.rejects(indexedStep(),reason);assert.equal(refsFault,null);
+            refsFault=fault;await assert.rejects(indexedStep(),reason,`indexed original/member probe ${fault}`);assert.equal(refsFault,null);
             await contributionUnchanged(finishedContributions);
           }
           const indexedFrom=refsCalls.length,indexed=await indexedStep();

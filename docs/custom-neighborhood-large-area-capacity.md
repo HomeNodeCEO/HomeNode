@@ -1,5 +1,42 @@
 # Complete larger-area Custom neighborhood studies
 
+## Native NEXT original child authored; issuance still inactive (2026-10-11, 11:54 UTC)
+
+The local-only transaction-index owner WIP now has a separate original-package
+SQL plan selected by its actual native NEXT function. It binds generation and
+all six retained member fields, requires native exact16/17 admission, gates the
+required subject on that context too, and distinguishes an actual empty NEXT
+context from an absent context or mismatched next account. All twelve older
+original SQL plans remain byte-for-byte unchanged, including fixed FIRST.
+
+The additive single-use original child reopens each complete shared source even
+when that source was seen for an earlier account. Required subject, stock, CAD,
+transaction originals and ENTIRE neutral caches retain the same aggregate250
+original, raw-byte, transport, output, SQL and deadline bounds. Native selected
+flags remain separate from stock membership; the new path also refuses
+inconsistent per-account flags and subject-flag disagreement. It performs the
+existing ending stock/source/market-cache/CAD-cache fences and establishes no
+global economic transaction equivalence, at-sale fact, quarter or publication.
+
+All424 focused tests across38 files passed in2335ms, with no failures or skips.
+The new original-reader tests are small DATA/SQL-protocol simulations, not
+PostgreSQL execution or licensed acquisition. Initial fixture-only failures
+(wrong observation field, mutation of frozen compiler DATA, and a broad old
+static method slice including a new comment) were corrected without relaxing
+guards, old tests, limits or deadlines. No database/full-server/frontend suite
+ran locally. The new SQL and owner WIP have NOT passed native cloud CI.
+
+This child is NOT connected to the complete current-authorized context owner,
+route or worker. Migration20261206 is still unregistered; installed unconditional
+head and deferred COMMIT refusals remain intact. Next finish the whole-original
+owner with every prior field and ALL ending actor/assignment/draft/subject/
+source/workspace/claim/head/native-plan fences, then exact17 job/continuation
+and same-transaction issuance, genuine native prefix/rollback/lostACK/ordinary
+4-to-5/fresh-EMPTY proofs, and only then coherent registration. The actual review
+allowance remains unresolved. No protected merge, deployment, activation,
+source grant, accepted report, genuine Hardy choice or pin was changed.
+Licensed large-area and live-speed acceptance remain OPEN; heartbeat ACTIVE.
+
 ## Shared graph native PASS; next owner still unregistered (2026-10-11,11:36 UTC)
 
 The corrected exact PR1291 head `20c26448493ab727530e91cb301a8a41cc7f69d2`

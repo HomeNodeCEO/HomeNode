@@ -1,5 +1,60 @@
 # Complete larger-area Custom neighborhood studies
 
+## Shared-graph cloud ordering correction (2026-10-11,11:07 UTC)
+
+The first ninth-graph run at `4ec92aa7` failed its exact original closure-order
+assertion before the new shared original owner was exercised. The full native
+log shows417/417 migration and1/1 subject tests passed, then15/16 prepared-index
+tests passed: all eight earlier graphs passed, but the new sales originals were
+correctly delivered in native BIGINT order1,3,4,10 rather than the fixture's
+incorrect C-text expectation1,10,3,4. This was a test failure, not an incident
+cancellation; no check or guard is waived.
+
+The correction keeps separate exact ordered oracles for four original-chain
+capture/reopens versus typed identity/package pages. It does not sort received
+originals to mask a cursor bug. The legacy-package assertion still requires
+C-text10,3, and the extra genuinely captured sale is included in all three old
+typed-row-count/unchanged-state checks. All old eight datasets and every source,
+authority, COMMIT, timeout and whole-owner budget remain unchanged.
+The corrected head requires fresh native cloud verification; the new shared
+owner marker did not execute on the failed head. No full shared-graph, phase17,
+licensed or live-speed acceptance is claimed.
+
+## Independent shared-native-source original graph (2026-10-11)
+
+The exact corrected storage head `d724c56e` and first-candidate head `b3f4f9b5`
+passed all visible feature checks. Full native logs, every workflow step and
+migration idempotence were inspected:417 migration,1 subject-prefill,15 prepared
+index,1 selected-edge and2 bootstrap tests passed for each head. Both nonempty
+storage graphs rejected an actual COMMIT; EMPTY covers only its applicable
+identity/head/no-child checks. The three first-candidate graphs used238/233/238
+whole-owner SQL queries under the unchanged256 limit. These results supersede
+the historical pending notes below, but are not actual review or protected-main
+clearance. Parents remain unmerged and all internal stages inactive.
+
+A ninth native fixture is now authored for the next durable-index owner. It
+changes live test sources BEFORE genuine capture: source501 links both selected
+A and B; legacy keys10 and3 require C-text order rather than numeric order.
+The existing eight graphs, especially both tight positive/recovery graphs, keep
+their data, proof coverage and180-second deadlines. No issued root, original,
+cache, checkpoint or head is copied or rebound.
+
+The new graph must pass the actual complete seven-layer owner and independently
+issue selection/union and each prior selected stage through tenth DONE/exact16.
+Both selected accounts pass the real sixth complete-original/ENTIRE-cache owner;
+later B must reopen all four shared501 originals, not just its own link, plus
+the other source and legacy packages. Native selected-union joins independently
+check A/B versus OUTSIDE associations, while unresolved503 and excluded
+second-hop502 remain. The first-candidate owner then freshly repeats its current
+and ALL ending fences; its index tables still stay empty. The small test observer
+is never supplied to the owner as an authoritative callback or roster.
+
+Cloud verification of this ninth graph is pending. This is NOT a durable index,
+phase17, global deduplication, economic/at-sale denominator/calendar-quarter
+authority, licensed acquisition, production speed or Hardy live reload acceptance.
+The coherent NEXT owner, atomic head/exact17/single-use continuation, orphan
+COMMIT and prefix/EMPTY recovery remain required before any index activation.
+
 ## Native-bound first index candidate inside the original owner (2026-10-11)
 
 A separate inactive internal method now prepares a compact reference-only FIRST

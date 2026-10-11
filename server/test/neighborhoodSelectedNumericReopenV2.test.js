@@ -98,3 +98,16 @@ test('authored indexed cloud fixture uses independent issued graph, full prior-s
   for(const v of ['nonvacuous indexed transport probe ${fault}: ${key}',
     'indexed authority probe ${fault}','indexed original/member probe ${fault}'])assert.ok(s.includes(v),v);
 });
+
+test('native indexed ending probe stays armed through the complete original page until the ending native member read',()=>{
+  const s=readFileSync(new URL('./neighborhoodGroupIndex.integration.test.js',import.meta.url),'utf8'),
+    clearAt=s.indexOf("const fault=refsFault;if(!['commit','cad_header','transaction_header'"),
+    clear=s.slice(clearAt,s.indexOf("if(fault==='license')",clearAt));
+  assert.ok(clearAt>0);
+  for(const prefix of ['partition_','catalog_','union_','eligibility_','evidence_','metric_','metrics_','stats_','freq_','indexed_'])
+    assert.ok(clear.includes(`!fault?.startsWith('${prefix}')`),`original-page handler preserves ${prefix} faults`);
+  assert.ok(s.includes("if(refsFault==='indexed_value_ending'){refsFault='indexed_value_after_first';return result;}"));
+  assert.match(s,/\['indexed_value_after_first','indexed_value_wrong','indexed_value_zero'(?:,'indexed_value_null')?,'indexed_native_child_missing'\]\.includes\(refsFault\)/);
+  assert.ok(s.includes("['indexed_value_ending',/selected_union_original_mismatch/]"));
+  assert.ok(s.includes('refsFault=fault;await assert.rejects(indexedStep(),reason,`indexed original/member probe ${fault}`);assert.equal(refsFault,null);'));
+});

@@ -13,6 +13,19 @@ refusal defect on the next cloud run. The cause remains unproved until that
 evidence is inspected. Earlier successful parent logs do not override this
 exact-head failure. No runtime, source grant, activation or production change.
 
+The labelled f161d9e3 native job114365527959 full decoded log (2,572,456
+characters) now identifies BOTH failures as `indexed_value_ending`. Migration417
+and subject1 PASS; index11/13 PASS with zero cancellations/skips. The native
+fault harness armed `indexed_value_after_first` on the initial indexed member
+read, but its broad original-page handler cleared unrecognized fault families
+while replaying the complete originals BEFORE the ending member read. Nothing
+was injected into the ending check. That handler now preserves `indexed_`
+faults, like all prior semantic/ending families, until the exact ending indexed
+read injects the nonvacuous change. The owner comparison, rejection regex and
+ALL unchanged-state/rollback assertions are unchanged. This is a TEST harness
+correction, not a runtime fix or acceptance waiver. Fresh cloud execution is
+still required to establish the refusal and complete tiny native graph.
+
 ## Native indexed-source reconciliation (2026-10-11; authored, inactive)
 
 A separate fixed-first indexed-source entry extends the ACTUAL bounded original

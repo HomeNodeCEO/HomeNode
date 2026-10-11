@@ -128,7 +128,34 @@ test('actual tenth owner compares all originals and members, rechecks ending aut
   assert.doesNotMatch(body,/selected_accounts|callback|\.map\(.*original|prepareGeneration|publishContext|Number\(.*value/);
 });
 
-test('cloud tenth probes are nonvacuous actual-owner and native grammar tests across all four retained graphs, not synthetic acquisition acceptance',()=>{
+test('tenth owner freshly batches ONLY fixed issued receipts after current source rights, never original pages or native head authority',()=>{
+  const s=readFileSync(new URL('../src/services/neighborhoodAssessment/customCohortContextCapture.js',import.meta.url),'utf8'),
+    start=s.indexOf('const issuedCheckpointReceipts=progressingSelectedSemantic?checkpoint.evidence_refs.slice(3):null'),
+    end=s.indexOf('const binding={...scope',start),body=s.slice(start,end),
+    cad=s.lastIndexOf('const cadDecision=readingCadSource?await boundedPolicy',start),
+    market=s.lastIndexOf('const decision=await boundedPolicy(authorizeMarketData',cad);
+  assert.ok(market>0&&cad>market&&start>cad&&end>start,'both current policies precede bounded progress receipt reads');
+  for(const text of ['[12,13].includes(issuedCheckpointReceipts.length)','Number(ref.canonical_utf8_bytes)>16000',
+    'offset+=NEIGHBORHOOD_COHORT_BLOB_READ_BATCH_LIMITS.records','await blobs.getPreparedBatch(issuedCheckpointReceipts.slice(offset,',
+    "if(body===null)fail('checkpoint_conflict')",'Object.freeze(issuedCheckpointReceipts);Object.freeze(issuedCheckpointTexts)',
+    'if(issuedCheckpointReceipts===null)return blobs.get(ref.content_sha256,ref.canonical_utf8_bytes)',
+    'findIndex(expected=>same(expected,ref))',"if(index<0)fail('checkpoint_conflict')"])assert.ok(body.includes(text),text);
+  assert.equal((s.match(/await readIssuedCheckpointReceipt\(/g)??[]).length,13);
+  for(const anchor of ['graphAnchor','geographicAnchor','identityAnchor','traversalAnchor','partitionAnchor','catalogAnchor','unionAnchor',
+    'eligibilityAnchor','evidenceAnchor','metricsAnchor','statisticsAnchor','numericAnchor','semanticAnchor']){
+    const read=s.indexOf(`await readIssuedCheckpointReceipt(${anchor}.receipt_reference)`);
+    assert.ok(read>start&&s.lastIndexOf(`${anchor}=await`,read)>start,`${anchor} still independently reopened`);
+    assert.ok(s.slice(Math.max(start,read-700),read).includes("fail('checkpoint_conflict')"),`${anchor} checked before its body is used`);
+  }
+  assert.doesNotMatch(body,/blobs\.get\s*=|readOriginal|source_original|selected_accounts|\.put\(|new Map|callback/);
+  assert.ok(s.includes('{put:text=>blobs.put(text),get:(hash,size)=>blobs.get(hash,size)},binding,'),
+    'whole original source graph still uses fresh ordinary original reads');
+  assert.ok(s.includes('const summaryText=await blobs.get(semanticIssued.after_summary_reference.content_sha256'));
+  const blob=readFileSync(new URL('../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js',import.meta.url),'utf8');
+  assert.ok(blob.includes('NEIGHBORHOOD_COHORT_BLOB_READ_BATCH_LIMITS = Object.freeze({ records: 8, bytes: 2_000_000 })'));
+});
+
+test('cloud tenth probes are nonvacuous actual-owner and native grammar tests across all five retained graphs, not synthetic acquisition acceptance',()=>{
   const fixture=readFileSync(new URL('./neighborhoodGroupIndex.integration.test.js',import.meta.url),'utf8'),
     start=fixture.indexOf('// Tenth ACTUAL complete-original semantic owner.'),
     end=fixture.indexOf('[native-selected-semantic-original-owner-v2]',start),probe=fixture.slice(start,end),
@@ -150,9 +177,16 @@ test('cloud tenth probes are nonvacuous actual-owner and native grammar tests ac
     'semanticQueries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries)'])assert.ok(probe.includes(text),text);
   for(const text of ['semanticAutocommitCalls.push(text)','return pool.query(text,values)',
     'semanticAutocommitCalls.length,2','semanticUnchanged(semanticInitial)',
-    'txid_current()::text AS transaction_id,','Math.max(...semanticQueries)<=251',
+    'txid_current()::text AS transaction_id,','Math.max(...semanticQueries)<=241',
     'custom-cohort-selected-semantic-v2:transaction',
     'custom-cohort-selected-semantic-v2:head-read'])assert.ok(probe.includes(text),text);
+  for(const text of ['semantic_receipt_batch_missing','semantic_receipt_batch_duplicate','semantic_receipt_batch_bytes',
+    "for(const source of ['market','cad'])",'real CURRENT source denial precedes even the fixed receipt batch',
+    'refsQueryParameters[from+i]','receiptReferences=before.job.checkpoint.evidence_refs.slice(3)',
+    'receiptBatches.length,2','[8,receiptReferences.length-8]',
+    'receiptReferences.map(ref=>ref.content_sha256)','receiptReferences.map(ref=>Number(ref.canonical_utf8_bytes))',
+    'params[0]===organization','params[1].length<=8','bytes<=16000','0)<=2000000',
+    'each successful step STILL freshly opens the actual whole original packet independently'])assert.ok(probe.includes(text),text);
   for(const text of ['semanticRecoveryFixture&&ordinal===1','retained.semantic_rows.length,1',
     'selected_ordinal:1,done:false','retained.job.attempts,4',".failClaim(liveClaim,'synthetic_semantic_prefix_reclaim'",
     "pending.job.status,'retry'",'pending.job.claim_token,null','pending.job.lease_expires_at,null',

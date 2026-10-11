@@ -1818,6 +1818,16 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         refsFault=null;return {...result,rows:result.rows.map(r=>({...r,selected_count:r.selected_count+1}))};
       }
       if(orphanUnionYield){await client.query('ROLLBACK TO SAVEPOINT synthetic_union_yield');refsFault=null;}
+      // Fault ONLY the actual new bounded receipt-read result. Original pages,
+      // source/current authority and native head reads are never substituted.
+      if(config.text.includes('neighborhood-cohort-blob:read-batch')&&config.values?.length===3
+        &&['semantic_receipt_batch_missing','semantic_receipt_batch_duplicate','semantic_receipt_batch_bytes'].includes(refsFault)){
+        const fault=refsFault;refsFault=null;assert.equal(result.rows.length,8,'nonvacuous native first receipt batch');
+        const rows=fault==='semantic_receipt_batch_missing'?result.rows.slice(1)
+          :fault==='semantic_receipt_batch_duplicate'?[...result.rows,result.rows[0]]
+            :result.rows.map((row,i)=>i===0?{...row,canonical_utf8_bytes:'1'}:row);
+        return {...result,rowCount:rows.length,rows};
+      }
       if(config.text===NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL){
         const p=result.rows[0];
         if(p.account_id!==null&&p.account_id===p.subject_account_id){
@@ -6434,6 +6444,25 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           assert.ok(!semanticAutocommitCalls.some(sql=>/:row-insert|:head-insert|:head-advance/.test(sql)));
           await semanticUnchanged(semanticInitial);
           await assert.rejects(freshRefsOwner()[semanticMethod](refsInput,{captureJobClaim:liveClaim}),/CAD_source_policy_required/);
+          for(const source of ['market','cad']){
+            if(source==='market')await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+            else await setCadFixtureGrant(pool,organization,{...cadGrant,revoked_at:cadGrant.valid_from});
+            const from=refsCalls.length;await assert.rejects(semanticStep(),/market_data_access_denied/);
+            assert.ok(!refsCalls.slice(from).some(sql=>sql.includes('neighborhood-cohort-blob:read-batch')),
+              'real CURRENT source denial precedes even the fixed receipt batch');
+            assert.ok(!refsCalls.slice(from).includes(NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL));
+            await semanticUnchanged(semanticInitial);
+            if(source==='market')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+            else await setCadFixtureGrant(pool,organization,cadGrant);
+          }
+          for(const fault of ['semantic_receipt_batch_missing','semantic_receipt_batch_duplicate','semantic_receipt_batch_bytes']){
+            const from=refsCalls.length;refsFault=fault;
+            await assert.rejects(semanticStep(),/checkpoint_conflict|neighborhood_cohort_blob_storage_conflict/);
+            assert.equal(refsFault,null,'new actual receipt query must consume the fault');
+            assert.equal(refsCalls.slice(from).filter(sql=>sql===NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL).length,0,
+              'missing/duplicate/corrupt issued receipt refuses BEFORE next complete original packet');
+            await semanticUnchanged(semanticInitial);
+          }
           for(const key of ['ordinal','ranks','values','counts','done','readOriginal','selected_accounts','summary']){
             const from=refsCalls.length;await assert.rejects(cadOwner()[semanticMethod](refsInput,{captureJobClaim:liveClaim,[key]:true}),/invalid_options/);
             assert.equal(refsCalls.length,from);await semanticUnchanged(semanticInitial);
@@ -6494,6 +6523,17 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             assert.equal(refsCalls.slice(from).filter(sql=>sql.includes('custom-cohort-selected-semantic-v2:head-read')
               &&sql.includes('txid_current()::text AS transaction_id,')).length,2,
               'real advance keeps both same-transaction head fences while removing two standalone round trips');
+            const receiptBatches=refsCalls.slice(from).flatMap((sql,i)=>sql.includes('neighborhood-cohort-blob:read-batch')
+              &&sql.includes('CASE WHEN b.canonical_utf8_bytes=input.bytes')?[refsQueryParameters[from+i]]:[]),
+              receiptReferences=before.job.checkpoint.evidence_refs.slice(3);
+            assert.equal(receiptBatches.length,2,'two fresh fixed receipt reads, not a saved source-page cache');
+            assert.deepEqual(receiptBatches.map(params=>params[1].length),[8,receiptReferences.length-8]);
+            assert.deepEqual(receiptBatches.flatMap(params=>params[1]),receiptReferences.map(ref=>ref.content_sha256));
+            assert.deepEqual(receiptBatches.flatMap(params=>params[2]),receiptReferences.map(ref=>Number(ref.canonical_utf8_bytes)));
+            assert.ok(receiptBatches.every(params=>params.length===3&&params[0]===organization
+              &&params[1].length<=8&&params[2].every(bytes=>bytes<=16000)&&params[2].reduce((a,b)=>a+b,0)<=2000000));
+            assert.equal(refsCalls.slice(from).filter(sql=>sql===NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL).length,1,
+              'each successful step STILL freshly opens the actual whole original packet independently');
             assert.equal(state.semantic_heads[0].sequence,ordinal);assert.equal(issued.sequence,ordinal);
             assert.deepEqual(issued.after,{selected_ordinal:Math.min(ordinal,selectedCount),done:ordinal===selectedCount+1});
             assert.equal(issued.selected_entry?.account_id??null,account?.account_id??null);
@@ -6554,6 +6594,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
               await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
               const deniedFrom=refsCalls.length;await assert.rejects(semanticStep(),/market_data_access_denied/);
               assert.ok(!refsCalls.slice(deniedFrom).includes(NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL));
+              assert.ok(!refsCalls.slice(deniedFrom).some(sql=>sql.includes('neighborhood-cohort-blob:read-batch')));
               await semanticUnchanged(recovered);await setFixtureGrant(pool,organization,fixtureGrant(organization));
               semanticRecoveredPrefix=recovered;
             }
@@ -6599,7 +6640,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             assert.equal(liveClaim.attempts,5);
           }
           assert.ok(semanticQueries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries));
-          assert.ok(Math.max(...semanticQueries)<=251,'actual whole-owner SQL headroom improves without raising256 or removing any original/authority fence');
+          assert.ok(Math.max(...semanticQueries)<=241,'actual whole-owner SQL headroom improves without raising256 or removing any original/authority fence');
           console.info('[native-selected-semantic-original-owner-v2]',{actual_bounded_database_owner:true,
             independently_issued_selected_accounts:selectedCount,every_selected_complete_original_ENTIRE_cache_and_every_seventh_eighth_index_ninth_field:true,
             all_current_and_ending_authority_before_atomic_writes:true,reference_only_members:true,bounded_exact_aggregate_summaries:true,
@@ -6609,6 +6650,10 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             actual_terminal_EMPTY_ordinary_failure_fifth_claim_recovery:selectionWaitFixture==='union-empty',
             actual_nonempty_prefix_ordinary_failure_fifth_claim_resume:semanticRecoveryFixture,
             actual_autocommit_refused_before_DML_and_two_coalesced_transaction_head_reads:true,
+            actual_fixed_issued_receipt_batches_8_plus_4_or_5_fresh_every_step:true,
+            actual_current_both_source_denials_before_receipt_batches:true,
+            missing_duplicate_or_corrupt_batch_refused_before_next_original_packet:true,
+            no_original_page_cache_or_head_authority_substitution:true,
             maximum_whole_owner_sql_queries:Math.max(...semanticQueries),whole_owner_limits:ORIGINAL_OWNER_LIMITS,
             calendar_quarters:false,publication:false,licensed_acquisition:false,production_speed:false,worker_activation:false});
 

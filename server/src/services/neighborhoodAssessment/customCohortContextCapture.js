@@ -16,7 +16,8 @@ import { captureAssignmentSalesCsv, recheckAssignmentSalesCsvCapture } from '../
 import { buildCustomCohortPrivateSalesObservations, presentCustomCohortPrivateSalesObservations } from './customCohortPrivateSales.js';
 import { authorizePublicCadastralCatalogRead } from '../../security/publicCadastralCatalog.js';
 import { assessmentDate, assessmentEvidenceDigest, canonicalAssessmentJson } from './contract.js';
-import { createNeighborhoodCohortBlobRepository, prepareNeighborhoodCohortBlob } from './cohortEvidenceBlobRepository.js';
+import { createNeighborhoodCohortBlobRepository, prepareNeighborhoodCohortBlob,
+  NEIGHBORHOOD_COHORT_BLOB_READ_BATCH_LIMITS } from './cohortEvidenceBlobRepository.js';
 import { createCustomCohortSubjectRepository } from './customCohortSubjectRepository.js';
 import { createCustomCohortContextRepository } from './customCohortContextRepository.js';
 import { createCustomCohortCaptureJobRepository, prepareCustomCohortCaptureJobClaim } from './customCohortCaptureJobRepository.js';
@@ -1895,6 +1896,29 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       const cadDecision=readingCadSource?await boundedPolicy(authorizeCadImprovementData,client,input.auth,context,cadPurpose,budget):null;
       if(readingCadSource&&!/^custom-neighborhood-cad-improvement-source-rights-v1:sha256:[a-f0-9]{64}$/.test(cadDecision.policy_revision))
         fail('CAD_source_policy_required');
+      // Tenth owner only: freshly load its FIXED twelve/thirteen issued progress
+      // receipts through the existing eight-record/2MB reader. These are NOT
+      // population/source originals or authority. Each actual native head is
+      // still checked BEFORE using its body below, and every original/ENTIRE
+      // cache replay plus all ending head/rights checks remain independent.
+      // Never wrap blobs.get or the original graph adapter in this small buffer.
+      const issuedCheckpointReceipts=progressingSelectedSemantic?checkpoint.evidence_refs.slice(3):null,
+        issuedCheckpointTexts=[];
+      if(issuedCheckpointReceipts){
+        if(![12,13].includes(issuedCheckpointReceipts.length)
+          ||issuedCheckpointReceipts.some(ref=>Number(ref.canonical_utf8_bytes)>16000))fail('checkpoint_conflict');
+        for(let offset=0;offset<issuedCheckpointReceipts.length;offset+=NEIGHBORHOOD_COHORT_BLOB_READ_BATCH_LIMITS.records){
+          const prepared=await blobs.getPreparedBatch(issuedCheckpointReceipts.slice(offset,
+            offset+NEIGHBORHOOD_COHORT_BLOB_READ_BATCH_LIMITS.records));
+          for(const body of prepared){if(body===null)fail('checkpoint_conflict');issuedCheckpointTexts.push(body.canonicalJson);}
+        }
+        Object.freeze(issuedCheckpointReceipts);Object.freeze(issuedCheckpointTexts);
+      }
+      const readIssuedCheckpointReceipt=async ref=>{
+        if(issuedCheckpointReceipts===null)return blobs.get(ref.content_sha256,ref.canonical_utf8_bytes);
+        const index=issuedCheckpointReceipts.findIndex(expected=>same(expected,ref));
+        if(index<0)fail('checkpoint_conflict');return issuedCheckpointTexts[index];
+      };
       const binding={...scope,operation_id:input.operationId,generation_id:stock.generation_id,
         spatial_definition_sha256:stock.definition_sha256,source_original_sha256:stock.source_original_sha256};
       const sourceVersion=referencesV2?2:1,sourceUsage=referencesV2?'frozen_source_reference_prefix_only':'frozen_source_prefix_only';
@@ -1955,7 +1979,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           :graphAnchor===null||!same(graphAnchor.receipt_reference,verificationReference)) fail('checkpoint_conflict');
         let issued=null;
         if(graphAnchor){
-          const text=await blobs.get(graphAnchor.receipt_reference.content_sha256,graphAnchor.receipt_reference.canonical_utf8_bytes);
+          const text=await readIssuedCheckpointReceipt(graphAnchor.receipt_reference);
           if(text===null||Buffer.byteLength(text)>16_000)fail('checkpoint_conflict');
           try{issued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
           if(issued.sequence!==graphAnchor.sequence)fail('checkpoint_conflict');
@@ -2009,7 +2033,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           :geographicAnchor===null||!same(geographicAnchor.receipt_reference,stockVerificationReference))fail('checkpoint_conflict');
         let issued=null;
         if(geographicAnchor){
-          const text=await blobs.get(geographicAnchor.receipt_reference.content_sha256,geographicAnchor.receipt_reference.canonical_utf8_bytes);
+          const text=await readIssuedCheckpointReceipt(geographicAnchor.receipt_reference);
           if(text===null||Buffer.byteLength(text)>16000)fail('checkpoint_conflict');
           try{issued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
           issued=prepareCohortGeographicOriginalReceiptV2(issued,expected);
@@ -2070,7 +2094,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           :identityAnchor===null||!same(identityAnchor.receipt_reference,identityVerificationReference))fail('checkpoint_conflict');
         let issued=null;
         if(identityAnchor){
-          const text=await blobs.get(identityAnchor.receipt_reference.content_sha256,identityAnchor.receipt_reference.canonical_utf8_bytes);
+          const text=await readIssuedCheckpointReceipt(identityAnchor.receipt_reference);
           if(text===null||Buffer.byteLength(text)>16000)fail('checkpoint_conflict');
           try{issued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
           issued=prepareCohortSourceIdentityReceiptV2(issued,expected);
@@ -2268,7 +2292,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           geographic_reference:stockVerificationReference,identity_reference:identityVerificationReference,stock_reference:stockReference});
         traversalAnchor=await traversalAnchorStore.read();
         if(traversalAnchor===null||!same(traversalAnchor.receipt_reference,checkpoint.evidence_refs[6]))fail('checkpoint_conflict');
-        const traversalText=await blobs.get(traversalAnchor.receipt_reference.content_sha256,traversalAnchor.receipt_reference.canonical_utf8_bytes);
+        const traversalText=await readIssuedCheckpointReceipt(traversalAnchor.receipt_reference);
         if(traversalText===null||Buffer.byteLength(traversalText)>16000)fail('checkpoint_conflict');
         let completed;try{completed=JSON.parse(traversalText);}catch{fail('checkpoint_conflict');}
         completed=prepareCohortStockTraversalReceiptV2(completed,baseExpected);
@@ -2283,7 +2307,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         if(checkpoint.phase==='frozen_stock_traversal_refs_v2'?partitionAnchor!==null
           :partitionAnchor===null||!same(partitionAnchor.receipt_reference,checkpoint.evidence_refs[7]))fail('checkpoint_conflict');
         let issued=null;
-        if(partitionAnchor){const text=await blobs.get(partitionAnchor.receipt_reference.content_sha256,partitionAnchor.receipt_reference.canonical_utf8_bytes);
+        if(partitionAnchor){const text=await readIssuedCheckpointReceipt(partitionAnchor.receipt_reference);
           if(text===null||Buffer.byteLength(text)>16000)fail('checkpoint_conflict');
           try{issued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
           issued=prepareCohortRecordedGroupPartitionReceiptV2(issued,expected);
@@ -2299,7 +2323,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           catalogAnchor=await catalogStore.read();
           if(checkpoint.phase==='frozen_recorded_partition_refs_v2'?catalogAnchor!==null
             :catalogAnchor===null||!same(catalogAnchor.receipt_reference,checkpoint.evidence_refs[8]))fail('checkpoint_conflict');
-          if(catalogAnchor){const text=await blobs.get(catalogAnchor.receipt_reference.content_sha256,catalogAnchor.receipt_reference.canonical_utf8_bytes);
+          if(catalogAnchor){const text=await readIssuedCheckpointReceipt(catalogAnchor.receipt_reference);
             if(text===null||Buffer.byteLength(text)>16000)fail('checkpoint_conflict');
             try{catalogIssued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
             catalogIssued=prepareCohortRecordedCatalogReceiptV2(catalogIssued,catalogExpected);
@@ -2316,7 +2340,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           unionAnchor=await unionStore.read();
           if(checkpoint.phase==='frozen_recorded_catalog_refs_v2'?unionAnchor!==null
             :unionAnchor===null||!same(unionAnchor.receipt_reference,checkpoint.evidence_refs[9]))fail('checkpoint_conflict');
-          if(unionAnchor){const text=await blobs.get(unionAnchor.receipt_reference.content_sha256,unionAnchor.receipt_reference.canonical_utf8_bytes);
+          if(unionAnchor){const text=await readIssuedCheckpointReceipt(unionAnchor.receipt_reference);
             if(text===null||Buffer.byteLength(text)>16000)fail('checkpoint_conflict');
             try{unionIssued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
             unionIssued=prepareCohortSelectedUnionReceiptV2(unionIssued,unionExpected);
@@ -2343,7 +2367,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             if(checkpoint.phase==='frozen_selected_union_refs_v2'?eligibilityAnchor!==null:
               eligibilityAnchor===null||!same(eligibilityAnchor.receipt_reference,checkpoint.evidence_refs[10]))fail('checkpoint_conflict');
             if(eligibilityAnchor){
-              const text=await blobs.get(eligibilityAnchor.receipt_reference.content_sha256,eligibilityAnchor.receipt_reference.canonical_utf8_bytes);
+              const text=await readIssuedCheckpointReceipt(eligibilityAnchor.receipt_reference);
               if(text===null||Buffer.byteLength(text)>16000)fail('checkpoint_conflict');
               try{eligibilityIssued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
               eligibilityIssued=prepareCohortSelectedEligibilityReceiptV2(eligibilityIssued,eligibilityExpected);
@@ -2363,7 +2387,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             if(checkpoint.phase==='frozen_selected_eligibility_refs_v2'?evidenceAnchor!==null:
               evidenceAnchor===null||!same(evidenceAnchor.receipt_reference,checkpoint.evidence_refs[11]))fail('checkpoint_conflict');
             if(evidenceAnchor){
-              const text=await blobs.get(evidenceAnchor.receipt_reference.content_sha256,evidenceAnchor.receipt_reference.canonical_utf8_bytes);
+              const text=await readIssuedCheckpointReceipt(evidenceAnchor.receipt_reference);
               if(text===null||Buffer.byteLength(text)>16000)fail('checkpoint_conflict');
               try{evidenceIssued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
               evidenceIssued=prepareCohortSelectedEvidenceReceiptV2(evidenceIssued,evidenceExpected);
@@ -2384,7 +2408,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             if(checkpoint.phase==='frozen_selected_evidence_refs_v2'?metricsAnchor!==null:
               metricsAnchor===null||!same(metricsAnchor.receipt_reference,checkpoint.evidence_refs[12]))fail('checkpoint_conflict');
             if(metricsAnchor){
-              const text=await blobs.get(metricsAnchor.receipt_reference.content_sha256,metricsAnchor.receipt_reference.canonical_utf8_bytes);
+              const text=await readIssuedCheckpointReceipt(metricsAnchor.receipt_reference);
               if(text===null||Buffer.byteLength(text)>16000)fail('checkpoint_conflict');
               try{metricsIssued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
               metricsIssued=prepareCohortSelectedMetricsReceiptV2(metricsIssued,metricsExpected);
@@ -2407,7 +2431,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             if(checkpoint.phase==='frozen_selected_metrics_refs_v2'?statisticsAnchor!==null:
               statisticsAnchor===null||!same(statisticsAnchor.receipt_reference,checkpoint.evidence_refs[13]))fail('checkpoint_conflict');
             if(statisticsAnchor){
-              const text=await blobs.get(statisticsAnchor.receipt_reference.content_sha256,statisticsAnchor.receipt_reference.canonical_utf8_bytes);
+              const text=await readIssuedCheckpointReceipt(statisticsAnchor.receipt_reference);
               if(text===null||Buffer.byteLength(text)>16000)fail('checkpoint_conflict');
               let issued;try{issued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
               issued=prepareCohortSelectedStatisticsReceiptV2(issued,statisticsExpected);
@@ -2429,7 +2453,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             if(checkpoint.phase==='frozen_selected_statistics_refs_v2'?numericAnchor!==null:
               numericAnchor===null||!same(numericAnchor.receipt_reference,checkpoint.evidence_refs[14]))fail('checkpoint_conflict');
             if(numericAnchor){
-              const text=await blobs.get(numericAnchor.receipt_reference.content_sha256,numericAnchor.receipt_reference.canonical_utf8_bytes);
+              const text=await readIssuedCheckpointReceipt(numericAnchor.receipt_reference);
               if(text===null||Buffer.byteLength(text)>4096)fail('checkpoint_conflict');
               let issued;try{issued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
               issued=prepareCohortSelectedNumericReceiptV2(issued,numericExpected);
@@ -2450,7 +2474,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             if(checkpoint.phase==='frozen_selected_numeric_refs_v2'?semanticAnchor!==null:
               semanticAnchor===null||!same(semanticAnchor.receipt_reference,checkpoint.evidence_refs[15]))fail('checkpoint_conflict');
             if(semanticAnchor){
-              const text=await blobs.get(semanticAnchor.receipt_reference.content_sha256,semanticAnchor.receipt_reference.canonical_utf8_bytes);
+              const text=await readIssuedCheckpointReceipt(semanticAnchor.receipt_reference);
               if(text===null||Buffer.byteLength(text)>4096)fail('checkpoint_conflict');
               let issued;try{issued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
               semanticIssued=prepareCohortSelectedSemanticReceiptV2(issued,semanticExpected);

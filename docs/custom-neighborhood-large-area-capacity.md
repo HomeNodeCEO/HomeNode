@@ -1,5 +1,45 @@
 # Complete larger-area Custom neighborhood studies
 
+## Transaction fences native PASS; fixed issued-receipt headroom follow-up (2026-10-11)
+
+Exact feature head92cb3d8a passes all SEVEN checks. FULL3,146,174-character native
+log run38120340264/job114413574344 has migration417/subject1/index15/edge1/
+bootstrap2 passes, ZERO failures/cancellations/skips, successful idempotence and
+EVERY job step SUCCESS. All FIVE actual complete-original graphs pass. Native
+autocommit is refused BEFORE DML in every graph, with one standalone and BOTH
+coalesced transaction/head reads per advance. Whole-owner query maxima are
+251/246/251/251/251. Nonempty fourth-to-fifth prefix recovery, EMPTY terminal
+fourth/fifth recovery, exact positive reported-comparison Type7/COD and native
+forgery refusals remain intact. No deadline or aggregate budget was raised.
+
+The next INACTIVE follow-up freshly batches ONLY the exact checkpoint's fixed
+twelve/thirteen issued progress receipts through the EXISTING eight-record/2MB
+scoped reader, in two statements. It runs AFTER both current source policies;
+every actual native head is independently checked BEFORE its body is used.
+All full original graph/ENTIRE cache/member reconciliation and ending fences
+remain independent. This is not a source-page cache or a hash/head authority
+substitute. Original adapters, next whole original packet and derived summary
+reads remain fresh and unchanged; no population-sized buffer is introduced.
+
+Authored native probes require exactly8+4/5 issued receipts on EVERY real step,
+the same scoped/reference/byte sequence, actual current MARKET and CAD denial
+BEFORE even receipt batches, complete original replay, missing/
+duplicate/corrupt batch refusal with whole-state rollback before the next packet,
+and a stricter241-query ceiling under the unchanged256 cap. This follow-up is
+AUTHORED, NOT native accepted until the NEW exact-head cloud run passes. Existing
+five-graph/source/ending/native forgery/rollback/orphan/lost-ACK/recovery probes,
+250-original/32MB/60-second budgets,180-second fixture,120-second statement and
+two-client pool limits are preserved.
+All255 focused tests pass; source and fixture JavaScript syntax checks pass.
+These local results do not establish new native or licensed/live acceptance.
+
+Economic transactions/calendar quarters, currency/historical/at-sale authority,
+coherent publication, durable large-area workers/terminal pins and all licensed/
+live acceptance remain OPEN. All protected parents remain UNMERGED; actual
+included review and fresh integrated-main required security/native/full checks
+remain required. No deployment, activation, source rights, reports, genuine
+choices, pin or Apply changes; QA7 remains the only future Apply-test target.
+
 ## Five actual native graphs PASS; bounded transaction headroom follow-up (2026-10-11)
 
 Feature headadc8b8ab passes all SEVEN checks. The FULL3,144,619-character native

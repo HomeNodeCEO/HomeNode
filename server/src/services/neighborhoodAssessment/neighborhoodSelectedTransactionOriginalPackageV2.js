@@ -293,3 +293,23 @@ export const NEIGHBORHOOD_NEXT_SELECTED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL=
     .replace('r.ordinal=1 AND $4::text=', 'r.ordinal=coalesce(numeric_population.sequence,0)+1 AND $4::text=')
     .replace('app.neighborhood_selected_statistics_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)',
       'app.neighborhood_selected_numeric_v2_admission_matches(job.operation_id,job.organization_id,job.checkpoint)');
+
+// Separate fixed-FIRST original reopening AFTER the ninth's fresh EMPTY.
+// This is a source seam for provisional native rank candidates, NOT a complete
+// semantic statistics pass. No caller ordinal or widening of any old reader.
+export const NEIGHBORHOOD_FIRST_COMPLETED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL=
+  NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL
+    .replace('neighborhood-first-selected-frequency-original-package-v2','neighborhood-first-completed-numeric-original-package-v2')
+    .replace('  JOIN app.neighborhood_custom_cohort_selected_statistics_v2_rows r',`  JOIN app.neighborhood_custom_cohort_selected_numeric_v2_heads numeric_population
+    ON numeric_population.operation_id=job.operation_id AND numeric_population.organization_id=job.organization_id
+  JOIN app.neighborhood_cohort_evidence_blobs numeric_body ON numeric_body.organization_id=numeric_population.organization_id
+    AND numeric_body.content_sha256=numeric_population.receipt_reference->>'content_sha256'
+    AND numeric_body.canonical_utf8_bytes::text=numeric_population.receipt_reference->>'canonical_utf8_bytes' AND numeric_body.canonical_utf8_bytes<=4096
+  JOIN app.neighborhood_custom_cohort_selected_statistics_v2_rows r`)
+    .replace('app.neighborhood_selected_statistics_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)',
+      `app.neighborhood_selected_numeric_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)
+          AND numeric_population.command_id=command.command_id AND numeric_population.statistics_reference=statistics.receipt_reference
+          AND numeric_body.canonical_utf8::jsonb->>'format'='cohort_selected_numeric_receipt_v2'
+          AND numeric_body.canonical_utf8::jsonb->>'sequence'=numeric_population.sequence::text
+          AND numeric_body.canonical_utf8::jsonb->'after'->>'done'='true'
+          AND numeric_body.canonical_utf8::jsonb->'after'->'selected_ordinal'=body.canonical_utf8::jsonb->'after_selected_count'`);

@@ -77,7 +77,8 @@ test('actual capture entry points refuse executable claim Proxies before connect
     'progressOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2','progressOriginalFrozenCaptureJobSelectedEvidenceReferencesV2',
     'readOriginalFrozenCaptureJobFirstSelectedMetricReferencesV2','progressOriginalFrozenCaptureJobSelectedMetricReferencesV2',
     'readOriginalFrozenCaptureJobFirstSelectedStatisticsReferencesV2','progressOriginalFrozenCaptureJobSelectedStatisticsReferencesV2',
-    'readOriginalFrozenCaptureJobFirstSelectedFrequencyReferencesV2','progressOriginalFrozenCaptureJobSelectedNumericReferencesV2']){
+    'readOriginalFrozenCaptureJobFirstSelectedFrequencyReferencesV2','progressOriginalFrozenCaptureJobSelectedNumericReferencesV2',
+    'readOriginalFrozenCaptureJobFirstSelectedRankCandidatesReferencesV2']){
     assert.equal(typeof service[method],'function',method);
     for(const value of values)await assert.rejects(service[method](base,{captureJobClaim:value}),/invalid_input|invalid_options/);
   }
@@ -336,7 +337,8 @@ for(const method of ['advanceOriginalFrozenCaptureJobStockTraversalReferencesV2'
   'progressOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2','progressOriginalFrozenCaptureJobSelectedEvidenceReferencesV2',
   'readOriginalFrozenCaptureJobFirstSelectedMetricReferencesV2','progressOriginalFrozenCaptureJobSelectedMetricReferencesV2',
   'readOriginalFrozenCaptureJobFirstSelectedStatisticsReferencesV2','progressOriginalFrozenCaptureJobSelectedStatisticsReferencesV2',
-  'readOriginalFrozenCaptureJobFirstSelectedFrequencyReferencesV2','progressOriginalFrozenCaptureJobSelectedNumericReferencesV2'])
+  'readOriginalFrozenCaptureJobFirstSelectedFrequencyReferencesV2','progressOriginalFrozenCaptureJobSelectedNumericReferencesV2',
+  'readOriginalFrozenCaptureJobFirstSelectedRankCandidatesReferencesV2'])
 test(`${method} admits only the live claim and bounded operation, not caller continuation`,async()=>{
   const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
     claim={operation_id:base.operationId,claim_token:'70000000-0000-4000-8000-000000000002',attempts:1};

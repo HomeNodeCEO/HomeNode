@@ -83,7 +83,9 @@ test('authored cloud fixture traverses ALL four actual graphs with every old sou
 
 test('ninth recovery uses a real fifth ordinary claim without removing seventh/eighth coverage or resetting attempts',()=>{
   const s=readFileSync(new URL('./neighborhoodGroupIndex.integration.test.js',import.meta.url),'utf8');
-  assert.ok(s.includes('if(allSelected&&!positiveIndexedSourceFixture){'));
+  assert.ok(s.includes('if(allSelected&&!positiveIndexedSourceFixture&&!transactionIndexOwnerFixture){'));
+  assert.ok(s.includes("transactionIndexOwnerFixture=selectionWaitFixture==='union-all-transaction-index-owner'"),
+    'ONLY the new independent graph reserves its fifth claim; all nine old seventh/eighth/ninth recovery paths are unchanged');
   assert.ok(s.includes(".failClaim(liveClaim,'synthetic_metrics_reclaim',{retrySeconds:1})"));
   assert.ok(s.includes(".failClaim(liveClaim,'synthetic_contribution_reclaim',{retrySeconds:1})"));
   const start=s.indexOf('if(positiveIndexedSourceFixture&&!semanticRecoveryFixture&&ordinal===1){'),block=s.slice(start,s.indexOf('previousNumeric=head.receipt_reference;',start));

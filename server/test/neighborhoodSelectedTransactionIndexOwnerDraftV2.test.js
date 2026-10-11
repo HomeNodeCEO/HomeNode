@@ -6,10 +6,11 @@ const name='20261206_custom_cohort_selected_transaction_index_owner_v2.sql',
   registered=readFileSync(new URL('../src/database/mobileMigrations.js',import.meta.url),'utf8'),
   old=readFileSync(new URL('../migrations/20261205_custom_cohort_selected_transaction_index_v2.sql',import.meta.url),'utf8');
 
-test('partial owner SQL stays unregistered and does not relax an installed head/COMMIT or continuation guard',()=>{
+test('coherent candidate stays unregistered with installed refusals unchanged outside its disposable native fixture',()=>{
   assert.doesNotMatch(registered,new RegExp(name));
   assert.match(sql,/UNREGISTERED OWNER WORK IN PROGRESS/);
-  assert.doesNotMatch(sql,/DROP TRIGGER|DISABLE TRIGGER|ALTER TABLE|GRANT\s|CREATE TRIGGER|CREATE CONSTRAINT TRIGGER|CREATE TABLE/);
+  assert.doesNotMatch(sql,/DISABLE TRIGGER|GRANT\s|CREATE TABLE|DROP TABLE|TRUNCATE\s+app\./);
+  assert.match(sql,/Apply ONLY as one complete transaction/);
   assert.match(old,/RAISE EXCEPTION 'neighborhood_selected_transaction_index_v2_owner_unintegrated'/);
   assert.match(sql,/TODO, before registration/);
 });

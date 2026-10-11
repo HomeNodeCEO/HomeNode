@@ -75,8 +75,8 @@ const BOUND=`WITH bound_context AS MATERIALIZED (
 const NEXT='app.neighborhood_selected_transaction_index_v2_next_keys(c.operation_id,c.organization_id)';
 const ADMISSION='app.neighborhood_selected_transaction_index_v2_admission_matches(c.operation_id,c.organization_id,c.checkpoint)';
 
-/** UNREGISTERED owner WIP. Only readNext is connected to the inactive context
- * original-reader seam; advance is NOT called by any owner/route/worker yet.
+/** UNREGISTERED owner WIP. The inactive complete-original NEXT owner calls
+ * advance only AFTER current and ALL ending fences; no route/worker calls it.
  * Storage only: the complete-original owner must replay EVERY prior field and
  * current account's COMPLETE packages, ENTIRE caches/required subject and ALL
  * current/ending rights/actor/workspace/claim fences before calling advance.

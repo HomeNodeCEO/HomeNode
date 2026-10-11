@@ -1,5 +1,50 @@
 # Complete larger-area Custom neighborhood studies
 
+## Coherent dormant index candidate and independent native acceptance fixture (2026-10-11, 12:57 UTC)
+
+Unregistered20261206 now contains the complete candidate attachment package,
+superseding the12:37 note that constraints and head/deferred attachments were
+absent. The candidate replaces the unconditional head/COMMIT refusals only in
+one enclosing migration transaction, retaining every installed child BEFORE
+identity/first-seen/immutability guard, all TRUNCATE guards and the existing
+deferred job/continuation pair. It adds the exact17 continuation phase and
+index-specific22000011 ceiling while preserving old phase ceilings. It is NOT
+registered or applied to any application database by this change.
+
+A tenth independently captured native fixture is authored in the existing
+isolated PostgreSQL integration suite. It seeds shared501/legacy10 in live test
+sources before capture, builds its own complete-original graph through genuine
+semantic DONE/exact16, then applies the entire candidate inside that disposable
+CI database transaction. The nine older fixture paths and180-second deadlines,
+120-second statement timeout, pool2 and whole-owner256 SQL/32MB/60s/250-original
+limits are unchanged. Only the new graph reserves its final ordinary failure
+claim for the nonempty index prefix; the older seventh/ninth/tenth recovery
+proofs are preserved.
+
+The new fixture requires complete-original A then B then separate fresh EMPTY,
+reopening all four originals for shared501 on BOTH accounts, native first-seen
+registries3 source/2 legacy keys and all6 per-account edges. It asserts atomic
+head/exact17/single-use continuation with all first16 roots/seven parents,
+native identity/first-seen/incomplete-edge and orphan-child refusal, actual
+member/head/checkpoint/yield rollback, orphan COMMIT, lost real COMMIT ACK,
+current source denial and ending assignment rollback. A real retained nonempty
+fourth-claim failure and ordinary fifth-claim recovery must preserve all rows,
+roots, progress and error history before B/EMPTY; no reset or sixth claim.
+
+These are authored acceptance requirements, NOT a native PASS. The candidate
+SQL has not yet compiled/executed in cloud CI; small local structure/protocol
+tests cannot establish native durability or licensed/live speed. Local focused
+verification passed485/485 across44 files,0fail/cancel/skip,2432.9525ms; changed
+JS syntax and diff checks passed. Four first-run static fixture-literal/position
+failures were corrected without removing old original/authority/recovery
+proofs; the old sixth injection remains immediately after the actual query.
+No source
+grant, required check/review bypass, default/route/worker activation, deployment,
+report, Hardy selection or pin mutation is included. Economic/amenity/at-sale
+resolution, calendar quarters, coherent publication, durable large-area worker
+and terminal transfer/retirement, licensed>50k/5-mile/10-mile/city/retrospective
+acquisition and Hardy saved-map/live QA acceptance remain outstanding.
+
 ## Inactive atomic NEXT owner wired; native issuance still refused (2026-10-11, 12:37 UTC)
 
 The local-only WIP now connects a separate fixed progress entry to the complete

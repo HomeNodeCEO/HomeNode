@@ -1,8 +1,9 @@
--- UNREGISTERED OWNER WORK IN PROGRESS. Do not register/apply this partial
--- migration until the complete-original owner, same-TX issuance/deferred guards,
--- dedicated intent admission, exact17 job/continuation and native acceptance are
--- integrated coherently. The installed 20261205 unconditional COMMIT/head
--- refusals remain unchanged. These native functions alone issue NOTHING.
+-- UNREGISTERED OWNER WORK IN PROGRESS. Apply ONLY as one complete transaction
+-- inside the independently captured disposable native CI fixture. Do not
+-- register or deploy until complete-original/current+ALL ending fences,
+-- same-TX head/checkpoint/single-use yield and native recovery are verified.
+-- Outside that fixture, installed20261205 unconditional head/COMMIT refusals
+-- remain unchanged. This candidate grants no source or worker authority.
 
 -- Exact17 recursively retains the actual issued exact16 graph. This is a native
 -- graph join, not a caller-created/projected checkpoint or count/hash authority.
@@ -367,7 +368,8 @@ CREATE FUNCTION app.check_neighborhood_transaction_index_v2_child_commit_issued(
 DECLARE h app.neighborhood_custom_cohort_selected_transaction_index_v2_heads%ROWTYPE; body jsonb; child_ordinal integer;
  job app.neighborhood_custom_cohort_capture_jobs%ROWTYPE; c app.neighborhood_custom_cohort_v2_continuations%ROWTYPE;
 BEGIN
- SELECT * INTO STRICT h FROM app.neighborhood_custom_cohort_selected_transaction_index_v2_heads WHERE operation_id=NEW.operation_id;
+ SELECT * INTO h FROM app.neighborhood_custom_cohort_selected_transaction_index_v2_heads WHERE operation_id=NEW.operation_id;
+ IF NOT FOUND THEN RAISE EXCEPTION 'neighborhood_selected_transaction_index_v2_orphan_child' USING ERRCODE='55000'; END IF;
  SELECT * INTO STRICT job FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=NEW.operation_id;
  SELECT * INTO STRICT c FROM app.neighborhood_custom_cohort_v2_continuations WHERE operation_id=NEW.operation_id;
  IF TG_TABLE_NAME IN ('neighborhood_custom_cohort_selected_transaction_source_v2_keys','neighborhood_custom_cohort_selected_transaction_legacy_v2_keys')
@@ -646,15 +648,43 @@ BEGIN
   RETURN NEW;
 END $$;
 
--- TODO, before registration: attach the complete native guards ONLY with the
--- coherent whole-original NEXT owner/current+ALL ending fences, separate
--- original-package SQL/adapter, exact17 checkpoint and single-use continuation
--- including ordinary4->5 recovery. The actual original owner now calls the
--- same-TX native delta/head, dedicated checkpoint save and single-use yield,
--- but neither this SQL nor the complete atomic owner is natively verified.
--- Job/continuation replacement functions above are only draft definitions;
--- constraints and head/deferred guard attachment remain deliberately absent.
--- The installed child BEFORE guard already calls NEXT dynamically and keeps
--- all member/native-key/first-seen/immutable checks; do not replace it merely
--- to admit17. Require independently captured shared-source native positive/
--- negative/orphan/rollback/lostACK/EMPTY and failure-recovery proofs in cloud.
+-- Coherent candidate attachment. The migration runner/CI fixture must own one
+-- enclosing transaction: there is no committed gap between fail-closed guards
+-- and these complete replacements. Keep all installed child BEFORE identity,
+-- immutable and TRUNCATE guards, and the deferred job/continuation pair.
+ALTER TABLE app.neighborhood_custom_cohort_v2_continuations
+  DROP CONSTRAINT neighborhood_custom_cohort_v2_continuations_sequence_check,
+  DROP CONSTRAINT neighborhood_custom_cohort_v2_continuations_phase_check,
+  ADD CONSTRAINT neighborhood_custom_cohort_v2_continuations_sequence_check
+    CHECK(sequence BETWEEN 1 AND 22000011),
+  ADD CONSTRAINT neighborhood_custom_cohort_v2_continuations_phase_check
+    CHECK(phase IN ('frozen_stock_traversal_refs_v2','frozen_recorded_partition_refs_v2','frozen_recorded_catalog_refs_v2','frozen_selected_union_refs_v2','frozen_selected_eligibility_refs_v2','frozen_selected_evidence_refs_v2','frozen_selected_metrics_refs_v2','frozen_selected_statistics_refs_v2','frozen_selected_numeric_refs_v2','frozen_selected_semantic_refs_v2','frozen_selected_transaction_index_refs_v2'));
+
+DROP TRIGGER neighborhood_selected_transaction_index_v2_head_guard
+ ON app.neighborhood_custom_cohort_selected_transaction_index_v2_heads;
+CREATE TRIGGER neighborhood_selected_transaction_index_v2_head_guard BEFORE INSERT OR UPDATE OR DELETE
+ ON app.neighborhood_custom_cohort_selected_transaction_index_v2_heads FOR EACH ROW
+ EXECUTE FUNCTION app.guard_neighborhood_selected_transaction_index_v2_head_issued();
+DROP TRIGGER neighborhood_selected_transaction_index_v2_head_commit
+ ON app.neighborhood_custom_cohort_selected_transaction_index_v2_heads;
+CREATE CONSTRAINT TRIGGER neighborhood_selected_transaction_index_v2_head_commit AFTER INSERT OR UPDATE
+ ON app.neighborhood_custom_cohort_selected_transaction_index_v2_heads DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+ EXECUTE FUNCTION app.check_neighborhood_transaction_index_v2_head_commit_issued();
+
+DO $$ DECLARE target text; label text; BEGIN
+ FOR target,label IN VALUES
+  ('neighborhood_custom_cohort_selected_transaction_index_v2_rows','member'),
+  ('neighborhood_custom_cohort_selected_transaction_source_v2_keys','source'),
+  ('neighborhood_custom_cohort_selected_transaction_legacy_v2_keys','legacy'),
+  ('neighborhood_custom_cohort_selected_transaction_index_v2_edges','edge') LOOP
+  EXECUTE format('DROP TRIGGER %I ON app.%I',
+   'neighborhood_selected_transaction_index_v2_'||label||'_commit',target);
+  EXECUTE format('CREATE CONSTRAINT TRIGGER %I AFTER INSERT ON app.%I DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION app.check_neighborhood_transaction_index_v2_child_commit_issued()',
+   'neighborhood_selected_transaction_index_v2_'||label||'_commit',target);
+ END LOOP;
+END $$;
+
+-- TODO, before registration: require independently captured shared-source
+-- native positive/negative/orphan/rollback/lostACK/EMPTY and ordinary4->5
+-- recovery with unchanged whole-owner budgets. Do not infer native success,
+-- licensed acquisition, completed context or publication from structure tests.

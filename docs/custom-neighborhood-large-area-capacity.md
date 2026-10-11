@@ -1,5 +1,37 @@
 # Complete larger-area Custom neighborhood studies
 
+## Frequency-source original reconciliation (2026-10-11; authored, inactive)
+
+The next read-only boundary requires exact fourteen original-preserving roots
+and actual DONE union, eligibility, evidence, metric and contribution parents.
+Its separate command reader binds the current consumed continuation or ordinary
+higher failure attempt. The seven older original SQL plans and strict older
+readers remain unchanged. Native eighth membership selects ordinal1; there is
+no caller ordinal, source callback, hash/count capability or population array.
+
+The ACTUAL bounded owner freshly reopens the complete original graph, selected
+stock/CAD/whole all-date transaction/required subject originals and ENTIRE
+neutral caches AGAIN. It derives current original comparison cells, compares
+EVERY seventh-row field, derives the fresh contribution and compares EVERY
+eighth-row field, including five-way states, source parts, overlapping reasons,
+dates, subject, parents, exact values and units. Matching retained hashes or
+eligible totals cannot substitute for this reconciliation. All current and
+ending source rights, database actor, assignment, private draft, subject,
+workspace, claim, native parents and member fences still precede return.
+
+This boundary is fixed-first/read-only, not a frequency ledger or complete
+semantic pass. It does not retain candidates, extend leases, write roots or
+continuations, calculate ranks/medians/CODs/quarters or confer publication.
+The unchanged whole-owner limits remain250 aggregate originals,256 SQL,32MB,
+60 seconds and16KB response. Authored cloud-native B-only/EMPTY/both coverage
+includes actual same-transaction ending reassignment/archive, source/cache
+changes, canonical contribution state/part/reason/date/member/parent forgeries,
+unfinished-parent refusal and complete prior-state preservation. Cloud native
+execution is pending; these tiny fixtures are never licensed/speed acceptance.
+No route, worker, default, grant, deployment, pin, Apply, accepted report or
+genuine Hardy choice changed. Native bounded frequency/rank/deviation ownership,
+full statistics, coherent publication and licensed/live acceptance remain next.
+
 ## Native selected contribution traversal (2026-10-11; authored, inactive)
 
 The additive eighth pass extends the ACTUAL bounded database owner, not a

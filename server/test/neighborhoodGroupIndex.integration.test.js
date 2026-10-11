@@ -3,6 +3,7 @@ import test from 'node:test';
 import { randomUUID,createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { prepareNeighborhoodCiDatabase } from './helpers/neighborhoodCiDatabase.js';
+import { runNeighborhoodSelectedNumericIndexV2DatabaseChecks } from './helpers/neighborhoodSelectedNumericIndexV2DatabaseChecks.js';
 import { assertBoundedCohortAuthorityAggregates } from './helpers/boundedCohortAuthorityAggregateAssertions.js';
 import { NEIGHBORHOOD_CACHED_SOURCE_SCHEMA } from './fixtures/neighborhoodCachedSourceSchemaFixture.js';
 import { runNeighborhoodGroupIndex,getPreparedNeighborhoodGroupSummary }
@@ -4659,7 +4660,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           for(const table of tables.filter(key=>finalUnion[key].length))await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
             `DELETE FROM app.neighborhood_custom_cohort_selected_union_v2_${table} WHERE operation_id=$1`,[refsOperation])),/immutable/);
           await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
-            'TRUNCATE app.neighborhood_custom_cohort_selected_union_v2_rows, app.neighborhood_custom_cohort_selected_metrics_v2_rows, app.neighborhood_custom_cohort_selected_statistics_v2_rows')),/immutable|mutation|not permitted/);
+            'TRUNCATE app.neighborhood_custom_cohort_selected_union_v2_rows, app.neighborhood_custom_cohort_selected_metrics_v2_rows, app.neighborhood_custom_cohort_selected_statistics_v2_rows, app.neighborhood_custom_cohort_selected_numeric_index_v2_rows')),/immutable|mutation|not permitted/);
           assert.deepEqual(await readUnion(),finalUnion);
           // Reopen the ACTUAL completed native union under its freshly consumed
           // claim. No caller receipt, material, subject account, category or
@@ -5665,7 +5666,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             'DELETE FROM app.neighborhood_custom_cohort_selected_metrics_v2_rows WHERE operation_id=$1']){
             await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql,[refsOperation])),/immutable/);await metricsUnchanged(finishedMetrics);
           }
-          for(const sql of ['TRUNCATE app.neighborhood_custom_cohort_selected_metrics_v2_rows, app.neighborhood_custom_cohort_selected_statistics_v2_rows','TRUNCATE app.neighborhood_custom_cohort_selected_metrics_v2_heads']){
+          for(const sql of ['TRUNCATE app.neighborhood_custom_cohort_selected_metrics_v2_rows, app.neighborhood_custom_cohort_selected_statistics_v2_rows, app.neighborhood_custom_cohort_selected_numeric_index_v2_rows','TRUNCATE app.neighborhood_custom_cohort_selected_metrics_v2_heads']){
             await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql)),/immutable|mutation|not permitted/);await metricsUnchanged(finishedMetrics);
           }
           assert.equal(new Set(metricAccounts).size,selectedCount);assert.ok(metricsQueries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries));
@@ -5693,7 +5694,10 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             readContributionRows=async()=>(await pool.query(`SELECT r.*,b.canonical_utf8 FROM app.neighborhood_custom_cohort_selected_statistics_v2_rows r
               JOIN app.neighborhood_cohort_evidence_blobs b ON b.organization_id=r.organization_id AND b.content_sha256=r.row_reference->>'content_sha256'
                 AND b.canonical_utf8_bytes::text=r.row_reference->>'canonical_utf8_bytes' WHERE r.operation_id=$1 ORDER BY r.ordinal`,[refsOperation])).rows,
-            contributionSnapshot=async()=>({heads:await readContributions(),rows:await readContributionRows(),
+            readNumericIndex=async()=>(await pool.query(`SELECT operation_id,organization_id,ordinal,account_id,contribution_row_reference,
+              reported_year_built::text,reported_residential_area::text,reported_site_area::text
+              FROM app.neighborhood_custom_cohort_selected_numeric_index_v2_rows WHERE operation_id=$1 ORDER BY ordinal`,[refsOperation])).rows,
+            contributionSnapshot=async()=>({heads:await readContributions(),rows:await readContributionRows(),numeric_index:await readNumericIndex(),
               job:await continuationJob(),continuation:await continuationRow(),blobs:await refsBlobCount()}),
             contributionParents=async()=>{assert.deepEqual(await readMetrics(),finishedMetrics.heads);assert.deepEqual(await readMetricRows(),finishedMetrics.rows);
               assert.deepEqual(await readEvidence(),completedEvidence.heads);assert.deepEqual(await readEligibility(),completedEligibility.heads);await stablePrior();},
@@ -5709,7 +5713,9 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
                 if(fault==='cad_license')await setCadFixtureGrant(pool,organization,cadGrant);
                 if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
               }};
+          const numericIndexNativeData=await runNeighborhoodSelectedNumericIndexV2DatabaseChecks(pool);
           const initialContributions=await contributionSnapshot();assert.deepEqual(initialContributions.heads,[]);assert.deepEqual(initialContributions.rows,[]);
+          assert.deepEqual(initialContributions.numeric_index,[]);
           await assert.rejects(freshRefsOwner()[contributionMethod](refsInput,{captureJobClaim:liveClaim}),/CAD_source_policy_required/);
           await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
           const deniedContribution=refsCalls.length;await assert.rejects(contributionStep(),/market_data_access_denied/);
@@ -5769,6 +5775,13 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             assert.deepEqual(row.metrics_reference,finishedMetrics.heads[0].receipt_reference);
             assert.deepEqual(state.rows.at(-1).metric_row_reference,nativeMetric.row_reference);
             assert.deepEqual(body.row_reference,state.rows.at(-1).row_reference);assert.equal(state.rows.length,ordinal);
+            assert.equal(state.numeric_index.length,ordinal);
+            const indexed=state.numeric_index.at(-1);
+            assert.equal(indexed.account_id,row.selected_entry.account_id);assert.equal(indexed.ordinal,ordinal);
+            assert.deepEqual(indexed.contribution_row_reference,state.rows.at(-1).row_reference);
+            for(const key of ['reported_year_built','reported_residential_area','reported_site_area'])
+              assert.equal(indexed[key],row.metrics[key].contribution_exact_value,'native exact index equals THIS original-derived eligible contribution');
+            assert.ok(!Object.hasOwn(indexed,'reported_market_value'),'no currency inference');
             for(const [key,cell] of Object.entries(row.metrics)){
               assert.equal(Object.keys(cell).length,8);assert.equal(cell.recorded_comparison_eligible,metricRow.metrics[key].recorded_comparison_eligible);
               assert.equal(cell.contribution_exact_value,cell.recorded_comparison_eligible?metricRow.metrics[key].exact_value:null);
@@ -5822,6 +5835,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           assert.equal(doneContribution.exact_distributions,false);assert.equal(doneContribution.statistics,'not_established');assert.equal(doneContribution.publication,'not_established');
           assert.equal(doneContribution.pin_transfer,false);assert.equal(doneContribution.context_complete,false);assert.equal(doneContribution.report_update,'none');
           assert.equal(terminalContributions.rows.length,selectedCount);assert.equal(terminalContributions.blobs,pendingContributions.blobs+1);
+          assert.equal(terminalContributions.numeric_index.length,selectedCount);
+          assert.deepEqual(terminalContributions.numeric_index,pendingContributions.numeric_index,'fresh terminal EMPTY never inserts a numerical observation');
           assert.deepEqual(terminalContribution.after_counts,doneContribution.contribution_counts);assert.equal(terminalContribution.row_reference,null);
           if(selectedCount)assert.deepEqual(terminalContribution.after_counts,JSON.parse(pendingContributions.heads[0].canonical_utf8).after_counts);
           for(const [key,c] of Object.entries(doneContribution.contribution_counts)){
@@ -5838,9 +5853,40 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             'DELETE FROM app.neighborhood_custom_cohort_selected_statistics_v2_rows WHERE operation_id=$1']){
             await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql,[refsOperation])),/immutable/);await contributionUnchanged(finishedContributions);
           }
-          for(const sql of ['TRUNCATE app.neighborhood_custom_cohort_selected_statistics_v2_rows','TRUNCATE app.neighborhood_custom_cohort_selected_statistics_v2_heads']){
+          for(const sql of ['TRUNCATE app.neighborhood_custom_cohort_selected_statistics_v2_rows, app.neighborhood_custom_cohort_selected_numeric_index_v2_rows','TRUNCATE app.neighborhood_custom_cohort_selected_statistics_v2_heads']){
             await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql)),/immutable|mutation|not permitted/);await contributionUnchanged(finishedContributions);
           }
+          if(selectedCount)for(const sql of [
+            'UPDATE app.neighborhood_custom_cohort_selected_numeric_index_v2_rows SET reported_site_area=999 WHERE operation_id=$1',
+            'DELETE FROM app.neighborhood_custom_cohort_selected_numeric_index_v2_rows WHERE operation_id=$1']){
+            await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql,[refsOperation])),/numeric_index_v2_immutable/);
+            await contributionUnchanged(finishedContributions);
+          }
+          await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
+            'TRUNCATE app.neighborhood_custom_cohort_selected_numeric_index_v2_rows')),/immutable|mutation|not permitted/);
+          await contributionUnchanged(finishedContributions);
+          if(selectedCount)await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(`
+            INSERT INTO app.neighborhood_custom_cohort_selected_numeric_index_v2_rows
+              (operation_id,organization_id,ordinal,account_id,contribution_row_reference,reported_year_built,reported_residential_area,reported_site_area)
+            SELECT operation_id,organization_id,ordinal,account_id,contribution_row_reference,reported_year_built,reported_residential_area,reported_site_area
+              FROM app.neighborhood_custom_cohort_selected_numeric_index_v2_rows WHERE operation_id=$1 AND ordinal=1`,[refsOperation])),/numeric_index_v2_binding_conflict/);
+          await contributionUnchanged(finishedContributions);
+          const nativeNumericCounts=(await pool.query(`SELECT count(*)::integer AS selected_count,
+            count(reported_year_built)::integer AS reported_year_built,count(reported_residential_area)::integer AS reported_residential_area,
+            count(reported_site_area)::integer AS reported_site_area FROM app.neighborhood_custom_cohort_selected_numeric_index_v2_rows WHERE operation_id=$1`,[refsOperation])).rows[0];
+          assert.equal(nativeNumericCounts.selected_count,selectedCount);
+          for(const key of ['reported_year_built','reported_residential_area','reported_site_area'])
+            assert.equal(nativeNumericCounts[key],doneContribution.contribution_counts[key].eligible_count);
+          if(allSelected)assert.equal(finishedContributions.numeric_index.at(-1).reported_site_area,'0');
+          console.info('[native-original-reconciled-numeric-contribution-index-v2]',{native_arithmetic_checks:numericIndexNativeData,
+            actual_independent_full_issued_original_graph:true,selected_ordinals:selectedCount,
+            one_row_per_original_reconciled_selected_account:true,indexed_rows:finishedContributions.numeric_index.length,
+            numeric_index_in_ALL_prior_state_rollback_and_lost_REAL_COMMIT_ack_snapshots:true,
+            native_child_FK_value_immutable_real_COMMIT_and_complete_EMPTY_guards:true,
+            exact_native_index_equals_THIS_fresh_original_contribution:true,genuine_eligible_site_zero:allSelected,
+            terminal_counts_equal_native_eighth_eligible_counts:true,additional_owner_client_queries:0,
+            later_semantic_pass_still_requires_complete_original_reconciliation:true,
+            rank_queries:false,medians_COD:false,calendar_quarters:false,publication:false,licensed_acquisition:false,production_speed:false,worker_activation:false});
           assert.equal(new Set(contributionAccounts).size,selectedCount);assert.ok(contributionQueries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries));
           console.info('[native-selected-statistics-contribution-traversal-owner-v2]',{actual_DONE_union_fifth_sixth_seventh:true,explicit_empty:selectedCount===0,
             selected_ordinals:selectedCount,contribution_rows:finishedContributions.rows.length,exact14_original_preserving_roots:true,

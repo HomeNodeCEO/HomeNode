@@ -164,5 +164,3 @@ export function createCustomCohortSelectedSemanticV2Repository(raw){
       if(!same(stored,{command_id:o.command_id,...refs,receipt_reference:receipt,sequence})||await tx()!==started)fail('corrupt');return stored;
     }});
 }
-
-

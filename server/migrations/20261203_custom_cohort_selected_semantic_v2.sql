@@ -277,4 +277,3 @@ CREATE CONSTRAINT TRIGGER neighborhood_selected_semantic_v2_row_commit AFTER INS
   EXECUTE FUNCTION app.check_neighborhood_selected_semantic_v2_row_commit();
 COMMENT ON TABLE app.neighborhood_custom_cohort_selected_semantic_v2_rows IS
  'INACTIVE tenth reference-only full semantic reconciliation ledger. Exact16 complete graph; fixed native next ordinal; fresh originals and current+ending authority mandatory; bounded derived exact ranks/sums/deviations and independent all-state counters. Native structure alone is not source authority, coherent publication, licensed acquisition or production-speed acceptance.';
-

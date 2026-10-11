@@ -86,7 +86,6 @@ BEGIN
     RAISE EXCEPTION 'neighborhood_v2_selection_wait_issued_catalog_required' USING ERRCODE='55000'; END IF;
   RETURN NEW;
 END $$;
-
 -- Supersede the foundation's installed metadata without rewriting that
 -- historical migration. Integration is not activation or source authority.
 -- No source grants, worker activation, attempt reset, or completed-context admission.
@@ -240,4 +239,3 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
-

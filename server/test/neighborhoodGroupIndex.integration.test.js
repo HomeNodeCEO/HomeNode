@@ -1782,7 +1782,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       Object.assign(refsClaim,{operation_id:fresh.operation_id,claim_token:fresh.claim_token,attempts:fresh.attempts});
     }
     const refsCalls=[],refsQueryParameters=[],refsBlobPuts=[];let refsFault=null,refsAbort=null;
-    const refsPool={async connect(){const client=await pool.connect();let cadHeaderReads=0,transactionHeaderReads=0,nativeTransactionKeyReads=0;return {release:client.release.bind(client),async query(config){
+    const refsPool={async connect(){const client=await pool.connect();let cadHeaderReads=0,transactionHeaderReads=0,nativeTransactionKeyReads=0,transactionCandidatePlanReads=0;return {release:client.release.bind(client),async query(config){
       refsCalls.push(config.text);
       refsQueryParameters.push(config.values);
       if(config.text.includes('neighborhood-cohort-blob:insert */'))refsBlobPuts.push(config.values[3]);
@@ -1791,6 +1791,17 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       // that statement. The earlier real group/head/root writes remain pending;
       // REAL COMMIT must reject orphan progress. No fabricated SQL result.
       if(orphanUnionYield)await client.query('SAVEPOINT synthetic_union_yield');
+      if(refsFault==='transaction_index_candidate_provisional'&&config.text.includes('custom-cohort-selected-transaction-first-candidate-v2:native-plan')){
+        refsFault=null;
+        // REAL native-bound provisional member in the same TX, not a mocked
+        // plan. FIRST/unissued admission must refuse and roll it back.
+        const inserted=await client.query(`INSERT INTO app.neighborhood_custom_cohort_selected_transaction_index_v2_rows
+          (operation_id,organization_id,generation_id,ordinal,account_id,partition_ordinal,entry_reference,metric_row_reference,contribution_row_reference)
+          SELECT DISTINCT $1::uuid,$2::uuid,generation_id,ordinal,account_id,partition_ordinal,entry_reference,metric_row_reference,contribution_row_reference
+          FROM app.neighborhood_selected_transaction_index_v2_next_keys($1::uuid,$2::uuid) WHERE account_id IS NOT NULL`,
+          [config.values[0],config.values[3]]);
+        assert.equal(inserted.rowCount,1);
+      }
       const result=await client.query(config);
       // Mutate actual native authority only AFTER the actual sixth combined
       // original/EMPTY query. Same client/TX: every refusal must roll these
@@ -1822,6 +1833,14 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           ['source_records','sales','sale_links'].includes(r.kind)&&r.account_id===result.rows[0].account_id);
         assert.ok(row,'nonvacuous first-selected original association');assert.equal(row.selected_union_member,true);
         row.selected_union_member=false;return {...result,rows:[{...result.rows[0],page_json:JSON.stringify(rows)}]};
+      }
+      if(config.text.includes('custom-cohort-selected-transaction-first-candidate-v2:native-plan')){
+        transactionCandidatePlanReads++;
+        if(['transaction_index_candidate_replaced','transaction_index_candidate_ending'].includes(refsFault)
+          &&(refsFault!=='transaction_index_candidate_ending'||transactionCandidatePlanReads===2)){
+          refsFault=null;assert.deepEqual(result.rows.map(r=>[r.kind,r.native_key]),[['source_record','503'],['source_record','504'],['legacy_sale','3']]);
+          const rows=result.rows.map(r=>({...r}));rows.at(-1).native_key='4';return {...result,rows};
+        }
       }
       if(config.text.includes('custom-cohort-selected-semantic-v2:first-completed-transaction-native-keys')){
         nativeTransactionKeyReads++;
@@ -6779,6 +6798,62 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             const transactionStorage=await runNeighborhoodSelectedTransactionIndexV2DatabaseChecks(pool,refsOperation,organization,value);
             await semanticUnchanged(before);
             console.info('[native-selected-transaction-index-storage-foundation-v2]',transactionStorage);
+            // Separate actual-owner FIRST candidate on the same safe three
+            // issued graphs. No extra calls on the tight positive/recovery
+            // graphs; no phase17, receipt storage, durable writes or yield.
+            const candidateMethod='prepareOriginalFrozenCaptureJobFirstSelectedTransactionIndexCandidateReferencesV2',candidateQueries=[],
+              candidateStep=async()=>{const start=refsCalls.length;try{return await cadOwner()[candidateMethod](refsInput,{captureJobClaim:liveClaim});}
+                finally{candidateQueries.push(refsCalls.length-start-3);}},
+              candidateUnchanged=async()=>{await semanticUnchanged(before);
+                for(const table of ['selected_transaction_index_v2_rows','selected_transaction_source_v2_keys','selected_transaction_legacy_v2_keys',
+                  'selected_transaction_index_v2_edges','selected_transaction_index_v2_heads'])assert.equal((await pool.query(
+                    `SELECT 1 FROM app.neighborhood_custom_cohort_${table} WHERE operation_id=$1 LIMIT 1`,[refsOperation])).rowCount,0);};
+            for(const key of ['ordinal','cursor','native_packages','counts','selected_accounts','readOriginal','sourceAuthority']){
+              const start=refsCalls.length;await assert.rejects(cadOwner()[candidateMethod](refsInput,{captureJobClaim:liveClaim,[key]:true}),/invalid_options/);
+              assert.equal(refsCalls.length,start);
+            }
+            if(selectionWaitFixture==='union'){
+              await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+              const start=refsCalls.length;await assert.rejects(candidateStep(),/market_data_access_denied/);
+              assert.ok(!refsCalls.slice(start).some(q=>q.includes('neighborhood-cohort-blob:read-batch')
+                ||q.includes('custom-cohort-selected-transaction-first-candidate-v2:')||q===NEIGHBORHOOD_FIRST_COMPLETED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL));
+              await setFixtureGrant(pool,organization,fixtureGrant(organization));await candidateUnchanged();
+              for(const [fault,reason] of [['transaction_index_candidate_replaced',/selected_transaction_index_candidate_mismatch/],
+                ['transaction_index_candidate_ending',/selected_transaction_index_candidate_mismatch/],
+                ['transaction_index_candidate_provisional',/native_plan_missing_or_corrupt/],['metric_assignment_ending',/assignment_access_denied/]]){
+                const start=refsCalls.length;refsFault=fault;await assert.rejects(candidateStep(),reason);assert.equal(refsFault,null);
+                if(['transaction_index_candidate_replaced','transaction_index_candidate_provisional'].includes(fault))assert.ok(
+                  !refsCalls.slice(start).includes(NEIGHBORHOOD_FIRST_COMPLETED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL),'native mismatch refuses before the original packet');
+                await candidateUnchanged();
+              }
+            }
+            const candidateStart=refsCalls.length,candidateValue=await candidateStep(),candidateSql=refsCalls.slice(candidateStart),c=candidateValue.native_index_candidate;
+            assert.equal(candidateValue.status,'current_authorized_first_selected_transaction_index_candidate_originals_reconciled');
+            const {native_index_candidate,native_index_candidate_retained,...oldShape}=candidateValue;
+            assert.deepEqual({...oldShape,status:value.status},value,'all complete-original membership and nonacceptance claims are preserved');
+            assert.equal(native_index_candidate_retained,false);assert.equal(c.durable_index_issued,false);assert.equal(c.sequence,1);assert.equal(c.previous_reference,null);
+            assert.equal(c.selected_stock_count,selectedCount);assert.equal(c.selected_entry?.account_id??null,value.selected_entry?.account_id??null);
+            assert.deepEqual(c.before,{selected_ordinal:0,source_record_keys:0,legacy_sale_keys:0,done:false});
+            assert.deepEqual(c.after,{selected_ordinal:selectedCount?1:0,source_record_keys:selectedCount?(allSelected?1:2):0,
+              legacy_sale_keys:selectedCount&&!allSelected?1:0,done:selectedCount===0});
+            assert.deepEqual(c.union_reference,value.union_reference);assert.deepEqual(c.semantic_reference,value.semantic_reference);
+            assert.equal(c.association_anchor_count,selectedCount?(allSelected?2:3):0);
+            assert.equal(candidateSql.filter(q=>q.includes('custom-cohort-selected-transaction-first-candidate-v2:native-plan')).length,2);
+            assert.equal(candidateSql.filter(q=>q.includes('custom-cohort-selected-transaction-first-candidate-v2:transaction')).length,1);
+            assert.equal(candidateSql.filter(q=>q===NEIGHBORHOOD_FIRST_COMPLETED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL).length,1);
+            assert.ok(!candidateSql.some(q=>/neighborhood-cohort-blob:insert|:row-insert|:head-insert|:head-advance|custom-cohort-v2-continuation:yield|custom-cohort-job:checkpoint-save/.test(q)));
+            assert.ok(Buffer.byteLength(JSON.stringify(c))<=4096);await candidateUnchanged();
+            assert.ok(candidateQueries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries));
+            console.info('[native-first-selected-transaction-index-candidate-original-owner-v2]',{selected_count:selectedCount,
+              actual_current_authorized_complete_original_owner:true,actual_tenth_DONE_exact16_seven_parent_bindings:true,
+              native_first_plan_before_packet_and_after_ALL_ending_fences:true,independent_old_native_keyset_and_complete_original_exact_match:true,
+              separate_namespace_first_seen_counts_derived_only_from_native_bounded_set:true,compact_reference_only_candidate:true,
+              same_count_replacement_ending_change_and_real_provisional_member_rollback:selectionWaitFixture==='union',
+              current_MARKET_denial_before_reads_and_actual_ending_assignment_rollback:selectionWaitFixture==='union',
+              all_original_parents_job_continuation_reports_choices_pins_and_storage_unchanged:true,
+              maximum_whole_owner_sql_queries:Math.max(...candidateQueries),whole_owner_limits:ORIGINAL_OWNER_LIMITS,
+              durable_index_issued:false,phase17:false,global_selected_native_deduplication:false,economic_transactions:false,calendar_quarters:false,
+              licensed_acquisition:false,production_speed:false,worker_activation:false});
           }
 
           }

@@ -1,5 +1,43 @@
 # Complete larger-area Custom neighborhood studies
 
+## Native-bound first index candidate inside the original owner (2026-10-11)
+
+A separate inactive internal method now prepares a compact reference-only FIRST
+index candidate at actual tenth DONE/exact16. It does not issue a receipt, write
+the index or install phase17. Its zero-argument native repository binds the
+actual live claim, actor/scope/command and seven parent references, requires all
+five index tables to be empty for this operation, and derives the first member,
+generation and <=250 namespaced keys through the native original-key function.
+No caller ordinal, keys, counts, callback or full-population array is accepted.
+Both reads must use the same actual PostgreSQL transaction.
+
+Before the original packet, the plan must exactly match the independently read
+first semantic member, union count, generation and existing independent native
+key set. The existing complete original graph, whole stock/CAD/all-date package,
+required subject, ENTIRE caches and every seventh/eighth/index/ninth/tenth member
+remain mandatory. After ALL ending source/actor/assignment/draft/subject/workspace
+and graph/head/member fences, both native key readers are freshly repeated.
+Only then is the candidate constructed. Separate source/legacy first-seen counts
+are derived from that exact bounded set; they are not completeness authority.
+Even a nonempty one-account union remains not-DONE until a later fresh EMPTY.
+
+Focused DATA/repository/owner-order tests pass locally. Authored cloud probes
+cover the existing independently issued B-only/EMPTY/A+B graphs, changed native
+plans before/after originals, actual provisional member rollback, current MARKET
+denial and actual ending assignment revocation. No calls are added to the two
+tight positive/recovery graphs and all original budgets/timeouts stay unchanged.
+Native verification of the new candidate is pending. This is NOT cross-account
+deduplication, economic resolution, calendar quarters, licensed acquisition,
+successful durable indexing or live-speed acceptance.
+
+The parent storage change at998ed263 failed two native nonempty probes because
+the test helper supplied two bind parameters to zero-parameter SET CONSTRAINTS;
+the intended deferred guard was never reached. Correctiond724c56e explicitly
+passes an empty parameter list, with a regression assertion. Native/cloud
+verification is running again; no SQL guard, required check or review was waived.
+Protected parents remain unmerged; included actual review is unestablished.
+No deployment, activation, grants, reports, choices, pins or Apply writes.
+
 ## Fail-closed native transaction-index storage foundation (2026-10-11)
 
 The new inactive additive `20261205` migration provides reference-only selected

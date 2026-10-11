@@ -280,3 +280,16 @@ export const NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL=
           AND statistics_body.canonical_utf8::jsonb->'after'->>'done'='true'
           AND statistics_body.canonical_utf8::jsonb->'after'->'selected_ordinal'=body.canonical_utf8::jsonb->'after_selected_count'
           AND statistics_body.canonical_utf8::jsonb->'selected_stock_count'=body.canonical_utf8::jsonb->'after_selected_count'`);
+
+// Ninth native ordinal plan, separate from the unchanged strict14 fixed-first
+// reader. No caller ordinal or free roster; the actual owner reopens COMPLETE
+// originals/ENTIRE caches and compares every seventh/eighth/index cell afresh.
+export const NEIGHBORHOOD_NEXT_SELECTED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL=
+  NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL
+    .replace('neighborhood-first-selected-frequency-original-package-v2','neighborhood-next-selected-numeric-original-package-v2')
+    .replace('  JOIN app.neighborhood_custom_cohort_selected_statistics_v2_rows r',`  LEFT JOIN app.neighborhood_custom_cohort_selected_numeric_v2_heads numeric_population
+    ON numeric_population.operation_id=job.operation_id AND numeric_population.organization_id=job.organization_id
+  JOIN app.neighborhood_custom_cohort_selected_statistics_v2_rows r`)
+    .replace('r.ordinal=1 AND $4::text=', 'r.ordinal=coalesce(numeric_population.sequence,0)+1 AND $4::text=')
+    .replace('app.neighborhood_selected_statistics_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)',
+      'app.neighborhood_selected_numeric_v2_admission_matches(job.operation_id,job.organization_id,job.checkpoint)');

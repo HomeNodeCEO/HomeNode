@@ -1,5 +1,159 @@
 # Complete larger-area Custom neighborhood studies
 
+## Fresh full server PASS; native fixture deadline fix requires cloud validation (2026-10-11)
+
+The recovery followup at `a77f1a5de14f2a782ede4d2232587874424db1cf`
+passes the full server job114382474932 (10,944 tests:10,876 PASS,68 skips,
+zero failures/cancellations); frontend, redteam, signed delivery, mobile and
+Appendix checks also PASS. This supersedes the older server-pending notes.
+The FULL native log job114382474761/run38109683960 was inspected: migration417
+and subject1 PASS, but the index suite has11 PASS/3 cancellations from the
+existing180-second fixture deadline (union, union-all and positive union-all).
+Later job steps were skipped. Recovery markers emitted after a cancelled
+fixture's deadline are NOT successful native verification or acceptance.
+
+The authored fix is ONLY the disposable CI harness: a bounded512-statement
+per-connection name cache allows the actual driver to reuse exact SQL parsing,
+while every query still executes with its current values. No results, source
+originals, authorization decisions or transactions are cached; native errors,
+callbacks, real COMMIT/rollback and lost-ack outcomes remain unchanged. Independent
+read-only unchanged-state assertions use the same maximum two pool connections
+in parallel, preserving every field comparison. All seven independent source
+fixtures, the480,000-character escape-sensitive original, original/cache and
+current-ending refusal probes, ordinary fifth-claim recovery,180-second fixture
+deadline,120-second statement timeout and256-query/32MB/60-second owner budget
+remain unchanged. A new metadata-only CI marker records execution requests,
+not authority, successful statement preparation, durability or production speed.
+This is a candidate runtime fix pending fresh exact-head cloud execution; no
+failed check is waived or relabeled PASS.
+
+Actual included review/security and protected dependency integration remain
+outstanding. No production owner/SQL, migration, workflow, rights, report,
+choice, worker, scheduler, pin, Apply or activation changed in this fix.
+Licensed/full-population statistics, publication, durable workers and live
+acceptance remain open; the heartbeat remains active.
+
+## Ninth original owner native verified; recovery followup still needs fresh cloud execution (2026-10-11)
+
+The integrated owner at `cb70d60fc5de71dfbf88255d24c23c06a70181b9`
+passes the entire native job114378112847/run38108210330. The FULL decoded
+2,846,540-character log was inspected: migration417, subject1, index14, edge1
+and bootstrap2 all PASS, zero failures/cancellations/skips, with idempotence
+and every later job step successful. All FOUR independently issued graphs
+execute the actual ninth bounded owner through fresh terminal EMPTY: B-only,
+explicit EMPTY, both-selected exclusions, and genuine first eligible8000/later0.
+Whole-owner maxima are246/241/247/247 queries within the unchanged256-query,
+32,000,000-byte/60-second budget. Complete originals/ENTIRE caches, every
+seventh/eighth/index cell, all current+ending authority, exact15 atomic native
+reference progress, real rollback/orphan COMMIT/lost COMMIT acknowledgment,
+strict old readers and preserved reports/choices/pins all execute successfully.
+
+This is small native PROTOCOL evidence, not licensed population acquisition,
+production speed, medians/COD/quarters, publication or worker activation. The
+same head still has a separate full-server failure (six other checks PASS).
+The locally reproduced old-phase continuation-ceiling fix, new actual ninth
+ordinary-failure/fifth-claim recovery coverage and installed metadata correction
+are followups requiring fresh exact-head cloud validation. Actual review and
+included-review allowance remain absent. No protected merge, deployment,
+activation or genuine appraisal choice changed; the full roadmap remains open.
+
+## Ninth bounded original-owner integration implemented; cloud validation pending (2026-10-11)
+
+Follow-up authored native recovery coverage reserves the independent positive
+graph's ordinary fourth-to-fifth failure claim for the ninth phase, preserving
+its actual saved head/rows/checkpoint/consumed continuation, blob count and error
+history across real failure/reclaim and stale-token/current-ending refusals.
+The original both-selected graph still exercises seventh recovery; B-only
+still exercises eighth recovery. No attempt counter reset, sixth claim, guard
+or old probe waiver. This follow-up is not yet native executed.
+
+The first integrated cloud server run reports one failure. Its full-log fetch
+was unavailable (transport closed); the diagnostic tail reports one failure,
+not its identity. Investigation locally reproduced a finite-continuation
+regression: the new global ninth ceiling also widened old phases and the
+existing rejection failed. The follow-up preserves the old
+16,000,008 ceiling for ALL old phases and admits 18,000,009 only for the new
+ninth phase; the original rejection test remains unchanged, with additional
+all-old-phase and new-boundary checks. No native head/claim/attempt/source
+guard is weakened. Fresh cloud validation remains required.
+
+This section overrides the earlier foundation-only description below. The
+inactive ninth population owner now has a separate strict14/strict15 native
+command admission, native next-selected original SQL, the same single-use
+aggregate250-original packet and unchanged256-query/32MB/60-second owner budget.
+It reopens the COMPLETE issued graph and whole stock/CAD/all-date transaction
+and required subject originals plus ENTIRE neutral caches, compares EVERY
+seventh metric/eighth contribution/native indexed cell, then rechecks current
+and ending actor/assignment/private-draft/subject/source/claim/workspace/parents
+and the whole next member. Only then does the SAME transaction retain one small
+reference-only receipt/native member, exact15 checkpoint and fresh single-use
+continuation. A separately reopened fresh EMPTY is required after the last
+account. The existing fixed-first strict14 SQL remains byte-identical.
+
+The additive20261202 migration permits only eighth-to-ninth/ninth-to-ninth
+continuations, preserves failure history and the five-attempt ceiling, and
+retains every older phase restriction. No source-rights grant, population
+callback/roster/free ordinal, numeric/original/typed/diagnostic copy or backfill
+was added. Later semantic statistics consumers MUST reopen complete originals
+and current authority AGAIN; ninth DONE is not enduring authority.
+
+Cloud native fixtures are authored for ALL FOUR independently issued graphs
+(B-only, explicit EMPTY, both-selected exclusions, genuine first8000/later0).
+They exercise source/entire-cache/every7th/8th/index/ending-rights refusals,
+actual row/head/checkpoint/yield rollback, deferred orphan real-COMMIT rejection,
+lost real-COMMIT acknowledgment, strict older readers, reference-only storage,
+fresh EMPTY and whole-owner budget checks. Authored tests and local focused
+passes are not successful native execution. Exact-head full database, server,
+frontend, security checks and actual included review remain required before
+any expected-head protected merge.
+
+No route, worker, scheduler, default, production pin, Apply, accepted report or
+genuine Hardy choice changed. Full original-reconciled distributions/medians,
+CODs/calendar quarters, coherent publication, durable workers/terminal pins,
+licensed >50k/5-mile/10-mile/city/retrospective and live reload/speed acceptance
+remain OPEN. The heartbeat remains active.
+
+## Indexed source-reopen fixes verified; ninth foundation still unintegrated (2026-10-11)
+
+This section overrides the older pending/failure notes below. Exact parent#1281
+`14fd00b7f558c80bc5a8d99a20ea095de9f9e3cf` and positive child#1282
+`6a8af300fe25ecb61b3446d31271d37cc04eb9c2` now each pass all FIVE reported
+cloud checks. Their FULL decoded native logs were inspected, not just statuses:
+parent job114369568677/run38105339873 (2,604,757 characters), child
+job114369676374/run38105379076 (2,817,167 characters). Both pass migration417,
+subject1, edge1 and bootstrap2, with zero failures/cancellations/skips; index
+passes13/13 parent and14/14 child. All later native steps executed successfully.
+
+The corrected ending-fault harness preserves its armed corruption through
+whole-original reads, so the actual ending indexed-member comparison now
+nonvacuously rejects the change. The FOURTH independently issued positive graph
+also executes successfully: genuine first A site8000 and later B site0 are
+eligible, while forging first8000 to NULL or0 refuses and preserves ALL state.
+All three previous independent graphs, full issued original/ENTIRE-cache
+reconciliation, current+ending authority, real rollback/orphan-COMMIT/lost-ACK
+and unchanged256-query/32MB/60-second budgets remain. Indexed-source reopen
+maximum231 queries (EMPTY226); this is FIXED FIRST ONLY, not full population.
+
+The next branch adds an INACTIVE ninth native reference-only foundation:
+closed <=4096-byte receipt; native next-ordinal storage over actual eighth rows
+and their numeric children; exact15 recursively bound complete parent graph;
+immutable rows/heads, fresh terminal EMPTY/native eligible-total reconciliation
+and deferred real-COMMIT head/job/single-use-continuation guards. It copies NO
+numeric/original/typed/diagnostic payloads and accepts NO caller cursor, roster,
+row, count, value, source callback or DONE flag. Focused DATA/SQL-structure tests
+are NOT native database or original-source acceptance. The additive migration
+is registered for cloud validation; actual original owner, command reader, native next-original SQL,
+job/continuation grammar and adversarial complete-graph integration still need
+implementation and cloud execution. No ninth transition can commit yet.
+
+Actual review arrays remain EMPTY for both PRs. Automatic disabled-base skips
+are not reviews; included-review allowance remains unestablished and the prior
+safety refusal is respected, with no paid/forced/indirect retry. No protected
+merge, deployment or activation occurred. Exact complete-population medians,
+CODs/calendar quarters, coherent publication, durable workers/terminal pins,
+licensed >50k/5-mile/10-mile/city/retrospective and Hardy live reload acceptance
+remain OPEN. The heartbeat remains active.
+
 ## Positive native duplicate-reason probe correction (2026-10-11; cloud pending)
 
 Full decoded positive-fixture head46b3d937 job114363101732 was inspected:

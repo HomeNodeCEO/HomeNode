@@ -79,12 +79,13 @@ function retainedSetup({patch={},auto=false,endAuto=false,missing=false}={}){
   const calls=[];let transactions=0;
   return {calls,owner:repository({async query(sql,values){calls.push({sql,values});
     if(sql.includes(':transaction'))return {rowCount:1,rows:[{transaction_id:String(auto?++transactions:endAuto&&++transactions===3?9:8)}]};
-    if(sql.includes(':retained-read')||sql.includes(':replay-read')||sql.includes(':eligibility-read')||sql.includes(':evidence-read')||sql.includes(':metrics-read')||sql.includes(':statistics-read')||sql.includes(':statistics-contributions-read')||sql.includes(':frequency-source-read'))return {rowCount:missing?0:1,rows:missing?[]:[{...structuredClone(command),
+    if(sql.includes(':retained-read')||sql.includes(':replay-read')||sql.includes(':eligibility-read')||sql.includes(':evidence-read')||sql.includes(':metrics-read')||sql.includes(':statistics-read')||sql.includes(':statistics-contributions-read')||sql.includes(':frequency-source-read')||sql.includes(':numeric-population-read'))return {rowCount:missing?0:1,rows:missing?[]:[{...structuredClone(command),
       job_request_sha256:command.request_sha256,job_checkpoint:structuredClone(checkpoint),
       ...(sql.includes(':replay-read')?{replay_binding:true}:{}),...(sql.includes(':eligibility-read')?{eligibility_binding:true}:{}),
       ...(sql.includes(':evidence-read')?{evidence_binding:true}:{}),...(sql.includes(':metrics-read')?{metrics_binding:true}:{}),
       ...(sql.includes(':statistics-read')?{statistics_binding:true}:{}),...(sql.includes(':statistics-contributions-read')?{contributions_binding:true}:{}),
-      ...(sql.includes(':frequency-source-read')?{frequency_binding:true}:{}),...patch}]};
+      ...(sql.includes(':frequency-source-read')?{frequency_binding:true}:{}),
+      ...(sql.includes(':numeric-population-read')?{numeric_population_binding:true}:{}),...patch}]};
     assert.fail(sql);
   }})};
 }
@@ -281,6 +282,37 @@ test('frequency source requires exact14/all FIVE DONE native parents/current con
   }
   await assert.rejects(retainedSetup({auto:true}).owner.readForFrequencies(fresh,workerOptions),/caller_transaction_required/);
   await assert.rejects(retainedSetup({endAuto:true,patch:{job_checkpoint:cp}}).owner.readForFrequencies(fresh,workerOptions),/caller_transaction_required/);
+});
+
+test('ninth admission requires strict14/15 all FIVE DONE parents and actual current consumed native progress, without widening old readers',async()=>{
+  const fresh={...currentClaim,claim_token:id(9)};
+  for(const n of [14,15]){
+    const cp={phase:n===14?'frozen_selected_statistics_refs_v2':'frozen_selected_numeric_refs_v2',
+      evidence_refs:[...checkpoint.evidence_refs,...Array(n-9).fill(ref)]},{owner,calls}=retainedSetup({patch:{job_checkpoint:cp}});
+    assert.equal((await owner.readForNumericPopulation(fresh,workerOptions)).command_id,intent.command_id);
+    const sql=calls.find(c=>c.sql.includes(':numeric-population-read')).sql;
+    for(const text of ['eighth.metrics_reference=h.receipt_reference','eighth.eligibility_reference=fifth.receipt_reference',
+      'eighth.evidence_reference=sixth.receipt_reference',"contribution_body.canonical_utf8::jsonb->'after'->>'done'='true'",
+      'neighborhood_selected_numeric_v2_admission_matches',"c.phase=job.checkpoint->>'phase'",
+      'THEN eighth.receipt_reference ELSE numeric_population.receipt_reference END',
+      'c.consumed_claim_token IS NOT NULL','job.claim_token=c.consumed_claim_token','job.attempts>c.issued_attempts',
+      'job.claim_token<>command.resume_claim_token','FOR SHARE OF job,command NOWAIT'])assert.ok(sql.includes(text),text);
+    assert.doesNotMatch(sql,/INSERT INTO|UPDATE app\.|DELETE FROM/);
+    for(const patch of [{numeric_population_binding:false},{workspace_revision:2},{issued_attempts:6},{job_request_sha256:'d'.repeat(64)},
+      {job_checkpoint:{...cp,evidence_refs:cp.evidence_refs.slice(1)}},{job_checkpoint:{...cp,phase:'free_done'}},
+      {job_checkpoint:{...cp,evidence_refs:[{...ref,content_sha256:'d'.repeat(64)},...cp.evidence_refs.slice(1)]}}])
+      await assert.rejects(retainedSetup({patch:{job_checkpoint:cp,...patch}}).owner.readForNumericPopulation(fresh,workerOptions));
+    if(n===15)for(const method of ['readRetained','readForReplay','readForEligibility','readForEvidence','readForMetrics','readForStatistics',
+      'readForStatisticsContributions','readForFrequencies'])await assert.rejects(owner[method](fresh,workerOptions),/checkpoint_changed/);
+    for(const raw of [{...workerOptions,ordinal:1},{...workerOptions,readOriginal:()=>assert.fail('callback')},
+      new Proxy(workerOptions,{getPrototypeOf(){assert.fail('proxy');}}),{...workerOptions,get actorUserId(){assert.fail('getter');}}]){
+      const {owner,calls}=retainedSetup();await assert.rejects(owner.readForNumericPopulation(fresh,raw));assert.equal(calls.length,0);
+    }
+    await assert.rejects(retainedSetup({auto:true,patch:{job_checkpoint:cp}}).owner.readForNumericPopulation(fresh,workerOptions),/caller_transaction_required/);
+    await assert.rejects(retainedSetup({endAuto:true,patch:{job_checkpoint:cp}}).owner.readForNumericPopulation(fresh,workerOptions),/caller_transaction_required/);
+  }
+  for(const n of [0,9,10,11,12,13,16])await assert.rejects(retainedSetup({patch:{job_checkpoint:{
+    phase:'frozen_selected_numeric_refs_v2',evidence_refs:Array(n).fill(ref)}}}).owner.readForNumericPopulation(fresh,workerOptions),/checkpoint_changed/);
 });
 
 test('statistics source admission requires exact13 and all DONE native parents/current consumed continuation, never widens old readers',async()=>{

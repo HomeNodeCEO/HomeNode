@@ -64,7 +64,7 @@ test('actual frequency boundary freshly replays originals and compares EVERY ret
     'readingSelectedUnionFirstTransactions: true','readingSelectedStatisticsSource: true','readingSelectedFrequencySource: true',
     "allowedPhases: ['frozen_selected_statistics_refs_v2']"])assert.ok(stage.includes(v),v);
   assert.doesNotMatch(stage,/progressingSelectedStatistics: true|progressingSelectedMetrics: true|yieldingV2Progress: true/);
-  const firstAt=s.indexOf('firstSelectedEntry=await (readingSelectedFrequencySource?'),
+  const firstAt=s.indexOf('firstSelectedEntry=await (progressingSelectedNumeric?numericStore.readNextSelectedEntry():readingSelectedFrequencySource?'),
     originals=s.indexOf("'subjectAndFirstSelectedFrequencyAccountPackage'",firstAt),
     comparison=s.indexOf('if(!same(row,metricRowCandidate))',originals),
     fresh=s.indexOf('statisticsContribution=prepareCohortSelectedStatisticsContributionV2',comparison),

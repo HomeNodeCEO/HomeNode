@@ -37,6 +37,18 @@ real current-source/member refusals, row/head/checkpoint/yield rollback, orphan
 COMMIT, lost ACK, native rank/aggregate forgeries and retained EMPTY fifth-claim
 recovery. All remain unverified until the exact-head cloud job completes.
 
+The historical childdba80f46 native job114397700921/run38114883703 FAILED.
+Its complete log (2,721,012 characters) has 417 migration/one subject pass and
+index10 passes/four failures, one in each independent selected graph; later
+edge/idempotence/bootstrap steps were skipped. Every graph stopped in the older
+ninth-foundation helper's TRUNCATE probe, which omitted the newly restrictive
+tenth FK child. No ninth-owner, rank-seam or tenth-owner success is established
+by that run. The helper now names the semantic child in the same real statement,
+and the migration-derived transitive-FK audit scans database helper files as
+well as the main fixture. The specific immutable55000 rejection remains required;
+no CASCADE, FK acceptance, disabled trigger, deadline or budget waiver is used.
+Fresh cloud execution must reach and validate the authored tenth protocol.
+
 Parent1285's historical ca12 native failure was an omitted GENERIC authority
 fault-injection hook, not a passing acceptance result. Its subsequent750a2c75
 cloud run also failed: 417 migration and one subject test passed, but the index

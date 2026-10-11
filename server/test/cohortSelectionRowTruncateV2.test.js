@@ -17,15 +17,22 @@ test('selected-row TRUNCATE probes include every transitive additive native FK c
   assert.ok(children.get(prefix+'union_v2_rows')?.has(prefix+'metrics_v2_rows'));
   assert.ok(children.get(prefix+'metrics_v2_rows')?.has(prefix+'statistics_v2_rows'));
   const fixture=readFileSync(new URL('./neighborhoodGroupIndex.integration.test.js',import.meta.url),'utf8'),
-    probes=[...fixture.matchAll(/'TRUNCATE app\.neighborhood_custom_cohort_selected_[^'\r\n]*_v2_rows[^'\r\n]*'/g)].map(m=>m[0]);
+    helperDirectory=new URL('./helpers/',import.meta.url),
+    sources=[['neighborhoodGroupIndex.integration.test.js',fixture],
+      ...readdirSync(helperDirectory).filter(n=>/DatabaseChecks\.js$/.test(n))
+        .map(n=>[n,readFileSync(new URL(n,helperDirectory),'utf8')])],
+    probes=sources.flatMap(([file,source])=>[...source.matchAll(/'TRUNCATE app\.neighborhood_custom_cohort_selected_[^'\r\n]*_v2_rows[^'\r\n]*'/g)]
+      .map(m=>({file,sql:m[0]})));
   assert.ok(probes.length>=3,'must cover union, metric and contribution row probes');
-  for(const probe of probes){
+  assert.ok(probes.some(p=>p.file==='neighborhoodSelectedNumericPopulationV2DatabaseChecks.js'),
+    'helper refusal probes must be audited too, not only the main fixture');
+  for(const {file,sql:probe} of probes){
     const targets=new Set([...probe.matchAll(/app\.(neighborhood_custom_cohort_selected_[a-z0-9_]+)/g)].map(m=>m[1])),
       queue=[...targets],seen=new Set();
     while(queue.length){
       const parent=queue.pop();if(seen.has(parent))continue;seen.add(parent);
       for(const child of children.get(parent)??[]){
-        assert.ok(targets.has(child),parent+' probe omits FK child '+child+' before its specific immutability assertion');
+        assert.ok(targets.has(child),file+': '+parent+' probe omits FK child '+child+' before its specific immutability assertion');
         queue.push(child);
       }
     }

@@ -77,3 +77,18 @@ test('authored cloud fixture traverses ALL four actual graphs with every old sou
     'state.job.checkpoint.evidence_refs.length,15','state.blobs,before.blobs+1','numericQueries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries)',
     'licensed_acquisition:false','production_speed:false','worker_activation:false'])assert.ok(block.includes(text),text);
 });
+
+test('ninth recovery uses a real fifth ordinary claim without removing seventh/eighth coverage or resetting attempts',()=>{
+  const s=readFileSync(new URL('./neighborhoodGroupIndex.integration.test.js',import.meta.url),'utf8');
+  assert.ok(s.includes('if(allSelected&&!positiveIndexedSourceFixture){'));
+  assert.ok(s.includes(".failClaim(liveClaim,'synthetic_metrics_reclaim',{retrySeconds:1})"));
+  assert.ok(s.includes(".failClaim(liveClaim,'synthetic_contribution_reclaim',{retrySeconds:1})"));
+  const start=s.indexOf('if(positiveIndexedSourceFixture&&ordinal===1){'),block=s.slice(start,s.indexOf('previousNumeric=head.receipt_reference;',start));
+  assert.ok(start>0);
+  for(const text of [".failClaim(liveClaim,'synthetic_numeric_reclaim',{retrySeconds:1})",'assert.equal(retained.job.attempts,4)',
+    'assert.equal(replacement.attempts,5)','assert.notEqual(replacement.claim_token,staleNumericClaim.claim_token)',
+    'reclaimed.job.last_error_code','reclaimed.job.checkpoint,retained.job.checkpoint','reclaimed.numeric_heads,retained.numeric_heads',
+    'reclaimed.numeric_population_rows,retained.numeric_population_rows','reclaimed.continuation,retained.continuation',
+    'reclaimed.blobs,retained.blobs','captureJobClaim:staleNumericClaim','await numericUnchanged(reclaimed);await numericRefusals(reclaimed)'])assert.ok(block.includes(text),text);
+  assert.doesNotMatch(block,/UPDATE app\.|SET attempts|attempts=0|attempts=1|attempts:6/);
+});

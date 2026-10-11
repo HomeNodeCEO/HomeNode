@@ -88,3 +88,13 @@ test('additive catalog continuation keeps existing atomic guards and refuses bac
     assert.ok(sql.includes(s),s);
   assert.doesNotMatch(sql,/DISABLE TRIGGER|DROP TRIGGER|DROP TABLE|DELETE FROM|UPDATE app\.|ST_DWithin|SET attempts|attempts=0/);
 });
+
+test('ninth-only continuation ceiling does not widen any historical phase or buy another failure attempt',async()=>{
+  const phase='frozen_selected_numeric_refs_v2',result=await setup({phase,sequence:18000009}).owner.yieldIssued(claim,options);
+  assert.equal(result.continuation_sequence,18000009);assert.equal(result.attempts,5);
+  for(const sequence of [0,18000010,1.5])await assert.rejects(setup({phase,sequence}).owner.yieldIssued(claim,options),/corrupt/);
+  for(const historical of ['frozen_stock_traversal_refs_v2','frozen_recorded_partition_refs_v2','frozen_recorded_catalog_refs_v2',
+    'frozen_selected_union_refs_v2','frozen_selected_eligibility_refs_v2','frozen_selected_evidence_refs_v2',
+    'frozen_selected_metrics_refs_v2','frozen_selected_statistics_refs_v2'])
+    await assert.rejects(setup({phase:historical,sequence:16000009}).owner.yieldIssued(claim,options),/corrupt/);
+});

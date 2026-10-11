@@ -5591,7 +5591,9 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             ['metrics_orphan_commit',/orphan_progress/]]){
             refsFault=fault;await assert.rejects(metricsStep(),reason);assert.equal(refsFault,null);await metricsUnchanged(pendingMetrics);
           }
-          if(allSelected){
+          // The unchanged original both-selected graph proves seventh reclaim;
+          // the independent positive graph reserves its last attempt for ninth.
+          if(allSelected&&!positiveIndexedSourceFixture){
             assert.equal(pendingMetrics.job.attempts,4,'both-selected fixture reserves the final REAL failure attempt for seventh; B-only reserves it for eighth');
             const failedMetrics=await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).failClaim(liveClaim,'synthetic_metrics_reclaim',{retrySeconds:1}));
             assert.equal(failedMetrics.status,'retry');
@@ -6182,6 +6184,34 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             liveClaim=await consume();assert.equal(liveClaim.attempts,state.job.attempts);
             for(const method of [indexedMethod,frequencyMethod,contributionMethod,metricsMethod,statisticsMethod,evidenceMethod,eligibilityMethod,metricMethod])
               await assert.rejects(cadOwner()[method](refsInput,{captureJobClaim:liveClaim}),/checkpoint_conflict/);
+            if(positiveIndexedSourceFixture&&ordinal===1){
+              // Actual ninth failure/reclaim across clients, WITHOUT a counter
+              // rewrite or sixth attempt. Original both-selected still proves
+              // seventh recovery; B-only still proves eighth recovery above.
+              const retained=await numericSnapshot(),staleNumericClaim=liveClaim;
+              assert.equal(retained.job.attempts,4);
+              const failed=await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client)
+                .failClaim(liveClaim,'synthetic_numeric_reclaim',{retrySeconds:1}));
+              assert.equal(failed.status,'retry');
+              const failedState=await numericSnapshot();
+              assert.equal(failedState.job.attempts,4);assert.equal(failedState.job.last_error_code,'synthetic_numeric_reclaim');
+              assert.deepEqual(failedState.job.checkpoint,retained.job.checkpoint);
+              assert.deepEqual(failedState.numeric_heads,retained.numeric_heads);assert.deepEqual(failedState.numeric_population_rows,retained.numeric_population_rows);
+              assert.deepEqual(failedState.continuation,retained.continuation);assert.equal(failedState.blobs,retained.blobs);await numericParents();
+              await new Promise(resolve=>setTimeout(resolve,1100));
+              const [replacement]=await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900}));
+              assert.ok(replacement,'ninth recovery uses the remaining ordinary fifth claim, never a sixth');
+              assert.equal(replacement.operation_id,refsOperation);assert.equal(replacement.attempts,5);
+              assert.notEqual(replacement.claim_token,staleNumericClaim.claim_token);
+              liveClaim={operation_id:replacement.operation_id,claim_token:replacement.claim_token,attempts:replacement.attempts};
+              const reclaimed=await numericSnapshot();
+              assert.equal(reclaimed.job.status,'running');assert.equal(reclaimed.job.last_error_code,'synthetic_numeric_reclaim');
+              assert.deepEqual(reclaimed.job.checkpoint,retained.job.checkpoint);assert.equal(reclaimed.job.context_sha256,null);
+              assert.deepEqual(reclaimed.numeric_heads,retained.numeric_heads);assert.deepEqual(reclaimed.numeric_population_rows,retained.numeric_population_rows);
+              assert.deepEqual(reclaimed.continuation,retained.continuation);assert.equal(reclaimed.blobs,retained.blobs);await numericParents();
+              await assert.rejects(cadOwner()[numericMethod](refsInput,{captureJobClaim:staleNumericClaim}),/claim_lost/);
+              await numericUnchanged(reclaimed);await numericRefusals(reclaimed);
+            }
             previousNumeric=head.receipt_reference;
           }
           const finishedNumeric=await numericSnapshot(),finishedNumericFrom=refsCalls.length;
@@ -6203,6 +6233,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             fresh_terminal_EMPTY_separate_from_last_account:true,reference_only_receipt_exact15_and_single_use_continuation_atomic:true,
             actual_row_head_checkpoint_yield_rollback_orphan_REAL_COMMIT_and_lost_REAL_COMMIT_ack_proved:true,
             all_old_readers_remain_strict14_or_less:true,attempts_and_failure_history_preserved_no_reset:true,
+            actual_ninth_ordinary_failure_and_fifth_claim_resume:positiveIndexedSourceFixture,
             eligible_positive_and_later_zero_graph:positiveIndexedSourceFixture,
             maximum_whole_owner_sql_queries:Math.max(...numericQueries),whole_owner_limits:ORIGINAL_OWNER_LIMITS,
             prior_reports_genuine_choices_workspace_pins_and_all_parent_rows_unchanged:true,

@@ -48,7 +48,10 @@ export function createCustomCohortV2ContinuationRepository(client){
         SET status='retry',claim_token=NULL,lease_expires_at=NULL,run_after=clock_timestamp(),updated_at=clock_timestamp()
         FROM issued WHERE job.operation_id=issued.operation_id AND job.claim_token=$2::uuid AND job.attempts=$3::integer
         RETURNING issued.sequence,issued.phase,issued.progress_reference,job.attempts`,values));
-    if(!Number.isInteger(row.sequence)||row.sequence<1||row.sequence>18000009||row.attempts!==claim.attempts||!PHASES.includes(row.phase))fail('corrupt');
+    // Adding ninth progress must NOT widen the historical eight-phase ceiling.
+    // Actual native heads/continuation guards still derive every sequence.
+    const maximumSequence=row.phase==='frozen_selected_numeric_refs_v2'?18000009:16000008;
+    if(!Number.isInteger(row.sequence)||row.sequence<1||row.sequence>maximumSequence||row.attempts!==claim.attempts||!PHASES.includes(row.phase))fail('corrupt');
     const r=data(row.progress_reference,['content_sha256','canonical_utf8_bytes']),reference=prepareNeighborhoodCohortBlobReference(r.content_sha256,r.canonical_utf8_bytes);
     if(Number(reference.canonical_utf8_bytes)>16000)fail('corrupt');
     if(await tx()!==started)fail('caller_transaction_required');

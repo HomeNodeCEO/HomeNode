@@ -2,6 +2,24 @@
 
 ## Ninth bounded original-owner integration implemented; cloud validation pending (2026-10-11)
 
+Follow-up authored native recovery coverage reserves the independent positive
+graph's ordinary fourth-to-fifth failure claim for the ninth phase, preserving
+its actual saved head/rows/checkpoint/consumed continuation, blob count and error
+history across real failure/reclaim and stale-token/current-ending refusals.
+The original both-selected graph still exercises seventh recovery; B-only
+still exercises eighth recovery. No attempt counter reset, sixth claim, guard
+or old probe waiver. This follow-up is not yet native executed.
+
+The first integrated cloud server run reports one failure. Its full-log fetch
+was unavailable (transport closed); the diagnostic tail reports one failure,
+not its identity. Investigation locally reproduced a finite-continuation
+regression: the new global ninth ceiling also widened old phases and the
+existing rejection failed. The follow-up preserves the old
+16,000,008 ceiling for ALL old phases and admits 18,000,009 only for the new
+ninth phase; the original rejection test remains unchanged, with additional
+all-old-phase and new-boundary checks. No native head/claim/attempt/source
+guard is weakened. Fresh cloud validation remains required.
+
 This section overrides the earlier foundation-only description below. The
 inactive ninth population owner now has a separate strict14/strict15 native
 command admission, native next-selected original SQL, the same single-use

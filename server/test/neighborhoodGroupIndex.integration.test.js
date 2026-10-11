@@ -1463,6 +1463,12 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).pinPreparedGeneration(claim,options));
     const expected={parcels:['1','2','4'],accounts:['CLOSURE-A','CLOSURE-B'],source_records:['501','503','504'],
       sales:sharedTransactionFixture?['1','10','3','4']:['1','3','4'],sale_links:['1','2','3','4'],sync_state:['dcad_parcels'],sync_runs:[run]};
+    // Original capture/closure pages use native BIGINT order for sale row IDs.
+    // Typed identity pages and legacy package keys use text/C order instead.
+    // Keep both exact ordered oracles: sorting the received rows would conceal
+    // a cursor-order regression and cannot prove the separate legacy10,3 order.
+    const expectedClosure={...expected,sales:sharedTransactionFixture?['1','3','4','10']:expected.sales},
+      expectedTypedOriginalCount=sharedTransactionFixture?18:17;
     // This storage-only fixture supplies a synthetic intent reference. The
     // separate 60,001-property test above uses the actual current subject owner.
     // Exact stock includes null-account parcel5 but NOT outside account-part4;
@@ -1478,7 +1484,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     [['1','CLOSURE-A','string'],['2','CLOSURE-B','string'],['5',null,'string']],
     'every geographic stock original, including the unassociated geometry, remains retained behind the exact generation FK');
     let retainedPageManifest,retainedPageText,chainBinding,chainRoot;
-    for(const [kind,keys] of Object.entries(expected))await withCustomCohortJobTransaction(pool,async client=>{
+    for(const [kind,keys] of Object.entries(expectedClosure))await withCustomCohortJobTransaction(pool,async client=>{
       const reader=createNeighborhoodFrozenSourceClosurePages(client,frozenSpatialOptions({...options,claim}));
       let after='',done=false;const rows=[];
       for(let i=0;i<12&&!done;i++){
@@ -1530,7 +1536,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         assert.equal(JSON.parse(rows[3].payload_text).is_resolved,false,'unresolved seeded associations are never filtered away');
       }
     });
-    for(const [kind,keys] of Object.entries(expected)){
+    for(const [kind,keys] of Object.entries(expectedClosure)){
       let position=null;const reopenedKeys=[];let pageCount=0,rawBytes=0;
       do{
         const step=await withCustomCohortJobTransaction(pool,async client=>{
@@ -1741,7 +1747,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       WHERE organization_id=$1 AND canonical_utf8::jsonb->>'format'='cohort_original_source_references_v2'`,[organization])).rows[0];
     assert.ok(metadataRows.count>=15);assert.ok(metadataRows.maximum<16_000);assert.equal(metadataRows.no_payloads,true);
     const referenceStarted=performance.now();let referencePages=0;
-    for(const [kind,keys] of Object.entries(expected)){
+    for(const [kind,keys] of Object.entries(expectedClosure)){
       let position=null,legacyPosition=null;const seen=[];let count=0,bytes=0;
       do{
         const step=await withCustomCohortJobTransaction(pool,async client=>{
@@ -7015,7 +7021,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       context_complete:false,worker_activation:false,licensed_acquisition:false,production_speed:false,report_update:false});
     }
     }
-    for(const [kind,keys] of Object.entries(expected)){
+    for(const [kind,keys] of Object.entries(expectedClosure)){
       let position=null;const seen=[];
       do{
         const stored=await withCustomCohortJobTransaction(pool,client=>createCohortOriginalSourceChainV1Store(
@@ -7298,7 +7304,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     assert.ok(typedCalls.slice(typedFrom).some(sql=>sql.includes('job-closure:accounts')));
     assert.ok(!typedCalls.slice(typedFrom).some(sql=>sql.includes('job-closure:parcels')),'fresh-client lost ACK resumes after the committed original layer');
     for(let i=0;i<10&&!typed.all_layers_typed;i++)typed=await typedOwner.prepareFrozenCaptureJobTypedOriginals(sourceInput,{captureJobClaim:sourceClaim});
-    assert.equal(typed.all_layers_typed,true);assert.equal(typed.individual_original_interpretation,'complete');assert.equal(await typedRows(),17);
+    assert.equal(typed.all_layers_typed,true);assert.equal(typed.individual_original_interpretation,'complete');assert.equal(await typedRows(),expectedTypedOriginalCount);
     assert.equal(typed.property_transaction_observations,'not_established');assert.equal(typed.source_freshness,'not_established');
     assert.equal(typed.source_acquisition,'not_established');assert.equal(typed.report_update,'none');
     const typedReplayFrom=typedCalls.length;assert.equal((await typedOwner.prepareFrozenCaptureJobTypedOriginals(sourceInput,{captureJobClaim:sourceClaim})).advanced,false);
@@ -7336,7 +7342,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     assert.equal(metricsB.rows[0].observations.reported_residential_area.state,'invalid');
     assert.equal(metricsB.rows[0].observations.reported_site_area.exact_value,'0');
     assert.equal(metricsB.rows[0].observations.reported_market_value.state,'missing');
-    assert.deepEqual(await readCheckpoint(),beforeMetrics);assert.equal(await typedRows(),17);
+    assert.deepEqual(await readCheckpoint(),beforeMetrics);assert.equal(await typedRows(),expectedTypedOriginalCount);
     assert.ok(!typedCalls.slice(metricFrom).some(sql=>/ST_DWithin|job-closure:|job-typed:rows|job-typed:progress|cohort-job:checkpoint-save/.test(sql)),
       'metric reads use the existing immutable read model, never recapture or checkpoint writes');
     const deniedFrom=typedCalls.length;
@@ -7349,7 +7355,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     await assert.rejects(typedOwner.readFrozenCaptureJobStockMetrics(sourceInput,metricOptions),/job_actor_access_revoked/);
     await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
     changeTypedSubject=true;await assert.rejects(typedOwner.readFrozenCaptureJobStockMetrics(sourceInput,metricOptions),/subject_changed/);
-    assert.deepEqual(await readCheckpoint(),beforeMetrics);assert.equal(await typedRows(),17);
+    assert.deepEqual(await readCheckpoint(),beforeMetrics);assert.equal(await typedRows(),expectedTypedOriginalCount);
     for(const sql of ["UPDATE app.neighborhood_custom_cohort_typed_original_rows SET typed=typed WHERE operation_id=$1",
       "DELETE FROM app.neighborhood_custom_cohort_typed_original_rows WHERE operation_id=$1",
       "UPDATE app.neighborhood_custom_cohort_typed_originals SET progress=progress WHERE operation_id=$1"])

@@ -24,6 +24,23 @@ test('shared501 and legacy10 are real live source changes before capture, never 
   assert.ok(fixture.includes("sharedTransactionFixture?['10','3']:['3']"));
 });
 
+test('original closure BIGINT order remains separate from typed/legacy C-text order; extra genuine sale is included in all old typed-row checks',()=>{
+  assert.ok(fixture.includes("sales:sharedTransactionFixture?['1','10','3','4']:['1','3','4']"));
+  assert.ok(fixture.includes("expectedClosure={...expected,sales:sharedTransactionFixture?['1','3','4','10']:expected.sales}"));
+  assert.equal([...fixture.matchAll(/Object\.entries\(expectedClosure\)/g)].length,4,
+    'capture, initial-chain reopen, reference-chain reopen and final original-chain reopen all preserve native order');
+  assert.ok(fixture.includes('expectedTypedOriginalCount=sharedTransactionFixture?18:17'));
+  assert.equal([...fixture.matchAll(/assert\.equal\(await typedRows\(\),expectedTypedOriginalCount\)/g)].length,3);
+  assert.ok(fixture.includes("assert.deepEqual(packages.filter(p=>p.kind==='legacy_sale').map(p=>p.native_key),sharedTransactionFixture?['10','3']:['3'])"));
+  const page=fixture.slice(fixture.indexOf('for(const [kind,keys] of Object.entries(expectedClosure))await'),
+    fixture.indexOf('await assert.rejects(withCustomCohortJobTransaction(pool,client=>createCohortOriginalSourceChainV1Store('));
+  assert.doesNotMatch(page,/rows\.sort\(|reopenedKeys\.sort\(|new Set\(/,'do not hide native order with set/sorting parity');
+  const closure=readFileSync(new URL('../src/services/neighborhoodAssessment/neighborhoodFrozenSourceClosurePages.js',import.meta.url),'utf8'),
+    typed=readFileSync(new URL('../src/services/neighborhoodAssessment/neighborhoodSharedJobTransactionPagesV2.js',import.meta.url),'utf8');
+  assert.match(closure,/sales:'bigint'/);assert.ok(closure.includes('`original.row_key::${type}`'));
+  assert.ok(typed.includes('ORDER BY t.row_key LIMIT $6::integer'));
+});
+
 test('native fixture requires both complete original owner packets, committed sixth EMPTY, actual selected-union joins and FIRST candidate without claiming a durable index',()=>{
   const observer=fixture.indexOf('sharedTransactionFixture&&config.text===NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL'),
     completed=fixture.indexOf("JSON.parse(completedEvidence.heads[0].canonical_utf8).after.done,true",observer),

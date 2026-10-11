@@ -1,5 +1,25 @@
 # Complete larger-area Custom neighborhood studies
 
+## Shared-graph cloud ordering correction (2026-10-11,11:07 UTC)
+
+The first ninth-graph run at `4ec92aa7` failed its exact original closure-order
+assertion before the new shared original owner was exercised. The full native
+log shows417/417 migration and1/1 subject tests passed, then15/16 prepared-index
+tests passed: all eight earlier graphs passed, but the new sales originals were
+correctly delivered in native BIGINT order1,3,4,10 rather than the fixture's
+incorrect C-text expectation1,10,3,4. This was a test failure, not an incident
+cancellation; no check or guard is waived.
+
+The correction keeps separate exact ordered oracles for four original-chain
+capture/reopens versus typed identity/package pages. It does not sort received
+originals to mask a cursor bug. The legacy-package assertion still requires
+C-text10,3, and the extra genuinely captured sale is included in all three old
+typed-row-count/unchanged-state checks. All old eight datasets and every source,
+authority, COMMIT, timeout and whole-owner budget remain unchanged.
+The corrected head requires fresh native cloud verification; the new shared
+owner marker did not execute on the failed head. No full shared-graph, phase17,
+licensed or live-speed acceptance is claimed.
+
 ## Independent shared-native-source original graph (2026-10-11)
 
 The exact corrected storage head `d724c56e` and first-candidate head `b3f4f9b5`

@@ -128,6 +128,47 @@ export function createCustomCohortSelectedSemanticV2Repository(raw){
           AND app.neighborhood_selected_semantic_v2_admission_matches(job.operation_id,job.organization_id,job.checkpoint)`,bound)),MEMBER);
       return member(r);
     },
+    // Separate fixed FIRST reopening after actual tenth DONE. Old next reader
+    // remains strict and unchanged; no caller ordinal or widened head grammar.
+    async readFirstCompletedSelectedEntry(...args){
+      if(args.length)fail('invalid_input');
+      const r=data(one(await client.query(`/* custom-cohort-selected-semantic-v2:first-completed-selected-entry */
+        SELECT m.account_id,m.ordinal,m.partition_ordinal,m.entry_reference,entry.state,entry.assigned_group_id,
+          m.metric_row_reference AS row_reference,m.row_reference AS contribution_row_reference,
+          indexed.ordinal AS numeric_index_ordinal,indexed.reported_year_built::text AS reported_year_built,
+          indexed.reported_residential_area::text AS reported_residential_area,indexed.reported_site_area::text AS reported_site_area,
+          n.ordinal AS numeric_population_ordinal,s.ordinal AS semantic_population_ordinal
+        ${PARENTS}
+        LEFT JOIN app.neighborhood_custom_cohort_selected_semantic_v2_heads h ON h.operation_id=job.operation_id AND h.organization_id=job.organization_id
+        LEFT JOIN app.neighborhood_cohort_evidence_blobs semantic_body ON semantic_body.organization_id=h.organization_id
+          AND semantic_body.content_sha256=h.receipt_reference->>'content_sha256'
+          AND semantic_body.canonical_utf8_bytes::text=h.receipt_reference->>'canonical_utf8_bytes' AND semantic_body.canonical_utf8_bytes<=4096
+        LEFT JOIN app.neighborhood_custom_cohort_selected_statistics_v2_rows m ON m.operation_id=job.operation_id
+          AND m.organization_id=job.organization_id AND m.ordinal=1
+        LEFT JOIN app.neighborhood_custom_cohort_selected_numeric_v2_rows n ON n.operation_id=m.operation_id AND n.organization_id=m.organization_id
+          AND n.ordinal=m.ordinal AND n.account_id=m.account_id AND n.partition_ordinal=m.partition_ordinal AND n.entry_reference=m.entry_reference
+          AND n.metric_row_reference=m.metric_row_reference AND n.contribution_row_reference=m.row_reference
+        LEFT JOIN app.neighborhood_custom_cohort_selected_numeric_index_v2_rows indexed ON indexed.operation_id=m.operation_id
+          AND indexed.organization_id=m.organization_id AND indexed.ordinal=m.ordinal AND indexed.account_id=m.account_id
+          AND indexed.contribution_row_reference=m.row_reference
+        LEFT JOIN app.neighborhood_custom_cohort_selected_semantic_v2_rows s ON s.operation_id=m.operation_id AND s.organization_id=m.organization_id
+          AND s.ordinal=m.ordinal AND s.account_id=m.account_id AND s.partition_ordinal=m.partition_ordinal AND s.entry_reference=m.entry_reference
+          AND s.metric_row_reference=m.metric_row_reference AND s.contribution_row_reference=m.row_reference
+        LEFT JOIN app.neighborhood_custom_cohort_selected_metrics_v2_rows metric ON metric.operation_id=m.operation_id
+          AND metric.organization_id=m.organization_id AND metric.ordinal=m.ordinal AND metric.account_id=m.account_id
+          AND metric.partition_ordinal=m.partition_ordinal AND metric.entry_reference=m.entry_reference AND metric.row_reference=m.metric_row_reference
+        LEFT JOIN app.neighborhood_custom_cohort_selected_union_v2_rows u ON u.operation_id=metric.operation_id AND u.organization_id=metric.organization_id
+          AND u.ordinal=metric.ordinal AND u.account_id=metric.account_id AND u.partition_ordinal=metric.partition_ordinal AND u.entry_reference=metric.entry_reference
+        LEFT JOIN app.neighborhood_custom_cohort_recorded_partition_v2_rows entry ON entry.operation_id=u.operation_id
+          AND entry.organization_id=u.organization_id AND entry.account_id=u.account_id AND entry.ordinal=u.partition_ordinal AND entry.entry_reference=u.entry_reference
+        WHERE ${FENCE} AND ${DONE}
+          AND app.neighborhood_selected_semantic_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)
+          AND semantic_body.canonical_utf8::jsonb->>'format'='cohort_selected_semantic_receipt_v2'
+          AND semantic_body.canonical_utf8::jsonb->>'sequence'=h.sequence::text
+          AND semantic_body.canonical_utf8::jsonb->'after'->>'done'='true'`,bound)),[...MEMBER,'semantic_population_ordinal']);
+      if(!Object.values(r).every(v=>v===null)&&r.semantic_population_ordinal!==r.ordinal)fail('semantic_population_missing_or_corrupt');
+      const {semantic_population_ordinal,...entry}=r;return member(entry);
+    },
     async advance(...args){
       if(args.length!==2)fail('invalid_input');
       const expected=anchor(args[0]),receipt=ref(args[1],4096),sequence=(expected?.sequence??0)+1,started=await tx();

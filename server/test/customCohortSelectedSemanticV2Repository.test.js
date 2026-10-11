@@ -19,6 +19,9 @@ function setup({next=member,auto=false,readback=false,rows=1,lateTransaction=fal
     if(text.includes(':head-read'))return {rowCount:1,rows:[{
       ...(text.includes('txid_current()::text AS transaction_id,')?{transaction_id:badTransaction?'0':head&&lateTransaction?'999':String(auto?++tx:tx)}:{}),
       ...(head??{command_id:null,...Object.fromEntries(keys.map(k=>[k,null])),receipt_reference:null,sequence:null})}]};
+    if(text.includes(':first-completed-selected-entry'))return {rowCount:1,rows:[next===null
+      ?Object.fromEntries([...Object.keys(member),'semantic_population_ordinal'].map(k=>[k,null]))
+      :{semantic_population_ordinal:1,...next}]};
     if(text.includes(':next-selected-entry'))return {rowCount:1,rows:[next??Object.fromEntries(Object.keys(member).map(k=>[k,null]))]};
     if(text.includes(':row-insert'))return {rowCount:rows,rows:Array.from({length:rows},()=>({ordinal:values[15]}))};
     if(text.includes(':head-insert')){head={command_id:values[8],...Object.fromEntries(keys.map((k,i)=>[k,JSON.parse(values[i+9])])),
@@ -56,6 +59,22 @@ test('closed storage rejects caller ordinal/value/summary authority, missing nin
   await assert.rejects(setup({next:{...member,get ordinal(){assert.fail('getter');}}}).owner.readNextSelectedEntry());
   await assert.rejects(setup({auto:true}).owner.advance(null,ref(7)),/caller_transaction_required/);
   await assert.rejects(setup({readback:true}).owner.advance(null,ref(7)),/binding_changed/);
+});
+
+test('separate fixed first reader requires exact16 tenth DONE and every native member without writing or accepting a cursor',async()=>{
+  const {owner,calls}=setup();assert.deepEqual(await owner.readFirstCompletedSelectedEntry(),member);
+  assert.equal(calls.length,1);const q=calls[0];assert.equal(q.values.length,15);
+  for(const text of ['m.ordinal=1','s.ordinal=m.ordinal','s.account_id=m.account_id','s.partition_ordinal=m.partition_ordinal',
+    's.entry_reference=m.entry_reference','s.metric_row_reference=m.metric_row_reference','s.contribution_row_reference=m.row_reference',
+    'neighborhood_selected_semantic_v2_checkpoint_matches',"semantic_body.canonical_utf8::jsonb->'after'->>'done'='true'",
+    'job.actor_user_id=$8::uuid','job.lease_expires_at>clock_timestamp()'])assert.ok(q.text.includes(text),text);
+  assert.doesNotMatch(q.text,/INSERT|UPDATE|DELETE|array_agg|jsonb_agg|coalesce\(h.sequence,0\)\+1/);
+  assert.equal(await setup({next:null}).owner.readFirstCompletedSelectedEntry(),null);
+  for(const semantic_population_ordinal of [null,0,2,'1'])await assert.rejects(
+    setup({next:{...member,semantic_population_ordinal}}).owner.readFirstCompletedSelectedEntry(),/semantic_population_missing_or_corrupt/);
+  const closed=setup();for(const args of [[undefined],[1],[{ordinal:1}],[()=>assert.fail('callback')]])
+    await assert.rejects(closed.owner.readFirstCompletedSelectedEntry(...args),/invalid_input/);
+  assert.equal(closed.calls.length,0);
 });
 
 test('coalesced native transaction identities retain pre-DML autocommit refusal and post-DML same-transaction readback in five queries',async()=>{

@@ -326,3 +326,36 @@ export const NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL=
     .replace('r.ordinal=1 AND $4::text=', 'r.ordinal=coalesce(semantic.sequence,0)+1 AND $4::text=')
     .replace('app.neighborhood_selected_numeric_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)',
       'app.neighborhood_selected_semantic_v2_admission_matches(job.operation_id,job.organization_id,job.checkpoint)');
+
+// Read-only transaction-source boundary AFTER the actual tenth fresh EMPTY.
+// Old plans stay byte-identical. Native selected membership is DISTINCT from
+// stock_member; neither a linked account nor the subject becomes selected.
+// The same aggregate original/raw-byte gates run BEFORE encoding these flags.
+export const NEIGHBORHOOD_FIRST_COMPLETED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL=
+  NEIGHBORHOOD_FIRST_COMPLETED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL
+    .replace('neighborhood-first-completed-numeric-original-package-v2','neighborhood-first-completed-semantic-original-package-v2')
+    .replace('  JOIN app.neighborhood_custom_cohort_selected_statistics_v2_rows r',`  JOIN app.neighborhood_custom_cohort_selected_semantic_v2_heads semantic
+    ON semantic.operation_id=job.operation_id AND semantic.organization_id=job.organization_id
+  JOIN app.neighborhood_cohort_evidence_blobs semantic_body ON semantic_body.organization_id=semantic.organization_id
+    AND semantic_body.content_sha256=semantic.receipt_reference->>'content_sha256'
+    AND semantic_body.canonical_utf8_bytes::text=semantic.receipt_reference->>'canonical_utf8_bytes' AND semantic_body.canonical_utf8_bytes<=4096
+  JOIN app.neighborhood_custom_cohort_selected_statistics_v2_rows r`)
+    .replace('app.neighborhood_selected_numeric_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)',
+      `app.neighborhood_selected_semantic_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)
+          AND semantic.command_id=command.command_id AND semantic.union_reference=head.receipt_reference
+          AND semantic.eligibility_reference=fifth.receipt_reference AND semantic.evidence_reference=evidence.receipt_reference
+          AND semantic.metrics_reference=metrics.receipt_reference AND semantic.statistics_reference=statistics.receipt_reference
+          AND semantic.numeric_reference=numeric_population.receipt_reference
+          AND semantic_body.canonical_utf8::jsonb->>'format'='cohort_selected_semantic_receipt_v2'
+          AND semantic_body.canonical_utf8::jsonb->>'sequence'=semantic.sequence::text
+          AND semantic_body.canonical_utf8::jsonb->'after'->>'done'='true'
+          AND semantic_body.canonical_utf8::jsonb->'after'->'selected_ordinal'=body.canonical_utf8::jsonb->'after_selected_count'`)
+    .replace("'stock_member',CASE WHEN o.account_id IS NULL",`'selected_union_member',CASE WHEN o.account_id IS NULL THEN NULL ELSE EXISTS(
+        SELECT 1 FROM app.neighborhood_custom_cohort_selected_union_v2_rows selected
+        WHERE selected.operation_id=$1::uuid AND selected.account_id=o.account_id) END,
+      'stock_member',CASE WHEN o.account_id IS NULL`)
+    .replace('  (SELECT count(*)::integer FROM anchors) AS anchor_count,',`  EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_capture_jobs job
+    JOIN app.neighborhood_custom_cohort_selected_union_v2_rows selected ON selected.operation_id=job.operation_id
+      AND selected.organization_id=job.organization_id AND selected.account_id=job.account_id
+    WHERE job.operation_id=$1::uuid) AS subject_selected_union_member,
+  (SELECT count(*)::integer FROM anchors) AS anchor_count,`);

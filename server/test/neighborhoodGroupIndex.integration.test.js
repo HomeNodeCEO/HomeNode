@@ -54,6 +54,10 @@ import { createCustomCohortRecordedCatalogV2Repository } from '../src/services/n
 import { prepareCohortRecordedCatalogReceiptV2 } from '../src/services/neighborhoodAssessment/cohortRecordedCatalogReceiptV2.js';
 import { createCustomCohortSelectedEligibilityV2Repository } from '../src/services/neighborhoodAssessment/customCohortSelectedEligibilityV2Repository.js';
 import { createCustomCohortSelectedMetricsV2Repository } from '../src/services/neighborhoodAssessment/customCohortSelectedMetricsV2Repository.js';
+import { createCustomCohortSelectedNumericRankCandidatesV2Repository }
+  from '../src/services/neighborhoodAssessment/customCohortSelectedNumericRankCandidatesV2Repository.js';
+import { parseExactDecimalPagedObservationV1 as rankCandidateDecimal }
+  from '../src/services/neighborhoodAssessment/exactDecimalPagedDistributionV1.js';
 import { createCustomCohortSelectedEvidenceV2Repository } from '../src/services/neighborhoodAssessment/customCohortSelectedEvidenceV2Repository.js';
 import { createCustomCohortV2ContinuationRepository }
   from '../src/services/neighborhoodAssessment/customCohortV2ContinuationRepository.js';
@@ -6120,6 +6124,14 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
               }};
           const initialNumeric=await numericSnapshot();
           assert.deepEqual(initialNumeric.numeric_population_rows,[]);assert.deepEqual(initialNumeric.numeric_heads,[]);
+          const rankCandidateRead=async(head,patch={})=>withCustomCohortJobTransaction(pool,client=>
+            createCustomCohortSelectedNumericRankCandidatesV2Repository({client,claim:liveClaim,scope,actorUserId:actor,
+              command_id:finishedContributions.heads[0].command_id,
+              ...Object.fromEntries(['union_reference','eligibility_reference','evidence_reference','metrics_reference','statistics_reference']
+                .map(key=>[key,head?.[key]??(key==='statistics_reference'?finishedContributions.heads[0].receipt_reference:finishedContributions.heads[0][key])])),
+              numeric_reference:head?.receipt_reference??{content_sha256:'f'.repeat(64),canonical_utf8_bytes:'123'},...patch}).read());
+          await assert.rejects(rankCandidateRead(null),/claim_lost_or_incomplete/);
+          await numericUnchanged(initialNumeric);
           await assert.rejects(freshRefsOwner()[numericMethod](refsInput,{captureJobClaim:liveClaim}),/CAD_source_policy_required/);
           for(const key of ['ordinal','values','counts','done','readOriginal','selected_accounts']){
             const from=refsCalls.length;await assert.rejects(cadOwner()[numericMethod](refsInput,{captureJobClaim:liveClaim,[key]:true}),/invalid_options/);
@@ -6191,6 +6203,11 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             liveClaim=await consume();assert.equal(liveClaim.attempts,state.job.attempts);
             for(const method of [indexedMethod,frequencyMethod,contributionMethod,metricsMethod,statisticsMethod,evidenceMethod,eligibilityMethod,metricMethod])
               await assert.rejects(cadOwner()[method](refsInput,{captureJobClaim:liveClaim}),/checkpoint_conflict/);
+            if(!terminal){
+              const prefixState=await numericSnapshot();
+              await assert.rejects(rankCandidateRead(head),/claim_lost_or_incomplete/,'rank candidates require actual ninth fresh EMPTY, never a prefix/count/DONE shortcut');
+              await numericUnchanged(prefixState);
+            }
             if(positiveIndexedSourceFixture&&ordinal===1){
               // Actual ninth failure/reclaim across clients, WITHOUT a counter
               // rewrite or sixth attempt. Original both-selected still proves
@@ -6246,6 +6263,45 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             prior_reports_genuine_choices_workspace_pins_and_all_parent_rows_unchanged:true,
             later_semantic_statistics_MUST_reopen_originals_AGAIN:true,
             rank_queries:false,medians_COD:false,calendar_quarters:false,publication:false,licensed_acquisition:false,production_speed:false,worker_activation:false});
+
+          // Structural native ranks ONLY, on these tiny actual ninth graphs.
+          // No semantic owner/source grant is inferred from a complete ledger.
+          const rankBefore=await numericSnapshot(),rankHead=rankBefore.numeric_heads[0],rankResult=await rankCandidateRead(rankHead),
+            rankMetrics=['reported_year_built','reported_residential_area','reported_site_area'];
+          assert.equal(rankResult.metrics.length,3);assert.ok(finishedNumeric.numeric_index.length<=2,'only this small isolated fixture oracle uses an array');
+          for(const [index,metric] of rankMetrics.entries()){
+            const cells=finishedNumeric.numeric_index.map(r=>r[metric]).filter(v=>v!==null).sort((a,b)=>{
+              const x=rankCandidateDecimal(a),y=rankCandidateDecimal(b);return x<y?-1:x>y?1:0;}),row=rankResult.metrics[index],
+              n=cells.length;
+            assert.equal(row.metric,metric);assert.equal(row.selected_count,String(selectedCount));assert.equal(row.observed_count,String(n));
+            assert.equal(row.low,cells[0]??null);assert.equal(row.high,cells.at(-1)??null);
+            for(const [name,k] of [['q1',1],['median',2],['q3',3]]){
+              const lower=n?Math.floor((n-1)*k/4):0,remainder=n?((n-1)*k)%4:0;
+              assert.equal(row[name+'_lower'],cells[lower]??null);assert.equal(row[name+'_upper'],cells[lower+Number(remainder>0)]??null);
+              assert.equal(row[name+'_remainder'],remainder);
+            }
+          }
+          if(positiveIndexedSourceFixture){const site=rankResult.metrics[2];
+            assert.equal(site.observed_count,'2');assert.equal(site.low,'0');assert.equal(site.high,'8000');
+            assert.equal(site.median_lower,'0');assert.equal(site.median_upper,'8000');assert.equal(site.median_remainder,2);
+          }
+          assert.equal(rankResult.authority,'not_established');assert.equal(rankResult.original_reconciliation,'not_established');
+          assert.equal(rankResult.statistics,'not_established');await numericUnchanged(rankBefore);
+          const absentRankRef={content_sha256:'f'.repeat(64),canonical_utf8_bytes:'123'};
+          for(const patch of [{claim:{...liveClaim,claim_token:randomUUID()}},{actorUserId:randomUUID()},
+            {scope:{...scope,organization_id:randomUUID()}},{scope:{...scope,report_file_id:randomUUID()}},
+            {scope:{...scope,assignment_file_id:'9223372036854775807'}},{scope:{...scope,account_id:'FOREIGN'}},{command_id:randomUUID()},
+            ...['union_reference','eligibility_reference','evidence_reference','metrics_reference','statistics_reference','numeric_reference']
+              .map(key=>({[key]:absentRankRef}))]){
+            await assert.rejects(rankCandidateRead(rankHead,patch),/claim_lost_or_incomplete/);await numericUnchanged(rankBefore);
+          }
+          console.info('[native-selected-numeric-rank-candidates-v2]',{actual_ninth_complete_original_graph:true,
+            independently_issued_selected_accounts:selectedCount,positive8000_and_later_zero:positiveIndexedSourceFixture,
+            native_fixed_metric_rows:3,ties_preserve_account_multiplicity:true,exact_native_order_no_float_no_population_array:true,
+            actual_prefix_and_foreign_claim_scope_actor_command_every_parent_refused:true,read_only_all_parent_rows_reports_choices_pins_and_lease_unchanged:true,
+            native_candidate_query_count:1,original_semantic_owner_reopen_AGAIN_required:true,
+            current_source_authority:false,semantic_statistics_owner_integrated:false,medians_COD:false,calendar_quarters:false,
+            publication:false,licensed_acquisition:false,production_speed:false,worker_activation:false});
           }
 
           }

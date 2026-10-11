@@ -33,7 +33,7 @@ export async function runNeighborhoodSelectedNumericPopulationV2DatabaseChecks(p
   // immutable TRUNCATE guard, rather than refusing the statement at its FK
   // preflight. Keep literal targets visible to the transitive schema audit.
   for(const sql of [
-    'TRUNCATE app.neighborhood_custom_cohort_selected_numeric_v2_rows, app.neighborhood_custom_cohort_selected_semantic_v2_rows',
+    'TRUNCATE app.neighborhood_custom_cohort_selected_numeric_v2_rows, app.neighborhood_custom_cohort_selected_semantic_v2_rows, app.neighborhood_custom_cohort_selected_transaction_index_v2_rows, app.neighborhood_custom_cohort_selected_transaction_source_v2_keys, app.neighborhood_custom_cohort_selected_transaction_legacy_v2_keys, app.neighborhood_custom_cohort_selected_transaction_index_v2_edges',
     'TRUNCATE app.neighborhood_custom_cohort_selected_numeric_v2_heads'
   ])await assert.rejects(pool.query(sql),
     error=>error.code==='55000'&&/custom_cohort_context_immutable/.test(error.message));

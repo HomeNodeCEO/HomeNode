@@ -99,6 +99,7 @@ const MIGRATIONS = Object.freeze([
   "20261202_custom_cohort_selected_numeric_owner_v2.sql",
   "20261203_custom_cohort_selected_semantic_v2.sql",
   "20261204_custom_cohort_selected_semantic_owner_v2.sql",
+  "20261205_custom_cohort_selected_transaction_index_v2.sql",
 ]);
 const ADVISORY_LOCK_KEY = 3_603_600_821;
 

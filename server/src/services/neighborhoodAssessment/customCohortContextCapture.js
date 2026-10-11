@@ -2288,7 +2288,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         metricsStore=null,metricsAnchor=null,metricsIssued=null,metricsExpected=null,metricsBefore=null,metricsCounts=null,metricsRowCandidate=null,
         statisticsStore=null,statisticsAnchor=null,statisticsExpected=null,statisticsBefore=null,statisticsCounts=null,statisticsCandidate=null,
         numericStore=null,numericAnchor=null,numericExpected=null,numericBefore=null,provisionalRankCandidates=null,
-        semanticStore=null,semanticAnchor=null,semanticExpected=null,semanticBefore=null,semanticIssued=null,semanticSummary=null,selectedTransactionSource=null;
+        semanticStore=null,semanticAnchor=null,semanticExpected=null,semanticBefore=null,semanticIssued=null,semanticSummary=null,
+        selectedTransactionSource=null,selectedTransactionNativeKeys=null;
       if(partitioningRecordedGroups||readingRecordedPartition||catalogingRecordedGroups){
         const baseExpected={binding,source_reference:reference,root,graph_verification_reference:verificationReference,
           stock_verification_reference:stockVerificationReference,identity_verification_reference:identityVerificationReference,
@@ -2506,6 +2507,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             progressingSelectedEligibility?eligibilityStore.readNextSelectedEntry():unionStore.readFirstSelectedEntry());
           if((firstSelectedEntry===null)!==(eligibilityBefore.selected_ordinal===unionCounts.selected_count)
             ||firstSelectedEntry!==null&&firstSelectedEntry.ordinal!==eligibilityBefore.selected_ordinal+1)fail('selected_union_original_mismatch');
+          if(readingSelectedTransactionSource){
+            selectedTransactionNativeKeys=await semanticStore.readFirstCompletedTransactionNativeKeys();
+            if(selectedTransactionNativeKeys.generation_id!==stock.generation_id
+              ||selectedTransactionNativeKeys.account_id!==(firstSelectedEntry?.account_id??null)
+              ||selectedTransactionNativeKeys.ordinal!==(firstSelectedEntry?.ordinal??null))fail('selected_transaction_native_keys_mismatch');
+          }
           const preferred=resolveCustomCohortRetainedSubjectHousing(retained.subject.material,retained.subject.target,{check:budget.check}),
             graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))},
             paired=await createNeighborhoodSharedStockOriginalCellsV2(client,stockOptions,graph,context.effective_date)
@@ -2630,6 +2637,14 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
                 native_packages:paired.selected_transactions===null?[]:paired.selected_transactions.packages.map(p=>({kind:p.kind,native_key:p.native_key})),
                 transaction_original_count:paired.selected_transactions?.original_count??0,
                 distinct_original_count:paired.distinct_original_count};
+              // BOTH-direction exact native key-set equality against a separate
+              // bounded ORIGINAL query. Counts/hashes are not substitutes for
+              // membership. Only this account's <=250 keys are compared; no
+              // full-population array or economics/deduplication is inferred.
+              const ordered=keys=>keys.map(p=>`${p.kind}:${p.native_key}`).sort();
+              if(!same(ordered(selectedTransactionNativeKeys.native_packages),ordered(selectedTransactionSource.native_packages))
+                ||selectedTransactionNativeKeys.anchor_count!==selectedTransactionSource.membership.associations.filter(
+                  row=>row.account_id===firstSelectedEntry?.account_id).length)fail('selected_transaction_native_keys_mismatch');
             }
             if(progressingSelectedStatistics||progressingSelectedSemantic)statisticsCandidate=statisticsContribution;
             subjectHousingResult={status:progressingSelectedMetrics?'current_authorized_next_selected_metric_originals_reopened':'current_authorized_first_selected_metric_originals_reopened',operation_id:input.operationId,
@@ -2986,6 +3001,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         if(progressingSelectedNumeric&&!same(await numericStore.read(),numericAnchor))fail('checkpoint_conflict');
         if(readingSelectedRankCandidates&&!same(await numericStore.read(),numericAnchor))fail('checkpoint_conflict');
         if(progressingSelectedSemantic&&(!same(await numericStore.read(),numericAnchor)||!same(await semanticStore.read(),semanticAnchor)))fail('checkpoint_conflict');
+        if(readingSelectedTransactionSource&&!same(await semanticStore.readFirstCompletedTransactionNativeKeys(),selectedTransactionNativeKeys))
+          fail('selected_transaction_native_keys_mismatch');
         budget.check();
         if(readingSelectedTransactionSource){
           // Read-only AFTER complete issued graph, whole FIRST selected packet,
@@ -2997,7 +3014,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             union_reference:unionAnchor.receipt_reference,semantic_reference:semanticAnchor.receipt_reference,
             selected_entry:firstSelectedEntry===null?null:Object.fromEntries(
               ['account_id','ordinal','partition_ordinal','entry_reference'].map(k=>[k,firstSelectedEntry[k]])),
-            ...selectedTransactionSource,empty_selected_union:unionCounts.selected_count===0,
+            ...selectedTransactionSource,native_key_set_reconciled:true,empty_selected_union:unionCounts.selected_count===0,
             original_reconciliation:'complete_issued_graph_whole_first_selected_stock_CAD_all_date_transaction_required_subject_ENTIRE_caches_and_every_seventh_eighth_index_ninth_tenth_member',
             coverage:'fixed_first_selected_account_only_after_actual_tenth_fresh_EMPTY',
             global_selected_native_deduplication:false,economic_transactions:'not_established',calendar_quarters:'not_established',

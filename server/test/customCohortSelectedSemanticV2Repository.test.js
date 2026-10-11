@@ -13,7 +13,11 @@ const id=n=>`70000000-0000-4000-8000-${String(n).padStart(12,'0')}`,ref=n=>({con
   member={account_id:'B',ordinal:1,partition_ordinal:2,entry_reference:ref(4),state:'unassigned',assigned_group_id:null,row_reference:ref(5),
     contribution_row_reference:ref(6),numeric_index_ordinal:1,numeric_population_ordinal:1,
     reported_year_built:null,reported_residential_area:'9007199254740993.000000000001',reported_site_area:'0'};
-function setup({next=member,auto=false,readback=false,rows=1,lateTransaction=false,badTransaction=false}={}){
+const nativeHeader={generation_id:id(7),account_id:'B',ordinal:1,anchor_count:5},nativeRows=[
+  ...['2','10','9007199254740993'].map(native_key=>({...nativeHeader,kind:'source_record',native_key})),
+  ...['10','2'].map(native_key=>({...nativeHeader,kind:'legacy_sale',native_key}))];
+function setup({next=member,auto=false,readback=false,rows=1,lateTransaction=false,badTransaction=false,
+  keyRows=nativeRows,keyRowCount=keyRows.length}={}){
   let head=null,tx=8;const calls=[],options={client:{async query(text,values){calls.push({text,values});
     if(text.includes(':transaction'))return {rowCount:1,rows:[{transaction_id:String(auto?++tx:tx)}]};
     if(text.includes(':head-read'))return {rowCount:1,rows:[{
@@ -22,6 +26,7 @@ function setup({next=member,auto=false,readback=false,rows=1,lateTransaction=fal
     if(text.includes(':first-completed-selected-entry'))return {rowCount:1,rows:[next===null
       ?Object.fromEntries([...Object.keys(member),'semantic_population_ordinal'].map(k=>[k,null]))
       :{semantic_population_ordinal:1,...next}]};
+    if(text.includes(':first-completed-transaction-native-keys'))return {rowCount:keyRowCount,rows:keyRows};
     if(text.includes(':next-selected-entry'))return {rowCount:1,rows:[next??Object.fromEntries(Object.keys(member).map(k=>[k,null]))]};
     if(text.includes(':row-insert'))return {rowCount:rows,rows:Array.from({length:rows},()=>({ordinal:values[15]}))};
     if(text.includes(':head-insert')){head={command_id:values[8],...Object.fromEntries(keys.map((k,i)=>[k,JSON.parse(values[i+9])])),
@@ -74,6 +79,50 @@ test('separate fixed first reader requires exact16 tenth DONE and every native m
     setup({next:{...member,semantic_population_ordinal}}).owner.readFirstCompletedSelectedEntry(),/semantic_population_missing_or_corrupt/);
   const closed=setup();for(const args of [[undefined],[1],[{ordinal:1}],[()=>assert.fail('callback')]])
     await assert.rejects(closed.owner.readFirstCompletedSelectedEntry(...args),/invalid_input/);
+  assert.equal(closed.calls.length,0);
+});
+
+test('independent first native keys derive generation and exact membership from fixed ORIGINAL anchors, with native BIGINT vs C-text namespaces',async()=>{
+  const {owner,calls}=setup(),value=await owner.readFirstCompletedTransactionNativeKeys();
+  assert.deepEqual(value,{...nativeHeader,native_packages:nativeRows.map(({kind,native_key})=>({kind,native_key}))});
+  assert.ok(Object.isFrozen(value)&&Object.isFrozen(value.native_packages)&&value.native_packages.every(Object.isFrozen));
+  assert.equal(calls.length,1);const q=calls[0];assert.equal(q.values.length,15);
+  for(const text of ['stock.generation_id','pin.generation_id=stock.generation_id','generation.retirement_started_at IS NULL',
+    'm.ordinal=1','s.contribution_row_reference=m.row_reference','n.contribution_row_reference=m.row_reference',
+    'indexed.contribution_row_reference=m.row_reference','metric.row_reference=m.metric_row_reference',
+    'entry.entry_reference=u.entry_reference','neighborhood_selected_semantic_v2_checkpoint_matches',
+    "semantic_body.canonical_utf8::jsonb->'after'->>'done'='true'",'h.numeric_reference=$15::jsonb',
+    'job.actor_user_id=$8::uuid','job.lease_expires_at>clock_timestamp()',
+    "CROSS JOIN (VALUES ('source_records'),('sales'),('sale_links'))",'o.generation_id=selected.generation_id',
+    'o.account_id=selected.account_id','ORDER BY o.row_key COLLATE "C" LIMIT 251',
+    'SELECT count(*)::integer FROM anchors','(SELECT anchor_count FROM gate)<=250','GROUP BY source_record_id',
+    "kind='sales' AND source_record_id IS NULL",'packages.native_key::bigint','COLLATE "C"','LIMIT 251'])assert.ok(q.text.includes(text),text);
+  assert.doesNotMatch(q.text,/INSERT|UPDATE|DELETE|array_agg|jsonb_agg|typed|original_text|payload::|FROM core\.|::float|::real/);
+  const empty={generation_id:id(7),account_id:null,ordinal:null,anchor_count:0,kind:null,native_key:null};
+  assert.deepEqual(await setup({keyRows:[empty]}).owner.readFirstCompletedTransactionNativeKeys(),{
+    generation_id:id(7),account_id:null,ordinal:null,anchor_count:0,native_packages:[]});
+  assert.deepEqual(await setup({keyRows:[{...empty,account_id:'B',ordinal:1}]}).owner.readFirstCompletedTransactionNativeKeys(),{
+    generation_id:id(7),account_id:'B',ordinal:1,anchor_count:0,native_packages:[]});
+});
+
+test('native key result rejects missing/extra/duplicate/oversized or malformed keys, headers, order and hostile DTOs before authority is returned',async()=>{
+  const read=options=>setup(options).owner.readFirstCompletedTransactionNativeKeys();
+  for(const patch of [{generation_id:null},{account_id:null},{ordinal:null},{ordinal:2},{anchor_count:251},
+    {anchor_count:'5'},{anchor_count:-1},{generation_id:id(8)},{native_key:'0'},{native_key:'01'},{native_key:'1e3'},
+    {native_key:'9223372036854775808'},{native_key:10},{kind:'sale'},{kind:null},{native_key:null},
+    {account_id:' B'},{extra:true}])await assert.rejects(read({keyRows:[{...nativeRows[0],...patch},...nativeRows.slice(1)]}));
+  for(const keyRows of [[],[...nativeRows,nativeRows[4]],[nativeRows[1],nativeRows[0],...nativeRows.slice(2)],
+    [...nativeRows.slice(0,3),nativeRows[4],nativeRows[3]],[nativeRows[3],...nativeRows.slice(0,3)],
+    nativeRows.map(r=>({...r,anchor_count:4})),Array(251).fill(nativeRows[0]),
+    [new Proxy(nativeRows[0],{get(){assert.fail('proxy evaluated');}})],
+    [{...nativeRows[0],get kind(){assert.fail('getter evaluated');}}]])await assert.rejects(read({keyRows}));
+  const sparse=[];sparse.length=1;await assert.rejects(read({keyRows:sparse}));
+  const accessor=[];Object.defineProperty(accessor,'0',{get(){assert.fail('array getter evaluated');}});
+  await assert.rejects(read({keyRows:accessor}));
+  await assert.rejects(read({keyRows:new Proxy(nativeRows,{get(){assert.fail('array proxy evaluated');}}),keyRowCount:5}));
+  await assert.rejects(read({keyRowCount:4}));
+  const closed=setup();for(const args of [[undefined],[1],[{generation_id:id(7)}],[{selected_accounts:['B']}],[()=>assert.fail('callback')]])
+    await assert.rejects(closed.owner.readFirstCompletedTransactionNativeKeys(...args),/invalid_input/);
   assert.equal(closed.calls.length,0);
 });
 

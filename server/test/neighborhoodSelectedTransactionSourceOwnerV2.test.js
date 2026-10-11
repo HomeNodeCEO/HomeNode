@@ -33,16 +33,24 @@ test('actual owner uses separate admission, native first member, complete origin
   const s=source('customCohortContextCapture'),original=s.indexOf("'subjectAndFirstCompletedSemanticAccountPackage'"),
     seventh=s.indexOf('if(!same(row,metricRowCandidate))',original),eighth=s.indexOf('if(!same(retainedContribution,statisticsContribution))',seventh),
     index=s.indexOf('if(firstSelectedEntry[key]!==statisticsContribution.metrics[key].contribution_exact_value)',eighth),
+    keys=s.indexOf('ordered(selectedTransactionNativeKeys.native_packages)',index),
     ending=s.indexOf('const ending=await createCustomCohortV2SelectionIntentRepository(client)',index),
     member=s.indexOf('await semanticStore.readFirstCompletedSelectedEntry()',ending),
     head=s.indexOf('!same(await semanticStore.read(),semanticAnchor)',member),
-    result=s.indexOf("status:'current_authorized_first_selected_transaction_source_originals_reconciled'",head),
+    endingKeys=s.indexOf('await semanticStore.readFirstCompletedTransactionNativeKeys(),selectedTransactionNativeKeys',head),
+    result=s.indexOf("status:'current_authorized_first_selected_transaction_source_originals_reconciled'",endingKeys),
     returned=s.indexOf('return freeze(result)',result),writes=s.indexOf('await blobs.put(canonicalAssessmentJson(afterSummary))',returned);
-  assert.ok(original>0&&seventh>original&&eighth>seventh&&index>eighth&&ending>index&&member>ending&&head>member&&result>head&&returned>result&&writes>returned);
+  assert.ok(original>0&&seventh>original&&eighth>seventh&&index>eighth&&keys>index&&ending>keys&&member>ending&&head>member
+    &&endingKeys>head&&result>endingKeys&&returned>result&&writes>returned);
+  const firstKeys=s.indexOf('selectedTransactionNativeKeys=await semanticStore.readFirstCompletedTransactionNativeKeys()');
+  assert.ok(firstKeys>0&&firstKeys<original,'independent native keys precede the whole original packet');
+  for(const text of ['selectedTransactionNativeKeys.generation_id!==stock.generation_id',
+    "selectedTransactionNativeKeys.account_id!==(firstSelectedEntry?.account_id??null)",
+    'selectedTransactionNativeKeys.anchor_count!==selectedTransactionSource.membership.associations.filter('])assert.ok(s.includes(text),text);
   const body=s.slice(result,returned);
   for(const text of ["coverage:'fixed_first_selected_account_only_after_actual_tenth_fresh_EMPTY'",'global_selected_native_deduplication:false',
     "economic_transactions:'not_established'","calendar_quarters:'not_established'",'context_complete:false,pin_transfer:false',
-    "report_update:'none',read_only:true,lease_extended:false",'Buffer.byteLength(JSON.stringify(result))>16000'])assert.ok(body.includes(text),text);
+    "report_update:'none',read_only:true,lease_extended:false",'native_key_set_reconciled:true','Buffer.byteLength(JSON.stringify(result))>16000'])assert.ok(body.includes(text),text);
   assert.doesNotMatch(body,/await blobs.put|yieldIssued|\.advance\(|callback|selected_accounts/);
   const intent=source('customCohortV2SelectionIntentRepository'),a=intent.indexOf('async readForTransactionSource'),
     b=intent.indexOf('async readForSemanticStatistics',a),admission=intent.slice(a,b);
@@ -59,5 +67,8 @@ test('cloud probes exercise actual first source boundary in three independently 
     'row.selected_union_member=false',"['metric_assignment_ending',/assignment_access_denied/]",
     "['metric_draft_ending',/private_source_read_only/]",'await semanticUnchanged(before)',
     'value.membership.subject_selected_union_member,allSelected','value.transaction_original_count,value.membership.associations.length',
+    'transaction_native_keys_missing','transaction_native_keys_extra','transaction_native_keys_replaced','transaction_native_keys_anchor_count',
+    'transaction_native_keys_generation','transaction_native_keys_ending',"assert.equal(value.native_key_set_reconciled,true)",
+    'independent_native_original_key_set_before_packet_and_after_ending_fences:true',
     "assert.equal(value.global_selected_native_deduplication,false)"])assert.ok(s.includes(text),text);
 });

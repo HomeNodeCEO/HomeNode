@@ -62,6 +62,40 @@ function member(r){
     contribution_row_reference:ref(r.contribution_row_reference,4096)});
 }
 
+const NATIVE_KEY_ROW=['generation_id','account_id','ordinal','anchor_count','kind','native_key'];
+function nativeKeys(result){
+  // The SQL itself returns at most251 reference rows, never original payloads
+  // or a selected-population roster. Reject overflow before mapping any row.
+  if(!result||!Number.isInteger(result.rowCount)||result.rowCount<1||result.rowCount>250
+    ||!Array.isArray(result.rows)||isProxy(result.rows)||result.rows.length!==result.rowCount)fail('native_keys_corrupt');
+  let header=null,previous=null;const packages=[];
+  for(let index=0;index<result.rows.length;index++){
+    const descriptor=Object.getOwnPropertyDescriptor(result.rows,String(index));
+    if(!descriptor||!Object.hasOwn(descriptor,'value'))fail('native_keys_corrupt');
+    const r=data(descriptor.value,NATIVE_KEY_ROW),h={generation_id:r.generation_id,account_id:r.account_id,
+      ordinal:r.ordinal,anchor_count:r.anchor_count};
+    if(typeof h.generation_id!=='string'||!UUID.test(h.generation_id)||!Number.isInteger(h.anchor_count)
+      ||h.anchor_count<0||h.anchor_count>250||h.ordinal!==null&&h.ordinal!==1
+      ||(h.account_id===null)!==(h.ordinal===null)||h.account_id!==null&&(typeof h.account_id!=='string'
+        ||!h.account_id||h.account_id.length>64||!h.account_id.isWellFormed()||h.account_id.trim()!==h.account_id
+        ||/[\u0000-\u001f\u007f]/.test(h.account_id)))fail('native_keys_corrupt');
+    if(header===null)header=h;else if(!same(header,h))fail('native_keys_corrupt');
+    if(r.kind===null||r.native_key===null){
+      if(r.kind!==null||r.native_key!==null||result.rowCount!==1||h.anchor_count!==0)fail('native_keys_corrupt');
+      continue;
+    }
+    if(h.account_id===null||!['source_record','legacy_sale'].includes(r.kind)||typeof r.native_key!=='string'
+      ||!/^[1-9][0-9]{0,18}$/.test(r.native_key)||BigInt(r.native_key)>9223372036854775807n)fail('native_keys_corrupt');
+    const p={kind:r.kind,native_key:r.native_key};
+    if(previous&&(previous.kind==='legacy_sale'&&p.kind==='source_record'||previous.kind===p.kind
+      &&(p.kind==='source_record'?BigInt(previous.native_key)>=BigInt(p.native_key):Buffer.compare(
+        Buffer.from(previous.native_key),Buffer.from(p.native_key))>=0)))fail('native_keys_corrupt');
+    packages.push(Object.freeze(p));previous=p;
+  }
+  if(packages.length>header.anchor_count||header.account_id===null&&(header.anchor_count!==0||packages.length))fail('native_keys_corrupt');
+  return Object.freeze({...header,native_packages:Object.freeze(packages)});
+}
+
 /** INACTIVE tenth reference-only durable storage; no independent source authority.
  * Called only by the inactive bounded tenth original owner. Its caller must be that actual
  * bounded owner, freshly reconciling COMPLETE originals/ENTIRE caches, EVERY
@@ -168,6 +202,89 @@ export function createCustomCohortSelectedSemanticV2Repository(raw){
           AND semantic_body.canonical_utf8::jsonb->'after'->>'done'='true'`,bound)),[...MEMBER,'semantic_population_ordinal']);
       if(!Object.values(r).every(v=>v===null)&&r.semantic_population_ordinal!==r.ordinal)fail('semantic_population_missing_or_corrupt');
       const {semantic_population_ordinal,...entry}=r;return member(entry);
+    },
+    // Independent ORIGINAL anchor/key query, not the combined packet's key
+    // list or a cache/count/hash/callback. Still FIRST only, exact16 and read
+    // only. It does not issue a durable transaction-index phase or dedup keys
+    // across accounts. Every package must ALSO pass the whole original owner.
+    async readFirstCompletedTransactionNativeKeys(...args){
+      if(args.length)fail('invalid_input');
+      return nativeKeys(await client.query(`/* custom-cohort-selected-semantic-v2:first-completed-transaction-native-keys */
+        WITH selected_context AS MATERIALIZED (
+          SELECT stock.generation_id,job.operation_id,m.account_id,m.ordinal
+          ${PARENTS}
+          JOIN app.neighborhood_custom_cohort_selected_semantic_v2_heads h ON h.operation_id=job.operation_id
+            AND h.organization_id=job.organization_id
+          JOIN app.neighborhood_cohort_evidence_blobs semantic_body ON semantic_body.organization_id=h.organization_id
+            AND semantic_body.content_sha256=h.receipt_reference->>'content_sha256'
+            AND semantic_body.canonical_utf8_bytes::text=h.receipt_reference->>'canonical_utf8_bytes' AND semantic_body.canonical_utf8_bytes<=4096
+          JOIN app.neighborhood_custom_cohort_selected_union_v2_heads union_head ON union_head.operation_id=job.operation_id
+            AND union_head.organization_id=job.organization_id
+          JOIN app.neighborhood_cohort_evidence_blobs union_body ON union_body.organization_id=union_head.organization_id
+            AND union_body.content_sha256=union_head.receipt_reference->>'content_sha256'
+            AND union_body.canonical_utf8_bytes::text=union_head.receipt_reference->>'canonical_utf8_bytes' AND union_body.canonical_utf8_bytes<=16000
+          JOIN app.neighborhood_custom_cohort_job_stocks stock ON stock.operation_id=job.operation_id
+            AND stock.organization_id=job.organization_id AND stock.report_file_id=job.report_file_id
+            AND stock.assignment_file_id=job.assignment_file_id AND stock.account_id=job.account_id
+            AND stock.actor_user_id=job.actor_user_id AND stock.status='complete'
+          JOIN app.neighborhood_custom_cohort_prepared_generation_pins pin ON pin.operation_id=stock.operation_id
+            AND pin.generation_id=stock.generation_id AND pin.organization_id=stock.organization_id
+            AND pin.report_file_id=stock.report_file_id AND pin.assignment_file_id=stock.assignment_file_id
+            AND pin.account_id=stock.account_id AND pin.actor_user_id=stock.actor_user_id
+          JOIN app.neighborhood_group_generations generation ON generation.generation_id=pin.generation_id
+            AND generation.status='complete' AND generation.retirement_started_at IS NULL
+          LEFT JOIN app.neighborhood_custom_cohort_selected_statistics_v2_rows m ON m.operation_id=job.operation_id
+            AND m.organization_id=job.organization_id AND m.ordinal=1
+          LEFT JOIN app.neighborhood_custom_cohort_selected_semantic_v2_rows s ON s.operation_id=m.operation_id AND s.organization_id=m.organization_id
+            AND s.ordinal=m.ordinal AND s.account_id=m.account_id AND s.partition_ordinal=m.partition_ordinal AND s.entry_reference=m.entry_reference
+            AND s.metric_row_reference=m.metric_row_reference AND s.contribution_row_reference=m.row_reference
+          LEFT JOIN app.neighborhood_custom_cohort_selected_numeric_v2_rows n ON n.operation_id=m.operation_id AND n.organization_id=m.organization_id
+            AND n.ordinal=m.ordinal AND n.account_id=m.account_id AND n.partition_ordinal=m.partition_ordinal AND n.entry_reference=m.entry_reference
+            AND n.metric_row_reference=m.metric_row_reference AND n.contribution_row_reference=m.row_reference
+          LEFT JOIN app.neighborhood_custom_cohort_selected_numeric_index_v2_rows indexed ON indexed.operation_id=m.operation_id
+            AND indexed.organization_id=m.organization_id AND indexed.ordinal=m.ordinal AND indexed.account_id=m.account_id
+            AND indexed.contribution_row_reference=m.row_reference
+          LEFT JOIN app.neighborhood_custom_cohort_selected_metrics_v2_rows metric ON metric.operation_id=m.operation_id
+            AND metric.organization_id=m.organization_id AND metric.ordinal=m.ordinal AND metric.account_id=m.account_id
+            AND metric.partition_ordinal=m.partition_ordinal AND metric.entry_reference=m.entry_reference AND metric.row_reference=m.metric_row_reference
+          LEFT JOIN app.neighborhood_custom_cohort_selected_union_v2_rows u ON u.operation_id=metric.operation_id AND u.organization_id=metric.organization_id
+            AND u.ordinal=metric.ordinal AND u.account_id=metric.account_id AND u.partition_ordinal=metric.partition_ordinal AND u.entry_reference=metric.entry_reference
+          LEFT JOIN app.neighborhood_custom_cohort_recorded_partition_v2_rows entry ON entry.operation_id=u.operation_id
+            AND entry.organization_id=u.organization_id AND entry.account_id=u.account_id AND entry.ordinal=u.partition_ordinal AND entry.entry_reference=u.entry_reference
+          WHERE ${FENCE} AND ${DONE}
+            AND app.neighborhood_selected_semantic_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)
+            AND h.command_id=$9::uuid AND h.union_reference=$10::jsonb AND h.eligibility_reference=$11::jsonb
+            AND h.evidence_reference=$12::jsonb AND h.metrics_reference=$13::jsonb AND h.statistics_reference=$14::jsonb AND h.numeric_reference=$15::jsonb
+            AND semantic_body.canonical_utf8::jsonb->>'format'='cohort_selected_semantic_receipt_v2'
+            AND semantic_body.canonical_utf8::jsonb->>'sequence'=h.sequence::text AND semantic_body.canonical_utf8::jsonb->'after'->>'done'='true'
+            AND union_head.command_id=$9::uuid AND union_head.receipt_reference=$10::jsonb
+            AND union_body.canonical_utf8::jsonb->>'format'='cohort_selected_union_receipt_v2'
+            AND union_body.canonical_utf8::jsonb->>'sequence'=union_head.sequence::text AND union_body.canonical_utf8::jsonb->'after'->>'done'='true'
+            AND semantic_body.canonical_utf8::jsonb->'after'->'selected_ordinal'=union_body.canonical_utf8::jsonb->'after_selected_count'
+            AND ((union_body.canonical_utf8::jsonb->>'after_selected_count'='0' AND m.operation_id IS NULL)
+              OR (union_body.canonical_utf8::jsonb->>'after_selected_count'<>'0' AND s.ordinal=1 AND n.ordinal=1
+                AND indexed.ordinal=1 AND metric.ordinal=1 AND u.ordinal=1 AND entry.account_id=m.account_id))
+        ), anchors AS MATERIALIZED (
+          SELECT original.kind,original.row_key,original.source_record_id FROM selected_context selected
+          CROSS JOIN (VALUES ('source_records'),('sales'),('sale_links')) k(kind)
+          CROSS JOIN LATERAL (SELECT o.kind,o.row_key,o.source_record_id FROM app.neighborhood_frozen_source_rows o
+            WHERE o.generation_id=selected.generation_id AND o.kind=k.kind AND o.account_id=selected.account_id
+            ORDER BY o.row_key COLLATE "C" LIMIT 251) original
+        ), gate AS MATERIALIZED (
+          SELECT selected.*,(SELECT count(*)::integer FROM anchors) AS anchor_count FROM selected_context selected
+        ), packages AS MATERIALIZED (
+          SELECT 'source_record'::text AS kind,source_record_id::text AS native_key FROM anchors
+            WHERE source_record_id IS NOT NULL AND (SELECT anchor_count FROM gate)<=250 GROUP BY source_record_id
+          UNION ALL
+          SELECT 'legacy_sale',row_key FROM anchors WHERE kind='sales' AND source_record_id IS NULL
+            AND (SELECT anchor_count FROM gate)<=250
+        )
+        SELECT gate.generation_id::text,gate.account_id,gate.ordinal,gate.anchor_count,packages.kind,packages.native_key
+        FROM gate LEFT JOIN packages ON gate.anchor_count<=250
+        ORDER BY CASE packages.kind WHEN 'source_record' THEN 0 ELSE 1 END,
+          CASE WHEN packages.kind='source_record' THEN packages.native_key::bigint END,
+          CASE WHEN packages.kind='legacy_sale' THEN packages.native_key END COLLATE "C"
+        LIMIT 251`,bound));
     },
     async advance(...args){
       if(args.length!==2)fail('invalid_input');

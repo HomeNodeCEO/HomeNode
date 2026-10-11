@@ -56,6 +56,9 @@ import { createCustomCohortSelectedEligibilityV2Repository } from '../src/servic
 import { createCustomCohortSelectedMetricsV2Repository } from '../src/services/neighborhoodAssessment/customCohortSelectedMetricsV2Repository.js';
 import { createCustomCohortSelectedNumericRankCandidatesV2Repository }
   from '../src/services/neighborhoodAssessment/customCohortSelectedNumericRankCandidatesV2Repository.js';
+import {createCustomCohortSelectedSemanticV2Repository} from '../src/services/neighborhoodAssessment/customCohortSelectedSemanticV2Repository.js';
+import {initializeCohortSelectedSemanticSummaryV2,advanceCohortSelectedSemanticSummaryV2}
+  from '../src/services/neighborhoodAssessment/cohortSelectedSemanticReceiptV2.js';
 import { parseExactDecimalPagedObservationV1 as rankCandidateDecimal }
   from '../src/services/neighborhoodAssessment/exactDecimalPagedDistributionV1.js';
 import { createCustomCohortSelectedEvidenceV2Repository } from '../src/services/neighborhoodAssessment/customCohortSelectedEvidenceV2Repository.js';
@@ -128,7 +131,8 @@ import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL,
   NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,
   NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,
   NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL,
-  NEIGHBORHOOD_FIRST_COMPLETED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL }
+  NEIGHBORHOOD_FIRST_COMPLETED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL,
+  NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSelectedTransactionOriginalPackageV2.js';
 import { expandCohortDiagnosticCompressedJsonV1 } from './helpers/expandCohortDiagnosticCompressedJsonV1.js';
 
@@ -1779,7 +1783,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       refsCalls.push(config.text);
       refsQueryParameters.push(config.values);
       if(config.text.includes('neighborhood-cohort-blob:insert */'))refsBlobPuts.push(config.values[3]);
-      const orphanUnionYield=['union_orphan_commit','eligibility_orphan_commit','evidence_orphan_commit','metrics_orphan_commit','stats_orphan_commit','numeric_orphan_commit'].includes(refsFault)&&config.text.includes('custom-cohort-v2-continuation:yield');
+      const orphanUnionYield=['union_orphan_commit','eligibility_orphan_commit','evidence_orphan_commit','metrics_orphan_commit','stats_orphan_commit','numeric_orphan_commit','semantic_orphan_commit'].includes(refsFault)&&config.text.includes('custom-cohort-v2-continuation:yield');
       // Negative native guard test: execute the REAL yield, then roll back ONLY
       // that statement. The earlier real group/head/root writes remain pending;
       // REAL COMMIT must reject orphan progress. No fabricated SQL result.
@@ -1799,7 +1803,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       if([NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,
         NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,
         NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL,
-        NEIGHBORHOOD_FIRST_COMPLETED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
+        NEIGHBORHOOD_FIRST_COMPLETED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
         &&['metric_assignment_ending','metric_draft_ending'].includes(refsFault)){
         const fault=refsFault;refsFault=null;
         if(fault==='metric_assignment_ending')await client.query(
@@ -1840,6 +1844,10 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         ['stats_advance_rollback','custom-cohort-selected-statistics-v2:head-advance'],
         ['stats_checkpoint_rollback','custom-cohort-job:checkpoint-save'],
         ['stats_yield_rollback','custom-cohort-v2-continuation:yield'],
+        ['semantic_row_rollback','custom-cohort-selected-semantic-v2:row-insert'],
+        ['semantic_head_rollback','custom-cohort-selected-semantic-v2:head-insert'],
+        ['semantic_checkpoint_rollback','custom-cohort-job:checkpoint-save'],
+        ['semantic_yield_rollback','custom-cohort-v2-continuation:yield'],
         ['numeric_row_rollback','custom-cohort-selected-numeric-v2:row-insert'],
         ['numeric_insert_rollback','custom-cohort-selected-numeric-v2:head-insert'],
         ['numeric_advance_rollback','custom-cohort-selected-numeric-v2:head-advance'],
@@ -1858,7 +1866,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,
         NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,
         NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL,
-        NEIGHBORHOOD_FIRST_COMPLETED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
+        NEIGHBORHOOD_FIRST_COMPLETED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
         &&['cad_original_cell','cad_original_missing','cad_original_text','cad_original_bytes'].includes(refsFault)){
         const fault=refsFault;refsFault=null;const key=config.text===NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL?'packet_json':'page_json',
           rows=JSON.parse(result.rows[0][key]),row=rows.find(r=>r.kind==='primary');
@@ -1873,7 +1881,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,
           NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,
           NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL,
-          NEIGHBORHOOD_FIRST_COMPLETED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL].includes(config.text))
+          NEIGHBORHOOD_FIRST_COMPLETED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL].includes(config.text))
         &&['tx_original_mismatch','tx_original_missing','tx_original_text'].includes(refsFault)){
         const fault=refsFault,key=Object.values(NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL).includes(config.text)?'packet_json':'page_json';
         refsFault=null;const rows=JSON.parse(result.rows[0][key]);
@@ -1891,7 +1899,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,
         NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,
         NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL,
-        NEIGHBORHOOD_FIRST_COMPLETED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
+        NEIGHBORHOOD_FIRST_COMPLETED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
         &&['stock_cells_mismatch','stock_cells_missing','stock_cells_original'].includes(refsFault)){
         // Corrupt only the transient transport, never the immutable original or
         // installed cache. Correct hashes/counts cannot launder changed cells.
@@ -1932,7 +1940,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         ||config.text.includes('custom-cohort-selected-metrics-v2:first-statistics-entry')||config.text.includes('custom-cohort-selected-statistics-v2:next-selected-entry')
         ||config.text.includes('custom-cohort-selected-statistics-v2:first-frequency-entry')
         ||config.text.includes('custom-cohort-selected-statistics-v2:first-indexed-frequency-entry')||config.text.includes('custom-cohort-selected-numeric-v2:next-selected-entry')
-        ||config.text.includes('custom-cohort-selected-numeric-v2:first-completed-selected-entry')){
+        ||(config.text.includes('custom-cohort-selected-numeric-v2:first-completed-selected-entry')||config.text.includes('custom-cohort-selected-semantic-v2:next-selected-entry'))){
         if(refsFault==='eligibility_entry_ending'){refsFault='eligibility_entry_after_first';return result;}
         if(['eligibility_entry_wrong','eligibility_entry_after_first','eligibility_entry_partition','eligibility_entry_missing'].includes(refsFault)){
           const fault=refsFault;refsFault=null;return {...result,rows:result.rows.map(r=>fault==='eligibility_entry_missing'
@@ -1943,7 +1951,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       if((config.text.includes('custom-cohort-selected-metrics-v2:first-statistics-entry')||config.text.includes('custom-cohort-selected-statistics-v2:next-selected-entry')
         ||config.text.includes('custom-cohort-selected-statistics-v2:first-frequency-entry')
         ||config.text.includes('custom-cohort-selected-statistics-v2:first-indexed-frequency-entry')||config.text.includes('custom-cohort-selected-numeric-v2:next-selected-entry')
-        ||config.text.includes('custom-cohort-selected-numeric-v2:first-completed-selected-entry'))&&['stats_row_cell','stats_row_date','stats_row_member'].includes(refsFault)){
+        ||(config.text.includes('custom-cohort-selected-numeric-v2:first-completed-selected-entry')||config.text.includes('custom-cohort-selected-semantic-v2:next-selected-entry')))&&['stats_row_cell','stats_row_date','stats_row_member'].includes(refsFault)){
         const fault=refsFault;refsFault=null;
         // Negative transport probes ONLY. Even a real canonical blob/hash with
         // valid closed grammar is not the native original metric row. The
@@ -1961,7 +1969,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       }
       if((config.text.includes('custom-cohort-selected-statistics-v2:first-frequency-entry')
         ||config.text.includes('custom-cohort-selected-statistics-v2:first-indexed-frequency-entry')||config.text.includes('custom-cohort-selected-numeric-v2:next-selected-entry')
-        ||config.text.includes('custom-cohort-selected-numeric-v2:first-completed-selected-entry'))&&['freq_row_state','freq_row_parts','freq_row_reasons','freq_row_date','freq_row_member','freq_row_parent'].includes(refsFault)){
+        ||(config.text.includes('custom-cohort-selected-numeric-v2:first-completed-selected-entry')||config.text.includes('custom-cohort-selected-semantic-v2:next-selected-entry')))&&['freq_row_state','freq_row_parts','freq_row_reasons','freq_row_date','freq_row_member','freq_row_parent'].includes(refsFault)){
         const fault=refsFault;refsFault=null;
         const stored=(await client.query(`SELECT b.canonical_utf8 FROM app.neighborhood_custom_cohort_selected_statistics_v2_rows r
           JOIN app.neighborhood_cohort_evidence_blobs b ON b.organization_id=r.organization_id
@@ -1987,7 +1995,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         }
       }
       if(config.text.includes('custom-cohort-selected-statistics-v2:first-indexed-frequency-entry')||config.text.includes('custom-cohort-selected-numeric-v2:next-selected-entry')
-        ||config.text.includes('custom-cohort-selected-numeric-v2:first-completed-selected-entry')){
+        ||(config.text.includes('custom-cohort-selected-numeric-v2:first-completed-selected-entry')||config.text.includes('custom-cohort-selected-semantic-v2:next-selected-entry'))){
         if(refsFault==='indexed_value_ending'){refsFault='indexed_value_after_first';return result;}
         if(['indexed_value_after_first','indexed_value_wrong','indexed_value_zero','indexed_value_null','indexed_native_child_missing'].includes(refsFault)){
           const fault=refsFault;refsFault=null;
@@ -1999,7 +2007,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           })};
         }
       }
-      if(config.text.includes('custom-cohort-selected-numeric-v2:first-completed-selected-entry')){
+      if((config.text.includes('custom-cohort-selected-numeric-v2:first-completed-selected-entry')||config.text.includes('custom-cohort-selected-semantic-v2:next-selected-entry'))){
         if(refsFault==='indexed_ninth_member_ending'){refsFault='indexed_ninth_member_after_first';return result;}
         if(['indexed_ninth_member_missing','indexed_ninth_member_after_first'].includes(refsFault)){
           refsFault=null;assert.equal(result.rows[0].numeric_population_ordinal,1,'nonvacuous actual ninth first member');
@@ -2140,6 +2148,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         ||config.text===NEIGHBORHOOD_NEXT_SELECTED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL
         ||Object.values(NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL).includes(config.text)
         ||config.text===NEIGHBORHOOD_FIRST_COMPLETED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL
+        ||config.text===NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL
         ||Object.values(NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL).includes(config.text)){
         // The ending-header fault is consumed by the later second metadata
         // read, not by the page query. Keep it armed like the COMMIT fault.
@@ -2148,7 +2157,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         // native indexed member read actually injects the changed value.
         const fault=refsFault;if(!['commit','cad_header','transaction_header','wait_release_rollback','intent_resume_rollback'].includes(fault)
           &&!fault?.startsWith('partition_')&&!fault?.startsWith('catalog_')&&!fault?.startsWith('union_')&&!fault?.startsWith('eligibility_')
-          &&!fault?.startsWith('evidence_')&&!fault?.startsWith('metric_')&&!fault?.startsWith('metrics_')&&!fault?.startsWith('stats_')&&!fault?.startsWith('freq_')&&!fault?.startsWith('indexed_')&&!fault?.startsWith('numeric_'))refsFault=null;
+          &&!fault?.startsWith('evidence_')&&!fault?.startsWith('metric_')&&!fault?.startsWith('metrics_')&&!fault?.startsWith('stats_')&&!fault?.startsWith('freq_')&&!fault?.startsWith('indexed_')&&!fault?.startsWith('numeric_')&&!fault?.startsWith('semantic_'))refsFault=null;
         if(fault==='license')await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
         if(fault==='role')await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);
         if(fault==='subject')await client.query("UPDATE app.appraisal_subject_snapshots SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2000') WHERE id=$1",[sourceSnapshot]);
@@ -4460,7 +4469,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         // row triggers. Include ALL children to exercise the immutable guards
         // too, never remove the FK or disable a trigger to reach them.
         await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
-          'TRUNCATE app.neighborhood_custom_cohort_v2_selection_intents, app.neighborhood_custom_cohort_selected_union_v2_heads, app.neighborhood_custom_cohort_selected_eligibility_v2_heads, app.neighborhood_custom_cohort_selected_evidence_v2_heads, app.neighborhood_custom_cohort_selected_metrics_v2_heads, app.neighborhood_custom_cohort_selected_statistics_v2_heads, app.neighborhood_custom_cohort_selected_numeric_v2_heads')),
+          'TRUNCATE app.neighborhood_custom_cohort_v2_selection_intents, app.neighborhood_custom_cohort_selected_union_v2_heads, app.neighborhood_custom_cohort_selected_eligibility_v2_heads, app.neighborhood_custom_cohort_selected_evidence_v2_heads, app.neighborhood_custom_cohort_selected_metrics_v2_heads, app.neighborhood_custom_cohort_selected_statistics_v2_heads, app.neighborhood_custom_cohort_selected_numeric_v2_heads, app.neighborhood_custom_cohort_selected_semantic_v2_heads')),
         /selection_intent_immutable|custom_cohort_context_immutable/);
         for(const set of ["status='awaiting_selection',claim_token=NULL,lease_expires_at=NULL",'checkpoint=NULL',
           "status='succeeded',context_sha256=repeat('a',64)"])
@@ -4722,7 +4731,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           for(const table of tables.filter(key=>finalUnion[key].length))await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
             `DELETE FROM app.neighborhood_custom_cohort_selected_union_v2_${table} WHERE operation_id=$1`,[refsOperation])),/immutable/);
           await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
-            'TRUNCATE app.neighborhood_custom_cohort_selected_union_v2_rows, app.neighborhood_custom_cohort_selected_metrics_v2_rows, app.neighborhood_custom_cohort_selected_statistics_v2_rows, app.neighborhood_custom_cohort_selected_numeric_index_v2_rows, app.neighborhood_custom_cohort_selected_numeric_v2_rows')),/immutable|mutation|not permitted/);
+            'TRUNCATE app.neighborhood_custom_cohort_selected_union_v2_rows, app.neighborhood_custom_cohort_selected_metrics_v2_rows, app.neighborhood_custom_cohort_selected_statistics_v2_rows, app.neighborhood_custom_cohort_selected_numeric_index_v2_rows, app.neighborhood_custom_cohort_selected_numeric_v2_rows, app.neighborhood_custom_cohort_selected_semantic_v2_rows')),/immutable|mutation|not permitted/);
           assert.deepEqual(await readUnion(),finalUnion);
           // Reopen the ACTUAL completed native union under its freshly consumed
           // claim. No caller receipt, material, subject account, category or
@@ -5734,7 +5743,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             'DELETE FROM app.neighborhood_custom_cohort_selected_metrics_v2_rows WHERE operation_id=$1']){
             await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql,[refsOperation])),/immutable/);await metricsUnchanged(finishedMetrics);
           }
-          for(const sql of ['TRUNCATE app.neighborhood_custom_cohort_selected_metrics_v2_rows, app.neighborhood_custom_cohort_selected_statistics_v2_rows, app.neighborhood_custom_cohort_selected_numeric_index_v2_rows, app.neighborhood_custom_cohort_selected_numeric_v2_rows','TRUNCATE app.neighborhood_custom_cohort_selected_metrics_v2_heads']){
+          for(const sql of ['TRUNCATE app.neighborhood_custom_cohort_selected_metrics_v2_rows, app.neighborhood_custom_cohort_selected_statistics_v2_rows, app.neighborhood_custom_cohort_selected_numeric_index_v2_rows, app.neighborhood_custom_cohort_selected_numeric_v2_rows, app.neighborhood_custom_cohort_selected_semantic_v2_rows','TRUNCATE app.neighborhood_custom_cohort_selected_metrics_v2_heads']){
             await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql)),/immutable|mutation|not permitted/);await metricsUnchanged(finishedMetrics);
           }
           assert.equal(new Set(metricAccounts).size,selectedCount);assert.ok(metricsQueries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries));
@@ -5931,7 +5940,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             'DELETE FROM app.neighborhood_custom_cohort_selected_statistics_v2_rows WHERE operation_id=$1']){
             await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql,[refsOperation])),/immutable/);await contributionUnchanged(finishedContributions);
           }
-          for(const sql of ['TRUNCATE app.neighborhood_custom_cohort_selected_statistics_v2_rows, app.neighborhood_custom_cohort_selected_numeric_index_v2_rows, app.neighborhood_custom_cohort_selected_numeric_v2_rows','TRUNCATE app.neighborhood_custom_cohort_selected_statistics_v2_heads']){
+          for(const sql of ['TRUNCATE app.neighborhood_custom_cohort_selected_statistics_v2_rows, app.neighborhood_custom_cohort_selected_numeric_index_v2_rows, app.neighborhood_custom_cohort_selected_numeric_v2_rows, app.neighborhood_custom_cohort_selected_semantic_v2_rows','TRUNCATE app.neighborhood_custom_cohort_selected_statistics_v2_heads']){
             await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql)),/immutable|mutation|not permitted/);await contributionUnchanged(finishedContributions);
           }
           if(selectedCount)for(const sql of [
@@ -5941,7 +5950,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             await contributionUnchanged(finishedContributions);
           }
           await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
-            'TRUNCATE app.neighborhood_custom_cohort_selected_numeric_index_v2_rows, app.neighborhood_custom_cohort_selected_numeric_v2_rows')),/immutable|mutation|not permitted/);
+            'TRUNCATE app.neighborhood_custom_cohort_selected_numeric_index_v2_rows, app.neighborhood_custom_cohort_selected_numeric_v2_rows, app.neighborhood_custom_cohort_selected_semantic_v2_rows')),/immutable|mutation|not permitted/);
           await contributionUnchanged(finishedContributions);
           if(selectedCount)await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(`
             INSERT INTO app.neighborhood_custom_cohort_selected_numeric_index_v2_rows
@@ -6263,7 +6272,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           await assert.rejects(numericStep(),/selected_numeric_finished_or_corrupt/);await numericUnchanged(finishedNumeric);
           assert.ok(!refsCalls.slice(finishedNumericFrom).includes(NEIGHBORHOOD_NEXT_SELECTED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL));
           assert.equal(new Set(numericAccounts).size,selectedCount);assert.deepEqual(numericAccounts,finishedContributions.rows.map(r=>r.account_id));
-          for(const sql of ['TRUNCATE app.neighborhood_custom_cohort_selected_numeric_v2_rows','TRUNCATE app.neighborhood_custom_cohort_selected_numeric_v2_heads',
+          for(const sql of ['TRUNCATE app.neighborhood_custom_cohort_selected_numeric_v2_rows, app.neighborhood_custom_cohort_selected_semantic_v2_rows','TRUNCATE app.neighborhood_custom_cohort_selected_numeric_v2_heads',
             'DELETE FROM app.neighborhood_custom_cohort_selected_numeric_v2_heads WHERE operation_id=$1',
             'UPDATE app.neighborhood_custom_cohort_selected_numeric_v2_heads SET sequence=sequence+1 WHERE operation_id=$1',
             ...(selectedCount?['DELETE FROM app.neighborhood_custom_cohort_selected_numeric_v2_rows WHERE operation_id=$1',
@@ -6390,6 +6399,138 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             first_account_ONLY_not_complete_original_reconciled_rank_population:true,
             statistics:false,medians_COD:false,calendar_quarters:false,publication:false,licensed_acquisition:false,
             production_speed:false,worker_activation:false});
+          // Tenth ACTUAL complete-original semantic owner. ALL four graphs
+          // retain their independently captured sources; no fixture rewrites.
+          const semanticQueries=[],semanticMethod='progressOriginalFrozenCaptureJobSelectedSemanticReferencesV2',
+            semanticStep=async()=>{const from=refsCalls.length;try{return await cadOwner()[semanticMethod](refsInput,{captureJobClaim:liveClaim});}
+              finally{semanticQueries.push(refsCalls.length-from-3);}},
+            semanticSnapshot=async()=>{const [prior,heads,rows]=await Promise.all([numericSnapshot(),
+              pool.query(`SELECT h.*,b.canonical_utf8,s.canonical_utf8 AS summary_text FROM app.neighborhood_custom_cohort_selected_semantic_v2_heads h
+                JOIN app.neighborhood_cohort_evidence_blobs b ON b.organization_id=h.organization_id AND b.content_sha256=h.receipt_reference->>'content_sha256'
+                  AND b.canonical_utf8_bytes::text=h.receipt_reference->>'canonical_utf8_bytes'
+                JOIN app.neighborhood_cohort_evidence_blobs s ON s.organization_id=h.organization_id
+                  AND s.content_sha256=b.canonical_utf8::jsonb->'after_summary_reference'->>'content_sha256'
+                  AND s.canonical_utf8_bytes::text=b.canonical_utf8::jsonb->'after_summary_reference'->>'canonical_utf8_bytes'
+                WHERE h.operation_id=$1`,[refsOperation]),
+              pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_semantic_v2_rows WHERE operation_id=$1 ORDER BY ordinal',[refsOperation])]);
+              return {...prior,semantic_heads:heads.rows,semantic_rows:rows.rows};},
+            semanticUnchanged=async state=>{assert.deepEqual(await semanticSnapshot(),state);await numericParents();};
+          const semanticInitial=await semanticSnapshot();assert.deepEqual(semanticInitial.semantic_heads,[]);assert.deepEqual(semanticInitial.semantic_rows,[]);
+          await assert.rejects(freshRefsOwner()[semanticMethod](refsInput,{captureJobClaim:liveClaim}),/CAD_source_policy_required/);
+          for(const key of ['ordinal','ranks','values','counts','done','readOriginal','selected_accounts','summary']){
+            const from=refsCalls.length;await assert.rejects(cadOwner()[semanticMethod](refsInput,{captureJobClaim:liveClaim,[key]:true}),/invalid_options/);
+            assert.equal(refsCalls.length,from);await semanticUnchanged(semanticInitial);
+          }
+          for(const [fault,reason] of [['metric_assignment_ending',/assignment_access_denied/],
+            ['numeric_head_ending',/checkpoint_conflict|corrupt/],
+            ...(selectedCount?[['indexed_ninth_member_ending',/numeric_population_missing_or_corrupt/]]:[]),
+            ...(positiveIndexedSourceFixture?[
+              ['subject',/subject_changed/],['claim',/claim_lost/],['cad_license',/market_data_access_denied/],
+              ['cad_header',/CAD_cache_unavailable/],['transaction_header',/cache_unavailable/],
+              ['cad_original_text',/original_mismatch/],['stats_row_cell',/selected_metric_original_mismatch/],
+              ['freq_row_state',/selected_contribution_original_mismatch/],['indexed_value_zero',/selected_numeric_original_mismatch/]
+            ]:[])]){
+            refsFault=fault;await assert.rejects(semanticStep(),reason);assert.equal(refsFault,null);await semanticUnchanged(semanticInitial);
+            if(fault==='cad_license')await setCadFixtureGrant(pool,organization,cadGrant);
+          }
+          for(const fault of [...(selectedCount?['semantic_row_rollback']:[]),'semantic_head_rollback','semantic_checkpoint_rollback','semantic_yield_rollback','semantic_orphan_commit']){
+            refsFault=fault;await assert.rejects(semanticStep(),/actual semantic_|orphan_progress/);assert.equal(refsFault,null);
+            await semanticUnchanged(semanticInitial);
+          }
+          if(positiveIndexedSourceFixture){
+            // NEGATIVE native grammar probes only, never a source-authority
+            // callback. Real blobs/rows reach the real native head guard and
+            // every attempted forgery must roll back the entire prior state.
+            for(const kind of ['rank','sum','deviation','observed','reason']){
+              await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
+                const blobs=createNeighborhoodCohortBlobRepository(client,organization),first=finishedNumeric.numeric_population_rows[0],
+                  contribution=JSON.parse(await blobs.get(first.contribution_row_reference.content_sha256,first.contribution_row_reference.canonical_utf8_bytes)),
+                  initial=initializeCohortSelectedSemanticSummaryV2(rankResult.metrics,selectedCount),
+                  forged=structuredClone(advanceCohortSelectedSemanticSummaryV2(initial,0,selectedCount,contribution.metrics));
+                if(kind==='rank')forged.ranks[2].median_lower='1';
+                if(kind==='sum')forged.totals.reported_site_area.sum_scaled14='1';
+                if(kind==='deviation')forged.totals.reported_site_area.absolute_deviation_scaled14='1';
+                if(kind==='observed')forged.totals.reported_site_area.observed_count=0;
+                if(kind==='reason')forged.counts.reported_market_value.exclusion_reason_counts.currency_not_established=0;
+                const summary=await blobs.put(canonicalAssessmentJson(forged)),head=finishedNumeric.numeric_heads[0],
+                  parents=Object.fromEntries(['union_reference','eligibility_reference','evidence_reference','metrics_reference','statistics_reference'].map(k=>[k,head[k]])),
+                  reference=await blobs.put(canonicalAssessmentJson({format:'cohort_selected_semantic_receipt_v2',...parents,
+                    numeric_reference:head.receipt_reference,command_id:head.command_id,selected_stock_count:selectedCount,
+                    sequence:1,previous:null,before:{selected_ordinal:0,done:false},after:{selected_ordinal:1,done:false},
+                    selected_entry:Object.fromEntries(['account_id','ordinal','partition_ordinal','entry_reference'].map(k=>[k,first[k]])),
+                    contribution_row_reference:first.contribution_row_reference,before_summary_reference:null,after_summary_reference:summary}));
+                await createCustomCohortSelectedSemanticV2Repository({client,claim:liveClaim,scope,actorUserId:actor,
+                  command_id:head.command_id,...parents,numeric_reference:head.receipt_reference}).advance(null,reference);
+              }),/neighborhood_selected_semantic_v2_(summary|aggregate)_conflict/,`actual native semantic forgery ${kind}`);
+              await semanticUnchanged(semanticInitial);
+            }
+          }
+          let semanticTerminal=null;
+          for(let ordinal=1;ordinal<=selectedCount+1;ordinal++){
+            const before=await semanticSnapshot(),from=refsCalls.length;
+            if(ordinal===1&&selectedCount){
+              refsFault='commit';await assert.rejects(semanticStep(),e=>e.outcome_unknown===true);assert.equal(refsFault,null);
+            }else semanticTerminal=await semanticStep();
+            const state=await semanticSnapshot(),issued=JSON.parse(state.semantic_heads[0].canonical_utf8),summary=JSON.parse(state.semantic_heads[0].summary_text),
+              account=ordinal<=selectedCount?finishedNumeric.numeric_population_rows[ordinal-1]:null;
+            assert.equal(state.semantic_heads[0].sequence,ordinal);assert.equal(issued.sequence,ordinal);
+            assert.deepEqual(issued.after,{selected_ordinal:Math.min(ordinal,selectedCount),done:ordinal===selectedCount+1});
+            assert.equal(issued.selected_entry?.account_id??null,account?.account_id??null);
+            assert.equal(state.semantic_rows.length,Math.min(ordinal,selectedCount));assert.equal(state.job.checkpoint.phase,'frozen_selected_semantic_refs_v2');
+            assert.equal(state.job.checkpoint.evidence_refs.length,16);assert.equal(state.job.checkpoint.evidence_refs[15].content_sha256,state.semantic_heads[0].receipt_reference.content_sha256);
+            assert.deepEqual(state.job.checkpoint.evidence_refs.slice(0,15),finishedNumeric.job.checkpoint.evidence_refs);
+            assert.deepEqual(state.numeric_heads,finishedNumeric.numeric_heads);assert.deepEqual(state.numeric_population_rows,finishedNumeric.numeric_population_rows);
+            assert.deepEqual(summary.ranks,rankResult.metrics);
+            assert.equal(refsCalls.slice(from).filter(sql=>sql.includes('custom-cohort-selected-numeric-rank-candidates-v2:read')).length,ordinal===1?1:0,
+              'only initial provisional rank read, never a full-population rerank per account');
+            assert.equal(state.blobs,before.blobs+(account||ordinal===1?2:1),'only bounded derived summary and reference receipt; EMPTY reuses identical summary');
+            if(ordinal===selectedCount+1){
+              assert.deepEqual(summary.counts,JSON.parse(finishedContributions.heads[0].canonical_utf8).after_counts);
+              assert.equal(semanticTerminal.complete_original_reconciled_selected_union,true);
+              assert.equal(semanticTerminal.exact_statistics.reported_site_area.median,
+                positiveIndexedSourceFixture?'4000':rankResult.metrics[2].observed_count==='0'?null:'0');
+              if(positiveIndexedSourceFixture){
+                assert.deepEqual(semanticTerminal.exact_statistics.reported_site_area.cod_percent,{numerator:'100',denominator:'1'});
+                assert.equal(semanticTerminal.exact_statistics.reported_site_area.q1,'2000');
+                assert.equal(semanticTerminal.exact_statistics.reported_site_area.q3,'6000');
+              }
+              assert.equal(semanticTerminal.calendar_quarters,'not_established');assert.equal(semanticTerminal.publication,'not_established');
+              assert.equal(semanticTerminal.context_complete,false);assert.equal(semanticTerminal.pin_transfer,false);
+            }
+            await numericParents();
+            const nextClaims=await withCustomCohortJobTransaction(pool,client=>createCustomCohortV2ContinuationRepository(client).claimDue());
+            assert.equal(nextClaims.length,1);assert.equal(nextClaims[0].claim.attempts,liveClaim.attempts);
+            assert.notEqual(nextClaims[0].claim.claim_token,liveClaim.claim_token);liveClaim=nextClaims[0].claim;
+          }
+          const semanticFinished=await semanticSnapshot();await assert.rejects(semanticStep(),/selected_semantic_finished_or_corrupt/);
+          await semanticUnchanged(semanticFinished);
+          if(selectionWaitFixture==='union-empty'){
+            // Empty graph retains its fourth claim through all older proofs;
+            // use the actual remaining fifth ordinary claim, never a sixth.
+            const stale=liveClaim;assert.equal(stale.attempts,4);
+            const failed=await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client)
+              .failClaim(liveClaim,'synthetic_semantic_terminal_reclaim',{retrySeconds:1}));assert.equal(failed.status,'retry');
+            await new Promise(resolve=>setTimeout(resolve,1100));
+            const [replacement]=await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900}));
+            assert.ok(replacement);assert.equal(replacement.operation_id,refsOperation);assert.equal(replacement.attempts,5);
+            liveClaim={operation_id:replacement.operation_id,claim_token:replacement.claim_token,attempts:replacement.attempts};
+            const recovered=await semanticSnapshot();assert.equal(recovered.job.last_error_code,'synthetic_semantic_terminal_reclaim');
+            for(const key of ['semantic_heads','semantic_rows','numeric_heads','numeric_population_rows','continuation','blobs'])assert.deepEqual(recovered[key],semanticFinished[key]);
+            assert.deepEqual(recovered.job.checkpoint,semanticFinished.job.checkpoint);await numericParents();
+            await assert.rejects(cadOwner()[semanticMethod](refsInput,{captureJobClaim:stale}),/claim_lost/);
+            await assert.rejects(semanticStep(),/selected_semantic_finished_or_corrupt/);await semanticUnchanged(recovered);
+          }
+          assert.ok(semanticQueries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries));
+          console.info('[native-selected-semantic-original-owner-v2]',{actual_bounded_database_owner:true,
+            independently_issued_selected_accounts:selectedCount,every_selected_complete_original_ENTIRE_cache_and_every_seventh_eighth_index_ninth_field:true,
+            all_current_and_ending_authority_before_atomic_writes:true,reference_only_members:true,bounded_exact_aggregate_summaries:true,
+            separate_fresh_EMPTY_all_state_part_reason_eligible_counts_reconciled:true,exact_type7_medians_COD:positiveIndexedSourceFixture,
+            provisional_ranks_initialized_once_not_per_account:true,real_row_head_checkpoint_yield_rollback_orphan_COMMIT_and_lost_ACK:true,
+            native_rank_sum_deviation_observed_reason_forgery_refused:positiveIndexedSourceFixture,
+            actual_terminal_EMPTY_ordinary_failure_fifth_claim_recovery:selectionWaitFixture==='union-empty',
+            maximum_whole_owner_sql_queries:Math.max(...semanticQueries),whole_owner_limits:ORIGINAL_OWNER_LIMITS,
+            calendar_quarters:false,publication:false,licensed_acquisition:false,production_speed:false,worker_activation:false});
+
           }
 
           }

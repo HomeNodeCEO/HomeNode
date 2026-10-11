@@ -3,7 +3,7 @@ import { prepareCustomCohortCaptureJobClaim, CAPTURE_JOB_LEASE_SECONDS } from '.
 import { prepareNeighborhoodCohortBlobReference } from './cohortEvidenceBlobRepository.js';
 
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
-const PHASES=['frozen_stock_traversal_refs_v2','frozen_recorded_partition_refs_v2','frozen_recorded_catalog_refs_v2','frozen_selected_union_refs_v2','frozen_selected_eligibility_refs_v2','frozen_selected_evidence_refs_v2','frozen_selected_metrics_refs_v2','frozen_selected_statistics_refs_v2','frozen_selected_numeric_refs_v2'];
+const PHASES=['frozen_stock_traversal_refs_v2','frozen_recorded_partition_refs_v2','frozen_recorded_catalog_refs_v2','frozen_selected_union_refs_v2','frozen_selected_eligibility_refs_v2','frozen_selected_evidence_refs_v2','frozen_selected_metrics_refs_v2','frozen_selected_statistics_refs_v2','frozen_selected_numeric_refs_v2','frozen_selected_semantic_refs_v2'];
 const fail=reason=>{throw new TypeError(`custom_cohort_v2_continuation_${reason}`);};
 function data(v,keys){if(!v||isProxy(v)||Object.getPrototypeOf(v)!==Object.prototype)fail('invalid_input');
   const ds=Object.getOwnPropertyDescriptors(v),names=Reflect.ownKeys(ds);
@@ -50,7 +50,7 @@ export function createCustomCohortV2ContinuationRepository(client){
         RETURNING issued.sequence,issued.phase,issued.progress_reference,job.attempts`,values));
     // Adding ninth progress must NOT widen the historical eight-phase ceiling.
     // Actual native heads/continuation guards still derive every sequence.
-    const maximumSequence=row.phase==='frozen_selected_numeric_refs_v2'?18000009:16000008;
+    const maximumSequence=row.phase==='frozen_selected_semantic_refs_v2'?20000010:row.phase==='frozen_selected_numeric_refs_v2'?18000009:16000008;
     if(!Number.isInteger(row.sequence)||row.sequence<1||row.sequence>maximumSequence||row.attempts!==claim.attempts||!PHASES.includes(row.phase))fail('corrupt');
     const r=data(row.progress_reference,['content_sha256','canonical_utf8_bytes']),reference=prepareNeighborhoodCohortBlobReference(r.content_sha256,r.canonical_utf8_bytes);
     if(Number(reference.canonical_utf8_bytes)>16000)fail('corrupt');

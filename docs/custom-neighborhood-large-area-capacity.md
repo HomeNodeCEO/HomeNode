@@ -1,5 +1,54 @@
 # Complete larger-area Custom neighborhood studies
 
+## Inactive durable complete-selected original statistics owner authored; cloud verification pending (2026-10-11)
+
+The child of actual unmerged PR1285 adds a tenth native cursor and reference-only
+member ledger. Exact16 admission recursively retains the actual ninth fresh
+EMPTY and all fifteen older roots. Each step uses the existing bounded database
+owner to reopen the complete issued graph, the next selected account's COMPLETE
+stock/CAD/all-date transaction and required subject originals, ENTIRE caches,
+and every seventh/eighth/numeric-index/ninth field. All current and ending
+actor/assignment/private-draft/subject/source/claim/workspace/member/parent
+fences run before any tenth writes. No caller roster, ordinal, values, counts,
+hash-only reconciliation, original callback or dense population array is admitted.
+
+Only the first step initializes three provisional native rank rows. Later steps
+reuse those immutable bounded candidates and derive exact scale14 sums and
+absolute deviations from freshly reconciled eligible original observations;
+there is no full-population rerank per account. Bounded summaries independently
+rederive EVERY value-state, complete/eligible/excluded, source-part and overlapping
+exclusion-reason counter. A separate fresh EMPTY must reconcile them all to the
+complete eighth parent before final exact Type7 quartiles/medians and reduced
+rational means/CODs are returned. Genuine zero-median COD remains explicitly
+undefined; missing, excluded and zero observations are distinct.
+
+Native guards independently verify the fixed initial ranks and subsequent
+count/sum/deviation transitions; deferred row/head constraints require the same
+transaction's exact16 checkpoint and fresh single-use continuation. Additive
+migrations preserve old strict readers, phase order, attempts and failure history.
+The 250-original child and 256-query/32MB/60-second whole-owner limits, fixture
+deadlines and statement limits are unchanged. There are no per-account numeric
+or original payload copies in the new ledger.
+
+Local focused mathematical, parser, storage and structural tests are NOT native,
+licensed or production acceptance. Authored cloud-native probes extend all four
+independently captured graphs through every selected account and fresh EMPTY,
+real current-source/member refusals, row/head/checkpoint/yield rollback, orphan
+COMMIT, lost ACK, native rank/aggregate forgeries and retained EMPTY fifth-claim
+recovery. All remain unverified until the exact-head cloud job completes.
+
+Parent1285's historical ca12 native failure was an omitted GENERIC authority
+fault-injection hook, not a passing acceptance result. The fix750a2c75 is pushed
+with 210 focused tests passing and fresh native cloud checks pending. The new
+child remains inactive and unmerged. Actual included review is still required;
+draft review skips are not reviews and no paid/forced workaround is authorized.
+
+Calendar-quarter economic transaction semantics, coherent publication, durable
+large-area dispatch and terminal pin transfer/retirement, licensed >50k/5-mile/
+10-mile/city/retrospective acquisition and Hardy saved-map/live acceptance remain
+OPEN. No grants, route/default/worker/scheduler activation, production operation,
+accepted report, genuine Hardy choice, pin or Apply target was changed.
+
 ## Native rank candidates connected to the actual first-original owner; still provisional (2026-10-11)
 
 The inactive child of PR1284 adds a read-only seam INSIDE the existing bounded

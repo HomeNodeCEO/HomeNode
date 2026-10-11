@@ -4626,7 +4626,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           for(const table of tables.filter(key=>finalUnion[key].length))await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
             `DELETE FROM app.neighborhood_custom_cohort_selected_union_v2_${table} WHERE operation_id=$1`,[refsOperation])),/immutable/);
           await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
-            'TRUNCATE app.neighborhood_custom_cohort_selected_union_v2_rows, app.neighborhood_custom_cohort_selected_metrics_v2_rows')),/immutable|mutation|not permitted/);
+            'TRUNCATE app.neighborhood_custom_cohort_selected_union_v2_rows, app.neighborhood_custom_cohort_selected_metrics_v2_rows, app.neighborhood_custom_cohort_selected_statistics_v2_rows')),/immutable|mutation|not permitted/);
           assert.deepEqual(await readUnion(),finalUnion);
           // Reopen the ACTUAL completed native union under its freshly consumed
           // claim. No caller receipt, material, subject account, category or
@@ -5632,7 +5632,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             'DELETE FROM app.neighborhood_custom_cohort_selected_metrics_v2_rows WHERE operation_id=$1']){
             await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql,[refsOperation])),/immutable/);await metricsUnchanged(finishedMetrics);
           }
-          for(const sql of ['TRUNCATE app.neighborhood_custom_cohort_selected_metrics_v2_rows','TRUNCATE app.neighborhood_custom_cohort_selected_metrics_v2_heads']){
+          for(const sql of ['TRUNCATE app.neighborhood_custom_cohort_selected_metrics_v2_rows, app.neighborhood_custom_cohort_selected_statistics_v2_rows','TRUNCATE app.neighborhood_custom_cohort_selected_metrics_v2_heads']){
             await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql)),/immutable|mutation|not permitted/);await metricsUnchanged(finishedMetrics);
           }
           assert.equal(new Set(metricAccounts).size,selectedCount);assert.ok(metricsQueries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries));

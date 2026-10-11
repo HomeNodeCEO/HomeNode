@@ -8,7 +8,7 @@ const source=name=>readFileSync(new URL('../src/services/neighborhoodAssessment/
 // These are integration-structure and hostile-input tests, NOT a native
 // execution of the complete owner or proof of licensed/source/speed acceptance.
 test('inactive NEXT owner retains the complete original graph stack and uses dedicated actual16/17 native intent at BOTH ends',()=>{
-  const start=capture.indexOf('original_selected_transaction_index_source_refs_v2:'),end=capture.indexOf('original_selected_semantic_progress_refs_v2:',start),
+  const start=capture.indexOf('original_selected_transaction_index_source_refs_v2:'),end=capture.indexOf('original_selected_transaction_index_progress_refs_v2:',start),
     stage=capture.slice(start,end);
   for(const text of ['referencesV2: true','verifying: true','stockVerifying: true','identityVerifying: true',
     'catalogingRecordedGroups: true','readingRecordedCatalog: true','replayingSelectedUnion: true',
@@ -64,7 +64,10 @@ test('NEXT connection does not call installed strict-FIRST readers at either end
   assert.match(capture,/else selectedTransactionNativeKeys=await semanticStore.readFirstCompletedTransactionNativeKeys/);
   assert.match(capture,/readingSelectedTransactionSource&&!readingSelectedTransactionIndex\)\{if\(!same\(await semanticStore.readFirstCompletedSelectedEntry/);
   assert.match(capture,/readingSelectedTransactionSource&&!readingSelectedTransactionIndex&&!same\(await semanticStore.readFirstCompletedTransactionNativeKeys/);
-  assert.doesNotMatch(capture,/selectedTransactionIndexStore\.advance\(/);
+  const writes=capture.indexOf('if(progressingSelectedTransactionIndex){'),readOnly=capture.indexOf('if(readingSelectedTransactionSource){',writes);
+  assert.equal((capture.match(/selectedTransactionIndexStore\.advance\(/g)||[]).length,1);
+  assert.ok(capture.indexOf('selectedTransactionIndexStore.advance(',writes)<readOnly);
+  assert.doesNotMatch(capture.slice(readOnly,capture.indexOf('if(progressingSelectedSemantic){',readOnly)),/selectedTransactionIndexStore\.advance\(/);
   for(const file of ['customCohortCaptureJobWorker','../../application/customNeighborhoodComposition','../../modules/accounts/customNeighborhoodCohortRouter'])
     assert.ok(!source(file).includes(method),file);
   const migration=readFileSync(new URL('../migrations/20261205_custom_cohort_selected_transaction_index_v2.sql',import.meta.url),'utf8'),

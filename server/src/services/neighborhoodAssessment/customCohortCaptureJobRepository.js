@@ -93,8 +93,9 @@ function checkpointOf(value) {
   if (Buffer.byteLength(canonicalAssessmentJson(checkpoint), 'utf8') > 65536) fail('invalid_checkpoint');
   return checkpoint;
 }
-// Separate inactive READ-ONLY exact16/17 grammar. The ordinary worker claim,
-// checkpoint reader and save path remain unchanged and cannot issue phase17.
+// Separate inactive exact16/17 grammar. Ordinary checkpoint read/save and
+// worker dispatch remain unchanged. Claim metadata alone may retain17 after
+// an ordinary failed claim; it grants no source authority or phase issuance.
 // Native intent/admission must still bind every reference to current heads.
 function transactionIndexData(value,keys){
   if(!value||isProxy(value)||Object.getPrototypeOf(value)!==Object.prototype)fail('invalid_checkpoint');
@@ -117,6 +118,11 @@ function transactionIndexCheckpointOf(raw){
   }
   const checkpoint=Object.freeze({phase:value.phase,evidence_refs:Object.freeze(refs)});
   if(Buffer.byteLength(canonicalAssessmentJson(checkpoint))>65536)fail('invalid_checkpoint');return checkpoint;
+}
+function claimedCheckpointOf(value){
+  if(isProxy(value))fail('invalid_checkpoint');
+  return Object.getOwnPropertyDescriptor(value,'phase')?.value==='frozen_selected_transaction_index_refs_v2'
+    ?transactionIndexCheckpointOf(value):checkpointOf(value);
 }
 function one(result, reason) {
   if (result?.rowCount !== 1 || !Array.isArray(result.rows) || result.rows.length !== 1)
@@ -313,7 +319,7 @@ export function createCustomCohortCaptureJobRepository(client) {
           // A resume must not trust an unvalidated JSONB checkpoint. The
           // worker still verifies every referenced immutable blob before use.
           const checkpoint = row.checkpoint === null || row.checkpoint === undefined
-            ? null : checkpointOf(row.checkpoint);
+            ? null : claimedCheckpointOf(row.checkpoint);
           valid.push(Object.freeze({ ...row, request_payload: admitted, checkpoint }));
         } catch {
           // The claimed row is locked by the caller's transaction. Retire only
@@ -363,6 +369,27 @@ export function createCustomCohortCaptureJobRepository(client) {
         SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs
         WHERE ${SCOPED_CHECKPOINT_FENCE} AND context_sha256 IS NULL`,scopedClaimOf(args[0],options)),'claim_lost');
       return transactionIndexCheckpointOf(row.checkpoint);
+    },
+
+    async saveTransactionIndexCheckpoint(...args){
+      if(args.length!==3)fail('invalid_input');
+      const options=transactionIndexData(args[1],['scope','actorUserId']);
+      options.scope=transactionIndexData(options.scope,['organization_id','report_file_id','assignment_file_id','account_id']);
+      const values=scopedClaimOf(args[0],options),checkpoint=transactionIndexCheckpointOf(args[2]);
+      if(checkpoint.phase!=='frozen_selected_transaction_index_refs_v2')fail('invalid_checkpoint');
+      const checkpointJson=canonicalAssessmentJson(checkpoint);
+      // The dedicated native transition reopens actual16/17, all first16 roots,
+      // the prior receipt and the NEW head issued in this SAME native TX. A
+      // caller-provided hash/count/phase cannot replace that graph or old prefix.
+      const row=one(await client.query(`/* custom-cohort-job:transaction-index-checkpoint-save */
+        UPDATE app.neighborhood_custom_cohort_capture_jobs
+          SET checkpoint=$9::jsonb,updated_at=clock_timestamp()
+          WHERE ${SCOPED_CHECKPOINT_FENCE} AND context_sha256 IS NULL
+            AND app.neighborhood_transaction_index_v2_checkpoint_transition_matches(
+              operation_id,organization_id,checkpoint,$9::jsonb)
+          RETURNING checkpoint`,[...values,checkpointJson]),'claim_lost');
+      const stored=transactionIndexCheckpointOf(row.checkpoint);
+      if(canonicalAssessmentJson(stored)!==checkpointJson)fail('job_corrupt');return stored;
     },
 
     async saveCheckpoint(claim, options, checkpoint) {

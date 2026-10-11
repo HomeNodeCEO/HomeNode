@@ -82,12 +82,15 @@ test('new child retains full original replay and both ending cache fences, share
     'Buffer.byteLength(JSON.stringify(output))>L.output_utf8_bytes'])assert.ok(cells.includes(text),text);
 });
 
-test('source child is connected only to inactive read-only NEXT and owner migration remains unregistered; unconditional native COMMIT refusals remain',()=>{
+test('source child connects only inactive original NEXT owners; owner migration unregistered and installed COMMIT refusals unchanged',()=>{
   const capture=source('customCohortContextCapture'),registry=readFileSync(new URL('../src/database/mobileMigrations.js',import.meta.url),'utf8'),
     installed=readFileSync(new URL('../migrations/20261205_custom_cohort_selected_transaction_index_v2.sql',import.meta.url),'utf8');
   assert.match(capture,/readingSelectedTransactionIndex\?'subjectAndNextSelectedTransactionIndexAccountPackage'/);
   assert.match(capture,/selectedTransactionIndexStore=createCustomCohortSelectedTransactionIndexV2Repository/);
-  assert.doesNotMatch(capture,/selectedTransactionIndexStore\.advance\(/);
+  const atomic=capture.indexOf('if(progressingSelectedTransactionIndex){'),readOnly=capture.indexOf('if(readingSelectedTransactionSource){',atomic);
+  assert.equal((capture.match(/selectedTransactionIndexStore\.advance\(/g)||[]).length,1);
+  assert.ok(capture.indexOf('selectedTransactionIndexStore.advance(',atomic)<readOnly);
+  assert.doesNotMatch(capture.slice(readOnly,capture.indexOf('if(progressingSelectedSemantic){',readOnly)),/selectedTransactionIndexStore\.advance\(/);
   assert.ok(!registry.includes('20261206_custom_cohort_selected_transaction_index_owner_v2.sql'));
   assert.ok(installed.includes('owner_unintegrated'));
 });

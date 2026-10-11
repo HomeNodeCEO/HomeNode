@@ -332,6 +332,14 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingSelectedStatisticsSource: true, readingSelectedFrequencySource: true, readingSelectedNumericSource: true,
     progressingSelectedSemantic: true, readingSelectedTransactionSource: true, readingSelectedTransactionIndex: true,
     allowedPhases: ['frozen_selected_semantic_refs_v2','frozen_selected_transaction_index_refs_v2'] },
+  original_selected_transaction_index_progress_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
+    readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true,
+    readingSelectedUnionFirstAmenities: true, readingSelectedUnionFirstTransactions: true, readingSelectedMetricSource: true,
+    readingSelectedStatisticsSource: true, readingSelectedFrequencySource: true, readingSelectedNumericSource: true,
+    progressingSelectedSemantic: true, readingSelectedTransactionSource: true, readingSelectedTransactionIndex: true,
+    progressingSelectedTransactionIndex: true,
+    allowedPhases: ['frozen_selected_semantic_refs_v2','frozen_selected_transaction_index_refs_v2'] },
   original_selected_semantic_progress_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
     readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true,
@@ -1784,7 +1792,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,
       resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,partitioningRecordedGroups=false,
-      readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,readingSelectedUnionFirstEligibility=false,readingSelectedUnionFirstAmenities=false,readingSelectedUnionFirstTransactions=false,progressingSelectedEligibility=false,progressingSelectedEvidence=false,readingSelectedMetricSource=false,progressingSelectedMetrics=false,readingSelectedStatisticsSource=false,progressingSelectedStatistics=false,readingSelectedFrequencySource=false,readingSelectedNumericSource=false,progressingSelectedNumeric=false,readingSelectedRankCandidates=false,progressingSelectedSemantic=false,readingSelectedTransactionSource=false,preparingSelectedTransactionFirstCandidate=false,readingSelectedTransactionIndex=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
+      readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,readingSelectedUnionFirstEligibility=false,readingSelectedUnionFirstAmenities=false,readingSelectedUnionFirstTransactions=false,progressingSelectedEligibility=false,progressingSelectedEvidence=false,readingSelectedMetricSource=false,progressingSelectedMetrics=false,readingSelectedStatisticsSource=false,progressingSelectedStatistics=false,readingSelectedFrequencySource=false,readingSelectedNumericSource=false,progressingSelectedNumeric=false,readingSelectedRankCandidates=false,progressingSelectedSemantic=false,readingSelectedTransactionSource=false,preparingSelectedTransactionFirstCandidate=false,readingSelectedTransactionIndex=false,progressingSelectedTransactionIndex=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     const readingCadSource=readingCadPages||readingSelectedUnionFirstAmenities;
     if(referencesV2){
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
@@ -3083,6 +3091,32 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         if(preparingSelectedTransactionFirstCandidate&&!same(await selectedTransactionCandidateStore.readFirstCandidate(),selectedTransactionCandidatePlan))
           fail('selected_transaction_index_candidate_mismatch');
         budget.check();
+        if(progressingSelectedTransactionIndex){
+          // This sole write branch is AFTER the complete original graph, ALL
+          // retained fields, exact per-account associations and EVERY ending
+          // authority/head/checkpoint/ENTIRE NEXT packet fence above. Shared
+          // keys never skip replay. The installed native refusals still keep
+          // this UNREGISTERED owner inactive until coherent native acceptance.
+          if(selectedTransactionSource===null)fail('selected_transaction_membership_missing');
+          const plan=buildCohortSelectedTransactionIndexReceiptV2({command_id:issuedSelectionIntent.command_id,
+            ...Object.fromEntries(['union_reference','eligibility_reference','evidence_reference','metrics_reference','statistics_reference','numeric_reference','semantic_reference']
+              .map(k=>[k,selectedTransactionIndexExpected[k]])),plan:selectedTransactionIndexPacket.plan,previous:selectedTransactionIndexPacket.previous});
+          const receiptReference=await blobs.put(canonicalAssessmentJson(plan));
+          const head=await selectedTransactionIndexStore.advance(receiptReference);
+          await jobs.saveTransactionIndexCheckpoint(claim,jobOptions,{phase:'frozen_selected_transaction_index_refs_v2',
+            evidence_refs:[...checkpoint.evidence_refs.slice(0,16),receiptReference]});
+          const continuation=await createCustomCohortV2ContinuationRepository(client).yieldTransactionIndexIssued(claim,jobOptions);
+          const result={status:'original_selected_transaction_index_progress_retained',operation_id:input.operationId,
+            command_id:issuedSelectionIntent.command_id,transaction_index_reference:head.receipt_reference,
+            semantic_reference:semanticAnchor.receipt_reference,progress:plan.after,selected_entry:plan.selected_entry,
+            source_package_count:plan.source_package_count,legacy_package_count:plan.legacy_package_count,
+            new_source_record_keys:plan.new_source_record_keys,new_legacy_sale_keys:plan.new_legacy_sale_keys,
+            complete_original_reconciled_selected_index:plan.after.done,
+            global_economic_transaction_deduplication:false,economic_transactions:'not_established',at_sale_facts:'not_established',
+            calendar_quarters:'not_established',source_acquisition:'not_established',publication:'not_established',
+            production_speed:'not_established',context_complete:false,pin_transfer:false,report_update:'none',continuation};
+          if(Buffer.byteLength(JSON.stringify(result))>16000)fail('byte_limit');budget.check();return freeze(result);
+        }
         if(readingSelectedTransactionSource){
           // Read-only AFTER complete issued graph, whole FIRST selected packet,
           // ENTIRE caches, EVERY seventh/eighth/index/ninth/tenth member and ALL
@@ -3745,6 +3779,13 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     async readOriginalFrozenCaptureJobNextSelectedTransactionIndexReferencesV2(...args){
       if(args.length!==2)fail('invalid_options');
       return frozenCaptureJobSourceStage(args[0],args[1], 'original_selected_transaction_index_source_refs_v2');
+    },
+    // Inactive atomic native NEXT owner, no route/worker/default dispatch.
+    // Installed guards refuse issuance until the unregistered coherent native
+    // guard/continuation migration and full native proofs are complete.
+    async progressOriginalFrozenCaptureJobSelectedTransactionIndexReferencesV2(...args){
+      if(args.length!==2)fail('invalid_options');
+      return frozenCaptureJobSourceStage(args[0],args[1], 'original_selected_transaction_index_progress_refs_v2');
     },
     // Inactive ninth population owner; no route/worker/default activation.
     progressOriginalFrozenCaptureJobSelectedNumericReferencesV2: (value, options = {}) =>

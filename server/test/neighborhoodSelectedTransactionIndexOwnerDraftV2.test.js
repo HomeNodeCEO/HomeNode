@@ -59,7 +59,7 @@ test('draft current-account edges compare both exact namespaces, keep shared key
 
 test('draft head issuance derives its entire compact receipt from actual next identities and bounded first-seen deltas in one native transaction',()=>{
   const q=sql.slice(sql.indexOf('CREATE FUNCTION app.guard_neighborhood_selected_transaction_index_v2_head_issued'),
-    sql.indexOf('CREATE FUNCTION app.check_neighborhood_selected_transaction_index_v2_head_commit_issued'));
+    sql.indexOf('CREATE FUNCTION app.check_neighborhood_transaction_index_v2_head_commit_issued'));
   for(const s of ['FOR UPDATE','NEW.issued_transaction_id IS DISTINCT FROM txid_current()',
     'OLD.issued_transaction_id=txid_current()','NEW.sequence<>OLD.sequence+1',
     "to_jsonb(NEW)-ARRAY['receipt_reference','sequence','issued_transaction_id']",
@@ -78,7 +78,8 @@ test('draft head issuance derives its entire compact receipt from actual next id
 });
 
 test('draft deferred head and all child functions require same-TX exact17 checkpoint and unconsumed single-use yield with no durable orphan',()=>{
-  const q=sql.slice(sql.indexOf('CREATE FUNCTION app.check_neighborhood_selected_transaction_index_v2_head_commit_issued'));
+  const q=sql.slice(sql.indexOf('CREATE FUNCTION app.check_neighborhood_transaction_index_v2_head_commit_issued'),
+    sql.indexOf('-- Draft job and continuation replacements'));
   assert.equal((q.match(/h.issued_transaction_id IS DISTINCT FROM txid_current\(\)/g)||[]).length,2);
   assert.equal((q.match(/app.neighborhood_selected_transaction_index_v2_checkpoint_matches/g)||[]).length,2);
   for(const s of ['h.receipt_reference IS DISTINCT FROM NEW.receipt_reference','h.sequence IS DISTINCT FROM NEW.sequence',

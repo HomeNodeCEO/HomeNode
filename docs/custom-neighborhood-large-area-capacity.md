@@ -1,5 +1,65 @@
 # Complete larger-area Custom neighborhood studies
 
+## Inactive atomic NEXT owner wired; native issuance still refused (2026-10-11, 12:37 UTC)
+
+The local-only WIP now connects a separate fixed progress entry to the complete
+native NEXT original owner described below. This supersedes the12:14 note that
+storage advance/checkpoint/yield were disconnected. It adds no caller plan,
+cursor, member, key roster, first-seen values, callback or source authority.
+The sole index write branch is AFTER every existing original/retained-field/
+per-account native-key comparison and ALL ending rights, actor, assignment,
+draft, subject, workspace, claim, immutable heads, actual checkpoint and entire
+NEXT packet fences. It retains the compact receipt, advances the bounded native
+member/typed registries/full per-account edges/head, saves exact17 and issues
+the dedicated single-use continuation in the existing caller transaction.
+Required subject and every shared source are still reopened in full; only
+native first-seen keys contribute new registry deltas. Fresh EMPTY remains a
+separate step, not the last nonempty account or a caller DONE/count assertion.
+
+Dedicated checkpoint save requires the actual new head issued in this native
+transaction, the complete actual first16 graph and either the initial actual16
+or exact prior17 receipt/sequence/after/parent bindings. Dedicated yield requires
+that same native-issued head and actual17 checkpoint, an already consumed prior
+continuation, fresh progress and the unchanged attempt. It admits only the
+index-specific22000011 ceiling and4096-byte receipt; historical20/18/16-million
+ceilings stay unchanged. Ordinary checkpoint read/save/heartbeat still reject17.
+Ordinary failed-claim recovery can now detach closed exact17 metadata without
+quarantining the retained prefix; its existing attempts<5/increment/fresh-token
+SQL and failure history are unchanged. This is NOT worker dispatch or authority.
+
+Unregistered20261206 now includes draft native16->17->17 job/continuation
+replacements, same-transaction issue versus later single-use consume, old
+phase ceilings, terminal cancellation and the existing human union bridge.
+Whole-function inverse tests compare every byte of the installed61204 guards
+outside these explicit additions. Two previously oversized unattached deferred
+function names were shortened to fit PostgreSQL's63-byte limit. The installed
+child BEFORE guard already dynamically calls NEXT and needs no identity or
+first-seen check removed. No migration was registered/applied, no constraints
+changed and no new guards attached: installed unconditional index head and
+deferred COMMIT refusals still prevent durable issuance.
+
+All479 focused tests across43 files passed in6971ms, zero failures/skips.
+New tests cover closed save/yield inputs, native-issued transition predicates,
+exact readback, autocommit/ending transaction changes, retained fifth-attempt
+metadata, finite old/new ceilings, whole-old-guard preservation and write order.
+Four old structure assertions saying advance was entirely disconnected were
+updated to require its sole guarded write branch and unchanged read-only path;
+all original/native refusal proofs remain. These are DATA/protocol/structure
+tests, NOT PostgreSQL compilation/execution of this SQL or owner, actual atomic
+rollback/lostACK/ordinary4-to-5 durability, licensed acquisition or speed proof.
+
+Next complete the coherent dormant native attachment/constraint package and a
+separate genuine native full-original A/B/shared-first-seen/fresh-EMPTY/orphan/
+missing/extra/wrong-first-seen/rollback/lostACK/ordinary4-to-5 fixture in cloud.
+Do not add owner calls to either tight old graph or raise256SQL/32MB/60s/250
+original/180000ms-fixture/120000ms-statement/pool2 limits. Exact-head native and
+full suites plus actual included review remain required before any protected
+merge. No push, protected merge, deployment, activation, production write,
+source grant, accepted report, genuine Hardy choice or pin changed. Economic
+transaction resolution, at-sale facts, complete calendar-quarter checks,
+coherent publication, durable workers/terminal pin retirement and all licensed
+large-area/Hardy reload/live acceptance remain OPEN; heartbeat ACTIVE.
+
 ## Inactive native NEXT original owner connected; no issuance (2026-10-11, 12:14 UTC)
 
 The local-only owner WIP now connects a separate read-only native NEXT entry to

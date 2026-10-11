@@ -224,14 +224,17 @@ test('constructor and public operations accept no caller cursor/plan/count/callb
   await assert.rejects(()=>f.repo.advance(receipt,undefined),/invalid_input/);assert.equal(mutations(f.queries).length,0);
 });
 
-test('storage is connected only to the inactive read-only original owner, with no issuance or installed-guard relaxation',()=>{
+test('storage is called only by the inactive original-owner write branch; installed native guards remain unchanged',()=>{
   const path='../src/services/neighborhoodAssessment/',source=readFileSync(new URL(path+'customCohortSelectedTransactionIndexV2Repository.js',import.meta.url),'utf8'),
     capture=readFileSync(new URL(path+'customCohortContextCapture.js',import.meta.url),'utf8'),
     sql=readFileSync(new URL('../migrations/20261205_custom_cohort_selected_transaction_index_v2.sql',import.meta.url),'utf8'),
     migrations=readFileSync(new URL('../src/database/mobileMigrations.js',import.meta.url),'utf8');
   assert.match(capture,/selectedTransactionIndexStore=createCustomCohortSelectedTransactionIndexV2Repository/);
   assert.match(capture,/selectedTransactionIndexPacket=await selectedTransactionIndexStore.readNext\(\)/);
-  assert.doesNotMatch(capture,/selectedTransactionIndexStore\.advance\(/);
+  const atomic=capture.indexOf('if(progressingSelectedTransactionIndex){'),readOnly=capture.indexOf('if(readingSelectedTransactionSource){',atomic);
+  assert.equal((capture.match(/selectedTransactionIndexStore\.advance\(/g)||[]).length,1);
+  assert.ok(capture.indexOf('selectedTransactionIndexStore.advance(',atomic)<readOnly);
+  assert.doesNotMatch(capture.slice(readOnly,capture.indexOf('if(progressingSelectedSemantic){',readOnly)),/selectedTransactionIndexStore\.advance\(/);
   assert.match(sql,/RAISE EXCEPTION 'neighborhood_selected_transaction_index_v2_owner_unintegrated'/);
   assert.doesNotMatch(migrations,/20261206_custom_cohort_selected_transaction_index_owner_v2/);
   assert.match(source,/UNREGISTERED owner WIP/);

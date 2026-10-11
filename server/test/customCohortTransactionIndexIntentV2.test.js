@@ -98,7 +98,7 @@ test('same actual native transaction is checked before the read and after all gr
   assert.equal(late.queries.length,4);assert.ok(!late.queries.some(q=>/\b(INSERT|UPDATE|DELETE)\b/.test(q.sql)));
 });
 
-test('new admission refuses caller callbacks/authority/cursor or extra arguments before any database query and is connected only to inactive read-only NEXT',async()=>{
+test('new admission refuses caller callbacks/authority/cursor or extra arguments and connects only inactive complete-original NEXT owners',async()=>{
   const hostile=()=>assert.fail('hostile DATA must not execute');
   for(const input of [{...options,readOriginal:hostile},{...options,ordinal:2},{...options,sourceAuthority:true},
     new Proxy(options,{get:hostile}),{...options,get actorUserId(){hostile();}},
@@ -110,5 +110,8 @@ test('new admission refuses caller callbacks/authority/cursor or extra arguments
   const capture=readFileSync(new URL('../src/services/neighborhoodAssessment/customCohortContextCapture.js',import.meta.url),'utf8');
   assert.equal((capture.match(/readingSelectedTransactionIndex\?'readForTransactionIndex'/g)||[]).length,2);
   assert.match(capture,/readOriginalFrozenCaptureJobNextSelectedTransactionIndexReferencesV2/);
-  assert.doesNotMatch(capture,/selectedTransactionIndexStore\.advance\(/);
+  const atomic=capture.indexOf('if(progressingSelectedTransactionIndex){'),readOnly=capture.indexOf('if(readingSelectedTransactionSource){',atomic);
+  assert.equal((capture.match(/selectedTransactionIndexStore\.advance\(/g)||[]).length,1);
+  assert.ok(capture.indexOf('selectedTransactionIndexStore.advance(',atomic)<readOnly);
+  assert.doesNotMatch(capture.slice(readOnly,capture.indexOf('if(progressingSelectedSemantic){',readOnly)),/selectedTransactionIndexStore\.advance\(/);
 });

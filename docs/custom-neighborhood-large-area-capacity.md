@@ -1,5 +1,42 @@
 # Complete larger-area Custom neighborhood studies
 
+## Complete original statistics native PASS; nonempty recovery follow-up authored (2026-10-11)
+
+Exact feature head338da089 of draft PR1286 passes all SEVEN cloud checks.
+The FULL2,895,971-character native log run38117317009/job114404690474 has
+migration417/subject1/index14/edge1/bootstrap2 passes, ZERO failures,
+cancellations or skips, and successful idempotence. Every native job step
+succeeded. All FOUR independently captured selected graphs reach the actual
+tenth owner through EVERY member and a separate fresh EMPTY. Their whole-owner
+query maxima are253/248/253/253 under the unchanged256 cap; no deadline or
+aggregate original/query/byte/time budget was raised. The positive reported
+site comparison has median4000, quartiles2000/6000 and COD100, with real native
+rank/sum/deviation/state/reason forgery refusals. This is reported-comparison
+statistics, NOT verified economic transaction, currency, at-sale GLA or
+historical housing authority, licensed acquisition or production speed.
+
+That verified head proves EMPTY terminal ordinary fourth/fifth-claim recovery,
+not NONEMPTY tenth mid-pass failure recovery. The follow-up adds a FIFTH
+independently captured two-selected-account positive/zero graph specifically
+for that missing durability boundary. It retains the first real tenth member,
+fails the actual fourth claim, reclaims the ordinary fifth across clients,
+checks exact16 checkpoint/reference rows/heads/continuation/blobs/error retention,
+rejects the stale token and a real current-source denial, then resumes at the
+second original and fresh EMPTY without duplicating/replacing the first member
+or reranking. Existing ninth, seventh/eighth and EMPTY recovery fixtures remain
+intact; no attempt counter is reset and no sixth claim is manufactured.
+This additional graph is AUTHORED, not yet cloud-verified. Fresh exact-head
+native/full checks and actual included review remain required; draft skips are
+not actual review, and no paid/forced workaround is authorized.
+
+All protected parents remain UNMERGED. Feature-head checks do not establish
+integrated-main required security/native checks or review clearance. Calendar-
+quarter economic transaction resolution, coherent publication, durable large-
+area dispatch and terminal pin transfer/retirement, licensed >50k/5-mile/10-mile/
+city/retrospective and Hardy saved-map/live acceptance remain OPEN. No activation,
+deployment, grants, production operation, reports, genuine choices, pins or Apply
+tests occurred. QA assignment7 remains the only future Apply-test target.
+
 ## Inactive durable complete-selected original statistics owner authored; cloud verification pending (2026-10-11)
 
 The child of actual unmerged PR1285 adds a tenth native cursor and reference-only

@@ -1363,11 +1363,12 @@ test('isolated PostgreSQL: freezes a complete 60001-account original source popu
 // Independent real-native captures: preserve the original five-failure terminal
 // test, and build an entirely new issued graph for the waiting boundary. Never
 // clone/rebind job roots, summaries, original payloads or caller DONE metadata.
-for(const selectionWaitFixture of [false,true,'intent','union','union-empty','union-all','union-all-site-positive']) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
-  +(['intent','union','union-empty','union-all','union-all-site-positive'].includes(selectionWaitFixture)?` with explicit new-study selection ${selectionWaitFixture}`:selectionWaitFixture?' with issued selection waiting':''),{
+for(const selectionWaitFixture of [false,true,'intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery']) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
+  +(['intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery'].includes(selectionWaitFixture)?` with explicit new-study selection ${selectionWaitFixture}`:selectionWaitFixture?' with issued selection waiting':''),{
   skip:!process.env.DATABASE_URL,timeout:180_000,
 },async()=>{
-  const positiveIndexedSourceFixture=selectionWaitFixture==='union-all-site-positive',
+  const semanticRecoveryFixture=selectionWaitFixture==='union-all-semantic-recovery',
+    positiveIndexedSourceFixture=selectionWaitFixture==='union-all-site-positive'||semanticRecoveryFixture,
     observedHousingFixture=selectionWaitFixture==='union-all'||positiveIndexedSourceFixture;
   const target=await prepareNeighborhoodCiDatabase();const {default:pg}=await import('pg');
   const pool=new pg.Pool({connectionString:target.connectionString,max:2,statement_timeout:120_000});
@@ -4371,7 +4372,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       assert.equal(await pinCount(),pinsBeforeContinuation);assert.deepEqual(await readTargetWorkspace(),targetWorkspace);
       assert.deepEqual(await readTargetHistory(),targetHistory);assert.deepEqual(await readTargetReport(),targetReport);
       assert.deepEqual(await readTargetWorkfile(),targetWorkfile);assert.deepEqual(await readPriorTargetMetadata(),priorTargetMetadata);
-      if(['intent','union','union-empty','union-all','union-all-site-positive'].includes(selectionWaitFixture)){
+      if(['intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery'].includes(selectionWaitFixture)){
         const allSelected=selectionWaitFixture==='union-all'||positiveIndexedSourceFixture,selectedCount=selectionWaitFixture==='union-empty'?0:allSelected?2:1;
         const intentMethod='resumeOriginalFrozenCaptureJobSelectionIntentReferencesV2',
           selectionIntent={command_id:randomUUID(),catalog_reference:catalogFinal.receipt_reference,workspace_revision:1,
@@ -6238,7 +6239,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
               await assert.rejects(rankSourceStep(),/selected_numeric_finished_or_corrupt/,'actual first-original rank seam also refuses an unfinished ninth');
               await numericUnchanged(prefixState);
             }
-            if(positiveIndexedSourceFixture&&ordinal===1){
+            if(positiveIndexedSourceFixture&&!semanticRecoveryFixture&&ordinal===1){
               // Actual ninth failure/reclaim across clients, WITHOUT a counter
               // rewrite or sixth attempt. Original both-selected still proves
               // seventh recovery; B-only still proves eighth recovery above.
@@ -6287,7 +6288,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             fresh_terminal_EMPTY_separate_from_last_account:true,reference_only_receipt_exact15_and_single_use_continuation_atomic:true,
             actual_row_head_checkpoint_yield_rollback_orphan_REAL_COMMIT_and_lost_REAL_COMMIT_ack_proved:true,
             all_old_readers_remain_strict14_or_less:true,attempts_and_failure_history_preserved_no_reset:true,
-            actual_ninth_ordinary_failure_and_fifth_claim_resume:positiveIndexedSourceFixture,
+            actual_ninth_ordinary_failure_and_fifth_claim_resume:positiveIndexedSourceFixture&&!semanticRecoveryFixture,
             eligible_positive_and_later_zero_graph:positiveIndexedSourceFixture,
             maximum_whole_owner_sql_queries:Math.max(...numericQueries),whole_owner_limits:ORIGINAL_OWNER_LIMITS,
             prior_reports_genuine_choices_workspace_pins_and_all_parent_rows_unchanged:true,
@@ -6466,7 +6467,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
               await semanticUnchanged(semanticInitial);
             }
           }
-          let semanticTerminal=null;
+          let semanticTerminal=null,semanticRecoveredPrefix=null;
           for(let ordinal=1;ordinal<=selectedCount+1;ordinal++){
             const before=await semanticSnapshot(),from=refsCalls.length;
             if(ordinal===1&&selectedCount){
@@ -6502,9 +6503,53 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             const nextClaims=await withCustomCohortJobTransaction(pool,client=>createCustomCohortV2ContinuationRepository(client).claimDue());
             assert.equal(nextClaims.length,1);assert.equal(nextClaims[0].claim.attempts,liveClaim.attempts);
             assert.notEqual(nextClaims[0].claim.claim_token,liveClaim.claim_token);liveClaim=nextClaims[0].claim;
+            if(semanticRecoveryFixture&&ordinal===1){
+              // A FIFTH independently captured graph reserves its last real
+              // failure claim for a NONEMPTY tenth prefix. Existing fourth-
+              // graph ninth recovery and EMPTY terminal recovery stay intact.
+              const retained=await semanticSnapshot(),staleSemanticClaim=liveClaim;
+              assert.equal(selectedCount,2);assert.equal(retained.semantic_rows.length,1);
+              assert.deepEqual(JSON.parse(retained.semantic_heads[0].canonical_utf8).after,{selected_ordinal:1,done:false});
+              assert.equal(retained.job.attempts,4);
+              const failed=await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client)
+                .failClaim(liveClaim,'synthetic_semantic_prefix_reclaim',{retrySeconds:1}));assert.equal(failed.status,'retry');
+              const pending=await semanticSnapshot();assert.equal(pending.job.attempts,4);
+              assert.equal(pending.job.status,'retry');assert.equal(pending.job.claim_token,null);assert.equal(pending.job.lease_expires_at,null);
+              assert.equal(pending.job.last_error_code,'synthetic_semantic_prefix_reclaim');assert.equal(pending.job.context_sha256,null);
+              for(const key of ['semantic_heads','semantic_rows','numeric_heads','numeric_population_rows','continuation','blobs'])assert.deepEqual(pending[key],retained[key]);
+              assert.deepEqual(pending.job.checkpoint,retained.job.checkpoint);await numericParents();
+              await new Promise(resolve=>setTimeout(resolve,1100));
+              const [replacement]=await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900}));
+              assert.ok(replacement,'nonempty tenth prefix resumes on its real fifth claim, never a reset or sixth');
+              assert.equal(replacement.operation_id,refsOperation);assert.equal(replacement.attempts,5);
+              assert.notEqual(replacement.claim_token,staleSemanticClaim.claim_token);
+              liveClaim={operation_id:replacement.operation_id,claim_token:replacement.claim_token,attempts:replacement.attempts};
+              const recovered=await semanticSnapshot();assert.equal(recovered.job.attempts,5);assert.equal(recovered.job.status,'running');
+              assert.equal(recovered.job.last_error_code,'synthetic_semantic_prefix_reclaim');assert.equal(recovered.job.context_sha256,null);
+              for(const key of ['semantic_heads','semantic_rows','numeric_heads','numeric_population_rows','continuation','blobs'])assert.deepEqual(recovered[key],retained[key]);
+              assert.deepEqual(recovered.job.checkpoint,retained.job.checkpoint);await numericParents();
+              await assert.rejects(cadOwner()[semanticMethod](refsInput,{captureJobClaim:staleSemanticClaim}),/claim_lost/);
+              await semanticUnchanged(recovered);
+              // Recovery is not retained source permission. A real current
+              // denial must preserve the prefix before a fresh owner can resume.
+              await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+              const deniedFrom=refsCalls.length;await assert.rejects(semanticStep(),/market_data_access_denied/);
+              assert.ok(!refsCalls.slice(deniedFrom).includes(NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL));
+              await semanticUnchanged(recovered);await setFixtureGrant(pool,organization,fixtureGrant(organization));
+              semanticRecoveredPrefix=recovered;
+            }
           }
           const semanticFinished=await semanticSnapshot();await assert.rejects(semanticStep(),/selected_semantic_finished_or_corrupt/);
           await semanticUnchanged(semanticFinished);
+          if(semanticRecoveryFixture){
+            assert.ok(semanticRecoveredPrefix);assert.equal(liveClaim.attempts,5);
+            assert.equal(semanticFinished.job.last_error_code,'synthetic_semantic_prefix_reclaim');
+            assert.equal(semanticFinished.semantic_heads[0].sequence,selectedCount+1);
+            assert.deepEqual(semanticFinished.semantic_rows.map(row=>row.account_id),['CLOSURE-A','CLOSURE-B']);
+            assert.deepEqual(semanticFinished.semantic_rows[0],semanticRecoveredPrefix.semantic_rows[0],'committed first member is neither duplicated nor replaced');
+            assert.deepEqual(semanticFinished.numeric_heads,semanticRecoveredPrefix.numeric_heads);
+            assert.deepEqual(semanticFinished.numeric_population_rows,semanticRecoveredPrefix.numeric_population_rows);
+          }
           if(selectionWaitFixture==='union-empty'){
             // The independently captured EMPTY graph is still on its third
             // ordinary claim: nonempty-only seventh/eighth/ninth failure
@@ -6542,6 +6587,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             provisional_ranks_initialized_once_not_per_account:true,real_row_head_checkpoint_yield_rollback_orphan_COMMIT_and_lost_ACK:true,
             native_rank_sum_deviation_observed_reason_forgery_refused:positiveIndexedSourceFixture,
             actual_terminal_EMPTY_ordinary_failure_fifth_claim_recovery:selectionWaitFixture==='union-empty',
+            actual_nonempty_prefix_ordinary_failure_fifth_claim_resume:semanticRecoveryFixture,
             maximum_whole_owner_sql_queries:Math.max(...semanticQueries),whole_owner_limits:ORIGINAL_OWNER_LIMITS,
             calendar_quarters:false,publication:false,licensed_acquisition:false,production_speed:false,worker_activation:false});
 

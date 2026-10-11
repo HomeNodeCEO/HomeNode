@@ -131,5 +131,19 @@ test('cloud tenth probes are nonvacuous actual-owner and native grammar tests ac
     'pending.job.checkpoint,semanticFinished.job.checkpoint','replacement.attempts,expectedAttempt',
     'replacement.claim_token,stale.claim_token','recovered.job.attempts,expectedAttempt','liveClaim.attempts,5',
     'semanticQueries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries)'])assert.ok(probe.includes(text),text);
+  for(const text of ['semanticRecoveryFixture&&ordinal===1','retained.semantic_rows.length,1',
+    'selected_ordinal:1,done:false','retained.job.attempts,4',".failClaim(liveClaim,'synthetic_semantic_prefix_reclaim'",
+    "pending.job.status,'retry'",'pending.job.claim_token,null','pending.job.lease_expires_at,null',
+    'pending.job.checkpoint,retained.job.checkpoint','replacement.attempts,5',
+    'replacement.claim_token,staleSemanticClaim.claim_token','recovered.job.checkpoint,retained.job.checkpoint',
+    'captureJobClaim:staleSemanticClaim','semanticUnchanged(recovered)',
+    'deniedFrom=refsCalls.length','NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL',
+    'semanticFinished.semantic_rows[0],semanticRecoveredPrefix.semantic_rows[0]',
+    "semanticFinished.semantic_rows.map(row=>row.account_id),['CLOSURE-A','CLOSURE-B']",
+    "semanticFinished.job.last_error_code,'synthetic_semantic_prefix_reclaim'"
+  ])assert.ok(probe.includes(text),text);
+  assert.ok(fixture.includes("'union-all-semantic-recovery'"),'additional independently captured graph, not a rewrite of an old graph');
+  assert.ok(fixture.includes('positiveIndexedSourceFixture&&!semanticRecoveryFixture&&ordinal===1'));
+  assert.ok(fixture.includes('actual_ninth_ordinary_failure_and_fifth_claim_resume:positiveIndexedSourceFixture&&!semanticRecoveryFixture'));
   assert.doesNotMatch(probe,/SET attempts|attempts=0|attempts:6|DISABLE TRIGGER|session_replication_role/);
 });

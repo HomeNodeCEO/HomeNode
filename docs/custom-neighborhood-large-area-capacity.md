@@ -1,5 +1,58 @@
 # Complete larger-area Custom neighborhood studies
 
+## Native indexed-source reconciliation (2026-10-11; authored, inactive)
+
+A separate fixed-first indexed-source entry extends the ACTUAL bounded original
+owner without changing the older frequency reader or original SQL plans. Strict
+exact14 admission still requires all five DONE native parents and a currently
+authorized consumed continuation/ordinary failure claim. Native membership joins
+the indexed child by operation, organization, ordinal, account and ACTUAL eighth
+contribution reference. A nonempty legacy head without that child is refused;
+native NULL eligibility is not substituted for missing index membership.
+
+The same current-authorized transaction reopens the complete original graph,
+stock/CAD/whole all-date transactions/required subject originals and ENTIRE
+caches AGAIN. EVERY seventh-row and eighth-contribution field is compared to
+this fresh replay, then ALL three exact indexed value/null fields must equal the
+fresh original-derived eligible contributions. No numeric result, null bucket,
+hash, count, roster or callback becomes source authority. All current and ending
+source/database actor/assignment/draft/subject/workspace/claim/parent fences
+remain, including a second read/equality check of the ENTIRE indexed member.
+Exact numeric strings never pass through Number/float/rounding. The response
+strips indexed values; no original or numerical payload copy is created.
+
+This entry is read-only, fixed at ordinal1 or genuine EMPTY, with NO new root,
+checkpoint phase, native table, continuation, lease or source grant. The indexed
+join replaces the first/ending member reads without extra owner client queries.
+All aggregate250-original/256-SQL/32MB/60-second/16KB limits remain unchanged.
+Authored cloud issued-graph assertions cover missing-child/value/NULL-versus-zero
+forgeries, ending index changes, fresh original/seventh/eighth forgeries, actual
+same-transaction source/actor/assignment/draft/subject/claim ending refusals and
+complete prior-state/index preservation. Tiny fixtures and structural unit DATA
+are not full licensed/positive-valued population or production-speed acceptance.
+The selected first members in these issued fixtures are excluded; the prior
+complete traversal independently verifies eligible genuine site zero later in
+the both-selected population. Full indexed semantic traversal remains required.
+
+Corrected parent#1278 a2b8021b and source#1279 5267f9f0 now have successful native
+cloud jobs114356968045/114357047708; full decoded logs were inspected. Both passed
+417 migration,1 subject,13 index,1 edge and2 bootstrap tests with no failures,
+cancellations or skips. All three independent B-only/EMPTY/both contribution
+markers completed1/0/2 rows plus fresh terminal EMPTY. Source#1279 also completed
+all three fixed-first original-reconciliation markers. Eighth whole-owner SQL
+maxima are243/237/244 and fixed-first source231/226/231, under unchanged256.
+Those actual small-protocol results supersede older pending/failed notes below;
+they do NOT establish the new numerical-index/this indexed-source native result,
+complete frequency/rank/deviation/statistics or protected integrated clearance.
+
+Complete original-reconciled indexed population traversal, exact medians/COD,
+calendar-quarter/transaction resolution, coherent publication, durable workers,
+terminal pin transfer/retirement and licensed >50k/5-mile/10-mile/city/retrospective
+plus live Hardy reload/speed acceptance remain outstanding. Actual included
+review and dependency-order protected integration remain gates. No HTTP route,
+default, worker, grant, deployment, pin, Apply, accepted report or genuine Hardy
+choice changed; all new internal stages remain inactive.
+
 ## Exact native contribution index (2026-10-11; authored, inactive)
 
 An additive numerical observation index is a structural CHILD of each actual

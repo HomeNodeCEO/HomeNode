@@ -293,6 +293,12 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true,
     readingSelectedUnionFirstAmenities: true, readingSelectedUnionFirstTransactions: true, readingSelectedMetricSource: true,
     readingSelectedStatisticsSource: true, readingSelectedFrequencySource: true, allowedPhases: ['frozen_selected_statistics_refs_v2'] },
+  original_selected_first_indexed_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
+    readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true,
+    readingSelectedUnionFirstAmenities: true, readingSelectedUnionFirstTransactions: true, readingSelectedMetricSource: true,
+    readingSelectedStatisticsSource: true, readingSelectedFrequencySource: true, readingSelectedNumericSource: true,
+    allowedPhases: ['frozen_selected_statistics_refs_v2'] },
 });
 function fail(reason, detail, captureCounts) {
   const error = Object.assign(new Error(`custom_cohort_capture_${reason}`), {
@@ -1727,7 +1733,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,
       resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,partitioningRecordedGroups=false,
-      readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,readingSelectedUnionFirstEligibility=false,readingSelectedUnionFirstAmenities=false,readingSelectedUnionFirstTransactions=false,progressingSelectedEligibility=false,progressingSelectedEvidence=false,readingSelectedMetricSource=false,progressingSelectedMetrics=false,readingSelectedStatisticsSource=false,progressingSelectedStatistics=false,readingSelectedFrequencySource=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
+      readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,readingSelectedUnionFirstEligibility=false,readingSelectedUnionFirstAmenities=false,readingSelectedUnionFirstTransactions=false,progressingSelectedEligibility=false,progressingSelectedEvidence=false,readingSelectedMetricSource=false,progressingSelectedMetrics=false,readingSelectedStatisticsSource=false,progressingSelectedStatistics=false,readingSelectedFrequencySource=false,readingSelectedNumericSource=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     const readingCadSource=readingCadPages||readingSelectedUnionFirstAmenities;
     if(referencesV2){
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
@@ -2385,7 +2391,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             if(readingSelectedFrequencySource){if(!statisticsAnchor)fail('unfinished_selected_statistics');}
             else eligibilityBefore=statisticsBefore;
           }
-          firstSelectedEntry=await (readingSelectedFrequencySource?statisticsStore.readFirstFrequencyEntry():readingSelectedStatisticsSource?(progressingSelectedStatistics?statisticsStore.readNextSelectedEntry():metricsStore.readFirstStatisticsEntry()):progressingSelectedMetrics?metricsStore.readNextSelectedEntry():readingSelectedMetricSource?evidenceStore.readFirstMetricEntry():progressingSelectedEvidence?evidenceStore.readNextSelectedEntry():
+          firstSelectedEntry=await (readingSelectedFrequencySource?(readingSelectedNumericSource?statisticsStore.readFirstIndexedFrequencyEntry():statisticsStore.readFirstFrequencyEntry()):readingSelectedStatisticsSource?(progressingSelectedStatistics?statisticsStore.readNextSelectedEntry():metricsStore.readFirstStatisticsEntry()):progressingSelectedMetrics?metricsStore.readNextSelectedEntry():readingSelectedMetricSource?evidenceStore.readFirstMetricEntry():progressingSelectedEvidence?evidenceStore.readNextSelectedEntry():
             progressingSelectedEligibility?eligibilityStore.readNextSelectedEntry():unionStore.readFirstSelectedEntry());
           if((firstSelectedEntry===null)!==(eligibilityBefore.selected_ordinal===unionCounts.selected_count)
             ||firstSelectedEntry!==null&&firstSelectedEntry.ordinal!==eligibilityBefore.selected_ordinal+1)fail('selected_union_original_mismatch');
@@ -2497,6 +2503,14 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
                 // exact value and unit field. Hashes, eligible totals and the
                 // lossy seventh null bucket grant NO source authority.
                 if(!same(retainedContribution,statisticsContribution))fail('selected_contribution_original_mismatch');
+                if(readingSelectedNumericSource){
+                  // The numeric index is not source authority. Compare EVERY
+                  // indexed value/null to THIS fresh complete original replay,
+                  // not to old counts, hashes, a caller callback or a roster.
+                  for(const key of ['reported_year_built','reported_residential_area','reported_site_area'])
+                    if(firstSelectedEntry[key]!==statisticsContribution.metrics[key].contribution_exact_value)
+                      fail('selected_numeric_original_mismatch');
+                }
               }
             }
             if(progressingSelectedStatistics)statisticsCandidate=statisticsContribution;
@@ -2825,7 +2839,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           {...jobOptions,workspaceTarget:selectionWorkspaceTarget});
         if(!same(ending,issuedSelectionIntent)||!same(await unionStore.read(),unionAnchor)
           ||!same(await unionStore.counts(),unionCounts))fail('selected_union_original_mismatch');
-        if(readingSelectedUnionFirstEligibility&&!same(await (readingSelectedFrequencySource?statisticsStore.readFirstFrequencyEntry():progressingSelectedStatistics?statisticsStore.readNextSelectedEntry():readingSelectedStatisticsSource?metricsStore.readFirstStatisticsEntry():progressingSelectedMetrics?metricsStore.readNextSelectedEntry():readingSelectedMetricSource?evidenceStore.readFirstMetricEntry():progressingSelectedEvidence?evidenceStore.readNextSelectedEntry():progressingSelectedEligibility
+        if(readingSelectedUnionFirstEligibility&&!same(await (readingSelectedFrequencySource?(readingSelectedNumericSource?statisticsStore.readFirstIndexedFrequencyEntry():statisticsStore.readFirstFrequencyEntry()):progressingSelectedStatistics?statisticsStore.readNextSelectedEntry():readingSelectedStatisticsSource?metricsStore.readFirstStatisticsEntry():progressingSelectedMetrics?metricsStore.readNextSelectedEntry():readingSelectedMetricSource?evidenceStore.readFirstMetricEntry():progressingSelectedEvidence?evidenceStore.readNextSelectedEntry():progressingSelectedEligibility
           ?eligibilityStore.readNextSelectedEntry():unionStore.readFirstSelectedEntry()),firstSelectedEntry))
           fail('selected_union_original_mismatch');
         if((progressingSelectedEligibility||progressingSelectedEvidence||readingSelectedMetricSource)&&!same(await eligibilityStore.read(),eligibilityAnchor))fail('checkpoint_conflict');
@@ -2843,6 +2857,14 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             coverage:'fixed_first_native_selected_ordinal_only_after_DONE_union_fifth_sixth_seventh_and_eighth',
             frequency_ledger:false,exact_distributions:false,complete_selected_union_metric_population:false,
             statistics:'not_established',publication:'not_established',read_only:true,lease_extended:false};
+          if(readingSelectedNumericSource){
+            result.status='current_authorized_first_selected_numeric_originals_reconciled';
+            result.selected_entry=firstSelectedEntry===null?null:Object.fromEntries(
+              ['account_id','ordinal','partition_ordinal','entry_reference','state','assigned_group_id','row_reference','contribution_row_reference']
+                .map(key=>[key,firstSelectedEntry[key]]));
+            result.retained_numeric_index_reconciled=firstSelectedEntry!==null;
+            result.complete_indexed_metric_population=false;
+          }
           if(Buffer.byteLength(JSON.stringify(result))>16000)fail('byte_limit');
           budget.check();return freeze(result);
         }
@@ -3351,6 +3373,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     // NOT a frequency index, complete semantic pass, statistic or publication.
     readOriginalFrozenCaptureJobFirstSelectedFrequencyReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_selected_first_frequency_refs_v2'),
+    // Separate inactive indexed-source entry; same strict14/fresh originals.
+    // Numerical values remain internal, not full-population/rank authority.
+    readOriginalFrozenCaptureJobFirstSelectedNumericReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'original_selected_first_indexed_refs_v2'),
     async capture(value, options = {}) {
     if (!options || Object.getPrototypeOf(options) !== Object.prototype)
       fail('invalid_options');

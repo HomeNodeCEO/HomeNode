@@ -1,5 +1,18 @@
 # Complete larger-area Custom neighborhood studies
 
+## Indexed-source native rejection failure (2026-10-11; unresolved)
+
+Exact head4c455fec native cloud job114361229103 failed two nonempty
+issued-graph tests with an unlabeled `Missing expected rejection` at the indexed
+original/member fault loop; the separate EMPTY indexed boundary completed.
+The full decoded log was inspected. Its other four reported checks passed,
+but this is NOT native acceptance or merge clearance. No assertion or required
+check is waived. Probe-specific rejection messages and transport nonvacuity
+assertions now distinguish an unchanged negative fixture from a genuine owner
+refusal defect on the next cloud run. The cause remains unproved until that
+evidence is inspected. Earlier successful parent logs do not override this
+exact-head failure. No runtime, source grant, activation or production change.
+
 ## Native indexed-source reconciliation (2026-10-11; authored, inactive)
 
 A separate fixed-first indexed-source entry extends the ACTUAL bounded original

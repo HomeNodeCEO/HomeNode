@@ -95,4 +95,6 @@ test('authored indexed cloud fixture uses independent issued graph, full prior-s
     'EVERY_seventh_eighth_field_and_native_indexed_value_null_compared_to_THIS_fresh_original:true',
     'complete_indexed_population:false,frequency_ledger:false,rank_queries:false,medians_COD:false,calendar_quarters:false',
     'publication:false,licensed_acquisition:false,production_speed:false,worker_activation:false'])assert.ok(s.includes(v),v);
+  for(const v of ['nonvacuous indexed transport probe ${fault}: ${key}',
+    'indexed authority probe ${fault}','indexed original/member probe ${fault}'])assert.ok(s.includes(v),v);
 });

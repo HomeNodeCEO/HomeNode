@@ -4,6 +4,7 @@ import { randomUUID,createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { prepareNeighborhoodCiDatabase } from './helpers/neighborhoodCiDatabase.js';
 import { runNeighborhoodSelectedNumericIndexV2DatabaseChecks } from './helpers/neighborhoodSelectedNumericIndexV2DatabaseChecks.js';
+import { runNeighborhoodSelectedNumericPopulationV2DatabaseChecks } from './helpers/neighborhoodSelectedNumericPopulationV2DatabaseChecks.js';
 import { assertBoundedCohortAuthorityAggregates } from './helpers/boundedCohortAuthorityAggregateAssertions.js';
 import { NEIGHBORHOOD_CACHED_SOURCE_SCHEMA } from './fixtures/neighborhoodCachedSourceSchemaFixture.js';
 import { runNeighborhoodGroupIndex,getPreparedNeighborhoodGroupSummary }
@@ -4424,7 +4425,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         // row triggers. Include ALL children to exercise the immutable guards
         // too, never remove the FK or disable a trigger to reach them.
         await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
-          'TRUNCATE app.neighborhood_custom_cohort_v2_selection_intents, app.neighborhood_custom_cohort_selected_union_v2_heads, app.neighborhood_custom_cohort_selected_eligibility_v2_heads, app.neighborhood_custom_cohort_selected_evidence_v2_heads, app.neighborhood_custom_cohort_selected_metrics_v2_heads, app.neighborhood_custom_cohort_selected_statistics_v2_heads')),
+          'TRUNCATE app.neighborhood_custom_cohort_v2_selection_intents, app.neighborhood_custom_cohort_selected_union_v2_heads, app.neighborhood_custom_cohort_selected_eligibility_v2_heads, app.neighborhood_custom_cohort_selected_evidence_v2_heads, app.neighborhood_custom_cohort_selected_metrics_v2_heads, app.neighborhood_custom_cohort_selected_statistics_v2_heads, app.neighborhood_custom_cohort_selected_numeric_v2_heads')),
         /selection_intent_immutable|custom_cohort_context_immutable/);
         for(const set of ["status='awaiting_selection',claim_token=NULL,lease_expires_at=NULL",'checkpoint=NULL',
           "status='succeeded',context_sha256=repeat('a',64)"])
@@ -4686,7 +4687,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           for(const table of tables.filter(key=>finalUnion[key].length))await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
             `DELETE FROM app.neighborhood_custom_cohort_selected_union_v2_${table} WHERE operation_id=$1`,[refsOperation])),/immutable/);
           await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
-            'TRUNCATE app.neighborhood_custom_cohort_selected_union_v2_rows, app.neighborhood_custom_cohort_selected_metrics_v2_rows, app.neighborhood_custom_cohort_selected_statistics_v2_rows, app.neighborhood_custom_cohort_selected_numeric_index_v2_rows')),/immutable|mutation|not permitted/);
+            'TRUNCATE app.neighborhood_custom_cohort_selected_union_v2_rows, app.neighborhood_custom_cohort_selected_metrics_v2_rows, app.neighborhood_custom_cohort_selected_statistics_v2_rows, app.neighborhood_custom_cohort_selected_numeric_index_v2_rows, app.neighborhood_custom_cohort_selected_numeric_v2_rows')),/immutable|mutation|not permitted/);
           assert.deepEqual(await readUnion(),finalUnion);
           // Reopen the ACTUAL completed native union under its freshly consumed
           // claim. No caller receipt, material, subject account, category or
@@ -5694,7 +5695,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             'DELETE FROM app.neighborhood_custom_cohort_selected_metrics_v2_rows WHERE operation_id=$1']){
             await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql,[refsOperation])),/immutable/);await metricsUnchanged(finishedMetrics);
           }
-          for(const sql of ['TRUNCATE app.neighborhood_custom_cohort_selected_metrics_v2_rows, app.neighborhood_custom_cohort_selected_statistics_v2_rows, app.neighborhood_custom_cohort_selected_numeric_index_v2_rows','TRUNCATE app.neighborhood_custom_cohort_selected_metrics_v2_heads']){
+          for(const sql of ['TRUNCATE app.neighborhood_custom_cohort_selected_metrics_v2_rows, app.neighborhood_custom_cohort_selected_statistics_v2_rows, app.neighborhood_custom_cohort_selected_numeric_index_v2_rows, app.neighborhood_custom_cohort_selected_numeric_v2_rows','TRUNCATE app.neighborhood_custom_cohort_selected_metrics_v2_heads']){
             await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql)),/immutable|mutation|not permitted/);await metricsUnchanged(finishedMetrics);
           }
           assert.equal(new Set(metricAccounts).size,selectedCount);assert.ok(metricsQueries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries));
@@ -5742,6 +5743,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
                 if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
               }};
           const numericIndexNativeData=await runNeighborhoodSelectedNumericIndexV2DatabaseChecks(pool);
+          const numericPopulationFoundation=await runNeighborhoodSelectedNumericPopulationV2DatabaseChecks(pool);
+          console.info('[native-selected-numeric-population-foundation-v2]',numericPopulationFoundation);
           const initialContributions=await contributionSnapshot();assert.deepEqual(initialContributions.heads,[]);assert.deepEqual(initialContributions.rows,[]);
           assert.deepEqual(initialContributions.numeric_index,[]);
           await assert.rejects(freshRefsOwner()[contributionMethod](refsInput,{captureJobClaim:liveClaim}),/CAD_source_policy_required/);
@@ -5885,7 +5888,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             'DELETE FROM app.neighborhood_custom_cohort_selected_statistics_v2_rows WHERE operation_id=$1']){
             await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql,[refsOperation])),/immutable/);await contributionUnchanged(finishedContributions);
           }
-          for(const sql of ['TRUNCATE app.neighborhood_custom_cohort_selected_statistics_v2_rows, app.neighborhood_custom_cohort_selected_numeric_index_v2_rows','TRUNCATE app.neighborhood_custom_cohort_selected_statistics_v2_heads']){
+          for(const sql of ['TRUNCATE app.neighborhood_custom_cohort_selected_statistics_v2_rows, app.neighborhood_custom_cohort_selected_numeric_index_v2_rows, app.neighborhood_custom_cohort_selected_numeric_v2_rows','TRUNCATE app.neighborhood_custom_cohort_selected_statistics_v2_heads']){
             await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql)),/immutable|mutation|not permitted/);await contributionUnchanged(finishedContributions);
           }
           if(selectedCount)for(const sql of [
@@ -5895,7 +5898,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             await contributionUnchanged(finishedContributions);
           }
           await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
-            'TRUNCATE app.neighborhood_custom_cohort_selected_numeric_index_v2_rows')),/immutable|mutation|not permitted/);
+            'TRUNCATE app.neighborhood_custom_cohort_selected_numeric_index_v2_rows, app.neighborhood_custom_cohort_selected_numeric_v2_rows')),/immutable|mutation|not permitted/);
           await contributionUnchanged(finishedContributions);
           if(selectedCount)await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(`
             INSERT INTO app.neighborhood_custom_cohort_selected_numeric_index_v2_rows

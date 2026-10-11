@@ -1,5 +1,46 @@
 # Complete larger-area Custom neighborhood studies
 
+## Indexed source-reopen fixes verified; ninth foundation still unintegrated (2026-10-11)
+
+This section overrides the older pending/failure notes below. Exact parent#1281
+`14fd00b7f558c80bc5a8d99a20ea095de9f9e3cf` and positive child#1282
+`6a8af300fe25ecb61b3446d31271d37cc04eb9c2` now each pass all FIVE reported
+cloud checks. Their FULL decoded native logs were inspected, not just statuses:
+parent job114369568677/run38105339873 (2,604,757 characters), child
+job114369676374/run38105379076 (2,817,167 characters). Both pass migration417,
+subject1, edge1 and bootstrap2, with zero failures/cancellations/skips; index
+passes13/13 parent and14/14 child. All later native steps executed successfully.
+
+The corrected ending-fault harness preserves its armed corruption through
+whole-original reads, so the actual ending indexed-member comparison now
+nonvacuously rejects the change. The FOURTH independently issued positive graph
+also executes successfully: genuine first A site8000 and later B site0 are
+eligible, while forging first8000 to NULL or0 refuses and preserves ALL state.
+All three previous independent graphs, full issued original/ENTIRE-cache
+reconciliation, current+ending authority, real rollback/orphan-COMMIT/lost-ACK
+and unchanged256-query/32MB/60-second budgets remain. Indexed-source reopen
+maximum231 queries (EMPTY226); this is FIXED FIRST ONLY, not full population.
+
+The next branch adds an INACTIVE ninth native reference-only foundation:
+closed <=4096-byte receipt; native next-ordinal storage over actual eighth rows
+and their numeric children; exact15 recursively bound complete parent graph;
+immutable rows/heads, fresh terminal EMPTY/native eligible-total reconciliation
+and deferred real-COMMIT head/job/single-use-continuation guards. It copies NO
+numeric/original/typed/diagnostic payloads and accepts NO caller cursor, roster,
+row, count, value, source callback or DONE flag. Focused DATA/SQL-structure tests
+are NOT native database or original-source acceptance. The additive migration
+is registered for cloud validation; actual original owner, command reader, native next-original SQL,
+job/continuation grammar and adversarial complete-graph integration still need
+implementation and cloud execution. No ninth transition can commit yet.
+
+Actual review arrays remain EMPTY for both PRs. Automatic disabled-base skips
+are not reviews; included-review allowance remains unestablished and the prior
+safety refusal is respected, with no paid/forced/indirect retry. No protected
+merge, deployment or activation occurred. Exact complete-population medians,
+CODs/calendar quarters, coherent publication, durable workers/terminal pins,
+licensed >50k/5-mile/10-mile/city/retrospective and Hardy live reload acceptance
+remain OPEN. The heartbeat remains active.
+
 ## Positive native duplicate-reason probe correction (2026-10-11; cloud pending)
 
 Full decoded positive-fixture head46b3d937 job114363101732 was inspected:

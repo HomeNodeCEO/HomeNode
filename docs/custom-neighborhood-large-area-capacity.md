@@ -1,5 +1,50 @@
 # Complete larger-area Custom neighborhood studies
 
+## First transaction-source native PASS; independent native key-set guard (2026-10-11)
+
+Exact parent feature headd76ada9b has all FIVE currently visible feature checks
+SUCCESS, including native run38125778948/job114429730464. Its FULL3,154,432-
+character native log verifies migration417/subject1/index15/edge1/bootstrap2
+passes, ZERO failures/cancellations/skips, successful idempotence and EVERY
+job step SUCCESS. The three actual first-source graphs (B-only/EMPTY/A+B)
+pass at233/228/233 whole-owner queries; all five prior semantic graphs still
+pass at241/236/241/241/241. This is inactive FIRST-source protocol evidence,
+NOT a globally deduplicated transaction index, licensed acquisition or speed
+acceptance. Actual review is UNESTABLISHED; the draft review skip is not review.
+
+The new INACTIVE follow-up adds an independent native ORIGINAL key-set query
+to that actual bounded owner. Its pinned generation, fixed first selected
+account, exact16 tenth DONE, command/scope/live claim and every seventh/eighth/
+index/ninth/tenth member are natively bound. Three indexed original prefixes
+are each capped at251 anchors; their SUM must be<=250 BEFORE package-key
+enumeration. Only source BIGINT keys and separate source-less sale C-text keys
+cross the boundary. No payload/cache, caller generation/key/ordinal/roster,
+population scan, callback or count/hash stands in for the key set.
+
+The owner compares BOTH-direction exact key-set membership and selected anchor
+count against its freshly reconciled WHOLE originals/ENTIRE caches, then rereads
+the native key set AFTER all ending authorization/member/head fences. A wrong
+generation is refused before the combined packet. The compact output gains only
+`native_key_set_reconciled:true`; it still explicitly denies global native dedup,
+economic/quarter/publication/licensed/live authority. Closed DTO tests cover
+BIGINT precision, numeric source vs C-text legacy order, separate equal-valued
+namespaces, duplicate/missing/extra/overflow/hostile results. Authored actual
+cloud probes cover missing, extra, same-cardinality replacement, anchor count,
+generation and ending-key changes with unchanged-state rollback. Three new
+negative owner calls per nonempty graph preserve the existing five semantic
+proofs and unchanged180s deadlines; the two tight positive/recovery graphs gain
+NO calls. NEW exact-head native acceptance is still pending, not inherited.
+
+This is a bounded prerequisite INSIDE the actual original owner, not the full
+durable index. Phase17, global source/legacy registries, per-account edges,
+atomic job/continuation transitions and native orphan/recovery guards remain
+UNIMPLEMENTED. The full durable index is next, followed by real economic and
+calendar-quarter authority, coherent publication, workers/terminal pins and all
+licensed>50k/5-mile/10-mile/city/retrospective/live acceptance. Limits remain
+256SQL/32MB/60s whole owner,250 originals,180s fixture,120s statement,pool2.
+No protected merge, paid/forced review request, deployment/activation, grants,
+production/report/choice/pin changes or Apply tests. Roadmap NOT complete.
+
 ## Fixed receipt batches native PASS; first transaction-source seam (2026-10-11)
 
 Exact parent feature head323a00a3 passes all SEVEN checks. FULL3,149,913-character

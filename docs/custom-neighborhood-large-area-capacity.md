@@ -1,5 +1,36 @@
 # Complete larger-area Custom neighborhood studies
 
+## Native rank candidates connected to the actual first-original owner; still provisional (2026-10-11)
+
+The inactive child of PR1284 adds a read-only seam INSIDE the existing bounded
+database original owner. It requires the actual ninth's fresh terminal EMPTY,
+strict15 roots and current consumed claim/selection command. A separate fixed
+ordinal1 plan reopens the COMPLETE issued graph, whole stock/CAD/all-date
+transaction and required subject originals, ENTIRE neutral caches, and every
+seventh/eighth/index/ninth member field. The same actor/assignment/private-draft/
+subject/source/claim/workspace/parent/member ending fences run AFTER the single
+provisional native three-metric rank query and BEFORE returning anything. No caller rank/cursor/roster/value/count/callback,
+new durable phase, payload copy, source grant or widened old reader is added.
+
+This freshly reconciles ONLY the first selected account (or explicit EMPTY).
+The native ranks remain explicitly provisional with no complete-population
+source/statistics authority. It is NOT the later complete bounded semantic
+statistics pass, exact medians/CODs/quarters, licensed acquisition or live speed
+acceptance. The next durable owner still needs a native cursor, reference-only
+progress and bounded derived summaries, COMPLETE fresh original replay for
+EVERY selected account, independent eligible/state-count reconciliation and a
+separate fresh EMPTY before statistics may become publishable. Do not rerank
+the full population on every account or substitute counts/hashes for originals.
+
+Cloud probes are authored for all FOUR independently issued graphs, plus the
+full first-original/current-ending refusal matrix on the genuine8000/later0
+graph. They require entire prior-state/lease preservation, early original
+refusals before candidates and ending refusals after candidates, and unchanged256-query/32MB/60-second owner and250-original
+packet limits. Local focused passes are NOT native cloud execution. Exact-head
+native/security/full checks and actual included review remain required before
+protected dependency integration. No route/default/worker/scheduler, activation,
+deployment, pin, Apply, accepted report or genuine Hardy choice changed.
+
 ## Native bounded rank-candidate groundwork authored, not semantic statistics (2026-10-11)
 
 The child of actual ninth-owner PR1283 adds a separate INACTIVE read-only native

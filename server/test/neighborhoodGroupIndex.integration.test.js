@@ -1817,7 +1817,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       if(refsFault==='union_delta_count'&&config.text.includes('custom-cohort-selected-union-v2:member-insert'))
         refsFault='union_delta_after_member';
       if(refsFault==='transaction_selected_flag'&&config.text===NEIGHBORHOOD_FIRST_COMPLETED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL){
-        refsFault=null;const rows=JSON.parse(result.rows[0].page_json),row=rows.find(r=>r.kind==='source_records'&&r.account_id===result.rows[0].account_id);
+        refsFault=null;const rows=JSON.parse(result.rows[0].page_json),row=rows.find(r=>
+          ['source_records','sales','sale_links'].includes(r.kind)&&r.account_id===result.rows[0].account_id);
         assert.ok(row,'nonvacuous first-selected original association');assert.equal(row.selected_union_member,true);
         row.selected_union_member=false;return {...result,rows:[{...result.rows[0],page_json:JSON.stringify(rows)}]};
       }

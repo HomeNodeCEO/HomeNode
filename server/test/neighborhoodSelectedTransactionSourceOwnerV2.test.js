@@ -55,7 +55,8 @@ test('actual owner uses separate admission, native first member, complete origin
 test('cloud probes exercise actual first source boundary in three independently captured graphs without changing the five tenth graphs or timeouts',()=>{
   const s=readFileSync(new URL('./neighborhoodGroupIndex.integration.test.js',import.meta.url),'utf8');
   for(const text of ['[native-first-selected-transaction-source-original-owner-v2]','if(!positiveIndexedSourceFixture)',
-    "refsFault==='transaction_selected_flag'",'row.selected_union_member=false',"['metric_assignment_ending',/assignment_access_denied/]",
+    "refsFault==='transaction_selected_flag'","['source_records','sales','sale_links'].includes(r.kind)&&r.account_id===result.rows[0].account_id",
+    'row.selected_union_member=false',"['metric_assignment_ending',/assignment_access_denied/]",
     "['metric_draft_ending',/private_source_read_only/]",'await semanticUnchanged(before)',
     'value.membership.subject_selected_union_member,allSelected','value.transaction_original_count,value.membership.associations.length',
     "assert.equal(value.global_selected_native_deduplication,false)"])assert.ok(s.includes(text),text);

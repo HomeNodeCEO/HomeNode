@@ -1365,13 +1365,14 @@ test('isolated PostgreSQL: freezes a complete 60001-account original source popu
 // Independent real-native captures: preserve the original five-failure terminal
 // test, and build an entirely new issued graph for the waiting boundary. Never
 // clone/rebind job roots, summaries, original payloads or caller DONE metadata.
-for(const selectionWaitFixture of [false,true,'intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery']) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
-  +(['intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery'].includes(selectionWaitFixture)?` with explicit new-study selection ${selectionWaitFixture}`:selectionWaitFixture?' with issued selection waiting':''),{
+for(const selectionWaitFixture of [false,true,'intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction']) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
+  +(['intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction'].includes(selectionWaitFixture)?` with explicit new-study selection ${selectionWaitFixture}`:selectionWaitFixture?' with issued selection waiting':''),{
   skip:!process.env.DATABASE_URL,timeout:180_000,
 },async()=>{
-  const semanticRecoveryFixture=selectionWaitFixture==='union-all-semantic-recovery',
+  const sharedTransactionFixture=selectionWaitFixture==='union-all-shared-transaction',
+    semanticRecoveryFixture=selectionWaitFixture==='union-all-semantic-recovery',
     positiveIndexedSourceFixture=selectionWaitFixture==='union-all-site-positive'||semanticRecoveryFixture,
-    observedHousingFixture=selectionWaitFixture==='union-all'||positiveIndexedSourceFixture;
+    observedHousingFixture=selectionWaitFixture==='union-all'||positiveIndexedSourceFixture||sharedTransactionFixture;
   const target=await prepareNeighborhoodCiDatabase();const {default:pg}=await import('pg');
   const pool=new pg.Pool({connectionString:target.connectionString,max:2,statement_timeout:120_000});
   const preparedCiQueries=observeNeighborhoodCiPreparedQueries(pool);
@@ -1430,6 +1431,15 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     await pool.query(`INSERT INTO core.sale_parcels(id,source_record_id,source_position,parcel_sequence,account_id,is_resolved) VALUES
       (1,501,1,1,'CLOSURE-A',true),(2,501,1,2,'CLOSURE-OUTSIDE',true),
       (3,503,1,1,'CLOSURE-B',true),(4,503,1,2,NULL,false),(5,502,1,1,'CLOSURE-OUTSIDE',true)`);
+    // A separate graph, changed ONLY in live source tables BEFORE genuine
+    // capture. Never copy/rebind issued roots, receipts, originals or caches.
+    // Source501 is now native to BOTH selected accounts. Its sale still has
+    // an OUTSIDE account; unresolved503 and excluded second-hop502 survive.
+    // Legacy10 then3 gives nonvacuous C-text order (not numeric3 then10).
+    if(sharedTransactionFixture){
+      await pool.query("UPDATE core.sale_parcels SET account_id='CLOSURE-B' WHERE id=2");
+      await pool.query("INSERT INTO core.sales(id,source_record_id,account_id,closing_date,sale_price) VALUES(10,NULL,'CLOSURE-B','2012-01-01',200000)");
+    }
     const run=randomUUID(),otherRun=randomUUID();
     await pool.query(`INSERT INTO gis.source_sync_runs(id,source_key,status,records_seen) VALUES
       ($1,'dcad_parcels','complete',5),($2,'other_source','complete',99)`,[run,otherRun]);
@@ -1452,7 +1462,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     });
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).pinPreparedGeneration(claim,options));
     const expected={parcels:['1','2','4'],accounts:['CLOSURE-A','CLOSURE-B'],source_records:['501','503','504'],
-      sales:['1','3','4'],sale_links:['1','2','3','4'],sync_state:['dcad_parcels'],sync_runs:[run]};
+      sales:sharedTransactionFixture?['1','10','3','4']:['1','3','4'],sale_links:['1','2','3','4'],sync_state:['dcad_parcels'],sync_runs:[run]};
     // This storage-only fixture supplies a synthetic intent reference. The
     // separate 60,001-property test above uses the actual current subject owner.
     // Exact stock includes null-account parcel5 but NOT outside account-part4;
@@ -1514,9 +1524,9 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         const payload=JSON.parse(rows[0].payload_text);assert.equal(payload.current_price,'9007199254740993');
         assert.equal(payload.close_date,'2010-01-01');assert.equal(payload.source_raw_witness.fields.ClosePrice.value_text,'9007199254740993');
       }
-      if(kind==='sales')assert.equal(JSON.parse(rows[1].payload_text).closing_date,'2012-01-01','legacy observations outside analytic period remain original');
+      if(kind==='sales')assert.equal(JSON.parse(rows.find(r=>r.row_key==='3').payload_text).closing_date,'2012-01-01','legacy observations outside analytic period remain original');
       if(kind==='sale_links'){
-        assert.equal(JSON.parse(rows[1].payload_text).account_id,'CLOSURE-OUTSIDE','package association is retained, not stock membership');
+        assert.equal(JSON.parse(rows[1].payload_text).account_id,sharedTransactionFixture?'CLOSURE-B':'CLOSURE-OUTSIDE','whole original package association is retained, not inferred from stock');
         assert.equal(JSON.parse(rows[3].payload_text).is_resolved,false,'unresolved seeded associations are never filtered away');
       }
     });
@@ -1781,7 +1791,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       assert.equal(fresh.operation_id,refsOperation);assert.equal(fresh.attempts,2);assert.notEqual(fresh.claim_token,refsClaim.claim_token);
       Object.assign(refsClaim,{operation_id:fresh.operation_id,claim_token:fresh.claim_token,attempts:fresh.attempts});
     }
-    const refsCalls=[],refsQueryParameters=[],refsBlobPuts=[];let refsFault=null,refsAbort=null;
+    const refsCalls=[],refsQueryParameters=[],refsBlobPuts=[],sharedSelectedEvidencePackets=new Map();let refsFault=null,refsAbort=null;
     const refsPool={async connect(){const client=await pool.connect();let cadHeaderReads=0,transactionHeaderReads=0,nativeTransactionKeyReads=0,transactionCandidatePlanReads=0;return {release:client.release.bind(client),async query(config){
       refsCalls.push(config.text);
       refsQueryParameters.push(config.values);
@@ -1828,6 +1838,29 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       }
       if(refsFault==='union_delta_count'&&config.text.includes('custom-cohort-selected-union-v2:member-insert'))
         refsFault='union_delta_after_member';
+      if(sharedTransactionFixture&&config.text===NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL&&result.rows[0]?.account_id
+        &&result.rows[0].page_count===result.rows[0].original_count&&result.rows[0].page_count>0){
+        // Bounded TWO-account test oracle only, never fed back into the owner
+        // as source authority. Observe the actual native combined ORIGINAL
+        // packet; the owner must still reconcile it and issue real progress.
+        const packet=result.rows[0],rows=JSON.parse(packet.page_json).filter(r=>['source_records','sales','sale_links'].includes(r.kind)),
+          anchors=rows.filter(r=>r.account_id===packet.account_id),
+          sources=[...new Set(anchors.filter(r=>r.source_record_id!==null).map(r=>r.source_record_id))].sort((a,b)=>BigInt(a)<BigInt(b)?-1:1),
+          legacy=anchors.filter(r=>r.kind==='sales'&&r.source_record_id===null).map(r=>r.row_key).sort();
+        assert.ok(rows.every(r=>typeof r.original_text==='string'&&typeof r.typed==='object'),'whole originals and ENTIRE neutral cells, not a key/count callback');
+        assert.equal(rows.filter(r=>r.source_record_id==='501').length,4,'later B reopens the ENTIRE shared501 package, not only its own link');
+        assert.equal(rows.find(r=>r.kind==='sale_links'&&r.row_key==='2').account_id,'CLOSURE-B');
+        assert.ok(rows.some(r=>r.account_id==='CLOSURE-OUTSIDE'),'shared whole package retains outside sale');
+        assert.ok(!rows.some(r=>r.source_record_id==='502'),'no second-hop source expansion');
+        if(packet.account_id==='CLOSURE-A'){
+          assert.deepEqual(sources,['501']);assert.deepEqual(legacy,[]);assert.equal(rows.length,4);assert.equal(anchors.length,2);
+        }else{
+          assert.equal(packet.account_id,'CLOSURE-B');assert.deepEqual(sources,['501','503','504']);assert.deepEqual(legacy,['10','3']);
+          assert.equal(rows.length,11);assert.equal(anchors.length,5);assert.ok(rows.some(r=>r.account_id===null));
+        }
+        sharedSelectedEvidencePackets.set(packet.account_id,{source_keys:sources,legacy_keys:legacy,whole_originals:rows.length,own_anchors:anchors.length});
+        assert.ok(sharedSelectedEvidencePackets.size<=2);
+      }
       if(refsFault==='transaction_selected_flag'&&config.text===NEIGHBORHOOD_FIRST_COMPLETED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL){
         refsFault=null;const rows=JSON.parse(result.rows[0].page_json),row=rows.find(r=>
           ['source_records','sales','sale_links'].includes(r.kind)&&r.account_id===result.rows[0].account_id);
@@ -2967,7 +3000,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       'missing same-payload currency is not inferred from normalized price');
     assert.equal(transactionRows.source_records.find(r=>r.row_key==='504').account_id,'CLOSURE-OUTSIDE');
     assert.equal(transactionRows.sales.find(r=>r.row_key==='3').source_record_id,null);
-    assert.equal(transactionRows.sale_links.find(r=>r.row_key==='2').account_id,'CLOSURE-OUTSIDE');
+    assert.equal(transactionRows.sale_links.find(r=>r.row_key==='2').account_id,sharedTransactionFixture?'CLOSURE-B':'CLOSURE-OUTSIDE');
     assert.equal(transactionRows.sale_links.find(r=>r.row_key==='4').account_id,null);
     const assertTransactionUnchanged=async()=>{
       assert.deepEqual(await readRefsCheckpoint(),identityCommitted);assert.deepEqual(await readRefsAnchor(),finalAnchor);
@@ -2992,7 +3025,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     }
     await assert.rejects(freshRefsOwner()[transactionMethod](sourceInput,{...transactionOptions,captureJobClaim:sourceClaim}),/checkpoint_conflict/);
     assert.ok(!refsCalls.slice(transactionFrom).some(sql=>/ST_DWithin|neighborhood-frozen-job-closure:|payload::text|shared-typed-v2:(?:page|begin|rows|progress)|checkpoint-save|anchor-(?:advance|insert)/.test(sql)));
-    console.info('[native-shared-transaction-page-owner-v2]',{source_records:3,sales:3,sale_links:4,
+    console.info('[native-shared-transaction-page-owner-v2]',{source_records:3,sales:expected.sales.length,sale_links:4,
       outside_and_unresolved_links_retained:true,legacy_stock_sale_retained:true,second_hop_source_502_excluded:true,
       all_dates_before_period_resolution:true,no_currency_or_normalized_fallback:true,actual_issued_prerequisites:true,
       current_authorization_and_ending_cache_refusal:true,partial_unissued_corrupt_heads_refused:true,lost_commit_reopen:true,
@@ -3044,7 +3077,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       await assertTransactionUnchanged();
     }
     assert.ok(!refsCalls.slice(temporalFrom).some(sql=>/ST_DWithin|neighborhood-frozen-job-closure:|payload::text|shared-typed-v2:(?:page|begin|rows|progress)|checkpoint-save|anchor-(?:advance|insert)/.test(sql)));
-    console.info('[native-retained-transaction-temporal-owner-v1]',{source_records:3,sales:3,sale_links:4,
+    console.info('[native-retained-transaction-temporal-owner-v1]',{source_records:3,sales:expected.sales.length,sale_links:4,
       actual_issued_owner_and_retained_period:true,older_and_outside_originals_retained:true,closing_date_bounds_inclusive:true,
       no_normalized_reported_fallback:true,unresolved_links_without_invented_date:true,
       unissued_partial_corrupt_prerequisites_refused:true,ending_current_authorization_cache_refusal:true,lost_commit_reopen:true,
@@ -3065,10 +3098,10 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           assert.equal(page.package.associations.provider_parcel_membership,'not_established');}
         cursor=page.next_cursor;ended=page.end_of_kind;assert.ok(++steps<=4);
       }
-      assert.equal(steps,kind==='source_record'?4:2,'last whole package requires an independent empty probe');
+      assert.equal(steps,kind==='source_record'?4:sharedTransactionFixture?3:2,'last whole package requires an independent empty probe');
     }
     assert.deepEqual(packages.filter(p=>p.kind==='source_record').map(p=>p.native_key),['501','503','504']);
-    assert.deepEqual(packages.filter(p=>p.kind==='legacy_sale').map(p=>p.native_key),['3']);
+    assert.deepEqual(packages.filter(p=>p.kind==='legacy_sale').map(p=>p.native_key),sharedTransactionFixture?['10','3']:['3']);
     for(const kind of ['source_records','sales','sale_links']){
       const identities=packages.flatMap(p=>p.rows).filter(e=>e.projection.kind===kind).map(e=>e.projection.row_key).sort();
       assert.deepEqual(identities,expected[kind],'complete per-package identities independently match whole issued one-hop graph');
@@ -3096,7 +3129,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     }
     await assert.rejects(freshRefsOwner()[packageMethod](sourceInput,{...packageOptions,captureJobClaim:sourceClaim}),/checkpoint_conflict/);
     assert.ok(!refsCalls.slice(packageFrom).some(sql=>/ST_DWithin|neighborhood-frozen-job-closure:|payload::text|shared-typed-v2:(?:page|begin|rows|progress)|checkpoint-save|anchor-(?:advance|insert)/.test(sql)));
-    console.info('[native-whole-transaction-package-owner-v1]',{source_packages:3,legacy_packages:1,source_records:3,sales:3,sale_links:4,
+    console.info('[native-whole-transaction-package-owner-v1]',{source_packages:3,legacy_packages:sharedTransactionFixture?2:1,source_records:3,sales:expected.sales.length,sale_links:4,
       independent_complete_native_kind_counts:true,outside_unresolved_and_all_date_evidence_retained:true,second_hop_502_excluded:true,
       retained_dates_before_resolution:true,actual_issued_current_authorized_owner:true,fresh_empty_terminal_probes:true,
       partial_unissued_corrupt_prerequisites_refused:true,ending_current_authorization_cache_refusal:true,lost_commit_reopen:true,
@@ -3116,7 +3149,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         if(page.package){originalPackages.push(page.package);assert.equal(page.end_of_kind,false);}
         cursor=page.next_cursor;ended=page.end_of_kind;assert.ok(++steps<=4);
       }
-      assert.equal(steps,kind==='source_record'?4:2);
+      assert.equal(steps,kind==='source_record'?4:sharedTransactionFixture?3:2);
     }
     assert.deepEqual(originalPackages,packages,'original replay preserves every original native identity/date/outside/unresolved row');
     for(const kind of ['source_records','sales','sale_links']){
@@ -3147,8 +3180,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     }
     await assert.rejects(freshRefsOwner()[originalPackageMethod](sourceInput,{...packageOptions,captureJobClaim:sourceClaim}),/checkpoint_conflict/);
     assert.ok(!refsCalls.slice(originalPackageFrom).some(sql=>/ST_DWithin|neighborhood-frozen-job-closure:|shared-typed-v2:(?:page|begin|rows|progress)|checkpoint-save|anchor-(?:advance|insert)/.test(sql)));
-    console.info('[native-original-reconciled-transaction-packages-owner-v2]',{source_packages:3,legacy_packages:1,
-      source_records:3,sales:3,sale_links:4,every_original_recompiled_before_projection:true,
+    console.info('[native-original-reconciled-transaction-packages-owner-v2]',{source_packages:3,legacy_packages:sharedTransactionFixture?2:1,
+      source_records:3,sales:expected.sales.length,sale_links:4,every_original_recompiled_before_projection:true,
       entire_cache_native_identity_hash_bytes_compared:true,original_graph_identities_reconciled:true,
       all_date_outside_unresolved_evidence_retained:true,retained_year_period_before_association:true,
       partial_unissued_corrupt_prerequisites_refused:true,current_and_ending_rights_cache_refusal:true,
@@ -4432,8 +4465,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       assert.equal(await pinCount(),pinsBeforeContinuation);assert.deepEqual(await readTargetWorkspace(),targetWorkspace);
       assert.deepEqual(await readTargetHistory(),targetHistory);assert.deepEqual(await readTargetReport(),targetReport);
       assert.deepEqual(await readTargetWorkfile(),targetWorkfile);assert.deepEqual(await readPriorTargetMetadata(),priorTargetMetadata);
-      if(['intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery'].includes(selectionWaitFixture)){
-        const allSelected=selectionWaitFixture==='union-all'||positiveIndexedSourceFixture,selectedCount=selectionWaitFixture==='union-empty'?0:allSelected?2:1;
+      if(['intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction'].includes(selectionWaitFixture)){
+        const allSelected=selectionWaitFixture==='union-all'||positiveIndexedSourceFixture||sharedTransactionFixture,selectedCount=selectionWaitFixture==='union-empty'?0:allSelected?2:1;
         const intentMethod='resumeOriginalFrozenCaptureJobSelectionIntentReferencesV2',
           selectionIntent={command_id:randomUUID(),catalog_reference:catalogFinal.receipt_reference,workspace_revision:1,
             included_recorded_group_ids:selectionWaitFixture==='union-empty'?[]:allSelected
@@ -5029,7 +5062,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             assert.deepEqual(tx.packages.map(p=>[p.kind,p.native_key]),allSelected?[['source_record','501']]:
               [['legacy_sale','3'],['source_record','503'],['source_record','504']]);
             const rows=tx.packages.flatMap(p=>p.rows);
-            assert.equal(rows.filter(r=>r.account_id==='CLOSURE-OUTSIDE').length,allSelected?2:1);
+            assert.equal(rows.filter(r=>r.account_id==='CLOSURE-OUTSIDE').length,allSelected&&!sharedTransactionFixture?2:1);
             if(allSelected){assert.equal(rows.find(r=>r.kind==='source_records').normalized.period_disposition.state,'outside_period');}
             else{assert.equal(rows.find(r=>r.kind==='sales'&&r.row_key==='3').normalized.period_disposition.state,'outside_period');
               assert.equal(rows.find(r=>r.kind==='source_records'&&r.row_key==='504').normalized.period_disposition.state,'in_period');
@@ -5446,6 +5479,11 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           assert.ok(!terminalCalls.some(sql=>sql===NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL
             ||sql===NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL||sql===NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL));
           liveClaim=await consume();const completedEvidence=await evidenceSnapshot(),endedFrom=refsCalls.length;
+          if(sharedTransactionFixture){
+            assert.deepEqual([...sharedSelectedEvidencePackets.keys()].sort(),['CLOSURE-A','CLOSURE-B']);
+            assert.equal(JSON.parse(completedEvidence.heads[0].canonical_utf8).after.done,true,
+              'both actual complete-original packets must pass the real owner and committed sixth fresh EMPTY, not merely a test observer');
+          }
           await assert.rejects(evidenceStep(),/selected_evidence_finished/);await evidenceUnchanged(completedEvidence);
           assert.ok(!refsCalls.slice(endedFrom).includes(NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL));
           await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
@@ -6769,6 +6807,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             for(const row of value.membership.associations){
               if(row.account_id===null){assert.equal(row.stock_member,null);assert.equal(row.selected_union_member,null);}
               else if(row.account_id===value.selected_entry.account_id){assert.equal(row.stock_member,true);assert.equal(row.selected_union_member,true);}
+              else if(sharedTransactionFixture&&row.account_id==='CLOSURE-B'){assert.equal(row.stock_member,true);assert.equal(row.selected_union_member,true);}
               else{assert.equal(row.account_id,'CLOSURE-OUTSIDE');assert.equal(row.stock_member,false);assert.equal(row.selected_union_member,false);}
             }
             if(selectedCount&&!allSelected)assert.ok(value.membership.associations.some(r=>r.account_id===null),'unresolved is not false/selected');
@@ -6838,6 +6877,29 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
               legacy_sale_keys:selectedCount&&!allSelected?1:0,done:selectedCount===0});
             assert.deepEqual(c.union_reference,value.union_reference);assert.deepEqual(c.semantic_reference,value.semantic_reference);
             assert.equal(c.association_anchor_count,selectedCount?(allSelected?2:3):0);
+            if(sharedTransactionFixture){
+              assert.deepEqual(sharedSelectedEvidencePackets.get('CLOSURE-B'),{source_keys:['501','503','504'],legacy_keys:['10','3'],whole_originals:11,own_anchors:5});
+              const nativeRows=(await pool.query(`SELECT o.kind,o.row_key,o.account_id,o.source_record_id::text AS source_record_id,u.ordinal AS selected_ordinal
+                FROM app.neighborhood_frozen_source_rows o
+                LEFT JOIN app.neighborhood_custom_cohort_selected_union_v2_rows u ON u.operation_id=$1::uuid AND u.organization_id=$2::uuid AND u.account_id=o.account_id
+                WHERE o.generation_id=$3::uuid AND (o.source_record_id=501 OR o.kind='sales' AND o.source_record_id IS NULL AND o.row_key IN ('10','3'))
+                ORDER BY o.kind COLLATE "C",o.row_key COLLATE "C"`,[refsOperation,organization,frozen.generationId])).rows;
+              assert.deepEqual(nativeRows.map(r=>[r.kind,r.row_key,r.account_id,r.source_record_id,r.selected_ordinal]),[
+                ['sale_links','1','CLOSURE-A','501',1],['sale_links','2','CLOSURE-B','501',2],
+                ['sales','1','CLOSURE-OUTSIDE','501',null],['sales','10','CLOSURE-B',null,2],['sales','3','CLOSURE-B',null,2],
+                ['source_records','501','CLOSURE-A','501',1]]);
+              assert.ok(candidateValue.membership.associations.some(r=>r.account_id==='CLOSURE-B'&&r.stock_member===true&&r.selected_union_member===true),
+                'FIRST A packet retains real selected B association rather than treating every non-first account as OUTSIDE');
+              console.info('[native-independently-captured-shared-selected-transaction-graph-v2]',{
+                actual_new_live_source_capture_not_rebound_roots:true,seven_layer_complete_original_graph:true,
+                actual_selected_A_then_B_sixth_original_reconciliation_and_fresh_EMPTY:true,
+                later_B_whole_shared501_originals_reopened:4,source_keys_B:['501','503','504'],legacy_C_text_keys_B:['10','3'],
+                selected_associations_independently_join_actual_union:true,OUTSIDE_unresolved_and_second_hop_exclusion:true,
+                actual_tenth_DONE_exact16_and_first_candidate:true,first_A_current_and_all_ending_fences:true,
+                all_eight_old_graphs_and_two_tight_fixture_deadlines_unchanged:true,
+                durable_index_issued:false,phase17:false,global_deduplication:false,economic_transactions:false,
+                licensed_acquisition:false,production_speed:false,worker_activation:false});
+            }
             assert.equal(candidateSql.filter(q=>q.includes('custom-cohort-selected-transaction-first-candidate-v2:native-plan')).length,2);
             assert.equal(candidateSql.filter(q=>q.includes('custom-cohort-selected-transaction-first-candidate-v2:transaction')).length,1);
             assert.equal(candidateSql.filter(q=>q===NEIGHBORHOOD_FIRST_COMPLETED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL).length,1);

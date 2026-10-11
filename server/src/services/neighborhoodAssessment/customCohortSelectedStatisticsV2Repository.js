@@ -80,6 +80,44 @@ export function createCustomCohortSelectedStatisticsV2Repository(raw){
         ||!['assigned','unassigned'].includes(r.state)||(r.state==='assigned'?typeof r.assigned_group_id!=='string'
           ||!/^recorded-cad:[a-f0-9]{64}$/.test(r.assigned_group_id):r.assigned_group_id!==null))fail('corrupt');
       return Object.freeze({...r,entry_reference:ref(r.entry_reference,1000000),row_reference:ref(r.row_reference,4096)});
+    },
+    /** Fixed first ordinal AFTER actual DONE eighth. The returned references
+     * are structural only. The original owner MUST derive a fresh contribution
+     * from complete originals and compare EVERY retained field before return.
+     * Never silently substitute seventh rows for a missing eighth member. */
+    async readFirstFrequencyEntry(...args){
+      if(args.length)fail('invalid_input');
+      const r=data(one(await client.query(`/* custom-cohort-selected-statistics-v2:first-frequency-entry */
+        SELECT m.account_id,m.ordinal,m.partition_ordinal,m.entry_reference,entry.state,entry.assigned_group_id,
+          m.metric_row_reference AS row_reference,m.row_reference AS contribution_row_reference
+        ${PARENTS}
+        JOIN app.neighborhood_custom_cohort_selected_statistics_v2_heads h ON h.operation_id=job.operation_id AND h.organization_id=job.organization_id
+        JOIN app.neighborhood_cohort_evidence_blobs b ON b.organization_id=h.organization_id
+          AND b.content_sha256=h.receipt_reference->>'content_sha256'
+          AND b.canonical_utf8_bytes::text=h.receipt_reference->>'canonical_utf8_bytes' AND b.canonical_utf8_bytes<=16000
+        LEFT JOIN app.neighborhood_custom_cohort_selected_statistics_v2_rows m ON m.operation_id=h.operation_id
+          AND m.organization_id=h.organization_id AND m.ordinal=1
+        LEFT JOIN app.neighborhood_custom_cohort_selected_metrics_v2_rows metric ON metric.operation_id=m.operation_id
+          AND metric.organization_id=m.organization_id AND metric.ordinal=m.ordinal AND metric.account_id=m.account_id
+          AND metric.partition_ordinal=m.partition_ordinal AND metric.entry_reference=m.entry_reference AND metric.row_reference=m.metric_row_reference
+        LEFT JOIN app.neighborhood_custom_cohort_selected_union_v2_rows u ON u.operation_id=metric.operation_id AND u.organization_id=metric.organization_id
+          AND u.ordinal=metric.ordinal AND u.account_id=metric.account_id AND u.partition_ordinal=metric.partition_ordinal AND u.entry_reference=metric.entry_reference
+        LEFT JOIN app.neighborhood_custom_cohort_recorded_partition_v2_rows entry ON entry.operation_id=u.operation_id
+          AND entry.organization_id=u.organization_id AND entry.account_id=u.account_id AND entry.ordinal=u.partition_ordinal AND entry.entry_reference=u.entry_reference
+        WHERE ${FENCE} AND ${DONE} AND h.command_id=seventh.command_id AND h.union_reference=seventh.union_reference
+          AND h.eligibility_reference=seventh.eligibility_reference AND h.evidence_reference=seventh.evidence_reference
+          AND h.metrics_reference=seventh.receipt_reference
+          AND b.canonical_utf8::jsonb->>'format'='cohort_selected_statistics_receipt_v2'
+          AND b.canonical_utf8::jsonb->>'sequence'=h.sequence::text AND b.canonical_utf8::jsonb->'after'->>'done'='true'
+          AND app.neighborhood_selected_statistics_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)`,bound)),
+        ['account_id','ordinal','partition_ordinal','entry_reference','state','assigned_group_id','row_reference','contribution_row_reference']);
+      if(Object.values(r).every(v=>v===null))return null;
+      if(typeof r.account_id!=='string'||!r.account_id||r.account_id.length>64||!r.account_id.isWellFormed()||r.account_id.trim()!==r.account_id
+        ||/[\u0000-\u001f\u007f]/.test(r.account_id)||r.ordinal!==1||!Number.isInteger(r.partition_ordinal)||r.partition_ordinal<1||r.partition_ordinal>2000000
+        ||!['assigned','unassigned'].includes(r.state)||(r.state==='assigned'?typeof r.assigned_group_id!=='string'
+          ||!/^recorded-cad:[a-f0-9]{64}$/.test(r.assigned_group_id):r.assigned_group_id!==null))fail('corrupt');
+      return Object.freeze({...r,entry_reference:ref(r.entry_reference,1000000),row_reference:ref(r.row_reference,4096),
+        contribution_row_reference:ref(r.contribution_row_reference,4096)});
     },async advance(...args){
       if(args.length!==3)fail('invalid_input');
       const expected=anchor(args[0]),receipt=ref(args[1]),rowRef=args[2]===null?null:ref(args[2],4096),

@@ -119,7 +119,8 @@ import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL,
   NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,
   NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,
   NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,
-  NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL }
+  NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,
+  NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSelectedTransactionOriginalPackageV2.js';
 import { expandCohortDiagnosticCompressedJsonV1 } from './helpers/expandCohortDiagnosticCompressedJsonV1.js';
 
@@ -1782,7 +1783,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           "UPDATE app.custom_appraisal_workfiles SET status='archived' WHERE assignment_file_id=$1",[assignment]);
       }
       if([NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,
-        NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
+        NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,
+        NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
         &&['metric_assignment_ending','metric_draft_ending'].includes(refsFault)){
         const fault=refsFault;refsFault=null;
         if(fault==='metric_assignment_ending')await client.query(
@@ -1834,7 +1836,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       if([NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL,
         NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,
         NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,
-        NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
+        NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,
+        NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
         &&['cad_original_cell','cad_original_missing','cad_original_text','cad_original_bytes'].includes(refsFault)){
         const fault=refsFault;refsFault=null;const key=config.text===NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL?'packet_json':'page_json',
           rows=JSON.parse(result.rows[0][key]),row=rows.find(r=>r.kind==='primary');
@@ -1847,7 +1850,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       if((Object.values(NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL).includes(config.text)
         ||[NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,
           NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,
-          NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL].includes(config.text))
+          NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,
+          NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL].includes(config.text))
         &&['tx_original_mismatch','tx_original_missing','tx_original_text'].includes(refsFault)){
         const fault=refsFault,key=Object.values(NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL).includes(config.text)?'packet_json':'page_json';
         refsFault=null;const rows=JSON.parse(result.rows[0][key]);
@@ -1863,7 +1867,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL,
         NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,
         NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,
-        NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
+        NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,
+        NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
         &&['stock_cells_mismatch','stock_cells_missing','stock_cells_original'].includes(refsFault)){
         // Corrupt only the transient transport, never the immutable original or
         // installed cache. Correct hashes/counts cannot launder changed cells.
@@ -1901,7 +1906,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       }
       if(config.text.includes('custom-cohort-selected-eligibility-v2:next-selected-entry')||config.text.includes('custom-cohort-selected-evidence-v2:next-selected-entry')
         ||config.text.includes('custom-cohort-selected-evidence-v2:first-metric-entry')||config.text.includes('custom-cohort-selected-metrics-v2:next-selected-entry')
-        ||config.text.includes('custom-cohort-selected-metrics-v2:first-statistics-entry')||config.text.includes('custom-cohort-selected-statistics-v2:next-selected-entry')){
+        ||config.text.includes('custom-cohort-selected-metrics-v2:first-statistics-entry')||config.text.includes('custom-cohort-selected-statistics-v2:next-selected-entry')
+        ||config.text.includes('custom-cohort-selected-statistics-v2:first-frequency-entry')){
         if(refsFault==='eligibility_entry_ending'){refsFault='eligibility_entry_after_first';return result;}
         if(['eligibility_entry_wrong','eligibility_entry_after_first','eligibility_entry_partition','eligibility_entry_missing'].includes(refsFault)){
           const fault=refsFault;refsFault=null;return {...result,rows:result.rows.map(r=>fault==='eligibility_entry_missing'
@@ -1909,7 +1915,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
               ?{...r,partition_ordinal:r.partition_ordinal+1}:{...r,account_id:r.account_id==='CLOSURE-A'?'CLOSURE-B':'CLOSURE-A'})};
         }
       }
-      if((config.text.includes('custom-cohort-selected-metrics-v2:first-statistics-entry')||config.text.includes('custom-cohort-selected-statistics-v2:next-selected-entry'))&&['stats_row_cell','stats_row_date','stats_row_member'].includes(refsFault)){
+      if((config.text.includes('custom-cohort-selected-metrics-v2:first-statistics-entry')||config.text.includes('custom-cohort-selected-statistics-v2:next-selected-entry')
+        ||config.text.includes('custom-cohort-selected-statistics-v2:first-frequency-entry'))&&['stats_row_cell','stats_row_date','stats_row_member'].includes(refsFault)){
         const fault=refsFault;refsFault=null;
         // Negative transport probes ONLY. Even a real canonical blob/hash with
         // valid closed grammar is not the native original metric row. The
@@ -1924,6 +1931,31 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         if(fault==='stats_row_member')row.selected_entry.account_id='FOREIGN';
         const reference=await createNeighborhoodCohortBlobRepository(client,organization).put(canonicalAssessmentJson(row));
         return {...result,rows:result.rows.map(r=>({...r,row_reference:reference}))};
+      }
+      if(config.text.includes('custom-cohort-selected-statistics-v2:first-frequency-entry')&&['freq_row_state','freq_row_parts','freq_row_reasons','freq_row_date','freq_row_member','freq_row_parent'].includes(refsFault)){
+        const fault=refsFault;refsFault=null;
+        const stored=(await client.query(`SELECT b.canonical_utf8 FROM app.neighborhood_custom_cohort_selected_statistics_v2_rows r
+          JOIN app.neighborhood_cohort_evidence_blobs b ON b.organization_id=r.organization_id
+            AND b.content_sha256=r.row_reference->>'content_sha256' WHERE r.operation_id=$1 AND r.ordinal=1`,[refsOperation])).rows[0],
+          row=JSON.parse(stored.canonical_utf8);
+        // Negative canonical transport probes. Native seventh null/value and
+        // eligible counts stay IDENTICAL; hashes/counters cannot expose these
+        // changed original states, parts and overlapping reasons. The actual
+        // owner's EVERY-field fresh original comparison must refuse them.
+        if(fault==='freq_row_state')row.metrics.reported_site_area.reported_value_state='unsupported';
+        if(fault==='freq_row_parts')row.metrics.reported_site_area.part_counts.missing++;
+        if(fault==='freq_row_reasons')row.metrics.reported_site_area.exclusion_reasons.push('unsupported_parts');
+        if(fault==='freq_row_date')row.effective_date='2001-01-01';
+        if(fault==='freq_row_member')row.selected_entry.account_id='FOREIGN';
+        if(fault==='freq_row_parent')row.metrics_reference.content_sha256='1'.repeat(64);
+        const reference=await createNeighborhoodCohortBlobRepository(client,organization).put(canonicalAssessmentJson(row));
+        return {...result,rows:result.rows.map(r=>({...r,contribution_row_reference:reference}))};
+      }
+      if(config.text.includes('custom-cohort-selected-statistics-v2:head-read')){
+        if(refsFault==='freq_head_ending'){refsFault='freq_head_after_first';return result;}
+        if(refsFault==='freq_head_after_first'){
+          refsFault=null;return {...result,rows:result.rows.map(r=>({...r,sequence:(r.sequence??0)+1}))};
+        }
       }
       if(config.text.includes('custom-cohort-selected-eligibility-v2:head-read')){
         if(refsFault==='eligibility_head_ending'){refsFault='eligibility_head_after_first';return result;}
@@ -2049,13 +2081,14 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         ||config.text===NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL
         ||config.text===NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL
         ||config.text===NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL
+        ||config.text===NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL
         ||Object.values(NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL).includes(config.text)
         ||Object.values(NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL).includes(config.text)){
         // The ending-header fault is consumed by the later second metadata
         // read, not by the page query. Keep it armed like the COMMIT fault.
         const fault=refsFault;if(!['commit','cad_header','transaction_header','wait_release_rollback','intent_resume_rollback'].includes(fault)
           &&!fault?.startsWith('partition_')&&!fault?.startsWith('catalog_')&&!fault?.startsWith('union_')&&!fault?.startsWith('eligibility_')
-          &&!fault?.startsWith('evidence_')&&!fault?.startsWith('metric_')&&!fault?.startsWith('metrics_')&&!fault?.startsWith('stats_'))refsFault=null;
+          &&!fault?.startsWith('evidence_')&&!fault?.startsWith('metric_')&&!fault?.startsWith('metrics_')&&!fault?.startsWith('stats_')&&!fault?.startsWith('freq_'))refsFault=null;
         if(fault==='license')await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
         if(fault==='role')await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);
         if(fault==='subject')await client.query("UPDATE app.appraisal_subject_snapshots SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2000') WHERE id=$1",[sourceSnapshot]);
@@ -5720,6 +5753,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
                 [refsOperation,canonicalAssessmentJson(ref)]);
             }),/query returned no rows|orphan_row/);await contributionUnchanged(initialContributions);
           }
+          const frequencyMethod='readOriginalFrozenCaptureJobFirstSelectedFrequencyReferencesV2';
           let previousContribution=null;const contributionAccounts=[];
           for(let ordinal=1;ordinal<=selectedCount;ordinal++){
             const before=await contributionSnapshot();
@@ -5757,6 +5791,9 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             liveClaim=await consume();assert.equal(liveClaim.attempts,state.job.attempts);const pending=await contributionSnapshot();
             for(const method of [metricsMethod,statisticsMethod,evidenceMethod,eligibilityMethod,metricMethod])
               await assert.rejects(cadOwner()[method](refsInput,{captureJobClaim:liveClaim}),/checkpoint_conflict/);
+            const unfinishedFrequencyFrom=refsCalls.length;
+            await assert.rejects(cadOwner()[frequencyMethod](refsInput,{captureJobClaim:liveClaim}),/checkpoint_changed|unfinished_selected_statistics/);
+            assert.ok(!refsCalls.slice(unfinishedFrequencyFrom).includes(NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL));
             await contributionUnchanged(pending);contributionAccounts.push(row.selected_entry.account_id);previousContribution=state.heads[0].receipt_reference;
           }
           const pendingContributions=await contributionSnapshot();await contributionRefusals(pendingContributions);
@@ -5816,6 +5853,68 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             terminal_complete_eligibility_reconciles_fifth_and_seventh:true,strict_old_readers_refuse14_fresh_terminal_EMPTY_no_row:true,
             genuine_site_zero_not_null:allSelected,maximum_whole_owner_sql_queries:Math.max(...contributionQueries),whole_owner_limits:ORIGINAL_OWNER_LIMITS,
             prior_heads_selection_workspace_reports_choices_and_pins_unchanged:true,
+            frequency_ledger:false,exact_distributions:false,statistics:false,publication:false,licensed_acquisition:false,production_speed:false,worker_activation:false});
+
+          // Next semantic-source boundary is fixed-first/read-only ONLY.
+          // Reopen ALL current-authorized originals AGAIN; even genuine native
+          // contribution hashes/counts are not enduring source authority.
+          const frequencyQueries=[],frequencyStep=async()=>{const from=refsCalls.length;try{
+            return await cadOwner()[frequencyMethod](refsInput,{captureJobClaim:liveClaim});
+          }finally{frequencyQueries.push(refsCalls.length-from-3);}},frequencyAuthority=await readEvidenceAuthority();
+          await assert.rejects(freshRefsOwner()[frequencyMethod](refsInput,{captureJobClaim:liveClaim}),/CAD_source_policy_required/);
+          for(const key of ['ordinal','selected_accounts','counts','contribution','readOriginal']){
+            const from=refsCalls.length;await assert.rejects(cadOwner()[frequencyMethod](refsInput,{captureJobClaim:liveClaim,[key]:true}),/invalid_options/);
+            assert.equal(refsCalls.length,from);await contributionUnchanged(finishedContributions);
+          }
+          await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+          const deniedFrequencyFrom=refsCalls.length;await assert.rejects(frequencyStep(),/market_data_access_denied/);
+          assert.ok(!refsCalls.slice(deniedFrequencyFrom).some(sql=>sql.includes('selection-intent:frequency-source-read')
+            ||sql===NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL));
+          await contributionUnchanged(finishedContributions);await setFixtureGrant(pool,organization,fixtureGrant(organization));
+          for(const [fault,reason] of [['metric_assignment_ending',/assignment_access_denied/],['metric_draft_ending',/private_source_read_only/],
+            ['subject',/subject_changed/],['claim',/claim_lost/],['cad_header',/CAD_cache_unavailable/],['transaction_header',/cache_unavailable/],
+            ['cad_license',/market_data_access_denied/],['license',/market_data_access_denied/],['freq_head_ending',/checkpoint_conflict/]]){
+            refsFault=fault;await assert.rejects(frequencyStep(),reason);assert.equal(refsFault,null);
+            await contributionUnchanged(finishedContributions);assert.deepEqual(await readEvidenceAuthority(),frequencyAuthority);
+            if(fault==='cad_license')await setCadFixtureGrant(pool,organization,cadGrant);
+            if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+          }
+          if(selectedCount)for(const [fault,reason] of [['stock_cells_mismatch',/original_mismatch/],['stock_cells_original',/original_mismatch/],
+            ['cad_original_cell',/original_mismatch/],['cad_original_text',/original_mismatch/],
+            ['tx_original_mismatch',/original_mismatch/],['tx_original_text',/original_mismatch/],
+            ['eligibility_entry_wrong',/selected_union_original_mismatch/],['eligibility_entry_partition',/partition_original_mismatch/],
+            ['eligibility_entry_ending',/selected_union_original_mismatch/],['stats_row_cell',/selected_metric_original_mismatch/],
+            ['stats_row_date',/selected_metric_original_mismatch/],['stats_row_member',/selected_metric_original_mismatch/],
+            ...['freq_row_state','freq_row_parts','freq_row_reasons','freq_row_date','freq_row_member','freq_row_parent']
+              .map(f=>[f,/selected_contribution_original_mismatch/])]){
+            refsFault=fault;await assert.rejects(frequencyStep(),reason);assert.equal(refsFault,null);await contributionUnchanged(finishedContributions);
+          }
+          const frequencyFrom=refsCalls.length,frequency=await frequencyStep();
+          assert.equal(frequency.status,'current_authorized_first_selected_frequency_originals_reconciled');
+          assert.equal(frequency.retained_contribution_reconciled,selectedCount>0);
+          assert.deepEqual(frequency.contribution_reference,finishedContributions.heads[0].receipt_reference);
+          assert.deepEqual(frequency.contribution_row_reference,finishedContributions.rows[0]?.row_reference??null);
+          assert.equal(frequency.selected_entry?.ordinal??null,selectedCount?1:null);assert.equal(frequency.empty_selected_union,selectedCount===0);
+          for(const key of ['frequency_ledger','exact_distributions','complete_selected_union_metric_population','context_complete','pin_transfer','lease_extended'])
+            assert.equal(frequency[key],false,key);
+          assert.equal(frequency.read_only,true);assert.equal(frequency.statistics,'not_established');assert.equal(frequency.publication,'not_established');
+          assert.equal(frequency.report_update,'none');
+          for(const key of ['statistics_contribution_candidate','metric_row_candidate','reported_comparison'])assert.ok(!Object.hasOwn(frequency,key));
+          const successfulFrequencySql=refsCalls.slice(frequencyFrom);
+          assert.equal(successfulFrequencySql.filter(sql=>sql===NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL).length,1);
+          assert.equal(successfulFrequencySql.filter(sql=>sql.includes('custom-cohort-selected-statistics-v2:first-frequency-entry')).length,2);
+          assert.ok(!successfulFrequencySql.some(sql=>/neighborhood-cohort-blob:insert|custom-cohort-selected-statistics-v2:(row-insert|head-insert|head-advance)|custom-cohort-job:checkpoint-save|custom-cohort-v2-continuation:yield/.test(sql)));
+          assert.ok(Buffer.byteLength(JSON.stringify(frequency))<=16000);await contributionUnchanged(finishedContributions);
+          assert.deepEqual(await frequencyStep(),frequency);await contributionUnchanged(finishedContributions);
+          assert.ok(frequencyQueries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries));
+          console.info('[native-first-selected-frequency-original-reconcile-owner-v2]',{actual_DONE_union_fifth_sixth_seventh_eighth:true,
+            explicit_empty:selectedCount===0,fixed_first_only:true,exact14_original_preserving_roots:true,
+            complete_original_graph_stock_CAD_whole_all_date_transactions_required_subject_entire_cache_reopened:true,
+            EVERY_seventh_metric_and_eighth_contribution_field_reconciled_to_THIS_fresh_original_replay:true,
+            canonical_forged_states_parts_reasons_dates_members_parents_not_hash_or_count_authority:selectedCount>0,
+            current_and_actual_same_TX_ending_assignment_archive_source_rights_refusals_roll_back:true,
+            unfinished_eighth_refuses_before_source_query:selectedCount>0,all_prior_rows_heads_roots_failure_history_continuation_workspace_reports_choices_pins_unchanged:true,
+            no_DML_no_lease_extension_no_new_source_copy:true,maximum_whole_owner_sql_queries:Math.max(...frequencyQueries),whole_owner_limits:ORIGINAL_OWNER_LIMITS,
             frequency_ledger:false,exact_distributions:false,statistics:false,publication:false,licensed_acquisition:false,production_speed:false,worker_activation:false});
           }
 

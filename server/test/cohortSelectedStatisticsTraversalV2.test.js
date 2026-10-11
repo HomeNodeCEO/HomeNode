@@ -87,7 +87,7 @@ test('native eighth guards retain strict old grammar, exact14 parents, immutable
 test('actual bounded original owner reconciles every native row, all ending authority, then writes eighth atomically',()=>{
   const s=readFileSync(new URL('../src/services/neighborhoodAssessment/customCohortContextCapture.js',import.meta.url),'utf8'),
     fresh=s.indexOf('if(!same(row,metricRowCandidate))'),policy=s.indexOf('statisticsContribution=prepareCohortSelectedStatisticsContributionV2',fresh),
-    ending=s.indexOf("if(progressingSelectedStatistics&&!same(await statisticsStore.read(),statisticsAnchor))",policy),
+    ending=s.indexOf("if((progressingSelectedStatistics||readingSelectedFrequencySource)&&!same(await statisticsStore.read(),statisticsAnchor))",policy),
     count=s.indexOf('advanceCohortSelectedStatisticsCountsV2(statisticsCounts',ending),row=s.indexOf('const rowReference=statisticsCandidate===null?',count),
     head=s.indexOf('statisticsStore.advance(',row),cp=s.indexOf("phase:'frozen_selected_statistics_refs_v2'",head),
     yieldAt=s.indexOf('yieldIssued(claim,jobOptions)',cp);

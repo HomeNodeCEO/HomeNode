@@ -255,3 +255,28 @@ export const NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL=
     .replace('r.ordinal=1 AND $4::text=', 'r.ordinal=coalesce(statistics.sequence,0)+1 AND $4::text=')
     .replace('app.neighborhood_selected_metrics_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)',
       'app.neighborhood_selected_statistics_v2_admission_matches(job.operation_id,job.organization_id,job.checkpoint)');
+
+// Distinct fixed-first frequency-source boundary, NOT numerical frequency
+// authority. All five actual native parents must be DONE with exact14 roots.
+// The owner independently replays complete originals/ENTIRE caches and compares
+// EVERY seventh metric and eighth contribution field. Older seven plans remain
+// byte-identical. No caller ordinal, source callback, roster or count adapter.
+export const NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL=
+  NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL
+    .replace('neighborhood-first-selected-statistics-original-package-v2','neighborhood-first-selected-frequency-original-package-v2')
+    .replace('  JOIN app.neighborhood_custom_cohort_selected_union_v2_rows r',`  JOIN app.neighborhood_custom_cohort_selected_statistics_v2_heads statistics
+    ON statistics.operation_id=job.operation_id AND statistics.organization_id=job.organization_id
+  JOIN app.neighborhood_cohort_evidence_blobs statistics_body ON statistics_body.organization_id=statistics.organization_id
+    AND statistics_body.content_sha256=statistics.receipt_reference->>'content_sha256'
+    AND statistics_body.canonical_utf8_bytes::text=statistics.receipt_reference->>'canonical_utf8_bytes' AND statistics_body.canonical_utf8_bytes<=16000
+  JOIN app.neighborhood_custom_cohort_selected_statistics_v2_rows r`)
+    .replace('app.neighborhood_selected_metrics_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)',
+      `app.neighborhood_selected_statistics_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)
+          AND statistics.command_id=command.command_id AND statistics.union_reference=head.receipt_reference
+          AND statistics.eligibility_reference=fifth.receipt_reference AND statistics.evidence_reference=evidence.receipt_reference
+          AND statistics.metrics_reference=metrics.receipt_reference
+          AND statistics_body.canonical_utf8::jsonb->>'format'='cohort_selected_statistics_receipt_v2'
+          AND statistics_body.canonical_utf8::jsonb->>'sequence'=statistics.sequence::text
+          AND statistics_body.canonical_utf8::jsonb->'after'->>'done'='true'
+          AND statistics_body.canonical_utf8::jsonb->'after'->'selected_ordinal'=body.canonical_utf8::jsonb->'after_selected_count'
+          AND statistics_body.canonical_utf8::jsonb->'selected_stock_count'=body.canonical_utf8::jsonb->'after_selected_count'`);

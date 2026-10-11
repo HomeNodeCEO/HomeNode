@@ -38,9 +38,18 @@ COMMIT, lost ACK, native rank/aggregate forgeries and retained EMPTY fifth-claim
 recovery. All remain unverified until the exact-head cloud job completes.
 
 Parent1285's historical ca12 native failure was an omitted GENERIC authority
-fault-injection hook, not a passing acceptance result. The fix750a2c75 is pushed
-with 210 focused tests passing and fresh native cloud checks pending. The new
-child remains inactive and unmerged. Actual included review is still required;
+fault-injection hook, not a passing acceptance result. Its subsequent750a2c75
+cloud run also failed: 417 migration and one subject test passed, but the index
+suite had 13 passes/one failure; edge/idempotence/bootstrap were skipped. The
+real claim-token mutation was refused by the original reader's own ending
+live-claim fence BEFORE the provisional rank query, contrary to the fixture's
+expected query count. Correctionfbc7098c preserves actual mutation/rejection,
+nonvacuous consumed fault and whole-state rollback, and expects zero rank reads
+for that early claim refusal. Subject/CAD-rights and ending-member refusals still
+require their later candidate read. All 210 focused parent tests pass; the child
+integrates that actual unmerged parent correction and has 225 focused passes.
+Fresh exact-head native cloud validation remains required. The new child
+remains inactive and unmerged. Actual included review is still required;
 draft review skips are not reviews and no paid/forced workaround is authorized.
 
 Calendar-quarter economic transaction semantics, coherent publication, durable

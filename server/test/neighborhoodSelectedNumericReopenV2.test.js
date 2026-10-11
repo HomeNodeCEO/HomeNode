@@ -150,3 +150,16 @@ test('positive native duplicate-reason probe reaches PostgreSQL with a real dupl
   assert.doesNotMatch(s,/reported_site_area\.exclusion_reasons\.push\(c\.reported_site_area\.exclusion_reasons\[0\]\)/);
   assert.ok(s.includes('canonicalAssessmentJson(cells)]),/statistics_v2_(cell|parts|reason)_conflict/'));
 });
+
+test('native indexed ending probe stays armed through the complete original page until the ending native member read',()=>{
+  const s=readFileSync(new URL('./neighborhoodGroupIndex.integration.test.js',import.meta.url),'utf8'),
+    clearAt=s.indexOf("const fault=refsFault;if(!['commit','cad_header','transaction_header'"),
+    clear=s.slice(clearAt,s.indexOf("if(fault==='license')",clearAt));
+  assert.ok(clearAt>0);
+  for(const prefix of ['partition_','catalog_','union_','eligibility_','evidence_','metric_','metrics_','stats_','freq_','indexed_'])
+    assert.ok(clear.includes(`!fault?.startsWith('${prefix}')`),`original-page handler preserves ${prefix} faults`);
+  assert.ok(s.includes("if(refsFault==='indexed_value_ending'){refsFault='indexed_value_after_first';return result;}"));
+  assert.match(s,/\['indexed_value_after_first','indexed_value_wrong','indexed_value_zero'(?:,'indexed_value_null')?,'indexed_native_child_missing'\]\.includes\(refsFault\)/);
+  assert.ok(s.includes("['indexed_value_ending',/selected_union_original_mismatch/]"));
+  assert.ok(s.includes('refsFault=fault;await assert.rejects(indexedStep(),reason,`indexed original/member probe ${fault}`);assert.equal(refsFault,null);'));
+});

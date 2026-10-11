@@ -23,6 +23,39 @@ calendar quarters, coherent publication, workers, licensed acquisition and live
 acceptance are still outstanding. Old readers and original-owner SQL/guards are
 unchanged. No route, production or genuine appraisal choice changed.
 
+## Fresh full server PASS; native fixture deadline fix requires cloud validation (2026-10-11)
+
+The recovery followup at `a77f1a5de14f2a782ede4d2232587874424db1cf`
+passes the full server job114382474932 (10,944 tests:10,876 PASS,68 skips,
+zero failures/cancellations); frontend, redteam, signed delivery, mobile and
+Appendix checks also PASS. This supersedes the older server-pending notes.
+The FULL native log job114382474761/run38109683960 was inspected: migration417
+and subject1 PASS, but the index suite has11 PASS/3 cancellations from the
+existing180-second fixture deadline (union, union-all and positive union-all).
+Later job steps were skipped. Recovery markers emitted after a cancelled
+fixture's deadline are NOT successful native verification or acceptance.
+
+The authored fix is ONLY the disposable CI harness: a bounded512-statement
+per-connection name cache allows the actual driver to reuse exact SQL parsing,
+while every query still executes with its current values. No results, source
+originals, authorization decisions or transactions are cached; native errors,
+callbacks, real COMMIT/rollback and lost-ack outcomes remain unchanged. Independent
+read-only unchanged-state assertions use the same maximum two pool connections
+in parallel, preserving every field comparison. All seven independent source
+fixtures, the480,000-character escape-sensitive original, original/cache and
+current-ending refusal probes, ordinary fifth-claim recovery,180-second fixture
+deadline,120-second statement timeout and256-query/32MB/60-second owner budget
+remain unchanged. A new metadata-only CI marker records execution requests,
+not authority, successful statement preparation, durability or production speed.
+This is a candidate runtime fix pending fresh exact-head cloud execution; no
+failed check is waived or relabeled PASS.
+
+Actual included review/security and protected dependency integration remain
+outstanding. No production owner/SQL, migration, workflow, rights, report,
+choice, worker, scheduler, pin, Apply or activation changed in this fix.
+Licensed/full-population statistics, publication, durable workers and live
+acceptance remain open; the heartbeat remains active.
+
 ## Ninth original owner native verified; recovery followup still needs fresh cloud execution (2026-10-11)
 
 The integrated owner at `cb70d60fc5de71dfbf88255d24c23c06a70181b9`

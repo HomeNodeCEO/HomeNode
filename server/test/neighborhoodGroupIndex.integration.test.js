@@ -6360,12 +6360,13 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             await assert.rejects(rankSourceStep(),reason,`rank seam actual original/current-ending refusal ${fault}`);
             assert.equal(refsFault,null,'nonvacuous rank seam fault consumed');
             const candidateQueries=refsCalls.slice(from).filter(sql=>sql.includes('custom-cohort-selected-numeric-rank-candidates-v2:read')).length;
-            // These mutations happen after the full-original package query,
-            // so the provisional candidate query is attempted before the
-            // ending subject/rights fences (or denied by its own claim fence).
-            const afterOriginalAuthorityFault=['subject','claim','cad_license'].includes(fault);
+            // Subject/rights mutations reach the owner's ending fences after
+            // the provisional query. Claim revocation is already refused by
+            // the original reader's finish()->stocks.read() live-claim fence,
+            // so it MUST NOT reach the later provisional candidate query.
+            const afterOriginalAuthorityFault=['subject','cad_license'].includes(fault);
             assert.equal(candidateQueries,fault.endsWith('_ending')||afterOriginalAuthorityFault?1:0,
-              'early original failures precede candidates; ending authority/member failures refuse AFTER the candidate read');
+              `early original failures precede candidates; ending authority/member failures refuse AFTER the candidate read: ${fault}`);
             await numericUnchanged(rankBefore);
             if(fault==='cad_license')await setCadFixtureGrant(pool,organization,cadGrant);
           }

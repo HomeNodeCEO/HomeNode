@@ -69,6 +69,8 @@ test('all provisional children are immutable and real commits and head issuance 
     'actual_eleventh_owner:false','phase17:false','global_selected_native_deduplication:false'])assert.ok(helper.includes(text),text);
   assert.ok(fixture.includes('runNeighborhoodSelectedTransactionIndexV2DatabaseChecks(pool,refsOperation,organization,value)'));
   assert.ok(fixture.includes('[native-selected-transaction-index-storage-foundation-v2]'));
+  assert.ok(helper.includes("refusal('SET CONSTRAINTS ALL IMMEDIATE',/selected_transaction_index_v2_owner_unintegrated/,[])"),
+    'zero-parameter SET CONSTRAINTS must reach the actual deferred guard, not fail PostgreSQL parameter binding');
   const nativeBlock=fixture.slice(fixture.indexOf('// New READ-ONLY first transaction-source seam.'));
   assert.ok(nativeBlock.indexOf('if(!positiveIndexedSourceFixture)')<nativeBlock.indexOf('const transactionStorage='));
   assert.match(nativeBlock,/const transactionStorage=[\s\S]*?await semanticUnchanged\(before\)/);

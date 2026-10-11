@@ -85,7 +85,7 @@ export async function runNeighborhoodSelectedTransactionIndexV2DatabaseChecks(po
         SELECT $1::uuid,$2::uuid,generation_id,'9223372036854775807',ordinal FROM ${keys} LIMIT 1`,/native_key/);
       await client.query(edges,bound);assert.equal(await matched(client),true);
       await refusal(`UPDATE app.neighborhood_custom_cohort_selected_transaction_index_v2_edges SET account_id='CLOSURE-OUTSIDE' WHERE operation_id=$1`,/immutable/,[operation]);
-      await refusal('SET CONSTRAINTS ALL IMMEDIATE',/selected_transaction_index_v2_owner_unintegrated/);
+      await refusal('SET CONSTRAINTS ALL IMMEDIATE',/selected_transaction_index_v2_owner_unintegrated/,[]);
       assert.equal(await matched(client),true,'savepoint refusal preserves the provisional exact set');
     }
     await client.query('ROLLBACK');

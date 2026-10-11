@@ -6506,20 +6506,33 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           const semanticFinished=await semanticSnapshot();await assert.rejects(semanticStep(),/selected_semantic_finished_or_corrupt/);
           await semanticUnchanged(semanticFinished);
           if(selectionWaitFixture==='union-empty'){
-            // Empty graph retains its fourth claim through all older proofs;
-            // use the actual remaining fifth ordinary claim, never a sixth.
-            const stale=liveClaim;assert.equal(stale.attempts,4);
-            const failed=await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client)
-              .failClaim(liveClaim,'synthetic_semantic_terminal_reclaim',{retrySeconds:1}));assert.equal(failed.status,'retry');
-            await new Promise(resolve=>setTimeout(resolve,1100));
-            const [replacement]=await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900}));
-            assert.ok(replacement);assert.equal(replacement.operation_id,refsOperation);assert.equal(replacement.attempts,5);
-            liveClaim={operation_id:replacement.operation_id,claim_token:replacement.claim_token,attempts:replacement.attempts};
-            const recovered=await semanticSnapshot();assert.equal(recovered.job.last_error_code,'synthetic_semantic_terminal_reclaim');
-            for(const key of ['semantic_heads','semantic_rows','numeric_heads','numeric_population_rows','continuation','blobs'])assert.deepEqual(recovered[key],semanticFinished[key]);
-            assert.deepEqual(recovered.job.checkpoint,semanticFinished.job.checkpoint);await numericParents();
-            await assert.rejects(cadOwner()[semanticMethod](refsInput,{captureJobClaim:stale}),/claim_lost/);
-            await assert.rejects(semanticStep(),/selected_semantic_finished_or_corrupt/);await semanticUnchanged(recovered);
+            // The independently captured EMPTY graph is still on its third
+            // ordinary claim: nonempty-only seventh/eighth/ninth failure
+            // probes did not consume its fourth. Exercise BOTH real remaining
+            // claims, never reset attempts or manufacture a sixth claim.
+            assert.equal(liveClaim.attempts,3);
+            for(const expectedAttempt of [4,5]){
+              const stale=liveClaim;assert.equal(stale.attempts,expectedAttempt-1);
+              const failed=await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client)
+                .failClaim(liveClaim,'synthetic_semantic_terminal_reclaim',{retrySeconds:1}));assert.equal(failed.status,'retry');
+              const pending=await semanticSnapshot();assert.equal(pending.job.attempts,stale.attempts);
+              assert.equal(pending.job.last_error_code,'synthetic_semantic_terminal_reclaim');
+              assert.equal(pending.job.status,'retry');assert.equal(pending.job.claim_token,null);assert.equal(pending.job.lease_expires_at,null);
+              for(const key of ['semantic_heads','semantic_rows','numeric_heads','numeric_population_rows','continuation','blobs'])assert.deepEqual(pending[key],semanticFinished[key]);
+              assert.deepEqual(pending.job.checkpoint,semanticFinished.job.checkpoint);await numericParents();
+              await new Promise(resolve=>setTimeout(resolve,1100));
+              const [replacement]=await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900}));
+              assert.ok(replacement);assert.equal(replacement.operation_id,refsOperation);assert.equal(replacement.attempts,expectedAttempt);
+              assert.notEqual(replacement.claim_token,stale.claim_token);
+              liveClaim={operation_id:replacement.operation_id,claim_token:replacement.claim_token,attempts:replacement.attempts};
+              const recovered=await semanticSnapshot();assert.equal(recovered.job.attempts,expectedAttempt);
+              assert.equal(recovered.job.last_error_code,'synthetic_semantic_terminal_reclaim');
+              for(const key of ['semantic_heads','semantic_rows','numeric_heads','numeric_population_rows','continuation','blobs'])assert.deepEqual(recovered[key],semanticFinished[key]);
+              assert.deepEqual(recovered.job.checkpoint,semanticFinished.job.checkpoint);await numericParents();
+              await assert.rejects(cadOwner()[semanticMethod](refsInput,{captureJobClaim:stale}),/claim_lost/);
+              await assert.rejects(semanticStep(),/selected_semantic_finished_or_corrupt/);await semanticUnchanged(recovered);
+            }
+            assert.equal(liveClaim.attempts,5);
           }
           assert.ok(semanticQueries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries));
           console.info('[native-selected-semantic-original-owner-v2]',{actual_bounded_database_owner:true,

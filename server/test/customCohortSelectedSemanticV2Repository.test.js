@@ -125,7 +125,11 @@ test('cloud tenth probes are nonvacuous actual-owner and native grammar tests ac
     'for(let ordinal=1;ordinal<=selectedCount+1;ordinal++)','state.job.checkpoint.evidence_refs.length,16',
     'summary.counts,JSON.parse(finishedContributions.heads[0].canonical_utf8).after_counts',
     "['rank','sum','deviation','observed','reason']",'actual native semantic forgery',
-    ".failClaim(liveClaim,'synthetic_semantic_terminal_reclaim'",'replacement.attempts,5',
+    ".failClaim(liveClaim,'synthetic_semantic_terminal_reclaim'",'for(const expectedAttempt of [4,5])',
+    'liveClaim.attempts,3','stale.attempts,expectedAttempt-1','pending.job.attempts,stale.attempts',
+    "pending.job.status,'retry'",'pending.job.claim_token,null','pending.job.lease_expires_at,null',
+    'pending.job.checkpoint,semanticFinished.job.checkpoint','replacement.attempts,expectedAttempt',
+    'replacement.claim_token,stale.claim_token','recovered.job.attempts,expectedAttempt','liveClaim.attempts,5',
     'semanticQueries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries)'])assert.ok(probe.includes(text),text);
   assert.doesNotMatch(probe,/SET attempts|attempts=0|attempts:6|DISABLE TRIGGER|session_replication_role/);
 });

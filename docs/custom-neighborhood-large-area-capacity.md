@@ -49,6 +49,20 @@ well as the main fixture. The specific immutable55000 rejection remains required
 no CASCADE, FK acceptance, disabled trigger, deadline or budget waiver is used.
 Fresh cloud execution must reach and validate the authored tenth protocol.
 
+Current historical496f1f35 native run38116103753/job114401191076 reached
+the tenth owner: three nonempty graphs passed, including positive exact
+median4000, quartiles2000/6000, COD100 and native rank/aggregate forgery refusal;
+each observed at most253 whole-owner SQL queries under the unchanged256 cap.
+The full2,876,216-character log has migration417/subject1 passes and index13
+passes/one failure. The EMPTY graph failed only its recovery fixture's assumption
+that it had already consumed four ordinary claims; its actual retained history
+had three. Later edge/idempotence/bootstrap steps were skipped, not passed.
+The correction exercises BOTH real remaining fourth and fifth claims through
+ordinary failure/reclaim, preserving checkpoint, all reference rows/heads,
+continuation, blobs and last error, with stale-token/DONE refusals after each.
+No attempt reset, extra claim, source/owner logic or limit change is involved.
+Fresh exact-head cloud validation of all four graphs and later suites is required.
+
 Parent1285's historical ca12 native failure was an omitted GENERIC authority
 fault-injection hook, not a passing acceptance result. Its subsequent750a2c75
 cloud run also failed: 417 migration and one subject test passed, but the index
@@ -60,7 +74,12 @@ nonvacuous consumed fault and whole-state rollback, and expects zero rank reads
 for that early claim refusal. Subject/CAD-rights and ending-member refusals still
 require their later candidate read. All 210 focused parent tests pass; the child
 integrates that actual unmerged parent correction and has 225 focused passes.
-Fresh exact-head native cloud validation remains required. The new child
+Parent correctionfbc7098c now passes all five exact-feature-head cloud checks:
+full2,866,308-character native log has migration417/subject1/index14/edge1/
+bootstrap2 passes, zero failures/cancellations/skips and successful idempotence.
+All four ninth/rank-seam graphs pass; the seam still verifies only the FIRST
+selected original, not the complete statistics pass. Fresh child exact-head
+native cloud validation remains required. The new child
 remains inactive and unmerged. Actual included review is still required;
 draft review skips are not reviews and no paid/forced workaround is authorized.
 

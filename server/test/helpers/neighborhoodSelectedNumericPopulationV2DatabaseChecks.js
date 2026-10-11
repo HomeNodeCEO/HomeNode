@@ -29,7 +29,13 @@ export async function runNeighborhoodSelectedNumericPopulationV2DatabaseChecks(p
     assert.match(truncate?.definition??'',/BEFORE TRUNCATE/);
     assert.equal(commit?.tgdeferrable,true);assert.equal(commit?.tginitdeferred,true);
   }
-  for(const table of [rows,heads])await assert.rejects(pool.query('TRUNCATE app.'+table),
+  // Include every restrictive FK child so PostgreSQL reaches the real
+  // immutable TRUNCATE guard, rather than refusing the statement at its FK
+  // preflight. Keep literal targets visible to the transitive schema audit.
+  for(const sql of [
+    'TRUNCATE app.neighborhood_custom_cohort_selected_numeric_v2_rows, app.neighborhood_custom_cohort_selected_semantic_v2_rows',
+    'TRUNCATE app.neighborhood_custom_cohort_selected_numeric_v2_heads'
+  ])await assert.rejects(pool.query(sql),
     error=>error.code==='55000'&&/custom_cohort_context_immutable/.test(error.message));
   const absent='70000000-0000-4000-8000-999999999999',
     refused=(await pool.query(`SELECT app.neighborhood_selected_numeric_v2_checkpoint_matches($1::uuid,$1::uuid,$2::jsonb) AS checkpoint,

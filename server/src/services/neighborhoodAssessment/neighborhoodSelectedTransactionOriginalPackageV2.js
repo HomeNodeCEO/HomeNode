@@ -313,3 +313,16 @@ export const NEIGHBORHOOD_FIRST_COMPLETED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL=
           AND numeric_body.canonical_utf8::jsonb->>'sequence'=numeric_population.sequence::text
           AND numeric_body.canonical_utf8::jsonb->'after'->>'done'='true'
           AND numeric_body.canonical_utf8::jsonb->'after'->'selected_ordinal'=body.canonical_utf8::jsonb->'after_selected_count'`);
+
+// Tenth pass: ONLY its own native head determines the next account. The ninth
+// is an immutable DONE parent, never the cursor and never current authority.
+// No caller ordinal/roster/callback or weakening of the shared original plan.
+export const NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL=
+  NEIGHBORHOOD_FIRST_COMPLETED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL
+    .replace('neighborhood-first-completed-numeric-original-package-v2','neighborhood-next-selected-semantic-original-package-v2')
+    .replace('  JOIN app.neighborhood_custom_cohort_selected_statistics_v2_rows r',`  LEFT JOIN app.neighborhood_custom_cohort_selected_semantic_v2_heads semantic
+    ON semantic.operation_id=job.operation_id AND semantic.organization_id=job.organization_id
+  JOIN app.neighborhood_custom_cohort_selected_statistics_v2_rows r`)
+    .replace('r.ordinal=1 AND $4::text=', 'r.ordinal=coalesce(semantic.sequence,0)+1 AND $4::text=')
+    .replace('app.neighborhood_selected_numeric_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)',
+      'app.neighborhood_selected_semantic_v2_admission_matches(job.operation_id,job.organization_id,job.checkpoint)');

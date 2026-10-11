@@ -86,7 +86,7 @@ test('ninth recovery uses a real fifth ordinary claim without removing seventh/e
   assert.ok(s.includes('if(allSelected&&!positiveIndexedSourceFixture){'));
   assert.ok(s.includes(".failClaim(liveClaim,'synthetic_metrics_reclaim',{retrySeconds:1})"));
   assert.ok(s.includes(".failClaim(liveClaim,'synthetic_contribution_reclaim',{retrySeconds:1})"));
-  const start=s.indexOf('if(positiveIndexedSourceFixture&&ordinal===1){'),block=s.slice(start,s.indexOf('previousNumeric=head.receipt_reference;',start));
+  const start=s.indexOf('if(positiveIndexedSourceFixture&&!semanticRecoveryFixture&&ordinal===1){'),block=s.slice(start,s.indexOf('previousNumeric=head.receipt_reference;',start));
   assert.ok(start>0);
   for(const text of [".failClaim(liveClaim,'synthetic_numeric_reclaim',{retrySeconds:1})",'assert.equal(retained.job.attempts,4)',
     'assert.equal(replacement.attempts,5)','assert.notEqual(replacement.claim_token,staleNumericClaim.claim_token)',

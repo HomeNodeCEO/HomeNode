@@ -1,5 +1,204 @@
 # Complete larger-area Custom neighborhood studies
 
+## Transaction fences native PASS; fixed issued-receipt headroom follow-up (2026-10-11)
+
+Exact feature head92cb3d8a passes all SEVEN checks. FULL3,146,174-character native
+log run38120340264/job114413574344 has migration417/subject1/index15/edge1/
+bootstrap2 passes, ZERO failures/cancellations/skips, successful idempotence and
+EVERY job step SUCCESS. All FIVE actual complete-original graphs pass. Native
+autocommit is refused BEFORE DML in every graph, with one standalone and BOTH
+coalesced transaction/head reads per advance. Whole-owner query maxima are
+251/246/251/251/251. Nonempty fourth-to-fifth prefix recovery, EMPTY terminal
+fourth/fifth recovery, exact positive reported-comparison Type7/COD and native
+forgery refusals remain intact. No deadline or aggregate budget was raised.
+
+The next INACTIVE follow-up freshly batches ONLY the exact checkpoint's fixed
+twelve/thirteen issued progress receipts through the EXISTING eight-record/2MB
+scoped reader, in two statements. It runs AFTER both current source policies;
+every actual native head is independently checked BEFORE its body is used.
+All full original graph/ENTIRE cache/member reconciliation and ending fences
+remain independent. This is not a source-page cache or a hash/head authority
+substitute. Original adapters, next whole original packet and derived summary
+reads remain fresh and unchanged; no population-sized buffer is introduced.
+
+Authored native probes require exactly8+4/5 issued receipts on EVERY real step,
+the same scoped/reference/byte sequence, actual current MARKET and CAD denial
+BEFORE even receipt batches, complete original replay, missing/
+duplicate/corrupt batch refusal with whole-state rollback before the next packet,
+and a stricter241-query ceiling under the unchanged256 cap. This follow-up is
+AUTHORED, NOT native accepted until the NEW exact-head cloud run passes. Existing
+five-graph/source/ending/native forgery/rollback/orphan/lost-ACK/recovery probes,
+250-original/32MB/60-second budgets,180-second fixture,120-second statement and
+two-client pool limits are preserved.
+All255 focused tests pass; source and fixture JavaScript syntax checks pass.
+These local results do not establish new native or licensed/live acceptance.
+
+Economic transactions/calendar quarters, currency/historical/at-sale authority,
+coherent publication, durable large-area workers/terminal pins and all licensed/
+live acceptance remain OPEN. All protected parents remain UNMERGED; actual
+included review and fresh integrated-main required security/native/full checks
+remain required. No deployment, activation, source rights, reports, genuine
+choices, pin or Apply changes; QA7 remains the only future Apply-test target.
+
+## Five actual native graphs PASS; bounded transaction headroom follow-up (2026-10-11)
+
+Feature headadc8b8ab passes all SEVEN checks. The FULL3,144,619-character native
+log run38118747291/job114408915055 has migration417/subject1/index15/edge1/
+bootstrap2 passes, ZERO failures/cancellations/skips, successful idempotence and
+every job step SUCCESS. All FIVE independently captured tenth-owner graphs pass.
+The added positive/zero graph proves actual nonempty prefix fourth-to-fifth
+ordinary failure/reclaim, stale-token/current-source refusal, retained first
+member and exact16 checkpoint/reference/continuation/error history, then second
+original and separate EMPTY without duplicate member or rerank. Existing four
+graphs and their seventh/eighth/ninth/EMPTY recovery proofs remain intact.
+Whole-owner query maxima remain253/248/253/253/253, NOT production-speed evidence.
+
+The next inactive follow-up reduces the semantic reference writer's seven query
+round trips to FIVE by reading native transaction identity in BOTH existing
+expected-head and post-DML readback SELECTs. The separate starting txid remains.
+Autocommit still MUST fail before any DML, and post-write head/transaction mismatch
+still MUST fail; no public transaction-id parameter or wider head grammar is
+introduced. Real PostgreSQL autocommit-before-DML probes are authored for all
+five actual graphs, along with one standalone/two coalesced transaction-read
+assertions and a stricter251 whole-owner-query ceiling. That improvement is
+AUTHORED/locally checked, not native-accepted until the NEW exact-head job passes.
+No original/source/member/current-ending fence, native deferred constraint,
+256-query/32MB/60-second/250-original budget,180-second fixture,120-second
+statement timeout or two-client pool limit was removed or raised.
+
+This is still inactive reported-comparison statistics. Economic transactions/
+calendar quarters, historical/at-sale/currency authority, coherent publication,
+large-area workers/terminal pin transfer and licensed/live acceptance remain OPEN.
+All protected parents remain unmerged; actual included review and fresh integrated-
+main required security/native/full checks are still required. No activation,
+deployment, grants, production operation, report/choice/pin or Apply changes.
+
+## Complete original statistics native PASS; nonempty recovery follow-up authored (2026-10-11)
+
+Exact feature head338da089 of draft PR1286 passes all SEVEN cloud checks.
+The FULL2,895,971-character native log run38117317009/job114404690474 has
+migration417/subject1/index14/edge1/bootstrap2 passes, ZERO failures,
+cancellations or skips, and successful idempotence. Every native job step
+succeeded. All FOUR independently captured selected graphs reach the actual
+tenth owner through EVERY member and a separate fresh EMPTY. Their whole-owner
+query maxima are253/248/253/253 under the unchanged256 cap; no deadline or
+aggregate original/query/byte/time budget was raised. The positive reported
+site comparison has median4000, quartiles2000/6000 and COD100, with real native
+rank/sum/deviation/state/reason forgery refusals. This is reported-comparison
+statistics, NOT verified economic transaction, currency, at-sale GLA or
+historical housing authority, licensed acquisition or production speed.
+
+That verified head proves EMPTY terminal ordinary fourth/fifth-claim recovery,
+not NONEMPTY tenth mid-pass failure recovery. The follow-up adds a FIFTH
+independently captured two-selected-account positive/zero graph specifically
+for that missing durability boundary. It retains the first real tenth member,
+fails the actual fourth claim, reclaims the ordinary fifth across clients,
+checks exact16 checkpoint/reference rows/heads/continuation/blobs/error retention,
+rejects the stale token and a real current-source denial, then resumes at the
+second original and fresh EMPTY without duplicating/replacing the first member
+or reranking. Existing ninth, seventh/eighth and EMPTY recovery fixtures remain
+intact; no attempt counter is reset and no sixth claim is manufactured.
+This additional graph is AUTHORED, not yet cloud-verified. Fresh exact-head
+native/full checks and actual included review remain required; draft skips are
+not actual review, and no paid/forced workaround is authorized.
+
+All protected parents remain UNMERGED. Feature-head checks do not establish
+integrated-main required security/native checks or review clearance. Calendar-
+quarter economic transaction resolution, coherent publication, durable large-
+area dispatch and terminal pin transfer/retirement, licensed >50k/5-mile/10-mile/
+city/retrospective and Hardy saved-map/live acceptance remain OPEN. No activation,
+deployment, grants, production operation, reports, genuine choices, pins or Apply
+tests occurred. QA assignment7 remains the only future Apply-test target.
+
+## Inactive durable complete-selected original statistics owner authored; cloud verification pending (2026-10-11)
+
+The child of actual unmerged PR1285 adds a tenth native cursor and reference-only
+member ledger. Exact16 admission recursively retains the actual ninth fresh
+EMPTY and all fifteen older roots. Each step uses the existing bounded database
+owner to reopen the complete issued graph, the next selected account's COMPLETE
+stock/CAD/all-date transaction and required subject originals, ENTIRE caches,
+and every seventh/eighth/numeric-index/ninth field. All current and ending
+actor/assignment/private-draft/subject/source/claim/workspace/member/parent
+fences run before any tenth writes. No caller roster, ordinal, values, counts,
+hash-only reconciliation, original callback or dense population array is admitted.
+
+Only the first step initializes three provisional native rank rows. Later steps
+reuse those immutable bounded candidates and derive exact scale14 sums and
+absolute deviations from freshly reconciled eligible original observations;
+there is no full-population rerank per account. Bounded summaries independently
+rederive EVERY value-state, complete/eligible/excluded, source-part and overlapping
+exclusion-reason counter. A separate fresh EMPTY must reconcile them all to the
+complete eighth parent before final exact Type7 quartiles/medians and reduced
+rational means/CODs are returned. Genuine zero-median COD remains explicitly
+undefined; missing, excluded and zero observations are distinct.
+
+Native guards independently verify the fixed initial ranks and subsequent
+count/sum/deviation transitions; deferred row/head constraints require the same
+transaction's exact16 checkpoint and fresh single-use continuation. Additive
+migrations preserve old strict readers, phase order, attempts and failure history.
+The 250-original child and 256-query/32MB/60-second whole-owner limits, fixture
+deadlines and statement limits are unchanged. There are no per-account numeric
+or original payload copies in the new ledger.
+
+Local focused mathematical, parser, storage and structural tests are NOT native,
+licensed or production acceptance. Authored cloud-native probes extend all four
+independently captured graphs through every selected account and fresh EMPTY,
+real current-source/member refusals, row/head/checkpoint/yield rollback, orphan
+COMMIT, lost ACK, native rank/aggregate forgeries and retained EMPTY fifth-claim
+recovery. All remain unverified until the exact-head cloud job completes.
+
+The historical childdba80f46 native job114397700921/run38114883703 FAILED.
+Its complete log (2,721,012 characters) has 417 migration/one subject pass and
+index10 passes/four failures, one in each independent selected graph; later
+edge/idempotence/bootstrap steps were skipped. Every graph stopped in the older
+ninth-foundation helper's TRUNCATE probe, which omitted the newly restrictive
+tenth FK child. No ninth-owner, rank-seam or tenth-owner success is established
+by that run. The helper now names the semantic child in the same real statement,
+and the migration-derived transitive-FK audit scans database helper files as
+well as the main fixture. The specific immutable55000 rejection remains required;
+no CASCADE, FK acceptance, disabled trigger, deadline or budget waiver is used.
+Fresh cloud execution must reach and validate the authored tenth protocol.
+
+Current historical496f1f35 native run38116103753/job114401191076 reached
+the tenth owner: three nonempty graphs passed, including positive exact
+median4000, quartiles2000/6000, COD100 and native rank/aggregate forgery refusal;
+each observed at most253 whole-owner SQL queries under the unchanged256 cap.
+The full2,876,216-character log has migration417/subject1 passes and index13
+passes/one failure. The EMPTY graph failed only its recovery fixture's assumption
+that it had already consumed four ordinary claims; its actual retained history
+had three. Later edge/idempotence/bootstrap steps were skipped, not passed.
+The correction exercises BOTH real remaining fourth and fifth claims through
+ordinary failure/reclaim, preserving checkpoint, all reference rows/heads,
+continuation, blobs and last error, with stale-token/DONE refusals after each.
+No attempt reset, extra claim, source/owner logic or limit change is involved.
+Fresh exact-head cloud validation of all four graphs and later suites is required.
+
+Parent1285's historical ca12 native failure was an omitted GENERIC authority
+fault-injection hook, not a passing acceptance result. Its subsequent750a2c75
+cloud run also failed: 417 migration and one subject test passed, but the index
+suite had 13 passes/one failure; edge/idempotence/bootstrap were skipped. The
+real claim-token mutation was refused by the original reader's own ending
+live-claim fence BEFORE the provisional rank query, contrary to the fixture's
+expected query count. Correctionfbc7098c preserves actual mutation/rejection,
+nonvacuous consumed fault and whole-state rollback, and expects zero rank reads
+for that early claim refusal. Subject/CAD-rights and ending-member refusals still
+require their later candidate read. All 210 focused parent tests pass; the child
+integrates that actual unmerged parent correction and has 225 focused passes.
+Parent correctionfbc7098c now passes all five exact-feature-head cloud checks:
+full2,866,308-character native log has migration417/subject1/index14/edge1/
+bootstrap2 passes, zero failures/cancellations/skips and successful idempotence.
+All four ninth/rank-seam graphs pass; the seam still verifies only the FIRST
+selected original, not the complete statistics pass. Fresh child exact-head
+native cloud validation remains required. The new child
+remains inactive and unmerged. Actual included review is still required;
+draft review skips are not reviews and no paid/forced workaround is authorized.
+
+Calendar-quarter economic transaction semantics, coherent publication, durable
+large-area dispatch and terminal pin transfer/retirement, licensed >50k/5-mile/
+10-mile/city/retrospective acquisition and Hardy saved-map/live acceptance remain
+OPEN. No grants, route/default/worker/scheduler activation, production operation,
+accepted report, genuine Hardy choice, pin or Apply target was changed.
+
 ## Native rank candidates connected to the actual first-original owner; still provisional (2026-10-11)
 
 The inactive child of PR1284 adds a read-only seam INSIDE the existing bounded

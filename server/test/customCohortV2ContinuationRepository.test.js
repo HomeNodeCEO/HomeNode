@@ -98,3 +98,11 @@ test('ninth-only continuation ceiling does not widen any historical phase or buy
     'frozen_selected_metrics_refs_v2','frozen_selected_statistics_refs_v2'])
     await assert.rejects(setup({phase:historical,sequence:16000009}).owner.yieldIssued(claim,options),/corrupt/);
 });
+
+test('tenth-only continuation adds its finite pass without widening ninth or historical ceilings or resetting attempts',async()=>{
+  const phase='frozen_selected_semantic_refs_v2',r=await setup({phase,sequence:20000010}).owner.yieldIssued(claim,options);
+  assert.equal(r.continuation_sequence,20000010);assert.equal(r.attempts,5);assert.equal(r.context_complete,false);assert.equal(r.pin_transfer,false);
+  for(const sequence of [0,20000011,1.5])await assert.rejects(setup({phase,sequence}).owner.yieldIssued(claim,options),/corrupt/);
+  await assert.rejects(setup({phase:'frozen_selected_numeric_refs_v2',sequence:18000010}).owner.yieldIssued(claim,options),/corrupt/);
+  await assert.rejects(setup({phase:'frozen_selected_statistics_refs_v2',sequence:16000009}).owner.yieldIssued(claim,options),/corrupt/);
+});

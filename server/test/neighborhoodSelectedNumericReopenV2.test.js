@@ -99,6 +99,58 @@ test('authored indexed cloud fixture uses independent issued graph, full prior-s
     'indexed authority probe ${fault}','indexed original/member probe ${fault}'])assert.ok(s.includes(v),v);
 });
 
+test('positive first-index source fixture is a fourth independently captured graph, never a rewrite of the three exclusion/EMPTY graphs',()=>{
+  const s=readFileSync(new URL('./neighborhoodGroupIndex.integration.test.js',import.meta.url),'utf8'),
+    fixtureAt=s.indexOf("for(const selectionWaitFixture of [false,true,'intent','union','union-empty','union-all','union-all-site-positive'])"),
+    positiveAt=s.indexOf("const positiveIndexedSourceFixture=selectionWaitFixture==='union-all-site-positive'",fixtureAt),
+    wholePartAt=s.indexOf('if(positiveIndexedSourceFixture)await pool.query("UPDATE gis.dcad_parcels SET class_code=\'A11\' WHERE object_id=4")',positiveAt),
+    freezeAt=s.indexOf('const frozen=await runNeighborhoodGroupIndex(',positiveAt);
+  assert.ok(fixtureAt>0&&positiveAt>fixtureAt&&wholePartAt>positiveAt&&freezeAt>wholePartAt,
+    'only pristine disposable source data changes, before its own original/cache/generation issuance');
+  const fixture=s.slice(positiveAt,freezeAt);
+  assert.ok(fixture.includes("WHEN 4 THEN 'A12'"),'the three older independent graphs retain their actual outside-part housing contradiction');
+  assert.ok(fixture.includes('parcel_area_sqft=8000'));
+  assert.doesNotMatch(fixture,/neighborhood_cohort_evidence_blobs|neighborhood_custom_cohort_selected|checkpoint|claim_token|DISABLE TRIGGER|CASCADE/);
+  for(const v of ["positiveIndexedSourceFixture?'observed':'conflicting'",
+    "positiveIndexedSourceFixture?'detached_single_family':'townhouse'",
+    "const allSelected=selectionWaitFixture==='union-all'||positiveIndexedSourceFixture",
+    "reported_site_area:Number(positiveIndexedSourceFixture)",
+    "reported_site_area:positiveIndexedSourceFixture?2:1",
+    "account==='CLOSURE-A'?positiveIndexedSourceFixture:observedHousingFixture",
+    "positiveIndexedSourceFixture?'8000':null"])assert.ok(s.includes(v),v);
+});
+
+test('positive first-index native success is coupled to genuine original contribution and separately refuses eligible value to NULL or zero',()=>{
+  const s=readFileSync(new URL('./neighborhoodGroupIndex.integration.test.js',import.meta.url),'utf8');
+  for(const v of ["'indexed_value_null'","fault==='indexed_value_null'?null:fault==='indexed_value_zero'?'0':'1'",
+    "...(positiveIndexedSourceFixture?[['indexed_value_null',/selected_numeric_original_mismatch/]]:[])",
+    "assert.equal(contribution.metrics.reported_site_area.recorded_comparison_eligible,true)",
+    "assert.equal(contribution.metrics.reported_site_area.contribution_exact_value,'8000')",
+    "assert.equal(finishedContributions.numeric_index[0].reported_site_area,'8000')",
+    "assert.equal(finishedContributions.numeric_index[1].reported_site_area,'0')",
+    "assert.equal(doneContribution.contribution_counts.reported_site_area.eligible_count,2)",
+    'independently_issued_matching_first_positive_site_and_later_eligible_zero:positiveIndexedSourceFixture',
+    'eligible_positive_to_NULL_and_zero_forgeries_refused:positiveIndexedSourceFixture'])assert.ok(s.includes(v),v);
+  // The positive graph executes the SAME actual owner, source/rights failures,
+  // snapshot comparisons, exact original plans and immutable budget assertions.
+  const indexed=s.slice(s.indexOf('// Separate indexed-source boundary:'),s.indexOf("assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel",s.indexOf('// Separate indexed-source boundary:')));
+  for(const v of ['indexedQueries.push(refsCalls.length-from-3)','await indexedStep()',
+    'await contributionUnchanged(finishedContributions)',"['metric_assignment_ending',/assignment_access_denied/]",
+    "['metric_draft_ending',/private_source_read_only/]",'NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL',
+    'indexedQueries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries)',
+    'complete_indexed_population:false,frequency_ledger:false,rank_queries:false,medians_COD:false,calendar_quarters:false',
+    'publication:false,licensed_acquisition:false,production_speed:false,worker_activation:false'])assert.ok(indexed.includes(v),v);
+});
+
+test('positive native duplicate-reason probe reaches PostgreSQL with a real duplicate, never undefined eligible-site DATA',()=>{
+  const s=readFileSync(new URL('./neighborhoodGroupIndex.integration.test.js',import.meta.url),'utf8');
+  assert.ok(s.includes('c=>{const reasons=c.reported_year_built.exclusion_reasons;'));
+  assert.ok(s.includes("assert.ok(reasons.length>0,'duplicate-reason probe uses an actually excluded year, never eligible site reasons')"));
+  assert.ok(s.includes('reasons.push(reasons[0]);'));
+  assert.doesNotMatch(s,/reported_site_area\.exclusion_reasons\.push\(c\.reported_site_area\.exclusion_reasons\[0\]\)/);
+  assert.ok(s.includes('canonicalAssessmentJson(cells)]),/statistics_v2_(cell|parts|reason)_conflict/'));
+});
+
 test('native indexed ending probe stays armed through the complete original page until the ending native member read',()=>{
   const s=readFileSync(new URL('./neighborhoodGroupIndex.integration.test.js',import.meta.url),'utf8'),
     clearAt=s.indexOf("const fault=refsFault;if(!['commit','cad_header','transaction_header'"),

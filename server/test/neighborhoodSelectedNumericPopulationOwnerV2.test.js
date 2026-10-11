@@ -65,6 +65,9 @@ test('additive ninth migration permits ONLY eighth-to-ninth and ninth-to-ninth w
     'NEW.issued_attempts<OLD.issued_attempts','NEW.attempts<OLD.attempts',"NEW.status IN ('succeeded','awaiting_selection')",
     "OLD.phase='frozen_selected_metrics_refs_v2' AND NEW.phase NOT IN ('frozen_selected_metrics_refs_v2','frozen_selected_statistics_refs_v2')"])assert.ok(sql.includes(text),text);
   assert.doesNotMatch(sql,/CREATE OR REPLACE FUNCTION app.neighborhood_selected_|GRANT |SECURITY DEFINER|DISABLE TRIGGER|UPDATE app\./i);
+  assert.ok(sql.includes('COMMENT ON TABLE app.neighborhood_custom_cohort_selected_numeric_v2_rows IS'));
+  assert.ok(sql.includes('integrated by the additive ninth original-owner migration'));
+  assert.ok(sql.includes('Every later semantic statistics consumer must reopen those originals and current authority AGAIN'));
 });
 
 test('authored cloud fixture traverses ALL four actual graphs with every old source failure, native rollback, fresh EMPTY and lost COMMIT ACK',()=>{

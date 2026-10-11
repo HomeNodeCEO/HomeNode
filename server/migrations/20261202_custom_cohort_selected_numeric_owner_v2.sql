@@ -87,6 +87,11 @@ BEGIN
   RETURN NEW;
 END $$;
 
+-- Supersede the foundation's installed metadata without rewriting that
+-- historical migration. Integration is not activation or source authority.
+COMMENT ON TABLE app.neighborhood_custom_cohort_selected_numeric_v2_rows IS
+  'INACTIVE ninth reference-only reconciliation ledger, integrated by the additive ninth original-owner migration. Native next ordinal, exact15 complete parent graph and deferred atomic row/head/job/single-use continuation; no numeric/original/typed copies or backfill. The bounded original owner must freshly reconcile COMPLETE originals/ENTIRE caches, EVERY seventh/eighth/index field and all current plus ending source/database actor/assignment/private-draft/subject authority. Every later semantic statistics consumer must reopen those originals and current authority AGAIN. No route/default/worker activation, medians/COD/quarters/publication, licensed acquisition or production-speed acceptance.';
+
 ALTER TABLE app.neighborhood_custom_cohort_v2_continuations
   DROP CONSTRAINT neighborhood_custom_cohort_v2_continuations_sequence_check,
   DROP CONSTRAINT neighborhood_custom_cohort_v2_continuations_phase_check,

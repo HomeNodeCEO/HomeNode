@@ -1,5 +1,47 @@
 # Complete larger-area Custom neighborhood studies
 
+## Shared graph native PASS; next owner still unregistered (2026-10-11,11:36 UTC)
+
+The corrected exact PR1291 head `20c26448493ab727530e91cb301a8a41cc7f69d2`
+passed all five visible feature checks. The complete3,431,992-character native
+log and every workflow step were inspected:417 migration,1 subject,16 prepared
+index,1 selected-edge and2 bootstrap tests passed, with migration idempotence.
+All eight prior graphs passed unchanged; the ninth shared graph passed in
+134096ms under its unchanged180000ms deadline. This supersedes the pending
+corrected-head notes below, not their historical failed-head evidence.
+
+The new shared marker confirms genuine pre-capture live test sources, seven
+complete original layers, actual A then B sixth-owner reconciliation and fresh
+EMPTY, all four shared501 originals reopened for B, native B source501/503/504
+and legacy C-text10/3, independently joined selected-union associations,
+OUTSIDE/unresolved/second-hop preservation, and actual tenth DONE/exact16 plus
+the original FIRST candidate. The candidate's whole-owner maximum remains238
+SQL queries under256. This is a small synthetic native graph, NOT an issued
+durable index, economic/at-sale/quarter authority, licensed large-area study,
+production speed, current review or protected-main clearance. Actual reviews
+remain empty and included-review allowance unresolved; draft skips are not reviews.
+
+The local-only next-owner WIP now adds bounded bidirectional current-account
+edge checks, immutable first-seen/native-prefix deltas and complete compact
+receipt reconstruction. Unattached head/child deferred functions require one
+native transaction, exact17 checkpoint and unconsumed single-use yield; no
+retained-population recount establishes completeness. A separate zero-argument
+native NEXT reader derives every storage member/key/edge from SQL and checks
+the native transaction before DML and after head CAS/readback. A dedicated
+exact16/17 intent reader retains request/profile/nine human roots/workspace and
+consumed-continuation/current-or-higher-attempt bindings without projecting17
+into or widening any old reader.306 focused DATA/static/protocol tests pass.
+
+This WIP is NOT in PR1291/cloud CI. Migration20261206 remains unregistered;
+the installed unconditional head/COMMIT refusals are unchanged, and no new
+storage/intent path is called by the actual original owner/route/worker. Before
+registration, finish separate actual-index-cursor original-package SQL/adapter,
+complete whole-original owner and ALL ending fences, exact17 job/continuation
+integration, and genuine native orphan/rollback/lostACK/ordinary4-to-5 prefix/
+fresh-EMPTY acceptance. Do not add calls to either tight old graph or raise any
+budget. All internal stages, production, reports, genuine choices and pins
+remain untouched; licensed/live roadmap acceptance remains OPEN.
+
 ## Shared-graph cloud ordering correction (2026-10-11,11:07 UTC)
 
 The first ninth-graph run at `4ec92aa7` failed its exact original closure-order

@@ -783,6 +783,82 @@ export function createCustomCohortV2SelectionIntentRepository(client){
     if(row.complete!==true)fail('unfinished_selected_semantic');
     if(await tx()!==started)fail('caller_transaction_required');return admitted;
   },
+  // Separate inactive exact16/17 admission for the eventual NEXT index owner.
+  // Do NOT delegate to readForTransactionSource/readForSemanticStatistics or
+  // project an actual17 checkpoint into their unchanged exact15/16 readers.
+  async readForTransactionIndex(...args){
+    if(args.length!==2)fail('invalid_input');
+    const claim=prepareCustomCohortCaptureJobClaim(data(args[0],['operation_id','claim_token','attempts'])),
+      o=data(args[1],['scope','actorUserId','workspaceTarget']),scope=authority(o),target=workspaceOf(o.workspaceTarget,claim.operation_id),
+      values=[claim.operation_id,claim.claim_token,claim.attempts,scope.organization_id,scope.report_file_id,
+        scope.assignment_file_id,scope.account_id,o.actorUserId],started=await tx();
+    if(await tx()!==started)fail('caller_transaction_required');
+    const row=data(one(await client.query(`/* custom-cohort-v2-selection-intent:transaction-index-read */
+      SELECT command.command_id::text,command.request_sha256,command.checkpoint,command.profile_reference,
+        command.workspace_revision,command.workspace_checkpoint,command.included_group_ids,command.issued_attempts,
+        command.resume_claim_token::text,job.request_sha256 AS job_request_sha256,job.checkpoint AS job_checkpoint,
+        coalesce(s.command_id=command.command_id AND u.command_id=command.command_id AND s.union_reference=u.receipt_reference
+          AND semantic_body.canonical_utf8::jsonb->>'format'='cohort_selected_semantic_receipt_v2'
+          AND semantic_body.canonical_utf8::jsonb->>'sequence'=s.sequence::text AND semantic_body.canonical_utf8::jsonb->'after'->>'done'='true'
+          AND union_body.canonical_utf8::jsonb->>'format'='cohort_selected_union_receipt_v2'
+          AND union_body.canonical_utf8::jsonb->>'sequence'=u.sequence::text AND union_body.canonical_utf8::jsonb->'after'->>'done'='true'
+          AND semantic_body.canonical_utf8::jsonb->'selected_stock_count'=union_body.canonical_utf8::jsonb->'after_selected_count'
+          AND semantic_body.canonical_utf8::jsonb->'after'->'selected_ordinal'=union_body.canonical_utf8::jsonb->'after_selected_count'
+          AND c.phase=job.checkpoint->>'phase'
+          AND c.progress_reference=CASE WHEN c.phase='frozen_selected_semantic_refs_v2' THEN s.receipt_reference ELSE indexed.receipt_reference END
+          AND app.neighborhood_selected_transaction_index_v2_admission_matches(job.operation_id,job.organization_id,job.checkpoint)
+          AND c.consumed_claim_token IS NOT NULL AND c.issued_attempts>=command.issued_attempts
+          AND ((job.attempts=c.issued_attempts AND job.claim_token=c.consumed_claim_token)
+            OR (job.attempts>c.issued_attempts AND job.claim_token<>c.issued_claim_token
+              AND job.claim_token<>c.consumed_claim_token AND job.claim_token<>command.resume_claim_token)),false) AS transaction_index_binding
+      FROM app.neighborhood_custom_cohort_capture_jobs job
+      JOIN app.neighborhood_custom_cohort_v2_selection_intents command USING(operation_id,organization_id)
+      JOIN app.neighborhood_custom_cohort_selected_semantic_v2_heads s USING(operation_id,organization_id)
+      JOIN app.neighborhood_custom_cohort_selected_union_v2_heads u USING(operation_id,organization_id)
+      JOIN app.neighborhood_cohort_evidence_blobs semantic_body ON semantic_body.organization_id=s.organization_id
+        AND semantic_body.content_sha256=s.receipt_reference->>'content_sha256'
+        AND semantic_body.canonical_utf8_bytes::text=s.receipt_reference->>'canonical_utf8_bytes' AND semantic_body.canonical_utf8_bytes<=4096
+      JOIN app.neighborhood_cohort_evidence_blobs union_body ON union_body.organization_id=u.organization_id
+        AND union_body.content_sha256=u.receipt_reference->>'content_sha256'
+        AND union_body.canonical_utf8_bytes::text=u.receipt_reference->>'canonical_utf8_bytes' AND union_body.canonical_utf8_bytes<=16000
+      LEFT JOIN app.neighborhood_custom_cohort_selected_transaction_index_v2_heads indexed
+        ON indexed.operation_id=job.operation_id AND indexed.organization_id=job.organization_id
+      JOIN app.neighborhood_custom_cohort_v2_continuations c ON c.operation_id=job.operation_id AND c.organization_id=job.organization_id
+      WHERE job.operation_id=$1::uuid AND job.claim_token=$2::uuid AND job.attempts=$3::integer
+        AND job.organization_id=$4::uuid AND job.report_file_id=$5::uuid AND job.assignment_file_id=$6::bigint
+        AND job.account_id=$7 AND job.actor_user_id=$8::uuid AND job.status='running'
+        AND job.lease_expires_at>clock_timestamp() AND job.cancellation_requested_at IS NULL AND job.context_sha256 IS NULL
+      FOR SHARE OF job,command NOWAIT`,values)),['command_id','request_sha256','checkpoint','profile_reference',
+      'workspace_revision','workspace_checkpoint','included_group_ids','issued_attempts','resume_claim_token',
+      'job_request_sha256','job_checkpoint','transaction_index_binding']);
+    // Validate closed native DATA before any canonical comparison. Native SQL,
+    // not these reference arrays, proves the actual graph/continuation binding.
+    const checkpoint=(raw,phase,length)=>{
+      const c=data(raw,['phase','evidence_refs']),a=c.evidence_refs;
+      if(c.phase!==phase||!Array.isArray(a)||isProxy(a)||Object.getPrototypeOf(a)!==Array.prototype
+        ||a.length!==length||Reflect.ownKeys(a).length!==length+1)fail('checkpoint_changed');
+      const roots=[];for(let i=0;i<length;i++){
+        const d=Object.getOwnPropertyDescriptor(a,String(i));if(!d||!d.enumerable||!Object.hasOwn(d,'value'))fail('checkpoint_changed');
+        const r=ref(d.value);if(i>=14&&Number(r.canonical_utf8_bytes)>4096)fail('checkpoint_changed');roots.push(r);
+      }
+      return Object.freeze({phase:c.phase,evidence_refs:Object.freeze(roots)});
+    },phase=data(row.job_checkpoint,['phase','evidence_refs']).phase;
+    if(!['frozen_selected_semantic_refs_v2','frozen_selected_transaction_index_refs_v2'].includes(phase))fail('checkpoint_changed');
+    const issued=checkpoint(row.checkpoint,'frozen_recorded_catalog_refs_v2',9),
+      cp=checkpoint(row.job_checkpoint,phase,phase==='frozen_selected_semantic_refs_v2'?16:17),
+      profile=ref(row.profile_reference),workspace=prepareCustomNeighborhoodWorkspaceCheckpoint(row.workspace_checkpoint);
+    if(typeof row.request_sha256!=='string'||!/^[a-f0-9]{64}$/.test(row.request_sha256)||row.request_sha256!==row.job_request_sha256
+      ||!same(profile,getNeighborhoodOriginalRecordedGroupV2Profile().definition_blob.ref)||row.transaction_index_binding!==true
+      ||!same(cp.evidence_refs.slice(0,9),issued.evidence_refs))fail('checkpoint_changed');
+    if(row.workspace_revision!==target.revision||!same(workspace,target.checkpoint))fail('workspace_changed');
+    if(!Number.isInteger(row.issued_attempts)||row.issued_attempts<1||row.issued_attempts>claim.attempts
+      ||typeof row.resume_claim_token!=='string'||!UUID.test(row.resume_claim_token)||claim.claim_token===row.resume_claim_token)fail('claim_lost');
+    const intent=prepareCustomCohortV2SelectionIntent({command_id:row.command_id,catalog_reference:issued.evidence_refs[8],
+      workspace_revision:row.workspace_revision,included_recorded_group_ids:row.included_group_ids});
+    if(await tx()!==started)fail('caller_transaction_required');
+    return Object.freeze({command_id:intent.command_id,claim,issued_attempts:row.issued_attempts,
+      included_recorded_group_ids:intent.included_recorded_group_ids,catalog_reference:intent.catalog_reference});
+  },
   async readForSemanticStatistics(rawClaim,raw){
     const claim=prepareCustomCohortCaptureJobClaim(data(rawClaim,['operation_id','claim_token','attempts'])),
       o=data(raw,['scope','actorUserId','workspaceTarget']),scope=authority(o),target=workspaceOf(o.workspaceTarget,claim.operation_id),

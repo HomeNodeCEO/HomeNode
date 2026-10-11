@@ -3,6 +3,7 @@ import test from 'node:test';
 import { randomUUID,createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { prepareNeighborhoodCiDatabase } from './helpers/neighborhoodCiDatabase.js';
+import { observeNeighborhoodCiPreparedQueries } from './helpers/neighborhoodCiPreparedQueries.js';
 import { runNeighborhoodSelectedNumericIndexV2DatabaseChecks } from './helpers/neighborhoodSelectedNumericIndexV2DatabaseChecks.js';
 import { runNeighborhoodSelectedNumericPopulationV2DatabaseChecks } from './helpers/neighborhoodSelectedNumericPopulationV2DatabaseChecks.js';
 import { assertBoundedCohortAuthorityAggregates } from './helpers/boundedCohortAuthorityAggregateAssertions.js';
@@ -1361,6 +1362,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     observedHousingFixture=selectionWaitFixture==='union-all'||positiveIndexedSourceFixture;
   const target=await prepareNeighborhoodCiDatabase();const {default:pg}=await import('pg');
   const pool=new pg.Pool({connectionString:target.connectionString,max:2,statement_timeout:120_000});
+  const preparedCiQueries=observeNeighborhoodCiPreparedQueries(pool);
   try {
     await pool.query(NEIGHBORHOOD_CACHED_SOURCE_SCHEMA);
     await pool.query('ALTER TABLE core.primary_improvements ADD COLUMN IF NOT EXISTS pool boolean');
@@ -5040,12 +5042,14 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
               JOIN app.neighborhood_cohort_evidence_blobs b ON b.organization_id=h.organization_id
                 AND b.content_sha256=h.receipt_reference->>'content_sha256' AND b.canonical_utf8_bytes::text=h.receipt_reference->>'canonical_utf8_bytes'
               WHERE h.operation_id=$1`,[refsOperation])).rows,
-            stablePrior=async()=>{assert.deepEqual(await readUnion(),finalUnion);assert.deepEqual(await readIntents(),retainedIntents);
-              assert.deepEqual(await readCatalogHead(),catalogFinal);assert.deepEqual(await readCatalogGroups(),catalogGroups);
-              assert.deepEqual(await readPartitionHead(),partitionFinal);assert.deepEqual(await readPartitionRows(),partitionRows);
-              assert.deepEqual(await readTargetWorkspace(),targetWorkspace);assert.deepEqual(await readTargetHistory(),targetHistory);
-              assert.deepEqual(await readTargetReport(),targetReport);assert.deepEqual(await readTargetWorkfile(),targetWorkfile);
-              assert.deepEqual(await readPriorTargetMetadata(),priorTargetMetadata);assert.equal(await pinCount(),pinsBeforeContinuation);},
+            // Read-only QA assertions after the owner transaction has ended.
+            // Keep EVERY prior value/probe, using at most the same two native
+            // pool connections rather than serial round trips for each field.
+            stablePrior=async()=>{const actual=await Promise.all([readUnion(),readIntents(),readCatalogHead(),readCatalogGroups(),
+              readPartitionHead(),readPartitionRows(),readTargetWorkspace(),readTargetHistory(),readTargetReport(),readTargetWorkfile(),
+              readPriorTargetMetadata(),pinCount()]),expected=[finalUnion,retainedIntents,catalogFinal,catalogGroups,partitionFinal,
+              partitionRows,targetWorkspace,targetHistory,targetReport,targetWorkfile,priorTargetMetadata,pinsBeforeContinuation];
+              actual.forEach((value,index)=>assert.deepEqual(value,expected[index],`unchanged native prior field ${index}`));},
             eligibilitySnapshot=async()=>({heads:await readEligibility(),job:await continuationJob(),continuation:await continuationRow(),blobs:await refsBlobCount()}),
             eligibilityUnchanged=async snapshot=>{assert.deepEqual(await eligibilitySnapshot(),snapshot);await stablePrior();};
           const eligibilityInitial=await eligibilitySnapshot();assert.deepEqual(eligibilityInitial.heads,[]);
@@ -5740,10 +5744,12 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             readNumericIndex=async()=>(await pool.query(`SELECT operation_id,organization_id,ordinal,account_id,contribution_row_reference,
               reported_year_built::text,reported_residential_area::text,reported_site_area::text
               FROM app.neighborhood_custom_cohort_selected_numeric_index_v2_rows WHERE operation_id=$1 ORDER BY ordinal`,[refsOperation])).rows,
-            contributionSnapshot=async()=>({heads:await readContributions(),rows:await readContributionRows(),numeric_index:await readNumericIndex(),
-              job:await continuationJob(),continuation:await continuationRow(),blobs:await refsBlobCount(),
-              numeric_population_heads:(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_numeric_v2_heads WHERE operation_id=$1',[refsOperation])).rows,
-              numeric_population_rows:(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_numeric_v2_rows WHERE operation_id=$1 ORDER BY ordinal',[refsOperation])).rows}),
+            contributionSnapshot=async()=>{const [heads,rows,job,continuation,blobs,populationHeads,populationRows]=await Promise.all([
+              readContributions(),readContributionRows(),continuationJob(),continuationRow(),refsBlobCount(),
+              pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_numeric_v2_heads WHERE operation_id=$1',[refsOperation]),
+              pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_numeric_v2_rows WHERE operation_id=$1 ORDER BY ordinal',[refsOperation])]);
+              return {heads,rows,numeric_index:await readNumericIndex(),job,continuation,blobs,
+                numeric_population_heads:populationHeads.rows,numeric_population_rows:populationRows.rows};},
             contributionParents=async()=>{assert.deepEqual(await readMetrics(),finishedMetrics.heads);assert.deepEqual(await readMetricRows(),finishedMetrics.rows);
               assert.deepEqual(await readEvidence(),completedEvidence.heads);assert.deepEqual(await readEligibility(),completedEligibility.heads);await stablePrior();},
             contributionUnchanged=async snapshot=>{assert.deepEqual(await contributionSnapshot(),snapshot);await contributionParents();},
@@ -6092,11 +6098,12 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           const numericMethod='progressOriginalFrozenCaptureJobSelectedNumericReferencesV2',numericQueries=[],
             numericStep=async()=>{const from=refsCalls.length;try{return await cadOwner()[numericMethod](refsInput,{captureJobClaim:liveClaim});}
               finally{numericQueries.push(refsCalls.length-from-3);}},
-            numericSnapshot=async()=>({...await contributionSnapshot(),
-              numeric_heads:(await pool.query(`SELECT h.*,b.canonical_utf8 FROM app.neighborhood_custom_cohort_selected_numeric_v2_heads h
+            numericSnapshot=async()=>{const [contribution,heads]=await Promise.all([contributionSnapshot(),
+              pool.query(`SELECT h.*,b.canonical_utf8 FROM app.neighborhood_custom_cohort_selected_numeric_v2_heads h
                 JOIN app.neighborhood_cohort_evidence_blobs b ON b.organization_id=h.organization_id
                   AND b.content_sha256=h.receipt_reference->>'content_sha256'
-                  AND b.canonical_utf8_bytes::text=h.receipt_reference->>'canonical_utf8_bytes' WHERE h.operation_id=$1`,[refsOperation])).rows}),
+                  AND b.canonical_utf8_bytes::text=h.receipt_reference->>'canonical_utf8_bytes' WHERE h.operation_id=$1`,[refsOperation])]);
+              return {...contribution,numeric_heads:heads.rows};},
             numericParents=async()=>{assert.deepEqual(await readContributions(),finishedContributions.heads);
               assert.deepEqual(await readContributionRows(),finishedContributions.rows);assert.deepEqual(await readNumericIndex(),finishedContributions.numeric_index);
               await contributionParents();assert.deepEqual(await readEvidenceAuthority(),frequencyAuthority);},
@@ -6697,6 +6704,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,operation));
     await assert.rejects(withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSourceClosurePages(client,
       frozenSpatialOptions({...options,claim})).page({kind:'source_records',cursor:''})),/claim_lost/);
+    console.info('[native-original-protocol-prepared-CI-queries]',{fixture:selectionWaitFixture,...preparedCiQueries.snapshot()});
   }finally{await pool.end();}
 });
 

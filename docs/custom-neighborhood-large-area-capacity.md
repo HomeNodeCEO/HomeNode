@@ -1,5 +1,28 @@
 # Complete larger-area Custom neighborhood studies
 
+## Native bounded rank-candidate groundwork authored, not semantic statistics (2026-10-11)
+
+The child of actual ninth-owner PR1283 adds a separate INACTIVE read-only native
+rank repository, not a new original/statistics owner. A live scoped consumed
+claim, exact15 complete native parent graph, actual ninth fresh EMPTY and every
+eighth/ninth/index member/reference/count must match. Fixed SQL returns THREE
+metric rows with native exact low/high and the six Type7 rank observations and
+integer remainders. It preserves tied-account multiplicity, NULL exclusions and
+genuine zero; no floating conversion, caller rank/cursor/count/value/roster,
+population JSON/array, DML, migration or activation is introduced.
+
+Cloud probes are authored after the real ninth owner for all four independent
+graphs, including actual prefix and foreign-claim/scope/actor/command/parent
+refusals and full unchanged-state/lease checks. Local parser/structure tests are
+NOT native execution. Candidates explicitly retain no source/original/statistics
+authority. The subsequent bounded semantic owner MUST reopen COMPLETE originals
+and ENTIRE caches, compare every seventh/eighth/index field, independently
+reconcile all eligible/state counts and all current+ending authorization AGAIN
+before exact quantile/deviation/COD results or publication. That semantic owner,
+calendar quarters, coherent publication, workers, licensed acquisition and live
+acceptance are still outstanding. Old readers and original-owner SQL/guards are
+unchanged. No route, production or genuine appraisal choice changed.
+
 ## Ninth original owner native verified; recovery followup still needs fresh cloud execution (2026-10-11)
 
 The integrated owner at `cb70d60fc5de71dfbf88255d24c23c06a70181b9`

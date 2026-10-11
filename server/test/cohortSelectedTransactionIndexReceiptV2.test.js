@@ -105,11 +105,13 @@ test('proxy/accessor/sparse/symbol/toJSON inputs fail closed without executing h
   assert.throws(()=>receipt(r));assert.throws(()=>receipt(r,expected,undefined));
 });
 
-test('owner WIP codec is not imported by an active or existing original owner and does not remove the unintegrated native COMMIT guard',()=>{
+test('owner WIP codec proposes only an unretained read-only native NEXT receipt and does not remove the unintegrated native COMMIT guard',()=>{
   const capture=readFileSync(new URL('../src/services/neighborhoodAssessment/customCohortContextCapture.js',import.meta.url),'utf8'),
     sql=readFileSync(new URL('../migrations/20261205_custom_cohort_selected_transaction_index_v2.sql',import.meta.url),'utf8'),
     codec=readFileSync(new URL('../src/services/neighborhoodAssessment/cohortSelectedTransactionIndexReceiptV2.js',import.meta.url),'utf8');
-  assert.doesNotMatch(capture,/cohortSelectedTransactionIndexReceiptV2/);
+  assert.match(capture,/native_index_candidate:buildCohortSelectedTransactionIndexReceiptV2/);
+  assert.match(capture,/native_index_candidate_retained:false,transaction_index_issued:false/);
+  assert.doesNotMatch(capture,/selectedTransactionIndexStore\.advance\(/);
   assert.match(sql,/RAISE EXCEPTION 'neighborhood_selected_transaction_index_v2_owner_unintegrated'/);
   assert.doesNotMatch(codec,/\.query\(|\.put\(|yieldIssued\(|saveCheckpoint\(|\.advance\(/);
   assert.match(codec,/DATA validation is not an issued index/);

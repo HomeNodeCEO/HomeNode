@@ -208,7 +208,8 @@ test('tenth owner freshly batches ONLY fixed issued receipts after current sourc
     "if(body===null)fail('checkpoint_conflict')",'Object.freeze(issuedCheckpointReceipts);Object.freeze(issuedCheckpointTexts)',
     'if(issuedCheckpointReceipts===null)return blobs.get(ref.content_sha256,ref.canonical_utf8_bytes)',
     'findIndex(expected=>same(expected,ref))',"if(index<0)fail('checkpoint_conflict')"])assert.ok(body.includes(text),text);
-  assert.equal((s.match(/await readIssuedCheckpointReceipt\(/g)??[]).length,13);
+  assert.equal((s.match(/await readIssuedCheckpointReceipt\(/g)??[]).length,14,'all thirteen original anchors plus the separate inactive phase17 compact receipt');
+  assert.equal((s.match(/await readIssuedCheckpointReceipt\(selectedTransactionIndexPacket.previous\)/g)??[]).length,1);
   for(const anchor of ['graphAnchor','geographicAnchor','identityAnchor','traversalAnchor','partitionAnchor','catalogAnchor','unionAnchor',
     'eligibilityAnchor','evidenceAnchor','metricsAnchor','statisticsAnchor','numericAnchor','semanticAnchor']){
     const read=s.indexOf(`await readIssuedCheckpointReceipt(${anchor}.receipt_reference)`);

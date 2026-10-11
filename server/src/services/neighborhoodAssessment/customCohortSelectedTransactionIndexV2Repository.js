@@ -7,8 +7,11 @@ import { prepareCohortSelectedTransactionIndexPlanV2 } from './cohortSelectedTra
 
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const MEMBER=['account_id','ordinal','partition_ordinal','entry_reference','metric_row_reference','contribution_row_reference'];
+const ORIGINAL_MEMBER=['account_id','ordinal','partition_ordinal','entry_reference','state','assigned_group_id','row_reference',
+  'contribution_row_reference','numeric_index_ordinal','reported_year_built','reported_residential_area','reported_site_area',
+  'numeric_population_ordinal','semantic_population_ordinal'];
 const ROW=['transaction_id','generation_id',...MEMBER,'anchor_count','kind','native_key','first_selected_ordinal','registry_matches',
-  'selected_stock_count','before','head_receipt_reference','head_sequence'];
+  'selected_stock_count','before','head_receipt_reference','head_sequence','original_member'];
 const fail=r=>{throw new TypeError(`custom_cohort_selected_transaction_index_v2_${r}`);};
 const same=(a,b)=>json(a)===json(b);
 function data(v,keys){
@@ -21,6 +24,22 @@ function ref(v,max=4096){const r=data(v,['content_sha256','canonical_utf8_bytes'
   if(Number(p.canonical_utf8_bytes)>max)fail('invalid_reference');return p;}
 function one(result){if(result?.rowCount!==1||result.rows?.length!==1)fail('claim_lost');return result.rows[0];}
 function txid(v){if(typeof v!=='string'||!/^[1-9][0-9]{0,19}$/.test(v))fail('caller_transaction_required');return v;}
+function originalMember(value,selected){
+  if(selected===null){if(value!==null)fail('native_member_missing_or_corrupt');return null;}
+  const raw=data(value,ORIGINAL_MEMBER),m={...raw,entry_reference:ref(raw.entry_reference,1000000),
+    row_reference:ref(raw.row_reference),contribution_row_reference:ref(raw.contribution_row_reference)};
+  if(!same(Object.fromEntries(MEMBER.map(k=>[k,k==='metric_row_reference'?m.row_reference:m[k]])),selected)
+    ||!['assigned','unassigned'].includes(m.state)||(m.state==='assigned'?typeof m.assigned_group_id!=='string'
+      ||!/^recorded-cad:[a-f0-9]{64}$/.test(m.assigned_group_id):m.assigned_group_id!==null)
+    ||['numeric_index_ordinal','numeric_population_ordinal','semantic_population_ordinal'].some(k=>m[k]!==selected.ordinal))
+    fail('native_member_missing_or_corrupt');
+  for(const key of ['reported_year_built','reported_residential_area','reported_site_area']){
+    const v=m[key];if(v!==null&&(typeof v!=='string'||v.length>31||!/^(0|[1-9][0-9]*)(\.[0-9]*[1-9])?$/.test(v)
+      ||v.replace('.','').length>30||(v.split('.')[1]?.length??0)>12))fail('native_member_missing_or_corrupt');
+  }
+  const {semantic_population_ordinal,...entry}=m;
+  return Object.freeze(entry);
+}
 
 // This is the actual current native binding, not a caller-created checkpoint
 // projection. The exact16/17 admission is added only to NEXT and pre-head DML;
@@ -56,7 +75,8 @@ const BOUND=`WITH bound_context AS MATERIALIZED (
 const NEXT='app.neighborhood_selected_transaction_index_v2_next_keys(c.operation_id,c.organization_id)';
 const ADMISSION='app.neighborhood_selected_transaction_index_v2_admission_matches(c.operation_id,c.organization_id,c.checkpoint)';
 
-/** UNREGISTERED owner WIP, not called by the context owner/route/worker yet.
+/** UNREGISTERED owner WIP. Only readNext is connected to the inactive context
+ * original-reader seam; advance is NOT called by any owner/route/worker yet.
  * Storage only: the complete-original owner must replay EVERY prior field and
  * current account's COMPLETE packages, ENTIRE caches/required subject and ALL
  * current/ending rights/actor/workspace/claim fences before calling advance.
@@ -91,8 +111,35 @@ export function createCustomCohortSelectedTransactionIndexV2Repository(...args){
        WHEN 'legacy_sale' THEN ls.operation_id IS NULL OR (ls.organization_id=c.organization_id AND ls.generation_id=k.generation_id)
        ELSE true END AS registry_matches,c.selected_stock_count,
       CASE WHEN h.operation_id IS NULL THEN jsonb_build_object('selected_ordinal',0,'source_record_keys',0,'legacy_sale_keys',0,'done',false)
-       ELSE hb.canonical_utf8::jsonb->'after' END AS before,h.receipt_reference AS head_receipt_reference,h.sequence AS head_sequence
+       ELSE hb.canonical_utf8::jsonb->'after' END AS before,h.receipt_reference AS head_receipt_reference,h.sequence AS head_sequence,
+      CASE WHEN k.account_id IS NULL THEN NULL ELSE jsonb_build_object(
+       'account_id',m.account_id,'ordinal',m.ordinal,'partition_ordinal',m.partition_ordinal,'entry_reference',m.entry_reference,
+       'state',entry.state,'assigned_group_id',entry.assigned_group_id,'row_reference',m.metric_row_reference,
+       'contribution_row_reference',m.row_reference,'numeric_index_ordinal',indexed.ordinal,
+       'reported_year_built',indexed.reported_year_built::text,'reported_residential_area',indexed.reported_residential_area::text,
+       'reported_site_area',indexed.reported_site_area::text,'numeric_population_ordinal',n.ordinal,'semantic_population_ordinal',semantic.ordinal)
+       END AS original_member
      FROM bound_context c CROSS JOIN LATERAL ${NEXT} k
+     LEFT JOIN app.neighborhood_custom_cohort_selected_statistics_v2_rows m ON m.operation_id=c.operation_id AND m.organization_id=c.organization_id
+      AND m.ordinal=k.ordinal AND m.account_id=k.account_id AND m.partition_ordinal=k.partition_ordinal
+      AND m.entry_reference=k.entry_reference AND m.metric_row_reference=k.metric_row_reference AND m.row_reference=k.contribution_row_reference
+     LEFT JOIN app.neighborhood_custom_cohort_selected_numeric_v2_rows n ON n.operation_id=m.operation_id AND n.organization_id=m.organization_id
+      AND n.ordinal=m.ordinal AND n.account_id=m.account_id AND n.partition_ordinal=m.partition_ordinal AND n.entry_reference=m.entry_reference
+      AND n.metric_row_reference=m.metric_row_reference AND n.contribution_row_reference=m.row_reference
+     LEFT JOIN app.neighborhood_custom_cohort_selected_numeric_index_v2_rows indexed ON indexed.operation_id=m.operation_id
+      AND indexed.organization_id=m.organization_id AND indexed.ordinal=m.ordinal AND indexed.account_id=m.account_id
+      AND indexed.contribution_row_reference=m.row_reference
+     LEFT JOIN app.neighborhood_custom_cohort_selected_semantic_v2_rows semantic ON semantic.operation_id=m.operation_id
+      AND semantic.organization_id=m.organization_id AND semantic.ordinal=m.ordinal AND semantic.account_id=m.account_id
+      AND semantic.partition_ordinal=m.partition_ordinal AND semantic.entry_reference=m.entry_reference
+      AND semantic.metric_row_reference=m.metric_row_reference AND semantic.contribution_row_reference=m.row_reference
+     LEFT JOIN app.neighborhood_custom_cohort_selected_metrics_v2_rows metric ON metric.operation_id=m.operation_id AND metric.organization_id=m.organization_id
+      AND metric.ordinal=m.ordinal AND metric.account_id=m.account_id AND metric.partition_ordinal=m.partition_ordinal
+      AND metric.entry_reference=m.entry_reference AND metric.row_reference=m.metric_row_reference
+     LEFT JOIN app.neighborhood_custom_cohort_selected_union_v2_rows u ON u.operation_id=metric.operation_id AND u.organization_id=metric.organization_id
+      AND u.ordinal=metric.ordinal AND u.account_id=metric.account_id AND u.partition_ordinal=metric.partition_ordinal AND u.entry_reference=metric.entry_reference
+     LEFT JOIN app.neighborhood_custom_cohort_recorded_partition_v2_rows entry ON entry.operation_id=u.operation_id AND entry.organization_id=u.organization_id
+      AND entry.account_id=u.account_id AND entry.ordinal=u.partition_ordinal AND entry.entry_reference=u.entry_reference
      LEFT JOIN app.neighborhood_custom_cohort_selected_transaction_index_v2_heads h ON h.operation_id=c.operation_id
      LEFT JOIN app.neighborhood_cohort_evidence_blobs hb ON hb.organization_id=h.organization_id
       AND hb.content_sha256=h.receipt_reference->>'content_sha256'
@@ -123,11 +170,13 @@ export function createCustomCohortSelectedTransactionIndexV2Repository(...args){
       }catch{fail('native_plan_missing_or_corrupt');}
       if((r.head_sequence===null)!==(previous===null)||previous===null&&header.before.selected_ordinal!==0
         ||previous!==null&&r.head_sequence!==header.before.selected_ordinal)fail('native_plan_missing_or_corrupt');
-      const next={header,previous};if(packet===null)packet=next;else if(!same(packet,next))fail('native_plan_missing_or_corrupt');
+      const selected_entry=originalMember(r.original_member,header.selected_entry),next={header,previous,selected_entry};
+      if(packet===null)packet=next;else if(!same(packet,next))fail('native_plan_missing_or_corrupt');
       if(noPackage){if(result.rowCount!==1||header.anchor_count!==0)fail('native_plan_missing_or_corrupt');}
       else packages.push(nativePackage);
     }
-    try{return Object.freeze({plan:prepareCohortSelectedTransactionIndexPlanV2({...packet.header,native_packages:packages}),previous:packet.previous});}
+    try{return Object.freeze({plan:prepareCohortSelectedTransactionIndexPlanV2({...packet.header,native_packages:packages}),
+      previous:packet.previous,selected_entry:packet.selected_entry});}
     catch{fail('native_plan_missing_or_corrupt');}
   };
   const changed=(r,count)=>{if(!r||r.rowCount!==count||!Array.isArray(r.rows)||r.rows.length!==0)fail('native_delta_conflict');};

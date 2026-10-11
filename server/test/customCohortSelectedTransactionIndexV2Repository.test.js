@@ -10,8 +10,12 @@ const id=n=>`70000000-0000-4000-8000-${String(n).padStart(12,'0')}`,
   zero={selected_ordinal:0,source_record_keys:0,legacy_sale_keys:0,done:false},
   member={account_id:'A',ordinal:1,partition_ordinal:1,entry_reference:ref(1),metric_row_reference:ref(2),contribution_row_reference:ref(3)},
   nullMember=Object.fromEntries(Object.keys(member).map(k=>[k,null])),
+  originalMember={account_id:'A',ordinal:1,partition_ordinal:1,entry_reference:ref(1),state:'unassigned',assigned_group_id:null,
+    row_reference:ref(2),contribution_row_reference:ref(3),numeric_index_ordinal:1,reported_year_built:'2001',
+    reported_residential_area:'1500.25',reported_site_area:null,numeric_population_ordinal:1,semantic_population_ordinal:1},
   first={transaction_id:'100',generation_id:id(1),...member,anchor_count:2,kind:'source_record',native_key:'501',
-    first_selected_ordinal:null,registry_matches:true,selected_stock_count:2,before:zero,head_receipt_reference:null,head_sequence:null},
+    first_selected_ordinal:null,registry_matches:true,selected_stock_count:2,before:zero,head_receipt_reference:null,head_sequence:null,
+    original_member:originalMember},
   scope={organization_id:id(2),report_file_id:id(3),assignment_file_id:'7',account_id:'SUBJECT'},
   claim={operation_id:id(4),claim_token:id(5),attempts:4};
 const copy=v=>structuredClone(v),result=rows=>({rowCount:rows.length,rows});
@@ -43,6 +47,8 @@ function fixture(rows=[copy(first)],changes={}){
 const mutations=q=>q.filter(v=>/-insert$|head-advance$/.test(v.tag));
 function secondRows(){
   const header={...first,account_id:'B',ordinal:2,partition_ordinal:2,anchor_count:5,
+    original_member:{...originalMember,account_id:'B',ordinal:2,partition_ordinal:2,numeric_index_ordinal:2,
+      numeric_population_ordinal:2,semantic_population_ordinal:2},
     before:{selected_ordinal:1,source_record_keys:1,legacy_sale_keys:0,done:false},head_sequence:1,head_receipt_reference:ref(8)};
   return [...['501','503','504'].map(native_key=>({...copy(header),kind:'source_record',native_key,first_selected_ordinal:native_key==='501'?1:null})),
     ...['10','3'].map(native_key=>({...copy(header),kind:'legacy_sale',native_key,first_selected_ordinal:null}))];
@@ -52,6 +58,8 @@ test('bounded first account derives every write from native NEXT and rechecks th
   const {repo,queries}=fixture(),packet=await repo.readNext();
   assert.equal(packet.previous,null);assert.deepEqual(packet.plan.native_packages,[{kind:'source_record',native_key:'501',first_selected_ordinal:null}]);
   assert.ok(Object.isFrozen(packet)&&Object.isFrozen(packet.plan.native_packages));
+  const {semantic_population_ordinal,...entry}=originalMember;
+  assert.deepEqual(packet.selected_entry,entry);assert.ok(Object.isFrozen(packet.selected_entry)&&Object.isFrozen(packet.selected_entry.row_reference));
   assert.deepEqual(await repo.advance(receipt),{receipt_reference:receipt,sequence:1,generation_id:id(1)});
   assert.deepEqual(queries.map(q=>q.tag),['transaction','native-plan','native-plan','member-insert','source_record-insert',
     'legacy_sale-insert','edge-insert','head-insert','head-readback']);
@@ -87,9 +95,10 @@ test('a separate fresh EMPTY retains the native issued prefix, including a maxim
   for(const count of [0,2,2000000]){
     const before=count===0?zero:{selected_ordinal:count,source_record_keys:count*250,legacy_sale_keys:0,done:false},
       row={...copy(first),...nullMember,selected_stock_count:count,before,anchor_count:0,kind:null,native_key:null,first_selected_ordinal:null,
+        original_member:null,
         head_sequence:count===0?null:count,head_receipt_reference:count===0?null:ref(8)},
       {repo,queries}=fixture([row]),packet=await repo.readNext();
-    assert.equal(packet.plan.selected_entry,null);assert.deepEqual(packet.plan.native_packages,[]);
+    assert.equal(packet.plan.selected_entry,null);assert.equal(packet.selected_entry,null);assert.deepEqual(packet.plan.native_packages,[]);
     assert.equal((await repo.advance(receipt)).sequence,count+1);
     assert.equal(queries.filter(q=>q.tag==='native-plan').length,2);
     assert.equal(mutations(queries).length,5,'four zero-child statements plus one issued head, no hidden terminal population scan');
@@ -102,7 +111,10 @@ test('autocommit/different native transaction and a changed ending plan are refu
   await assert.rejects(()=>badTx.repo.readNext(),/caller_transaction_required/);assert.equal(mutations(badTx.queries).length,0);
   for(const patch of [{generation_id:id(8)},{anchor_count:3},{native_key:'502'},
     {entry_reference:ref(4)},{metric_row_reference:ref(4)},{contribution_row_reference:ref(4)}]){
-    const f=fixture(undefined,{packets:[[copy(first)],[{...copy(first),...patch}]]});
+    const ending={...copy(first),...patch};
+    for(const [key,fullKey] of [['entry_reference','entry_reference'],['metric_row_reference','row_reference'],['contribution_row_reference','contribution_row_reference']])
+      if(patch[key])ending.original_member[fullKey]=patch[key];
+    const f=fixture(undefined,{packets:[[copy(first)],[ending]]});
     await f.repo.readNext();await assert.rejects(()=>f.repo.advance(receipt),/native_plan_changed/);assert.equal(mutations(f.queries).length,0);
   }
   const newTx=fixture(undefined,{packets:[[copy(first)],[{...copy(first),transaction_id:'101'}]]});
@@ -141,6 +153,50 @@ test('overflow, sparse, proxy, accessor, extra-field and nested hostile rows fai
   for(const rawResult of cases){const f=fixture(undefined,{rawResult});await assert.rejects(()=>f.repo.readNext());assert.equal(mutations(f.queries).length,0);}
 });
 
+test('native NEXT exposes the closed retained member needed by the whole original owner, never a first-member projection or extra population query',async()=>{
+  const f=fixture(secondRows()),packet=await f.repo.readNext();
+  assert.equal(packet.selected_entry.account_id,'B');assert.equal(packet.selected_entry.ordinal,2);
+  assert.equal(packet.selected_entry.numeric_population_ordinal,2);assert.equal(packet.selected_entry.numeric_index_ordinal,2);
+  assert.equal(packet.selected_entry.reported_residential_area,'1500.25');assert.equal(packet.selected_entry.reported_site_area,null);
+  const q=f.queries.find(v=>v.tag==='native-plan').sql;
+  for(const text of ['m.ordinal=k.ordinal AND m.account_id=k.account_id AND m.partition_ordinal=k.partition_ordinal',
+    'm.entry_reference=k.entry_reference AND m.metric_row_reference=k.metric_row_reference AND m.row_reference=k.contribution_row_reference',
+    'n.metric_row_reference=m.metric_row_reference AND n.contribution_row_reference=m.row_reference',
+    'semantic.metric_row_reference=m.metric_row_reference AND semantic.contribution_row_reference=m.row_reference',
+    'indexed.contribution_row_reference=m.row_reference','entry.ordinal=u.partition_ordinal AND entry.entry_reference=u.entry_reference',
+    "'semantic_population_ordinal',semantic.ordinal"])assert.ok(q.includes(text),text);
+  assert.deepEqual(f.queries.map(v=>v.tag),['transaction','native-plan']);
+  assert.doesNotMatch(q,/m\.ordinal=1|OFFSET\s|array_agg|jsonb_agg|::float|::real/);
+});
+
+test('every retained original-member identity, group state, exact numeric value and population binding is validated before any DML',async()=>{
+  const hostile=()=>assert.fail('hostile DATA must not execute'),cases=[null,{},new Proxy(originalMember,{get:hostile}),
+    {...originalMember,extra:true},{...originalMember,get reported_year_built(){hostile();}},
+    ...[{account_id:'B'},{ordinal:2},{partition_ordinal:2},{entry_reference:ref(4)},{row_reference:ref(4)},
+      {contribution_row_reference:ref(4)},{state:'unknown'},{assigned_group_id:'recorded-cad:'+ 'a'.repeat(64)},
+      {state:'assigned',assigned_group_id:null},{numeric_population_ordinal:null},{numeric_index_ordinal:2},
+      {semantic_population_ordinal:null},{reported_year_built:'01'},{reported_residential_area:'1.0'},
+      {reported_site_area:1},{reported_site_area:'1.1234567890123'},
+      {entry_reference:{...ref(1),toJSON:hostile}},{row_reference:new Proxy(ref(2),{get:hostile})}]
+      .map(patch=>({...copy(originalMember),...patch}))];
+  for(const original_member of cases){const f=fixture([{...copy(first),original_member}]);
+    await assert.rejects(()=>f.repo.readNext());assert.equal(mutations(f.queries).length,0);}
+  const rows=secondRows();rows[1].original_member.reported_residential_area='1501.25';
+  await assert.rejects(()=>fixture(rows).repo.readNext(),/native_plan_missing_or_corrupt/);
+  const empty={...copy(first),...nullMember,selected_stock_count:0,anchor_count:0,kind:null,native_key:null,original_member:copy(originalMember)};
+  await assert.rejects(()=>fixture([empty]).repo.readNext(),/native_member_missing_or_corrupt/);
+});
+
+test('ending retained member value/state changes are part of the observed native plan and are refused before the first DML',async()=>{
+  for(const patch of [{reported_year_built:null},{reported_residential_area:'1501.25'},{reported_site_area:'0'},
+    {state:'assigned',assigned_group_id:'recorded-cad:'+ 'a'.repeat(64)}]){
+    const ending={...copy(first),original_member:{...copy(originalMember),...patch}},
+      f=fixture(undefined,{packets:[[copy(first)],[ending]]});
+    await f.repo.readNext();await assert.rejects(()=>f.repo.advance(receipt),/native_plan_changed/);
+    assert.equal(mutations(f.queries).length,0);
+  }
+});
+
 test('post-head native transaction, receipt, generation, sequence and all parent binding readbacks must agree; bounded DML counts do not replace guards',async()=>{
   for(const changes of [{ending:'101'},{endingReceipt:ref(8)},{endingGeneration:id(8)},{endingSequence:2},{endingBinding:false},
     ...['member-insert','source_record-insert','legacy_sale-insert','edge-insert'].map(badDelta=>({badDelta}))]){
@@ -168,12 +224,14 @@ test('constructor and public operations accept no caller cursor/plan/count/callb
   await assert.rejects(()=>f.repo.advance(receipt,undefined),/invalid_input/);assert.equal(mutations(f.queries).length,0);
 });
 
-test('storage remains isolated from the actual owner until complete coherent native integration, with no old-reader or installed-guard relaxation',()=>{
+test('storage is connected only to the inactive read-only original owner, with no issuance or installed-guard relaxation',()=>{
   const path='../src/services/neighborhoodAssessment/',source=readFileSync(new URL(path+'customCohortSelectedTransactionIndexV2Repository.js',import.meta.url),'utf8'),
     capture=readFileSync(new URL(path+'customCohortContextCapture.js',import.meta.url),'utf8'),
     sql=readFileSync(new URL('../migrations/20261205_custom_cohort_selected_transaction_index_v2.sql',import.meta.url),'utf8'),
     migrations=readFileSync(new URL('../src/database/mobileMigrations.js',import.meta.url),'utf8');
-  assert.doesNotMatch(capture,/customCohortSelectedTransactionIndexV2Repository/);
+  assert.match(capture,/selectedTransactionIndexStore=createCustomCohortSelectedTransactionIndexV2Repository/);
+  assert.match(capture,/selectedTransactionIndexPacket=await selectedTransactionIndexStore.readNext\(\)/);
+  assert.doesNotMatch(capture,/selectedTransactionIndexStore\.advance\(/);
   assert.match(sql,/RAISE EXCEPTION 'neighborhood_selected_transaction_index_v2_owner_unintegrated'/);
   assert.doesNotMatch(migrations,/20261206_custom_cohort_selected_transaction_index_owner_v2/);
   assert.match(source,/UNREGISTERED owner WIP/);

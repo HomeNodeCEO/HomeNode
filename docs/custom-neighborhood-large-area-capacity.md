@@ -1,5 +1,51 @@
 # Complete larger-area Custom neighborhood studies
 
+## Inactive native NEXT original owner connected; no issuance (2026-10-11, 12:14 UTC)
+
+The local-only owner WIP now connects a separate read-only native NEXT entry to
+the existing bounded complete-original context owner. This supersedes the
+11:54 note below that the original child was unconnected. Dedicated actual
+exact16/17 intent admission runs at both ends; no caller checkpoint projection,
+ordinal, member, keys, first-seen values, callback or source grant is admitted.
+
+The bounded native-plan query now returns the closed retained member needed by
+the original owner, joined to actual partition/union/metric/statistics/numeric
+index/numeric population/semantic population rows. Exact numeric strings/nulls,
+group state, all member references and population ordinals are validated before
+use. This adds no full-population query. The owner reopens the complete issued
+graph, required subject, next selected stock/CAD/all-date transaction originals
+and ENTIRE caches, then compares every prior retained field and both directions
+of the complete per-account native package set. Previously seen shared sources
+are still reopened in full. ALL existing current/ending source rights, actor,
+assignment, draft, subject, workspace, claim and parent-head fences remain; the
+actual checkpoint and entire native NEXT packet, including first-seen bindings
+and retained values, are re-read after those ending checks.
+
+A separate read-only checkpoint decoder accepts only actual16/17. Ordinary job
+claim/read/save and continuation grammar remain unchanged and cannot issue17.
+The read-only owner validates the retained compact index receipt and native
+prefix before originals, and proposes an UNRETAINED bounded receipt only after
+all ending fences. It never calls index advance, writes a blob/member/key/edge/
+head/checkpoint, yields or changes a lease. No route or worker uses this entry.
+
+All463 focused tests across41 files passed in2345ms, with zero failures/skips.
+Coverage includes hostile checkpoint/member/options DATA, non-first native B,
+exact values/nulls, population/reference/state mismatches and changed ending
+values before DML. One old static receipt-call-count assertion was extended
+from13 to14 for the additive compact receipt read; all13 original anchor checks,
+old12/13 receipt bounds and eight-record/2MB batch caps remain. These are local
+DATA/protocol/structure tests, NOT PostgreSQL execution of this owner, licensed
+acquisition, actual first-seen durability or production-speed acceptance.
+
+Migration20261206 remains unregistered and its new guards unattached; installed
+unconditional index head/deferred COMMIT refusals remain intact. Next implement
+atomic exact17 issuance and single-use continuation, then genuine native A/B/
+shared-first-seen/fresh-EMPTY/orphan/rollback/lostACK/ordinary4-to-5 proofs in
+cloud without adding calls to either tight old graph. Actual included review
+allowance remains UNESTABLISHED. No protected merge, push, deployment,
+activation, source grant, report, genuine Hardy choice or pin changed. Full
+licensed large-area and Hardy reload/live acceptance remain OPEN; heartbeat ACTIVE.
+
 ## Native NEXT original child authored; issuance still inactive (2026-10-11, 11:54 UTC)
 
 The local-only transaction-index owner WIP now has a separate original-package

@@ -39,7 +39,7 @@ function anchor(v){
 function one(r){if(r?.rowCount!==1||r.rows?.length!==1)fail('claim_lost');return r.rows[0];}
 
 /** INACTIVE reference-only ninth storage, not source/selected-union authority.
- * NOT connected to the original owner yet. Its caller must be that actual
+ * Called only by the inactive bounded ninth original owner. Its caller must be that actual
  * bounded owner, freshly reconciling COMPLETE originals/ENTIRE caches, EVERY
  * seventh/eighth/index field and current+ending authorization before advance.
  * No caller ordinal, row, count, numerical value, callback or DONE parameter.

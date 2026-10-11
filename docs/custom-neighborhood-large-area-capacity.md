@@ -1,5 +1,43 @@
 # Complete larger-area Custom neighborhood studies
 
+## Ninth bounded original-owner integration implemented; cloud validation pending (2026-10-11)
+
+This section overrides the earlier foundation-only description below. The
+inactive ninth population owner now has a separate strict14/strict15 native
+command admission, native next-selected original SQL, the same single-use
+aggregate250-original packet and unchanged256-query/32MB/60-second owner budget.
+It reopens the COMPLETE issued graph and whole stock/CAD/all-date transaction
+and required subject originals plus ENTIRE neutral caches, compares EVERY
+seventh metric/eighth contribution/native indexed cell, then rechecks current
+and ending actor/assignment/private-draft/subject/source/claim/workspace/parents
+and the whole next member. Only then does the SAME transaction retain one small
+reference-only receipt/native member, exact15 checkpoint and fresh single-use
+continuation. A separately reopened fresh EMPTY is required after the last
+account. The existing fixed-first strict14 SQL remains byte-identical.
+
+The additive20261202 migration permits only eighth-to-ninth/ninth-to-ninth
+continuations, preserves failure history and the five-attempt ceiling, and
+retains every older phase restriction. No source-rights grant, population
+callback/roster/free ordinal, numeric/original/typed/diagnostic copy or backfill
+was added. Later semantic statistics consumers MUST reopen complete originals
+and current authority AGAIN; ninth DONE is not enduring authority.
+
+Cloud native fixtures are authored for ALL FOUR independently issued graphs
+(B-only, explicit EMPTY, both-selected exclusions, genuine first8000/later0).
+They exercise source/entire-cache/every7th/8th/index/ending-rights refusals,
+actual row/head/checkpoint/yield rollback, deferred orphan real-COMMIT rejection,
+lost real-COMMIT acknowledgment, strict older readers, reference-only storage,
+fresh EMPTY and whole-owner budget checks. Authored tests and local focused
+passes are not successful native execution. Exact-head full database, server,
+frontend, security checks and actual included review remain required before
+any expected-head protected merge.
+
+No route, worker, scheduler, default, production pin, Apply, accepted report or
+genuine Hardy choice changed. Full original-reconciled distributions/medians,
+CODs/calendar quarters, coherent publication, durable workers/terminal pins,
+licensed >50k/5-mile/10-mile/city/retrospective and live reload/speed acceptance
+remain OPEN. The heartbeat remains active.
+
 ## Indexed source-reopen fixes verified; ninth foundation still unintegrated (2026-10-11)
 
 This section overrides the older pending/failure notes below. Exact parent#1281

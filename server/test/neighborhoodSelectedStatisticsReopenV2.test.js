@@ -61,7 +61,7 @@ test('actual statistics-source owner compares every stored row field only to fre
   for(const s of ['verifying: true','stockVerifying: true','identityVerifying: true','readingSelectedUnionFirstAmenities: true',
     'readingSelectedUnionFirstTransactions: true','readingSelectedStatisticsSource: true',"allowedPhases: ['frozen_selected_metrics_refs_v2']"])assert.ok(stage.includes(s),s);
   assert.doesNotMatch(stage,/progressingSelectedMetrics: true|yieldingV2Progress: true/);
-  const first=owner.indexOf('firstSelectedEntry=await (readingSelectedFrequencySource?'),
+  const first=owner.indexOf('firstSelectedEntry=await (progressingSelectedNumeric?numericStore.readNextSelectedEntry():readingSelectedFrequencySource?'),
     original=owner.indexOf("'subjectAndFirstSelectedStatisticsAccountPackage'",first),
     compare=owner.indexOf('decision=resolveNeighborhoodOriginalAccountEligibilityV2',original),
     row=owner.indexOf('const metricRowCandidate=',compare),reconcile=owner.indexOf('if(!same(row,metricRowCandidate))',row),

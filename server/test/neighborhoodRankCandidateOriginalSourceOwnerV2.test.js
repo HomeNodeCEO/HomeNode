@@ -117,7 +117,12 @@ test('native seam injects actual post-original subject, claim and CAD-rights mut
     "if(fault==='cad_license')await setCadFixtureGrant",'revoked_at:cadGrant.valid_from'])assert.ok(hook.includes(text),text);
   const probe=s.slice(s.indexOf('rank seam actual original/current-ending refusal'),s.indexOf('const rankSourceFrom=',s.indexOf('rank seam actual original/current-ending refusal')));
   assert.ok(probe.includes("assert.equal(refsFault,null,'nonvacuous rank seam fault consumed')"));
-  assert.ok(probe.includes("afterOriginalAuthorityFault=['subject','claim','cad_license'].includes(fault)"));
+  assert.ok(probe.includes("afterOriginalAuthorityFault=['subject','cad_license'].includes(fault)"));
+  assert.doesNotMatch(probe,/afterOriginalAuthorityFault=\[[^\]]*'claim'/);
   assert.ok(probe.includes("fault.endsWith('_ending')||afterOriginalAuthorityFault?1:0"));
   assert.ok(probe.includes('await numericUnchanged(rankBefore)'));
+  const reader=source('neighborhoodSharedStockOriginalCellsV2.js'),stock=source('neighborhoodFrozenJobStock.js');
+  assert.ok(reader.includes('if(!same(await stocks.read(),stock)'));
+  assert.ok(reader.includes('await context.finish();if(cadContext)await cadContext.finish();return freeze(output)'));
+  assert.ok(stock.includes('await jobs.readPreparedGeneration(claim,jobOptions)'));
 });

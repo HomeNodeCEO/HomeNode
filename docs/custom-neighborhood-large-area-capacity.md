@@ -1,5 +1,40 @@
 # Complete larger-area Custom neighborhood studies
 
+## Fail-closed native transaction-index storage foundation (2026-10-11)
+
+The new inactive additive `20261205` migration provides reference-only selected
+members, separate source BIGINT and legacy-sale C-text key registries, immutable
+first-seen ordinals, per-account namespaced edges and a reserved native head.
+The fixed native key reader accepts only operation/organization; it derives the
+first next member from the actual tenth DONE/exact16 graph, actual job stock,
+generation pin and every seventh/eighth/index/ninth/tenth member. Three original
+association prefixes each stop at251; their combined anchor count must be<=250
+before package enumeration. No original payloads, roster, caller ordinal/keys,
+callback, hash or count is original or current-authorization authority.
+
+The native exact-set predicate uses BOTH missing and extra anti-joins, verifies
+member references/generation/namespace and bounded new-registry edges without
+rescanning the selected population. Provisional child inserts are native-bound;
+UPDATE/DELETE/TRUNCATE are refused. Crucially, head issuance is unconditionally
+refused and every provisional child has a deferred COMMIT refusal. This change
+does NOT install phase17, permit a durable ledger, acquire source rights or
+replace the actual complete-original owner. A later coherent owner/continuation
+migration must replace these fail-closed boundaries only with all current and
+ending rights, complete-original reconciliation, atomic exact17 checkpoint and
+single-use continuation, and genuine rollback/lost-ACK/prefix/EMPTY recovery.
+
+Authored cloud probes run only on the existing B-only/EMPTY/A+B issued graphs:
+native key identity, missing edges, provisional exact sets, duplicate insertion
+without first-seen replacement, wrong member/generation/key refusals, immutable
+edges, head refusal, SET CONSTRAINTS and actual rejected COMMIT followed by a
+fresh zero-child read. All original parent/job/continuation state must remain
+unchanged. No full owner calls are added, and the two near-deadline graphs and
+180s/120s/pool2/256SQL/32MB/60s/250-original limits are unchanged. These tests
+are provisional storage protocol, NOT successful owner, global selected-union
+deduplication, licensed acquisition or production-speed acceptance. New native
+verification is pending. Review allowance remains unestablished; draft skips
+are not reviews. No merge/deployment/activation/grants/report/choice/pin changes.
+
 ## First transaction-source native PASS; independent native key-set guard (2026-10-11)
 
 Exact parent feature headd76ada9b has all FIVE currently visible feature checks

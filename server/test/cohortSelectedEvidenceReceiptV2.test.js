@@ -171,12 +171,13 @@ test('native intent truncate proof includes every command FK child without bypas
     ['20261128_custom_cohort_selected_metrics_v2.sql','app.neighborhood_custom_cohort_selected_metrics_v2_heads'],
     ['20261129_custom_cohort_selected_statistics_v2.sql','app.neighborhood_custom_cohort_selected_statistics_v2_heads'],
     ['20261201_custom_cohort_selected_numeric_v2.sql','app.neighborhood_custom_cohort_selected_numeric_v2_heads'],
-    ['20261203_custom_cohort_selected_semantic_v2.sql','app.neighborhood_custom_cohort_selected_semantic_v2_heads']]){
+    ['20261203_custom_cohort_selected_semantic_v2.sql','app.neighborhood_custom_cohort_selected_semantic_v2_heads'],
+    ['20261205_custom_cohort_selected_transaction_index_v2.sql','app.neighborhood_custom_cohort_selected_transaction_index_v2_heads']]){
     const sql=readFileSync(new URL('../migrations/'+migration,import.meta.url),'utf8');
     assert.ok(sql.includes('REFERENCES app.neighborhood_custom_cohort_v2_selection_intents(command_id) ON DELETE RESTRICT ON UPDATE RESTRICT'));
     assert.ok(children.includes(table),table);
   }
-  assert.equal(children.length,7);
+  assert.equal(children.length,8);
   assert.doesNotMatch(statement[0],/CASCADE|DISABLE|DROP/);
   assert.ok(fixture.includes("'TRUNCATE app.neighborhood_custom_cohort_v2_selection_intents')),\n          /cannot truncate a table referenced in a foreign key constraint/"));
   assert.ok(fixture.includes('/selection_intent_immutable|custom_cohort_context_immutable/'));

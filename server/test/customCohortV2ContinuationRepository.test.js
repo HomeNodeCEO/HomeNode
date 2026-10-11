@@ -61,14 +61,15 @@ test('registered native continuation guards actual heads, root checkpoint, singl
   assert.match(jobs,/AND NOT EXISTS \(SELECT 1 FROM app\.neighborhood_custom_cohort_v2_continuations/);
   assert.doesNotMatch(sql,/DISABLE TRIGGER|DROP TABLE|ST_DWithin|UPDATE app\.report_files|DELETE FROM/);
 });
-test('catalog, union, eligibility, evidence and metric continuations admit only issued phases within the finite seven-pass ceiling',async()=>{
+test('catalog through contribution continuations admit only issued phases within the finite eight-pass ceiling',async()=>{
   const phase='frozen_recorded_catalog_refs_v2',result=await setup({phase,sequence:6000003}).owner.yieldIssued(claim,options);
   assert.equal(result.phase,phase);assert.equal(result.continuation_sequence,6000003);assert.equal(result.attempts,5);
-  for(const sequence of [0,14000008,1.5])await assert.rejects(setup({phase,sequence}).owner.yieldIssued(claim,options),/corrupt/);
+  for(const sequence of [0,16000009,1.5])await assert.rejects(setup({phase,sequence}).owner.yieldIssued(claim,options),/corrupt/);
   assert.equal((await setup({phase:'frozen_selected_union_refs_v2',sequence:8000004}).owner.yieldIssued(claim,options)).continuation_sequence,8000004);
   assert.equal((await setup({phase:'frozen_selected_eligibility_refs_v2',sequence:10000005}).owner.yieldIssued(claim,options)).continuation_sequence,10000005);
   assert.equal((await setup({phase:'frozen_selected_evidence_refs_v2',sequence:12000006}).owner.yieldIssued(claim,options)).continuation_sequence,12000006);
   assert.equal((await setup({phase:'frozen_selected_metrics_refs_v2',sequence:14000007}).owner.yieldIssued(claim,options)).continuation_sequence,14000007);
+  assert.equal((await setup({phase:'frozen_selected_statistics_refs_v2',sequence:16000008}).owner.yieldIssued(claim,options)).continuation_sequence,16000008);
   await assert.rejects(setup({phase:'frozen_free_done_refs_v2'}).owner.yieldIssued(claim,options),/corrupt/);
   const {owner,calls}=setup({phase});
   for(const key of ['phase','progress_reference','done','continuation_sequence','retry_count','catalog_head','readOriginal'])

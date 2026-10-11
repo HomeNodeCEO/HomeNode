@@ -240,3 +240,18 @@ export const NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL=sql(true,
 // The actual owner must reconcile the native seventh row field-by-field to
 // THIS call's complete originals and pass every ending fence before returning.
 export const NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL=sql(true,false,false,false,true);
+
+// Additive native eighth next-ordinal plan. Derive only from the fixed SQL
+// constant (never a caller string, ordinal or callback); all old six plans stay
+// byte-for-byte unchanged. Admission recursively requires the DONE seventh and
+// exact13 initial/exact14 native head. Whole originals/ENTIRE caches and the
+// shared aggregate bounds remain mandatory inside the actual original owner.
+export const NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL=
+  NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL
+    .replace('neighborhood-first-selected-statistics-original-package-v2','neighborhood-next-selected-statistics-original-package-v2')
+    .replace('  JOIN app.neighborhood_custom_cohort_selected_union_v2_rows r',`  LEFT JOIN app.neighborhood_custom_cohort_selected_statistics_v2_heads statistics
+    ON statistics.operation_id=job.operation_id AND statistics.organization_id=job.organization_id
+  JOIN app.neighborhood_custom_cohort_selected_union_v2_rows r`)
+    .replace('r.ordinal=1 AND $4::text=', 'r.ordinal=coalesce(statistics.sequence,0)+1 AND $4::text=')
+    .replace('app.neighborhood_selected_metrics_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)',
+      'app.neighborhood_selected_statistics_v2_admission_matches(job.operation_id,job.organization_id,job.checkpoint)');

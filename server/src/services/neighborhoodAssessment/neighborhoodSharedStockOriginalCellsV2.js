@@ -16,6 +16,7 @@ import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL,
   NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,
   NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,
   NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,
+  NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,
   NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL } from './neighborhoodSelectedTransactionOriginalPackageV2.js';
 import { reconcileNeighborhoodOriginalTransactionPackageV2 } from './neighborhoodOriginalTransactionPackagesV2.js';
 import { projectNeighborhoodTransactionPackageV1 } from './neighborhoodSharedTransactionPackagesV1.js';
@@ -525,13 +526,13 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
   /** Both complete accounts share every original/transport/output/SQL bound.
    * This is source DATA only; actual issued owner chooses the next cursor and
    * independently fences the full native graph, intent and current authority. */
-  async function subjectAndNextPackage(rawPage,rawSubject,firstSelected=false,nextEligibility=false,amenities=false,transactionPeriod=null,nextEvidence=false,completedEvidence=false,nextMetrics=false,completedMetrics=false){
+  async function subjectAndNextPackage(rawPage,rawSubject,firstSelected=false,nextEligibility=false,amenities=false,transactionPeriod=null,nextEvidence=false,completedEvidence=false,nextMetrics=false,completedMetrics=false,nextStatistics=false){
     const page=prepareNeighborhoodStockAccountPackagePageV2(rawPage),{includeSubject}=data(rawSubject,['includeSubject']);
     if(typeof includeSubject!=='boolean')fail('invalid_input');
     const context=await open(),{stock,source}=context,cadContext=amenities?await openCad(stock):null,
       values=[stock.operation_id,stock.generation_id,TYPED.profile_ref.content_sha256,page.cursor,L.rows,L.page_utf8_bytes,
         L.row_utf8_bytes,L.original_utf8_bytes,L.output_utf8_bytes,includeSubject],
-      result=one(await execute(completedMetrics?NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL:nextMetrics?NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL:completedEvidence?NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL
+      result=one(await execute(nextStatistics?NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL:completedMetrics?NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL:nextMetrics?NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL:completedEvidence?NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL
       :nextEvidence?NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL
       :transactionPeriod&&amenities?NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL
       :transactionPeriod?NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL:amenities?NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL:nextEligibility
@@ -763,6 +764,13 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
       if(args.length!==2)fail('invalid_input');
       const period=prepareNeighborhoodTransactionRetainedPeriodV1(args[1],effective);
       return subjectAndNextPackage({cursor:''},args[0],false,false,true,period,false,false,false,true);
+    },
+    // Single-use child; native eighth next ordinal, never a caller cursor or
+    // decision. Exact same aggregate original/ENTIRE-cache/SQL/byte budgets.
+    async subjectAndNextSelectedStatisticsAccountPackage(...args){
+      if(args.length!==2)fail('invalid_input');
+      const period=prepareNeighborhoodTransactionRetainedPeriodV1(args[1],effective);
+      return subjectAndNextPackage({cursor:''},args[0],false,false,true,period,false,false,false,false,true);
     },
   });
 }

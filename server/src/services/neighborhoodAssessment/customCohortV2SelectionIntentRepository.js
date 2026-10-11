@@ -753,6 +753,36 @@ export function createCustomCohortV2SelectionIntentRepository(client){
       included_recorded_group_ids:intent.included_recorded_group_ids,catalog_reference:intent.catalog_reference});
   },
   // Separate exact15/exact16 semantic admission. Every old reader stays strict.
+  async readForTransactionSource(rawClaim,raw){
+    const claim=prepareCustomCohortCaptureJobClaim(data(rawClaim,['operation_id','claim_token','attempts'])),
+      o=data(raw,['scope','actorUserId','workspaceTarget']),scope=authority(o),started=await tx(),
+      admitted=await createCustomCohortV2SelectionIntentRepository(client).readForSemanticStatistics(rawClaim,raw);
+    // Additional exact16 DONE admission, not a widening of any old reader.
+    // The actual owner still opens the whole issued graph and both-end rights.
+    const row=one(await client.query(`/* custom-cohort-v2-selection-intent:completed-semantic-transaction-source */
+      SELECT true AS complete FROM app.neighborhood_custom_cohort_capture_jobs job
+      JOIN app.neighborhood_custom_cohort_selected_semantic_v2_heads h USING(operation_id,organization_id)
+      JOIN app.neighborhood_cohort_evidence_blobs b ON b.organization_id=h.organization_id
+        AND b.content_sha256=h.receipt_reference->>'content_sha256'
+        AND b.canonical_utf8_bytes::text=h.receipt_reference->>'canonical_utf8_bytes' AND b.canonical_utf8_bytes<=4096
+      JOIN app.neighborhood_custom_cohort_selected_union_v2_heads u ON u.operation_id=job.operation_id AND u.organization_id=job.organization_id
+      JOIN app.neighborhood_cohort_evidence_blobs ub ON ub.organization_id=u.organization_id
+        AND ub.content_sha256=u.receipt_reference->>'content_sha256'
+        AND ub.canonical_utf8_bytes::text=u.receipt_reference->>'canonical_utf8_bytes' AND ub.canonical_utf8_bytes<=16000
+      WHERE job.operation_id=$1::uuid AND job.claim_token=$2::uuid AND job.attempts=$3::integer
+        AND job.organization_id=$4::uuid AND job.report_file_id=$5::uuid AND job.assignment_file_id=$6::bigint
+        AND job.account_id=$7 AND job.actor_user_id=$8::uuid AND job.status='running'
+        AND job.lease_expires_at>clock_timestamp() AND job.cancellation_requested_at IS NULL AND job.context_sha256 IS NULL
+        AND h.command_id=$9::uuid AND h.command_id=u.command_id AND h.union_reference=u.receipt_reference
+        AND app.neighborhood_selected_semantic_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)
+        AND b.canonical_utf8::jsonb->>'format'='cohort_selected_semantic_receipt_v2'
+        AND b.canonical_utf8::jsonb->>'sequence'=h.sequence::text AND b.canonical_utf8::jsonb->'after'->>'done'='true'
+        AND b.canonical_utf8::jsonb->'after'->'selected_ordinal'=ub.canonical_utf8::jsonb->'after_selected_count'`,
+    [claim.operation_id,claim.claim_token,claim.attempts,scope.organization_id,scope.report_file_id,scope.assignment_file_id,
+      scope.account_id,o.actorUserId,admitted.command_id]));
+    if(row.complete!==true)fail('unfinished_selected_semantic');
+    if(await tx()!==started)fail('caller_transaction_required');return admitted;
+  },
   async readForSemanticStatistics(rawClaim,raw){
     const claim=prepareCustomCohortCaptureJobClaim(data(rawClaim,['operation_id','claim_token','attempts'])),
       o=data(raw,['scope','actorUserId','workspaceTarget']),scope=authority(o),target=workspaceOf(o.workspaceTarget,claim.operation_id),

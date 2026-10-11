@@ -75,6 +75,38 @@ test('additive native guard binds all nine roots, exact workspace and one immuta
 
 const workerOptions={scope,actorUserId:id(5),workspaceTarget:options.workspaceTarget},
   currentClaim={operation_id:id(4),claim_token:id(6),attempts:5};
+function completedSemanticSetup({patch={},missing=false,complete=true,auto=false,late=false}={}){
+  const calls=[];let transactions=0;
+  return {calls,owner:repository({async query(sql,values){calls.push({sql,values});
+    if(sql.includes(':transaction')){transactions++;return {rowCount:1,rows:[{transaction_id:String(auto?transactions:late&&transactions===5?9:8)}]};}
+    if(sql.includes(':semantic-statistics-read'))return {rowCount:1,rows:[{...structuredClone(command),
+      job_request_sha256:command.request_sha256,job_checkpoint:{phase:'frozen_selected_semantic_refs_v2',evidence_refs:Array(16).fill(ref)},
+      semantic_binding:true,...patch}]};
+    if(sql.includes(':completed-semantic-transaction-source'))return {rowCount:missing?0:1,rows:missing?[]:[{complete}]};
+    assert.fail(sql);
+  }})};
+}
+
+test('transaction source adds separate exact16 DONE native admission over unchanged semantic command/workspace/consumed-claim checks',async()=>{
+  const claim={...currentClaim,claim_token:id(7)},s=completedSemanticSetup(),v=await s.owner.readForTransactionSource(claim,workerOptions);
+  assert.deepEqual(v.claim,claim);assert.equal(v.command_id,intent.command_id);assert.ok(Object.isFrozen(v));
+  assert.equal(s.calls.filter(c=>c.sql.includes(':transaction')).length,5);
+  const q=s.calls.find(c=>c.sql.includes(':completed-semantic-transaction-source'));
+  assert.deepEqual(q.values,[id(4),id(7),5,...Object.values(scope),id(5),id(3)]);
+  for(const text of ['neighborhood_selected_semantic_v2_checkpoint_matches',"b.canonical_utf8::jsonb->'after'->>'done'='true'",
+    "b.canonical_utf8::jsonb->'after'->'selected_ordinal'=ub.canonical_utf8::jsonb->'after_selected_count'",
+    'h.command_id=u.command_id','h.union_reference=u.receipt_reference','job.actor_user_id=$8::uuid',
+    'job.lease_expires_at>clock_timestamp()'])assert.ok(q.sql.includes(text),text);
+  assert.ok(s.calls.every(c=>!/\b(INSERT|UPDATE|DELETE|TRUNCATE)\b/.test(c.sql)));
+  for(const input of [{missing:true},{complete:false},{auto:true},{late:true},
+    {patch:{semantic_binding:false}},{patch:{workspace_revision:2}},{patch:{resume_claim_token:id(7)}},
+    {patch:{job_checkpoint:{phase:'frozen_selected_semantic_refs_v2',evidence_refs:Array(15).fill(ref)}}}])
+    await assert.rejects(completedSemanticSetup(input).owner.readForTransactionSource(claim,workerOptions),
+      /operation_unavailable|claim_lost|unfinished_selected_semantic|caller_transaction_required|checkpoint_changed|workspace_changed/);
+  const denied=completedSemanticSetup();await assert.rejects(denied.owner.readForTransactionSource(claim,{...workerOptions,readOriginal:()=>assert.fail('callback')}),/invalid_input/);
+  assert.equal(denied.calls.length,0);
+});
+
 function retainedSetup({patch={},auto=false,endAuto=false,missing=false}={}){
   const calls=[];let transactions=0;
   return {calls,owner:repository({async query(sql,values){calls.push({sql,values});

@@ -1,5 +1,49 @@
 # Complete larger-area Custom neighborhood studies
 
+## Fixed receipt batches native PASS; first transaction-source seam (2026-10-11)
+
+Exact parent feature head323a00a3 passes all SEVEN checks. FULL3,149,913-character
+native log run38122293856/job114419346840 has migration417/subject1/index15/edge1/
+bootstrap2 passes, ZERO failures/cancellations/skips, successful idempotence and
+EVERY job step SUCCESS. All FIVE independently captured complete-original
+graphs pass, freshly batching only fixed issued receipts8+4/5 after BOTH
+current source policies, with independent actual native heads and unchanged
+original/ENTIRE cache/member/ending reconciliation. Query maxima improve from
+251/246/251/251/251 to241/236/241/241/241 without changing any limits.
+
+The next INACTIVE change adds a READ-ONLY first-selected transaction-source
+seam INSIDE the actual bounded database owner. Separate exact16 native admission
+requires the actual tenth fresh EMPTY/DONE, original command/consumed claim and
+current workspace. The full issued original graph, whole first selected stock/
+CAD/all-date transaction/required subject packets, ENTIRE caches, every seventh/
+eighth/index/ninth/tenth member and ALL current+ending authority remain required.
+Native selected-union association flags are distinct from all-stock membership
+and subject membership; unresolved NULL and OUTSIDE associations are preserved.
+The old readers/next cursors and checkpoint grammars stay strict. No new durable
+phase, source grant, dense population buffer, receipt/member write, yield or lease
+extension is introduced. The compact result explicitly establishes FIRST ONLY,
+NOT global selected-union native deduplication or economic-property membership.
+
+Authored cloud probes exercise B-only, EMPTY and A+B independently captured
+graphs, unchanged state/no DML, closed caller options and native membership;
+B-only additionally checks unfinished admission, selected-flag refusal and real
+same-transaction ending assignment/archive rollback. The existing five tenth
+graphs remain intact; tight positive/recovery fixtures do not gain extra owner
+calls. This seam is AUTHORED, NOT native accepted until its NEW exact-head cloud
+run passes. The256SQL/32MB/60s whole owner,250-child-original,180s fixture,120s
+statement and two-client pool limits remain unchanged. Heavy suites stay in CI.
+All261 focused tests and six source/native-fixture syntax checks pass locally;
+these do not establish new native or licensed/live acceptance.
+
+The full durable globally deduplicated selected source/legacy index, source-bound
+economic equivalence/completion/consideration/currency/at-sale/historical authority
+and exact calendar quarters remain NEXT, followed by coherent publication,
+durable workers/terminal pins and licensed>50k/5-mile/10-mile/city/retrospective/
+live acceptance. All protected parents remain UNMERGED; included actual review
+and fresh integrated-main required security/native/full checks remain gates.
+No deployment, activation, production source/data/report/choice/pin or Apply
+change; QA7 is still the only future Apply-test target. Roadmap NOT complete.
+
 ## Transaction fences native PASS; fixed issued-receipt headroom follow-up (2026-10-11)
 
 Exact feature head92cb3d8a passes all SEVEN checks. FULL3,146,174-character native

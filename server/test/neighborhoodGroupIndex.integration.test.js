@@ -132,7 +132,8 @@ import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL,
   NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,
   NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL,
   NEIGHBORHOOD_FIRST_COMPLETED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL,
-  NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL }
+  NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL,
+  NEIGHBORHOOD_FIRST_COMPLETED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSelectedTransactionOriginalPackageV2.js';
 import { expandCohortDiagnosticCompressedJsonV1 } from './helpers/expandCohortDiagnosticCompressedJsonV1.js';
 
@@ -1804,7 +1805,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       if([NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,
         NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL,
         NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL,
-        NEIGHBORHOOD_FIRST_COMPLETED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
+        NEIGHBORHOOD_FIRST_COMPLETED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL,
+        NEIGHBORHOOD_FIRST_COMPLETED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL].includes(config.text)
         &&['metric_assignment_ending','metric_draft_ending'].includes(refsFault)){
         const fault=refsFault;refsFault=null;
         if(fault==='metric_assignment_ending')await client.query(
@@ -1814,6 +1816,12 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       }
       if(refsFault==='union_delta_count'&&config.text.includes('custom-cohort-selected-union-v2:member-insert'))
         refsFault='union_delta_after_member';
+      if(refsFault==='transaction_selected_flag'&&config.text===NEIGHBORHOOD_FIRST_COMPLETED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL){
+        refsFault=null;const rows=JSON.parse(result.rows[0].page_json),row=rows.find(r=>
+          ['source_records','sales','sale_links'].includes(r.kind)&&r.account_id===result.rows[0].account_id);
+        assert.ok(row,'nonvacuous first-selected original association');assert.equal(row.selected_union_member,true);
+        row.selected_union_member=false;return {...result,rows:[{...result.rows[0],page_json:JSON.stringify(rows)}]};
+      }
       if(refsFault==='union_delta_after_member'&&config.text.includes('custom-cohort-selected-union-v2:counts')){
         refsFault=null;return {...result,rows:result.rows.map(r=>({...r,selected_count:r.selected_count+1}))};
       }
@@ -6428,6 +6436,13 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
               return {...prior,semantic_heads:heads.rows,semantic_rows:rows.rows};},
             semanticUnchanged=async state=>{assert.deepEqual(await semanticSnapshot(),state);await numericParents();};
           const semanticInitial=await semanticSnapshot();assert.deepEqual(semanticInitial.semantic_heads,[]);assert.deepEqual(semanticInitial.semantic_rows,[]);
+          if(selectionWaitFixture==='union'){
+            const from=refsCalls.length;
+            await assert.rejects(cadOwner().readOriginalFrozenCaptureJobFirstSelectedTransactionSourceReferencesV2(refsInput,
+              {captureJobClaim:liveClaim}),/checkpoint_conflict/);
+            assert.ok(!refsCalls.slice(from).some(sql=>sql===NEIGHBORHOOD_FIRST_COMPLETED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL));
+            await semanticUnchanged(semanticInitial);
+          }
           // REAL PostgreSQL autocommit calls have different native txids.
           // The coalesced expected-head read must refuse BEFORE any DML; an
           // orphan/FK failure after a write is not an acceptable substitute.
@@ -6562,6 +6577,15 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             const nextClaims=await withCustomCohortJobTransaction(pool,client=>createCustomCohortV2ContinuationRepository(client).claimDue());
             assert.equal(nextClaims.length,1);assert.equal(nextClaims[0].claim.attempts,liveClaim.attempts);
             assert.notEqual(nextClaims[0].claim.claim_token,liveClaim.claim_token);liveClaim=nextClaims[0].claim;
+            if(selectionWaitFixture==='union'&&ordinal===1){
+              const prefix=await semanticSnapshot(),from=refsCalls.length;
+              assert.equal(prefix.job.checkpoint.evidence_refs.length,16);
+              assert.equal(JSON.parse(prefix.semantic_heads[0].canonical_utf8).after.done,false);
+              await assert.rejects(cadOwner().readOriginalFrozenCaptureJobFirstSelectedTransactionSourceReferencesV2(refsInput,
+                {captureJobClaim:liveClaim}),/operation_unavailable/);
+              assert.ok(!refsCalls.slice(from).some(sql=>sql===NEIGHBORHOOD_FIRST_COMPLETED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL));
+              await semanticUnchanged(prefix);
+            }
             if(semanticRecoveryFixture&&ordinal===1){
               // A FIFTH independently captured graph reserves its last real
               // failure claim for a NONEMPTY tenth prefix. Existing fourth-
@@ -6656,6 +6680,62 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             no_original_page_cache_or_head_authority_substitution:true,
             maximum_whole_owner_sql_queries:Math.max(...semanticQueries),whole_owner_limits:ORIGINAL_OWNER_LIMITS,
             calendar_quarters:false,publication:false,licensed_acquisition:false,production_speed:false,worker_activation:false});
+
+          // New READ-ONLY first transaction-source seam. Keep the two tight
+          // positive/recovery fixtures' old proofs and unchanged180s timeout;
+          // exercise this seam on independently captured B-only/EMPTY/A+B.
+          if(!positiveIndexedSourceFixture){
+            const method='readOriginalFrozenCaptureJobFirstSelectedTransactionSourceReferencesV2',queries=[],
+              step=async()=>{const from=refsCalls.length;try{return await cadOwner()[method](refsInput,{captureJobClaim:liveClaim});}
+                finally{queries.push(refsCalls.length-from-3);}},before=await semanticSnapshot();
+            await assert.rejects(freshRefsOwner()[method](refsInput,{captureJobClaim:liveClaim}),/CAD_source_policy_required/);
+            for(const key of ['ordinal','cursor','values','counts','selected_accounts','readOriginal','sourceAuthority']){
+              const from=refsCalls.length;await assert.rejects(cadOwner()[method](refsInput,{captureJobClaim:liveClaim,[key]:true}),/invalid_options/);
+              assert.equal(refsCalls.length,from);
+            }
+            if(selectionWaitFixture==='union'){
+              await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+              const from=refsCalls.length;await assert.rejects(step(),/market_data_access_denied/);
+              assert.ok(!refsCalls.slice(from).some(sql=>sql.includes('neighborhood-cohort-blob:read-batch')
+                ||sql===NEIGHBORHOOD_FIRST_COMPLETED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL));
+              await setFixtureGrant(pool,organization,fixtureGrant(organization));await semanticUnchanged(before);
+              for(const [fault,reason] of [['transaction_selected_flag',/selected_membership_mismatch/],
+                ['metric_assignment_ending',/assignment_access_denied/],['metric_draft_ending',/private_source_read_only/]]){
+                refsFault=fault;await assert.rejects(step(),reason);assert.equal(refsFault,null);await semanticUnchanged(before);
+              }
+            }
+            const from=refsCalls.length,value=await step(),sql=refsCalls.slice(from);
+            assert.equal(value.status,'current_authorized_first_selected_transaction_source_originals_reconciled');
+            assert.equal(value.empty_selected_union,selectedCount===0);assert.equal(value.selected_entry?.ordinal??null,selectedCount?1:null);
+            assert.equal(value.selected_entry?.account_id??null,selectedCount?(allSelected?'CLOSURE-A':'CLOSURE-B'):null);
+            assert.equal(value.membership.subject_account_id,'CLOSURE-A');
+            assert.equal(value.membership.subject_selected_union_member,allSelected);
+            assert.equal(value.transaction_original_count,value.membership.associations.length);
+            assert.equal(value.membership.associations.length>0,selectedCount>0);
+            for(const row of value.membership.associations){
+              if(row.account_id===null){assert.equal(row.stock_member,null);assert.equal(row.selected_union_member,null);}
+              else if(row.account_id===value.selected_entry.account_id){assert.equal(row.stock_member,true);assert.equal(row.selected_union_member,true);}
+              else{assert.equal(row.account_id,'CLOSURE-OUTSIDE');assert.equal(row.stock_member,false);assert.equal(row.selected_union_member,false);}
+            }
+            if(selectedCount&&!allSelected)assert.ok(value.membership.associations.some(r=>r.account_id===null),'unresolved is not false/selected');
+            if(allSelected)assert.ok(value.membership.associations.some(r=>r.account_id==='CLOSURE-OUTSIDE'),'whole native package retains OUTSIDE');
+            assert.equal(sql.filter(q=>q===NEIGHBORHOOD_FIRST_COMPLETED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL).length,1);
+            assert.equal(sql.filter(q=>q.includes('custom-cohort-selected-semantic-v2:first-completed-selected-entry')).length,2);
+            assert.ok(!sql.some(q=>/neighborhood-cohort-blob:insert|:row-insert|:head-insert|:head-advance|custom-cohort-v2-continuation:yield|custom-cohort-job:checkpoint-save|custom-cohort-selected-numeric-rank-candidates-v2:read/.test(q)));
+            assert.equal(value.read_only,true);assert.equal(value.lease_extended,false);assert.equal(value.context_complete,false);
+            assert.equal(value.pin_transfer,false);assert.equal(value.global_selected_native_deduplication,false);
+            for(const key of ['economic_transactions','calendar_quarters','source_acquisition','publication','production_speed'])assert.equal(value[key],'not_established');
+            assert.ok(Buffer.byteLength(JSON.stringify(value))<=16000);await semanticUnchanged(before);
+            assert.ok(queries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries));
+            console.info('[native-first-selected-transaction-source-original-owner-v2]',{actual_tenth_DONE_exact16:true,
+              selected_count:selectedCount,fixed_first_only:true,complete_original_graph_and_ENTIRE_caches_every_member:true,
+              native_selected_union_membership_separate_from_stock_and_subject:true,unresolved_null_and_OUTSIDE_preserved:true,
+              selected_flag_refusal_and_actual_ending_assignment_archive_rollback:selectionWaitFixture==='union',
+              no_DML_all_original_parents_heads_continuation_lease_reports_choices_pins_unchanged:true,
+              maximum_whole_owner_sql_queries:Math.max(...queries),whole_owner_limits:ORIGINAL_OWNER_LIMITS,
+              global_selected_native_deduplication:false,economic_transactions:false,calendar_quarters:false,
+              licensed_acquisition:false,production_speed:false,worker_activation:false});
+          }
 
           }
 

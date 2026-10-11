@@ -93,6 +93,7 @@ const MIGRATIONS = Object.freeze([
   "20261126_custom_cohort_selected_recorded_eligibility_v2.sql",
   "20261127_custom_cohort_selected_evidence_v2.sql",
   "20261128_custom_cohort_selected_metrics_v2.sql",
+  "20261129_custom_cohort_selected_statistics_v2.sql",
 ]);
 const ADVISORY_LOCK_KEY = 3_603_600_821;
 

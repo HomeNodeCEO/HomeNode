@@ -1,5 +1,59 @@
 # Complete larger-area Custom neighborhood studies
 
+## Native selected contribution traversal (2026-10-11; authored, inactive)
+
+The additive eighth pass extends the ACTUAL bounded database owner, not a
+callback/hash/count adapter. Native seventh rows determine the next selected
+ordinal. Each call reopens the complete issued original graph and selected
+stock/CAD/whole all-date transaction/required-subject originals and ENTIRE
+neutral caches. It compares EVERY seventh-row field to fresh originals before
+deriving the contribution policy. All current and ending source rights, database
+actor, assignment, draft, subject, workspace, claim and native parent/member
+fences still precede writes. All six older original-query plans are unchanged.
+
+The new immutable native row/head and closed receipt retain one contribution
+per selected account, five exclusive value-state denominators, complete/eligible
+and excluded counts, source-part counts and separate overlapping reason counts.
+Parts/reasons are never account multiplicities. Genuine eligible site zero is
+preserved. The fresh terminal EMPTY probe reconciles the ENTIRE selected count
+and complete eligibility against both fifth and seventh parents. No source
+payload/typed/diagnostic copy, dense population array, numerical frequency,
+rank, median, COD, quarter or economic transaction authority is created.
+
+Separate exact13 initial/exact14 progressed admission leaves old readers
+strict. Native row/head/deferred commit guards require the atomic receipt,
+fourteen original-preserving roots and single-use continuation. The additive
+continuation cardinality bound reflects eight passes of the existing maximum
+two-million ordinals; it does NOT increase the unchanged five-failure ceiling.
+Whole-owner limits remain250 aggregate originals,256 SQL queries,32MB decoded,
+60 seconds and16KB response, with4096-byte rows and16KB receipts.
+
+Focused tests pass locally; real PostgreSQL execution is pending cloud CI.
+Authored independent B-only/EMPTY/both-account tests cover complete traversal,
+current+ending authority refusal, source/cache/native-row forgery, actual
+row/head/checkpoint/yield rollback, orphan REAL COMMIT refusal, lost successful
+COMMIT acknowledgment, strict older readers and fresh terminal EMPTY. The
+both-selected fixture proves seventh ordinary reclaim; B-only reserves its
+last existing attempt4-to5 for eighth. No attempt reset or cap increase.
+These SMALL synthetic native fixtures are not licensed population or speed
+acceptance, even when they pass.
+
+The corrected seventh parent38207ec6, fixed-first source13b6a022 and policy
+015639da have passing native cloud jobs114341004113/114341096066/114341684193.
+Those verified prelude results supersede older pending notes below; they do
+not establish this new traversal, protected integrated-head review, statistics,
+coherent publication or licensed/live acceptance.
+
+Next semantic passes must independently reopen originals AGAIN for bounded
+frequency/rank/deviation and exact complete-population medians/CODs, calendar
+quarters and transaction resolution, followed by coherent publication, durable
+large-area workers, terminal pin transfer/retirement and licensed >50k/5-mile/
+10-mile/city/retrospective/live Hardy reload measurements. Internal stages remain
+unmounted/undispatched. No route/default/worker/grant/deployment/pin/Apply/accepted
+report or genuine Hardy choice changed. Protected parents must merge in order;
+retarget main before synchronization, then obtain fresh integrated exact-head
+security/native/full suites and ACTUAL included review without quota bypass.
+
 ## Original-derived statistical contribution policy (2026-10-10; authored, inactive)
 
 The actual current-authorized fixed-first statistics-source owner now derives

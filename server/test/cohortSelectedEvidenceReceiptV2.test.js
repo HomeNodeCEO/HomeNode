@@ -144,7 +144,7 @@ test('native sixth fault injection stays armed until actual source-ending, DML o
   assert.ok(block.includes("!fault?.startsWith('evidence_')"));
   for(const tag of ['evidence_insert_rollback','evidence_advance_rollback','evidence_checkpoint_rollback','evidence_yield_rollback',
     'evidence_orphan_commit','evidence_head_ending'])assert.ok(fixture.includes(tag),tag);
-  assert.ok(fixture.includes("'evidence_orphan_commit','metrics_orphan_commit'].includes(refsFault)"));
+  assert.ok(fixture.includes("'evidence_orphan_commit','metrics_orphan_commit','stats_orphan_commit'].includes(refsFault)"));
 });
 
 test('native sixth fresh EMPTY preserves explicit-null subject precedence and exact zero-original admission',()=>{
@@ -168,12 +168,13 @@ test('native intent truncate proof includes every command FK child without bypas
     ['20261125_custom_cohort_selected_union_replay_v2.sql','app.neighborhood_custom_cohort_selected_union_v2_heads'],
     ['20261126_custom_cohort_selected_recorded_eligibility_v2.sql','app.neighborhood_custom_cohort_selected_eligibility_v2_heads'],
     ['20261127_custom_cohort_selected_evidence_v2.sql','app.neighborhood_custom_cohort_selected_evidence_v2_heads'],
-    ['20261128_custom_cohort_selected_metrics_v2.sql','app.neighborhood_custom_cohort_selected_metrics_v2_heads']]){
+    ['20261128_custom_cohort_selected_metrics_v2.sql','app.neighborhood_custom_cohort_selected_metrics_v2_heads'],
+    ['20261129_custom_cohort_selected_statistics_v2.sql','app.neighborhood_custom_cohort_selected_statistics_v2_heads']]){
     const sql=readFileSync(new URL('../migrations/'+migration,import.meta.url),'utf8');
     assert.ok(sql.includes('REFERENCES app.neighborhood_custom_cohort_v2_selection_intents(command_id) ON DELETE RESTRICT ON UPDATE RESTRICT'));
     assert.ok(children.includes(table),table);
   }
-  assert.equal(children.length,4);
+  assert.equal(children.length,5);
   assert.doesNotMatch(statement[0],/CASCADE|DISABLE|DROP/);
   assert.ok(fixture.includes("'TRUNCATE app.neighborhood_custom_cohort_v2_selection_intents')),\n          /cannot truncate a table referenced in a foreign key constraint/"));
   assert.ok(fixture.includes('/selection_intent_immutable|custom_cohort_context_immutable/'));

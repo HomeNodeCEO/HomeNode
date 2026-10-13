@@ -359,3 +359,45 @@ export const NEIGHBORHOOD_FIRST_COMPLETED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL=
       AND selected.organization_id=job.organization_id AND selected.account_id=job.account_id
     WHERE job.operation_id=$1::uuid) AS subject_selected_union_member,
   (SELECT count(*)::integer FROM anchors) AS anchor_count,`);
+
+// UNREGISTERED eleventh-owner source seam. Its own native NEXT function, not
+// the DONE semantic sequence or a caller ordinal, selects the account. Even a
+// previously indexed shared source is reopened in FULL for the next account.
+// The owner must separately compare the independently read native plan and
+// every prior original-derived field, then repeat ALL ending authority fences.
+// No index/job/continuation write or source right is established by this SQL.
+function transactionIndexOriginalPackageSql(){
+  let result=NEIGHBORHOOD_FIRST_COMPLETED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL;
+  // Fail closed if an inherited fixed fragment moves or becomes ambiguous;
+  // these are module-owned literals, never caller strings or SQL callbacks.
+  const replace=(from,to)=>{
+    if(result.indexOf(from)<0||result.indexOf(from)!==result.lastIndexOf(from))
+      throw new TypeError('neighborhood_selected_transaction_index_original_sql_shape');
+    result=result.replace(from,to);
+  };
+  replace('neighborhood-first-completed-semantic-original-package-v2','neighborhood-next-selected-transaction-index-original-package-v2');
+  replace('WITH next_account AS MATERIALIZED (',`WITH transaction_index_context AS MATERIALIZED (
+  SELECT DISTINCT k.generation_id,k.account_id,k.ordinal,k.partition_ordinal,
+    k.entry_reference,k.metric_row_reference,k.contribution_row_reference
+  FROM app.neighborhood_custom_cohort_capture_jobs job
+  CROSS JOIN LATERAL app.neighborhood_selected_transaction_index_v2_next_keys(job.operation_id,job.organization_id) k
+  WHERE job.operation_id=$1::uuid AND k.generation_id=$2::uuid
+), next_account AS MATERIALIZED (`);
+  replace('  JOIN app.neighborhood_custom_cohort_stock_accounts a ON a.operation_id=r.operation_id AND a.account_id=r.account_id',
+    `  JOIN transaction_index_context index_next ON index_next.account_id=r.account_id AND index_next.ordinal=r.ordinal
+    AND index_next.partition_ordinal=r.partition_ordinal AND index_next.entry_reference=r.entry_reference
+    AND index_next.metric_row_reference=r.metric_row_reference AND index_next.contribution_row_reference=r.row_reference
+  JOIN app.neighborhood_custom_cohort_stock_accounts a ON a.operation_id=r.operation_id AND a.account_id=r.account_id`);
+  replace('r.ordinal=1 AND $4::text=',"r.ordinal=index_next.ordinal AND $4::text=");
+  replace('app.neighborhood_selected_semantic_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)',
+    'app.neighborhood_selected_transaction_index_v2_admission_matches(job.operation_id,job.organization_id,job.checkpoint)');
+  replace('WHERE job.operation_id=$1::uuid AND a.account_id=job.account_id AND $10::boolean',
+    `WHERE job.operation_id=$1::uuid AND a.account_id=job.account_id AND $10::boolean
+    AND EXISTS(SELECT 1 FROM transaction_index_context)`);
+  replace('SELECT (SELECT account_id FROM next_account) AS account_id,',
+    `SELECT (SELECT count(*)=1 FROM transaction_index_context) AS transaction_index_context_present,
+  (SELECT account_id FROM transaction_index_context) AS transaction_index_account_id,
+  (SELECT account_id FROM next_account) AS account_id,`);
+  return result;
+}
+export const NEIGHBORHOOD_NEXT_SELECTED_TRANSACTION_INDEX_ORIGINAL_PACKAGE_V2_SQL=transactionIndexOriginalPackageSql();

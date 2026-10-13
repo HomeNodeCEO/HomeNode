@@ -1,5 +1,306 @@
 # Complete larger-area Custom neighborhood studies
 
+## Tenth native orphan-COMMIT assertion correction (2026-10-13, UTC)
+
+Exact draft PR #1292 head `0b670a347e561df7af5101284d26e33636bd27b4`
+ran foundation `38422611818`. Migration417/417 and subject1/1 passed; all
+nine older prepared-index graph paths passed. The tenth independently captured
+graph advanced beyond the previous wall-clock limit (134.2 seconds), applied
+the full candidate and exercised real native DML. It then stopped at fixture
+line7027 because its orphan-COMMIT negative assertion expected a job/continuation
+refusal but PostgreSQL's earlier deferred **child** guard correctly rejected the
+same orphan with `neighborhood_selected_transaction_index_v2_orphan_child`.
+That real COMMIT failed; no partial index/head/checkpoint/yield was accepted.
+The A/B/fresh-EMPTY owner marker still has NOT executed or passed.
+
+The assertion now admits that exact native child refusal while preserving the
+real COMMIT, rollback and unchanged-state checks. No SQL, guards, source rights,
+owner budgets, older fixture deadlines, activation or deployment change. Fresh
+cloud CI on the new exact head must still prove the complete owner path.
+
+## Tenth native fixture wall-clock correction (2026-10-13, UTC)
+
+Corrected exact head `33726466a115b3a6f2ec0875f8e1ac6fc836ad92` on
+draft PR #1292 ran foundation `38417105789`. The server, frontend and red-team
+jobs passed, as did the separate readiness workflows. In native job
+`115364350102`, all 417 migrations and the subject test passed; the prepared
+index suite finished 16/17, with the nine older graph paths passing. The new
+tenth independently captured graph reached its complete-original candidate
+marker after about 175 seconds, and the full unregistered owner SQL compiled
+and began its real native DML refusals. The test's 180-second wall-clock
+deadline expired before A/B/fresh-EMPTY issuance and its final marker. This is
+not a completed owner proof, nor a native SQL failure to dismiss.
+
+The next correction gives **only** the new tenth graph 240 seconds of fixture
+wall-clock time. All nine older paths retain their 180-second deadlines. The
+120-second statement timeout, pool size two, and actual owner limits of 256
+SQL calls, 32 MB decoded rows, 60 seconds per owner operation and 250 originals
+are unchanged. The new graph must still pass every original/current-and-ending
+authority, atomic head/checkpoint/yield, recovery and A/B/fresh-EMPTY assertion
+in cloud CI before the owner migration is registered or considered for release.
+No paid/forced review, merge, activation or deployment is part of this fix.
+
+## Owner candidate cloud syntax failure and correction (2026-10-13, UTC)
+
+Exact head `779b0de748d59f2fe4c5cb789ae1e4ebc873fa46`, PR1292,
+run38323202328/native115055785381 failed the newly added tenth owner graph.
+The full3,742,182-character native log shows417/417 migration and1/1 subject
+tests passed, then16/17 prepared-index tests passed. All nine historical
+fixture paths passed unchanged. The new graph reached its independently
+captured semantic/shared-original prerequisites but stopped while applying the
+whole unregistered candidate: PostgreSQL42601, syntax error near a comma, at
+fixture line6979. Its complete-original transaction-index owner marker did NOT
+execute. Edge/idempotence/bootstrap steps were consequently skipped, not PASS.
+Server/frontend/redteam and both other feature workflows passed; this is not
+an incident cancellation, protected-main clearance or licensed/live acceptance.
+
+The checkpoint-transition SQL body lacked one closing parenthesis: its prior
+EXISTS, retained-phase branch and phase disjunction closed, but the outer EXISTS
+did not close before the coalesce false fallback. The correction adds that one
+parenthesis without changing any predicate, trigger attachment, authorization,
+original reconciliation, finite budget or deadline. A new structure regression
+first failed the original body2 as an unclosed expression; it checks balanced
+expressions in all five SQL bodies plus the exact transition closure. Local
+focused verification now passes486/486 across the same44 files,0fail/cancel/skip/
+todo,4627.7065ms; JS syntax and diff checks pass. This remains structure/protocol
+verification, not a PostgreSQL compile or owner acceptance result.
+
+The corrected head needs a fresh complete native cloud run, with every old
+proof and unchanged256-SQL/32MB/60s/250-original,180s fixture,120s statement and
+pool2 limits. The migration remains unregistered and internal stages inactive.
+Actual review allowance remains unestablished; draft skips do not count.
+No merge, deployment, source grants, accepted report/Hardy choice or pin changes.
+
+## Coherent dormant index candidate and independent native acceptance fixture (2026-10-11, 12:57 UTC)
+
+Unregistered20261206 now contains the complete candidate attachment package,
+superseding the12:37 note that constraints and head/deferred attachments were
+absent. The candidate replaces the unconditional head/COMMIT refusals only in
+one enclosing migration transaction, retaining every installed child BEFORE
+identity/first-seen/immutability guard, all TRUNCATE guards and the existing
+deferred job/continuation pair. It adds the exact17 continuation phase and
+index-specific22000011 ceiling while preserving old phase ceilings. It is NOT
+registered or applied to any application database by this change.
+
+A tenth independently captured native fixture is authored in the existing
+isolated PostgreSQL integration suite. It seeds shared501/legacy10 in live test
+sources before capture, builds its own complete-original graph through genuine
+semantic DONE/exact16, then applies the entire candidate inside that disposable
+CI database transaction. The nine older fixture paths and180-second deadlines,
+120-second statement timeout, pool2 and whole-owner256 SQL/32MB/60s/250-original
+limits are unchanged. Only the new graph reserves its final ordinary failure
+claim for the nonempty index prefix; the older seventh/ninth/tenth recovery
+proofs are preserved.
+
+The new fixture requires complete-original A then B then separate fresh EMPTY,
+reopening all four originals for shared501 on BOTH accounts, native first-seen
+registries3 source/2 legacy keys and all6 per-account edges. It asserts atomic
+head/exact17/single-use continuation with all first16 roots/seven parents,
+native identity/first-seen/incomplete-edge and orphan-child refusal, actual
+member/head/checkpoint/yield rollback, orphan COMMIT, lost real COMMIT ACK,
+current source denial and ending assignment rollback. A real retained nonempty
+fourth-claim failure and ordinary fifth-claim recovery must preserve all rows,
+roots, progress and error history before B/EMPTY; no reset or sixth claim.
+
+These are authored acceptance requirements, NOT a native PASS. The candidate
+SQL has not yet compiled/executed in cloud CI; small local structure/protocol
+tests cannot establish native durability or licensed/live speed. Local focused
+verification passed485/485 across44 files,0fail/cancel/skip,2432.9525ms; changed
+JS syntax and diff checks passed. Four first-run static fixture-literal/position
+failures were corrected without removing old original/authority/recovery
+proofs; the old sixth injection remains immediately after the actual query.
+No source
+grant, required check/review bypass, default/route/worker activation, deployment,
+report, Hardy selection or pin mutation is included. Economic/amenity/at-sale
+resolution, calendar quarters, coherent publication, durable large-area worker
+and terminal transfer/retirement, licensed>50k/5-mile/10-mile/city/retrospective
+acquisition and Hardy saved-map/live QA acceptance remain outstanding.
+
+## Inactive atomic NEXT owner wired; native issuance still refused (2026-10-11, 12:37 UTC)
+
+The local-only WIP now connects a separate fixed progress entry to the complete
+native NEXT original owner described below. This supersedes the12:14 note that
+storage advance/checkpoint/yield were disconnected. It adds no caller plan,
+cursor, member, key roster, first-seen values, callback or source authority.
+The sole index write branch is AFTER every existing original/retained-field/
+per-account native-key comparison and ALL ending rights, actor, assignment,
+draft, subject, workspace, claim, immutable heads, actual checkpoint and entire
+NEXT packet fences. It retains the compact receipt, advances the bounded native
+member/typed registries/full per-account edges/head, saves exact17 and issues
+the dedicated single-use continuation in the existing caller transaction.
+Required subject and every shared source are still reopened in full; only
+native first-seen keys contribute new registry deltas. Fresh EMPTY remains a
+separate step, not the last nonempty account or a caller DONE/count assertion.
+
+Dedicated checkpoint save requires the actual new head issued in this native
+transaction, the complete actual first16 graph and either the initial actual16
+or exact prior17 receipt/sequence/after/parent bindings. Dedicated yield requires
+that same native-issued head and actual17 checkpoint, an already consumed prior
+continuation, fresh progress and the unchanged attempt. It admits only the
+index-specific22000011 ceiling and4096-byte receipt; historical20/18/16-million
+ceilings stay unchanged. Ordinary checkpoint read/save/heartbeat still reject17.
+Ordinary failed-claim recovery can now detach closed exact17 metadata without
+quarantining the retained prefix; its existing attempts<5/increment/fresh-token
+SQL and failure history are unchanged. This is NOT worker dispatch or authority.
+
+Unregistered20261206 now includes draft native16->17->17 job/continuation
+replacements, same-transaction issue versus later single-use consume, old
+phase ceilings, terminal cancellation and the existing human union bridge.
+Whole-function inverse tests compare every byte of the installed61204 guards
+outside these explicit additions. Two previously oversized unattached deferred
+function names were shortened to fit PostgreSQL's63-byte limit. The installed
+child BEFORE guard already dynamically calls NEXT and needs no identity or
+first-seen check removed. No migration was registered/applied, no constraints
+changed and no new guards attached: installed unconditional index head and
+deferred COMMIT refusals still prevent durable issuance.
+
+All479 focused tests across43 files passed in6971ms, zero failures/skips.
+New tests cover closed save/yield inputs, native-issued transition predicates,
+exact readback, autocommit/ending transaction changes, retained fifth-attempt
+metadata, finite old/new ceilings, whole-old-guard preservation and write order.
+Four old structure assertions saying advance was entirely disconnected were
+updated to require its sole guarded write branch and unchanged read-only path;
+all original/native refusal proofs remain. These are DATA/protocol/structure
+tests, NOT PostgreSQL compilation/execution of this SQL or owner, actual atomic
+rollback/lostACK/ordinary4-to-5 durability, licensed acquisition or speed proof.
+
+Next complete the coherent dormant native attachment/constraint package and a
+separate genuine native full-original A/B/shared-first-seen/fresh-EMPTY/orphan/
+missing/extra/wrong-first-seen/rollback/lostACK/ordinary4-to-5 fixture in cloud.
+Do not add owner calls to either tight old graph or raise256SQL/32MB/60s/250
+original/180000ms-fixture/120000ms-statement/pool2 limits. Exact-head native and
+full suites plus actual included review remain required before any protected
+merge. No push, protected merge, deployment, activation, production write,
+source grant, accepted report, genuine Hardy choice or pin changed. Economic
+transaction resolution, at-sale facts, complete calendar-quarter checks,
+coherent publication, durable workers/terminal pin retirement and all licensed
+large-area/Hardy reload/live acceptance remain OPEN; heartbeat ACTIVE.
+
+## Inactive native NEXT original owner connected; no issuance (2026-10-11, 12:14 UTC)
+
+The local-only owner WIP now connects a separate read-only native NEXT entry to
+the existing bounded complete-original context owner. This supersedes the
+11:54 note below that the original child was unconnected. Dedicated actual
+exact16/17 intent admission runs at both ends; no caller checkpoint projection,
+ordinal, member, keys, first-seen values, callback or source grant is admitted.
+
+The bounded native-plan query now returns the closed retained member needed by
+the original owner, joined to actual partition/union/metric/statistics/numeric
+index/numeric population/semantic population rows. Exact numeric strings/nulls,
+group state, all member references and population ordinals are validated before
+use. This adds no full-population query. The owner reopens the complete issued
+graph, required subject, next selected stock/CAD/all-date transaction originals
+and ENTIRE caches, then compares every prior retained field and both directions
+of the complete per-account native package set. Previously seen shared sources
+are still reopened in full. ALL existing current/ending source rights, actor,
+assignment, draft, subject, workspace, claim and parent-head fences remain; the
+actual checkpoint and entire native NEXT packet, including first-seen bindings
+and retained values, are re-read after those ending checks.
+
+A separate read-only checkpoint decoder accepts only actual16/17. Ordinary job
+claim/read/save and continuation grammar remain unchanged and cannot issue17.
+The read-only owner validates the retained compact index receipt and native
+prefix before originals, and proposes an UNRETAINED bounded receipt only after
+all ending fences. It never calls index advance, writes a blob/member/key/edge/
+head/checkpoint, yields or changes a lease. No route or worker uses this entry.
+
+All463 focused tests across41 files passed in2345ms, with zero failures/skips.
+Coverage includes hostile checkpoint/member/options DATA, non-first native B,
+exact values/nulls, population/reference/state mismatches and changed ending
+values before DML. One old static receipt-call-count assertion was extended
+from13 to14 for the additive compact receipt read; all13 original anchor checks,
+old12/13 receipt bounds and eight-record/2MB batch caps remain. These are local
+DATA/protocol/structure tests, NOT PostgreSQL execution of this owner, licensed
+acquisition, actual first-seen durability or production-speed acceptance.
+
+Migration20261206 remains unregistered and its new guards unattached; installed
+unconditional index head/deferred COMMIT refusals remain intact. Next implement
+atomic exact17 issuance and single-use continuation, then genuine native A/B/
+shared-first-seen/fresh-EMPTY/orphan/rollback/lostACK/ordinary4-to-5 proofs in
+cloud without adding calls to either tight old graph. Actual included review
+allowance remains UNESTABLISHED. No protected merge, push, deployment,
+activation, source grant, report, genuine Hardy choice or pin changed. Full
+licensed large-area and Hardy reload/live acceptance remain OPEN; heartbeat ACTIVE.
+
+## Native NEXT original child authored; issuance still inactive (2026-10-11, 11:54 UTC)
+
+The local-only transaction-index owner WIP now has a separate original-package
+SQL plan selected by its actual native NEXT function. It binds generation and
+all six retained member fields, requires native exact16/17 admission, gates the
+required subject on that context too, and distinguishes an actual empty NEXT
+context from an absent context or mismatched next account. All twelve older
+original SQL plans remain byte-for-byte unchanged, including fixed FIRST.
+
+The additive single-use original child reopens each complete shared source even
+when that source was seen for an earlier account. Required subject, stock, CAD,
+transaction originals and ENTIRE neutral caches retain the same aggregate250
+original, raw-byte, transport, output, SQL and deadline bounds. Native selected
+flags remain separate from stock membership; the new path also refuses
+inconsistent per-account flags and subject-flag disagreement. It performs the
+existing ending stock/source/market-cache/CAD-cache fences and establishes no
+global economic transaction equivalence, at-sale fact, quarter or publication.
+
+All424 focused tests across38 files passed in2335ms, with no failures or skips.
+The new original-reader tests are small DATA/SQL-protocol simulations, not
+PostgreSQL execution or licensed acquisition. Initial fixture-only failures
+(wrong observation field, mutation of frozen compiler DATA, and a broad old
+static method slice including a new comment) were corrected without relaxing
+guards, old tests, limits or deadlines. No database/full-server/frontend suite
+ran locally. The new SQL and owner WIP have NOT passed native cloud CI.
+
+This child is NOT connected to the complete current-authorized context owner,
+route or worker. Migration20261206 is still unregistered; installed unconditional
+head and deferred COMMIT refusals remain intact. Next finish the whole-original
+owner with every prior field and ALL ending actor/assignment/draft/subject/
+source/workspace/claim/head/native-plan fences, then exact17 job/continuation
+and same-transaction issuance, genuine native prefix/rollback/lostACK/ordinary
+4-to-5/fresh-EMPTY proofs, and only then coherent registration. The actual review
+allowance remains unresolved. No protected merge, deployment, activation,
+source grant, accepted report, genuine Hardy choice or pin was changed.
+Licensed large-area and live-speed acceptance remain OPEN; heartbeat ACTIVE.
+
+## Shared graph native PASS; next owner still unregistered (2026-10-11,11:36 UTC)
+
+The corrected exact PR1291 head `20c26448493ab727530e91cb301a8a41cc7f69d2`
+passed all five visible feature checks. The complete3,431,992-character native
+log and every workflow step were inspected:417 migration,1 subject,16 prepared
+index,1 selected-edge and2 bootstrap tests passed, with migration idempotence.
+All eight prior graphs passed unchanged; the ninth shared graph passed in
+134096ms under its unchanged180000ms deadline. This supersedes the pending
+corrected-head notes below, not their historical failed-head evidence.
+
+The new shared marker confirms genuine pre-capture live test sources, seven
+complete original layers, actual A then B sixth-owner reconciliation and fresh
+EMPTY, all four shared501 originals reopened for B, native B source501/503/504
+and legacy C-text10/3, independently joined selected-union associations,
+OUTSIDE/unresolved/second-hop preservation, and actual tenth DONE/exact16 plus
+the original FIRST candidate. The candidate's whole-owner maximum remains238
+SQL queries under256. This is a small synthetic native graph, NOT an issued
+durable index, economic/at-sale/quarter authority, licensed large-area study,
+production speed, current review or protected-main clearance. Actual reviews
+remain empty and included-review allowance unresolved; draft skips are not reviews.
+
+The local-only next-owner WIP now adds bounded bidirectional current-account
+edge checks, immutable first-seen/native-prefix deltas and complete compact
+receipt reconstruction. Unattached head/child deferred functions require one
+native transaction, exact17 checkpoint and unconsumed single-use yield; no
+retained-population recount establishes completeness. A separate zero-argument
+native NEXT reader derives every storage member/key/edge from SQL and checks
+the native transaction before DML and after head CAS/readback. A dedicated
+exact16/17 intent reader retains request/profile/nine human roots/workspace and
+consumed-continuation/current-or-higher-attempt bindings without projecting17
+into or widening any old reader.306 focused DATA/static/protocol tests pass.
+
+This WIP is NOT in PR1291/cloud CI. Migration20261206 remains unregistered;
+the installed unconditional head/COMMIT refusals are unchanged, and no new
+storage/intent path is called by the actual original owner/route/worker. Before
+registration, finish separate actual-index-cursor original-package SQL/adapter,
+complete whole-original owner and ALL ending fences, exact17 job/continuation
+integration, and genuine native orphan/rollback/lostACK/ordinary4-to-5 prefix/
+fresh-EMPTY acceptance. Do not add calls to either tight old graph or raise any
+budget. All internal stages, production, reports, genuine choices and pins
+remain untouched; licensed/live roadmap acceptance remains OPEN.
+
 ## Shared-graph cloud ordering correction (2026-10-11,11:07 UTC)
 
 The first ninth-graph run at `4ec92aa7` failed its exact original closure-order

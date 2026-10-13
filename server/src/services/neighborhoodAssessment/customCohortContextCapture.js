@@ -81,6 +81,9 @@ import { prepareCohortSelectedNumericReceiptV2 } from './cohortSelectedNumericRe
 import { createCustomCohortSelectedSemanticV2Repository } from './customCohortSelectedSemanticV2Repository.js';
 import { createCustomCohortSelectedTransactionIndexFirstCandidateV2Repository } from './customCohortSelectedTransactionIndexFirstCandidateV2Repository.js';
 import { prepareCohortSelectedTransactionIndexFirstCandidateV2 } from './cohortSelectedTransactionIndexFirstCandidateV2.js';
+import { createCustomCohortSelectedTransactionIndexV2Repository } from './customCohortSelectedTransactionIndexV2Repository.js';
+import { prepareCohortSelectedTransactionIndexReceiptV2, buildCohortSelectedTransactionIndexReceiptV2 }
+  from './cohortSelectedTransactionIndexReceiptV2.js';
 import { prepareCohortSelectedSemanticReceiptV2, prepareCohortSelectedSemanticSummaryV2,
   initializeCohortSelectedSemanticSummaryV2, advanceCohortSelectedSemanticSummaryV2,
   finalizeCohortSelectedSemanticSummaryV2 } from './cohortSelectedSemanticReceiptV2.js';
@@ -322,6 +325,21 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingSelectedStatisticsSource: true, readingSelectedFrequencySource: true, readingSelectedNumericSource: true,
     progressingSelectedSemantic: true, readingSelectedTransactionSource: true, preparingSelectedTransactionFirstCandidate: true,
     allowedPhases: ['frozen_selected_semantic_refs_v2'] },
+  original_selected_transaction_index_source_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
+    readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true,
+    readingSelectedUnionFirstAmenities: true, readingSelectedUnionFirstTransactions: true, readingSelectedMetricSource: true,
+    readingSelectedStatisticsSource: true, readingSelectedFrequencySource: true, readingSelectedNumericSource: true,
+    progressingSelectedSemantic: true, readingSelectedTransactionSource: true, readingSelectedTransactionIndex: true,
+    allowedPhases: ['frozen_selected_semantic_refs_v2','frozen_selected_transaction_index_refs_v2'] },
+  original_selected_transaction_index_progress_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
+    readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true,
+    readingSelectedUnionFirstAmenities: true, readingSelectedUnionFirstTransactions: true, readingSelectedMetricSource: true,
+    readingSelectedStatisticsSource: true, readingSelectedFrequencySource: true, readingSelectedNumericSource: true,
+    progressingSelectedSemantic: true, readingSelectedTransactionSource: true, readingSelectedTransactionIndex: true,
+    progressingSelectedTransactionIndex: true,
+    allowedPhases: ['frozen_selected_semantic_refs_v2','frozen_selected_transaction_index_refs_v2'] },
   original_selected_semantic_progress_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
     readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true,
@@ -1774,7 +1792,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,
       resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,partitioningRecordedGroups=false,
-      readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,readingSelectedUnionFirstEligibility=false,readingSelectedUnionFirstAmenities=false,readingSelectedUnionFirstTransactions=false,progressingSelectedEligibility=false,progressingSelectedEvidence=false,readingSelectedMetricSource=false,progressingSelectedMetrics=false,readingSelectedStatisticsSource=false,progressingSelectedStatistics=false,readingSelectedFrequencySource=false,readingSelectedNumericSource=false,progressingSelectedNumeric=false,readingSelectedRankCandidates=false,progressingSelectedSemantic=false,readingSelectedTransactionSource=false,preparingSelectedTransactionFirstCandidate=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
+      readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,readingSelectedUnionFirstEligibility=false,readingSelectedUnionFirstAmenities=false,readingSelectedUnionFirstTransactions=false,progressingSelectedEligibility=false,progressingSelectedEvidence=false,readingSelectedMetricSource=false,progressingSelectedMetrics=false,readingSelectedStatisticsSource=false,progressingSelectedStatistics=false,readingSelectedFrequencySource=false,readingSelectedNumericSource=false,progressingSelectedNumeric=false,readingSelectedRankCandidates=false,progressingSelectedSemantic=false,readingSelectedTransactionSource=false,preparingSelectedTransactionFirstCandidate=false,readingSelectedTransactionIndex=false,progressingSelectedTransactionIndex=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     const readingCadSource=readingCadPages||readingSelectedUnionFirstAmenities;
     if(referencesV2){
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
@@ -1847,9 +1865,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         selectionWorkspaceTarget=await readCustomCohortFrozenSelectionWorkspaceTarget({
           client,input,scopeJson:canonicalAssessmentJson(scope),checkBudget:budget.check});
       }
-      const checkpoint=await jobs.readCheckpoint(claim,jobOptions);
+      const checkpoint=await jobs[readingSelectedTransactionIndex?'readTransactionIndexCheckpoint':'readCheckpoint'](claim,jobOptions);
       if(!checkpoint || !allowedPhases.includes(checkpoint.phase)
-        ||checkpoint.evidence_refs.length!==({frozen_stock_v1:2,frozen_source_v1:3,frozen_source_refs_v2:3,frozen_verify_refs_v2:4,frozen_geo_verify_refs_v2:5,frozen_identity_refs_v2:6,frozen_stock_traversal_refs_v2:7,frozen_recorded_partition_refs_v2:8,frozen_recorded_catalog_refs_v2:9,frozen_selected_union_refs_v2:10,frozen_selected_eligibility_refs_v2:11,frozen_selected_evidence_refs_v2:12,frozen_selected_metrics_refs_v2:13,frozen_selected_statistics_refs_v2:14,frozen_selected_numeric_refs_v2:15,frozen_selected_semantic_refs_v2:16,frozen_verify_v1:4,frozen_geo_verify_v1:5,frozen_identity_v1:6,frozen_typed_v1:7}[checkpoint.phase]))
+        ||checkpoint.evidence_refs.length!==({frozen_stock_v1:2,frozen_source_v1:3,frozen_source_refs_v2:3,frozen_verify_refs_v2:4,frozen_geo_verify_refs_v2:5,frozen_identity_refs_v2:6,frozen_stock_traversal_refs_v2:7,frozen_recorded_partition_refs_v2:8,frozen_recorded_catalog_refs_v2:9,frozen_selected_union_refs_v2:10,frozen_selected_eligibility_refs_v2:11,frozen_selected_evidence_refs_v2:12,frozen_selected_metrics_refs_v2:13,frozen_selected_statistics_refs_v2:14,frozen_selected_numeric_refs_v2:15,frozen_selected_semantic_refs_v2:16,frozen_selected_transaction_index_refs_v2:17,frozen_verify_v1:4,frozen_geo_verify_v1:5,frozen_identity_v1:6,frozen_typed_v1:7}[checkpoint.phase]))
         fail('checkpoint_conflict');
       const subjects=createCustomCohortSubjectRepository(client,canonicalAssessmentJson(scope));
       const blobs=createNeighborhoodCohortBlobRepository(client,scope.organization_id);
@@ -1882,7 +1900,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(readingRetainedSelectionIntent)issuedSelectionIntent=await createCustomCohortV2SelectionIntentRepository(client)
         .readRetained(claim,{...jobOptions,workspaceTarget:selectionWorkspaceTarget});
       if(replayingSelectedUnion)issuedSelectionIntent=await createCustomCohortV2SelectionIntentRepository(client)
-        [readingSelectedTransactionSource?'readForTransactionSource':progressingSelectedSemantic?'readForSemanticStatistics':progressingSelectedNumeric||readingSelectedRankCandidates?'readForNumericPopulation':readingSelectedFrequencySource?'readForFrequencies':progressingSelectedStatistics?'readForStatisticsContributions':readingSelectedStatisticsSource?'readForStatistics':progressingSelectedMetrics?'readForMetrics':progressingSelectedEvidence||readingSelectedMetricSource?'readForEvidence':progressingSelectedEligibility?'readForEligibility':'readForReplay'](claim,{...jobOptions,workspaceTarget:selectionWorkspaceTarget});
+        [readingSelectedTransactionIndex?'readForTransactionIndex':readingSelectedTransactionSource?'readForTransactionSource':progressingSelectedSemantic?'readForSemanticStatistics':progressingSelectedNumeric||readingSelectedRankCandidates?'readForNumericPopulation':readingSelectedFrequencySource?'readForFrequencies':progressingSelectedStatistics?'readForStatisticsContributions':readingSelectedStatisticsSource?'readForStatistics':progressingSelectedMetrics?'readForMetrics':progressingSelectedEvidence||readingSelectedMetricSource?'readForEvidence':progressingSelectedEligibility?'readForEligibility':'readForReplay'](claim,{...jobOptions,workspaceTarget:selectionWorkspaceTarget});
       // Never let an early known-ID error become a revoked-license catalog
       // oracle. This fixed lookup is permitted only AFTER current source policy
       // at BOTH ends. Choices come from the immutable native command, not body
@@ -1911,7 +1929,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       const cadDecision=readingCadSource?await boundedPolicy(authorizeCadImprovementData,client,input.auth,context,cadPurpose,budget):null;
       if(readingCadSource&&!/^custom-neighborhood-cad-improvement-source-rights-v1:sha256:[a-f0-9]{64}$/.test(cadDecision.policy_revision))
         fail('CAD_source_policy_required');
-      // Tenth owner only: freshly load its FIXED twelve/thirteen issued progress
+      // Tenth and inactive NEXT readers: load only their FIXED issued progress
       // receipts through the existing eight-record/2MB reader. These are NOT
       // population/source originals or authority. Each actual native head is
       // still checked BEFORE using its body below, and every original/ENTIRE
@@ -1920,7 +1938,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       const issuedCheckpointReceipts=progressingSelectedSemantic?checkpoint.evidence_refs.slice(3):null,
         issuedCheckpointTexts=[];
       if(issuedCheckpointReceipts){
-        if(![12,13].includes(issuedCheckpointReceipts.length)
+        if((readingSelectedTransactionIndex?![13,14].includes(issuedCheckpointReceipts.length):![12,13].includes(issuedCheckpointReceipts.length))
           ||issuedCheckpointReceipts.some(ref=>Number(ref.canonical_utf8_bytes)>16000))fail('checkpoint_conflict');
         for(let offset=0;offset<issuedCheckpointReceipts.length;offset+=NEIGHBORHOOD_COHORT_BLOB_READ_BATCH_LIMITS.records){
           const prepared=await blobs.getPreparedBatch(issuedCheckpointReceipts.slice(offset,
@@ -2298,7 +2316,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         statisticsStore=null,statisticsAnchor=null,statisticsExpected=null,statisticsBefore=null,statisticsCounts=null,statisticsCandidate=null,
         numericStore=null,numericAnchor=null,numericExpected=null,numericBefore=null,provisionalRankCandidates=null,
         semanticStore=null,semanticAnchor=null,semanticExpected=null,semanticBefore=null,semanticIssued=null,semanticSummary=null,
-        selectedTransactionSource=null,selectedTransactionNativeKeys=null,selectedTransactionCandidateStore=null,selectedTransactionCandidatePlan=null;
+        selectedTransactionSource=null,selectedTransactionNativeKeys=null,selectedTransactionCandidateStore=null,selectedTransactionCandidatePlan=null,
+        selectedTransactionIndexStore=null,selectedTransactionIndexPacket=null,selectedTransactionIndexExpected=null;
       if(partitioningRecordedGroups||readingRecordedPartition||catalogingRecordedGroups){
         const baseExpected={binding,source_reference:reference,root,graph_verification_reference:verificationReference,
           stock_verification_reference:stockVerificationReference,identity_verification_reference:identityVerificationReference,
@@ -2509,7 +2528,35 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             }
             eligibilityBefore=readingSelectedTransactionSource?{selected_ordinal:0,done:false}:semanticBefore;
           }
-          if(readingSelectedTransactionSource)firstSelectedEntry=await semanticStore.readFirstCompletedSelectedEntry();
+          if(readingSelectedTransactionIndex){
+            selectedTransactionIndexExpected={...semanticExpected,semantic_reference:semanticAnchor.receipt_reference,
+              generation_id:stock.generation_id,selected_stock_count:unionCounts.selected_count};
+            const parentKeys=['union_reference','eligibility_reference','evidence_reference','metrics_reference','statistics_reference','numeric_reference','semantic_reference'];
+            selectedTransactionIndexStore=createCustomCohortSelectedTransactionIndexV2Repository({client,claim,scope,
+              actorUserId:input.auth.userId,command_id:issuedSelectionIntent.command_id,
+              ...Object.fromEntries(parentKeys.map(k=>[k,selectedTransactionIndexExpected[k]]))});
+            selectedTransactionIndexPacket=await selectedTransactionIndexStore.readNext();
+            const nativePlan=selectedTransactionIndexPacket.plan;
+            if(nativePlan.generation_id!==stock.generation_id||nativePlan.selected_stock_count!==unionCounts.selected_count)
+              fail('selected_transaction_index_original_mismatch');
+            if(checkpoint.phase==='frozen_selected_semantic_refs_v2'){
+              if(selectedTransactionIndexPacket.previous!==null||nativePlan.before.selected_ordinal!==0)
+                fail('checkpoint_conflict');
+            }else{
+              if(!same(selectedTransactionIndexPacket.previous,checkpoint.evidence_refs[16]))fail('checkpoint_conflict');
+              const text=await readIssuedCheckpointReceipt(selectedTransactionIndexPacket.previous);
+              if(text===null||Buffer.byteLength(text)>4096)fail('checkpoint_conflict');
+              let retained;try{retained=JSON.parse(text);}catch{fail('checkpoint_conflict');}
+              const expected={command_id:issuedSelectionIntent.command_id,...Object.fromEntries(parentKeys.map(k=>[k,selectedTransactionIndexExpected[k]])),
+                generation_id:stock.generation_id,selected_stock_count:unionCounts.selected_count};
+              retained=prepareCohortSelectedTransactionIndexReceiptV2(retained,expected);
+              if(retained.after.done||retained.sequence!==nativePlan.before.selected_ordinal||!same(retained.after,nativePlan.before))
+                fail('checkpoint_conflict');
+            }
+            eligibilityBefore={selected_ordinal:nativePlan.before.selected_ordinal,done:false};
+            firstSelectedEntry=selectedTransactionIndexPacket.selected_entry;
+          }
+          else if(readingSelectedTransactionSource)firstSelectedEntry=await semanticStore.readFirstCompletedSelectedEntry();
           else if(progressingSelectedSemantic)firstSelectedEntry=await semanticStore.readNextSelectedEntry();
           else if(readingSelectedRankCandidates)firstSelectedEntry=await numericStore.readFirstCompletedSelectedEntry();
           else firstSelectedEntry=await (progressingSelectedNumeric?numericStore.readNextSelectedEntry():readingSelectedFrequencySource?(readingSelectedNumericSource?statisticsStore.readFirstIndexedFrequencyEntry():statisticsStore.readFirstFrequencyEntry()):readingSelectedStatisticsSource?(progressingSelectedStatistics?statisticsStore.readNextSelectedEntry():metricsStore.readFirstStatisticsEntry()):progressingSelectedMetrics?metricsStore.readNextSelectedEntry():readingSelectedMetricSource?evidenceStore.readFirstMetricEntry():progressingSelectedEvidence?evidenceStore.readNextSelectedEntry():
@@ -2517,7 +2564,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           if((firstSelectedEntry===null)!==(eligibilityBefore.selected_ordinal===unionCounts.selected_count)
             ||firstSelectedEntry!==null&&firstSelectedEntry.ordinal!==eligibilityBefore.selected_ordinal+1)fail('selected_union_original_mismatch');
           if(readingSelectedTransactionSource){
-            selectedTransactionNativeKeys=await semanticStore.readFirstCompletedTransactionNativeKeys();
+            if(readingSelectedTransactionIndex){
+              const p=selectedTransactionIndexPacket.plan;
+              selectedTransactionNativeKeys={generation_id:p.generation_id,account_id:p.selected_entry?.account_id??null,
+                ordinal:p.selected_entry?.ordinal??null,anchor_count:p.anchor_count,
+                native_packages:p.native_packages.map(({kind,native_key})=>({kind,native_key}))};
+            }else selectedTransactionNativeKeys=await semanticStore.readFirstCompletedTransactionNativeKeys();
             if(selectedTransactionNativeKeys.generation_id!==stock.generation_id
               ||selectedTransactionNativeKeys.account_id!==(firstSelectedEntry?.account_id??null)
               ||selectedTransactionNativeKeys.ordinal!==(firstSelectedEntry?.ordinal??null))fail('selected_transaction_native_keys_mismatch');
@@ -2541,7 +2593,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           const preferred=resolveCustomCohortRetainedSubjectHousing(retained.subject.material,retained.subject.target,{check:budget.check}),
             graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))},
             paired=await createNeighborhoodSharedStockOriginalCellsV2(client,stockOptions,graph,context.effective_date)
-              [readingSelectedTransactionSource?'subjectAndFirstCompletedSemanticAccountPackage':progressingSelectedSemantic?'subjectAndNextSelectedSemanticAccountPackage':readingSelectedRankCandidates?'subjectAndFirstCompletedNumericAccountPackage':progressingSelectedNumeric?'subjectAndNextSelectedNumericAccountPackage':readingSelectedFrequencySource?'subjectAndFirstSelectedFrequencyAccountPackage':progressingSelectedStatistics?'subjectAndNextSelectedStatisticsAccountPackage':readingSelectedStatisticsSource?'subjectAndFirstSelectedStatisticsAccountPackage':progressingSelectedMetrics?'subjectAndNextSelectedMetricAccountPackage':readingSelectedMetricSource?'subjectAndFirstSelectedMetricAccountPackage':progressingSelectedEvidence?'subjectAndNextSelectedCombinedAccountPackage':
+              [readingSelectedTransactionIndex?'subjectAndNextSelectedTransactionIndexAccountPackage':readingSelectedTransactionSource?'subjectAndFirstCompletedSemanticAccountPackage':progressingSelectedSemantic?'subjectAndNextSelectedSemanticAccountPackage':readingSelectedRankCandidates?'subjectAndFirstCompletedNumericAccountPackage':progressingSelectedNumeric?'subjectAndNextSelectedNumericAccountPackage':readingSelectedFrequencySource?'subjectAndFirstSelectedFrequencyAccountPackage':progressingSelectedStatistics?'subjectAndNextSelectedStatisticsAccountPackage':readingSelectedStatisticsSource?'subjectAndFirstSelectedStatisticsAccountPackage':progressingSelectedMetrics?'subjectAndNextSelectedMetricAccountPackage':readingSelectedMetricSource?'subjectAndFirstSelectedMetricAccountPackage':progressingSelectedEvidence?'subjectAndNextSelectedCombinedAccountPackage':
                 readingSelectedUnionFirstTransactions&&readingSelectedUnionFirstAmenities?'subjectAndFirstSelectedCombinedAccountPackage':
                 readingSelectedUnionFirstTransactions?'subjectAndFirstSelectedTransactionAccountPackage':
                 readingSelectedUnionFirstAmenities?'subjectAndFirstSelectedAmenityAccountPackage':
@@ -3005,14 +3057,14 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         client,input,scopeJson:canonicalAssessmentJson(scope),checkBudget:budget.check}),selectionWorkspaceTarget))fail('workspace_target_changed');
       budget.check();
       if(replayingSelectedUnion){
-        const ending=await createCustomCohortV2SelectionIntentRepository(client)[readingSelectedTransactionSource?'readForTransactionSource':progressingSelectedSemantic?'readForSemanticStatistics':progressingSelectedNumeric||readingSelectedRankCandidates?'readForNumericPopulation':readingSelectedFrequencySource?'readForFrequencies':progressingSelectedStatistics?'readForStatisticsContributions':readingSelectedStatisticsSource?'readForStatistics':progressingSelectedMetrics?'readForMetrics':progressingSelectedEvidence||readingSelectedMetricSource?'readForEvidence':progressingSelectedEligibility?'readForEligibility':'readForReplay'](claim,
+        const ending=await createCustomCohortV2SelectionIntentRepository(client)[readingSelectedTransactionIndex?'readForTransactionIndex':readingSelectedTransactionSource?'readForTransactionSource':progressingSelectedSemantic?'readForSemanticStatistics':progressingSelectedNumeric||readingSelectedRankCandidates?'readForNumericPopulation':readingSelectedFrequencySource?'readForFrequencies':progressingSelectedStatistics?'readForStatisticsContributions':readingSelectedStatisticsSource?'readForStatistics':progressingSelectedMetrics?'readForMetrics':progressingSelectedEvidence||readingSelectedMetricSource?'readForEvidence':progressingSelectedEligibility?'readForEligibility':'readForReplay'](claim,
           {...jobOptions,workspaceTarget:selectionWorkspaceTarget});
         if(!same(ending,issuedSelectionIntent)||!same(await unionStore.read(),unionAnchor)
           ||!same(await unionStore.counts(),unionCounts))fail('selected_union_original_mismatch');
         if(progressingSelectedNumeric&&!same(await numericStore.readNextSelectedEntry(),firstSelectedEntry))fail('selected_union_original_mismatch');
         if(readingSelectedRankCandidates&&!same(await numericStore.readFirstCompletedSelectedEntry(),firstSelectedEntry))fail('selected_union_original_mismatch');
-        if(readingSelectedTransactionSource){if(!same(await semanticStore.readFirstCompletedSelectedEntry(),firstSelectedEntry))fail('selected_union_original_mismatch');}
-        else if(progressingSelectedSemantic&&!same(await semanticStore.readNextSelectedEntry(),firstSelectedEntry))fail('selected_union_original_mismatch');
+        if(readingSelectedTransactionSource&&!readingSelectedTransactionIndex){if(!same(await semanticStore.readFirstCompletedSelectedEntry(),firstSelectedEntry))fail('selected_union_original_mismatch');}
+        else if(progressingSelectedSemantic&&!readingSelectedTransactionIndex&&!same(await semanticStore.readNextSelectedEntry(),firstSelectedEntry))fail('selected_union_original_mismatch');
         if(!progressingSelectedNumeric&&!readingSelectedRankCandidates&&!progressingSelectedSemantic){
         if(readingSelectedUnionFirstEligibility&&!same(await (readingSelectedFrequencySource?(readingSelectedNumericSource?statisticsStore.readFirstIndexedFrequencyEntry():statisticsStore.readFirstFrequencyEntry()):progressingSelectedStatistics?statisticsStore.readNextSelectedEntry():readingSelectedStatisticsSource?metricsStore.readFirstStatisticsEntry():progressingSelectedMetrics?metricsStore.readNextSelectedEntry():readingSelectedMetricSource?evidenceStore.readFirstMetricEntry():progressingSelectedEvidence?evidenceStore.readNextSelectedEntry():progressingSelectedEligibility
           ?eligibilityStore.readNextSelectedEntry():unionStore.readFirstSelectedEntry()),firstSelectedEntry))
@@ -3026,11 +3078,45 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         if(progressingSelectedNumeric&&!same(await numericStore.read(),numericAnchor))fail('checkpoint_conflict');
         if(readingSelectedRankCandidates&&!same(await numericStore.read(),numericAnchor))fail('checkpoint_conflict');
         if(progressingSelectedSemantic&&(!same(await numericStore.read(),numericAnchor)||!same(await semanticStore.read(),semanticAnchor)))fail('checkpoint_conflict');
-        if(readingSelectedTransactionSource&&!same(await semanticStore.readFirstCompletedTransactionNativeKeys(),selectedTransactionNativeKeys))
+        if(readingSelectedTransactionSource&&!readingSelectedTransactionIndex&&!same(await semanticStore.readFirstCompletedTransactionNativeKeys(),selectedTransactionNativeKeys))
           fail('selected_transaction_native_keys_mismatch');
+        if(readingSelectedTransactionIndex){
+          // Repeat the actual native checkpoint and ENTIRE bounded NEXT plan,
+          // including every retained member field and typed first-seen binding,
+          // only AFTER all current+ending rights, workspace and immutable heads.
+          if(!same(await jobs.readTransactionIndexCheckpoint(claim,jobOptions),checkpoint)
+            ||!same(await selectedTransactionIndexStore.readNext(),selectedTransactionIndexPacket))
+            fail('selected_transaction_index_original_mismatch');
+        }
         if(preparingSelectedTransactionFirstCandidate&&!same(await selectedTransactionCandidateStore.readFirstCandidate(),selectedTransactionCandidatePlan))
           fail('selected_transaction_index_candidate_mismatch');
         budget.check();
+        if(progressingSelectedTransactionIndex){
+          // This sole write branch is AFTER the complete original graph, ALL
+          // retained fields, exact per-account associations and EVERY ending
+          // authority/head/checkpoint/ENTIRE NEXT packet fence above. Shared
+          // keys never skip replay. The installed native refusals still keep
+          // this UNREGISTERED owner inactive until coherent native acceptance.
+          if(selectedTransactionSource===null)fail('selected_transaction_membership_missing');
+          const plan=buildCohortSelectedTransactionIndexReceiptV2({command_id:issuedSelectionIntent.command_id,
+            ...Object.fromEntries(['union_reference','eligibility_reference','evidence_reference','metrics_reference','statistics_reference','numeric_reference','semantic_reference']
+              .map(k=>[k,selectedTransactionIndexExpected[k]])),plan:selectedTransactionIndexPacket.plan,previous:selectedTransactionIndexPacket.previous});
+          const receiptReference=await blobs.put(canonicalAssessmentJson(plan));
+          const head=await selectedTransactionIndexStore.advance(receiptReference);
+          await jobs.saveTransactionIndexCheckpoint(claim,jobOptions,{phase:'frozen_selected_transaction_index_refs_v2',
+            evidence_refs:[...checkpoint.evidence_refs.slice(0,16),receiptReference]});
+          const continuation=await createCustomCohortV2ContinuationRepository(client).yieldTransactionIndexIssued(claim,jobOptions);
+          const result={status:'original_selected_transaction_index_progress_retained',operation_id:input.operationId,
+            command_id:issuedSelectionIntent.command_id,transaction_index_reference:head.receipt_reference,
+            semantic_reference:semanticAnchor.receipt_reference,progress:plan.after,selected_entry:plan.selected_entry,
+            source_package_count:plan.source_package_count,legacy_package_count:plan.legacy_package_count,
+            new_source_record_keys:plan.new_source_record_keys,new_legacy_sale_keys:plan.new_legacy_sale_keys,
+            complete_original_reconciled_selected_index:plan.after.done,
+            global_economic_transaction_deduplication:false,economic_transactions:'not_established',at_sale_facts:'not_established',
+            calendar_quarters:'not_established',source_acquisition:'not_established',publication:'not_established',
+            production_speed:'not_established',context_complete:false,pin_transfer:false,report_update:'none',continuation};
+          if(Buffer.byteLength(JSON.stringify(result))>16000)fail('byte_limit');budget.check();return freeze(result);
+        }
         if(readingSelectedTransactionSource){
           // Read-only AFTER complete issued graph, whole FIRST selected packet,
           // ENTIRE caches, EVERY seventh/eighth/index/ninth/tenth member and ALL
@@ -3047,6 +3133,14 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             global_selected_native_deduplication:false,economic_transactions:'not_established',calendar_quarters:'not_established',
             source_acquisition:'not_established',publication:'not_established',production_speed:'not_established',
             context_complete:false,pin_transfer:false,report_update:'none',read_only:true,lease_extended:false,
+            ...(readingSelectedTransactionIndex?{
+              status:'current_authorized_native_next_selected_transaction_index_originals_reconciled',
+              original_reconciliation:'complete_issued_graph_whole_native_NEXT_selected_stock_CAD_all_date_transaction_required_subject_ENTIRE_caches_and_every_seventh_eighth_index_ninth_tenth_member',
+              coverage:'native_next_selected_account_only_after_actual_tenth_fresh_EMPTY',
+              native_index_candidate:buildCohortSelectedTransactionIndexReceiptV2({command_id:issuedSelectionIntent.command_id,
+                ...Object.fromEntries(['union_reference','eligibility_reference','evidence_reference','metrics_reference','statistics_reference','numeric_reference','semantic_reference']
+                  .map(k=>[k,selectedTransactionIndexExpected[k]])),plan:selectedTransactionIndexPacket.plan,previous:selectedTransactionIndexPacket.previous}),
+              native_index_candidate_retained:false,transaction_index_issued:false}:{}),
             ...(preparingSelectedTransactionFirstCandidate?{
               status:'current_authorized_first_selected_transaction_index_candidate_originals_reconciled',
               native_index_candidate:prepareCohortSelectedTransactionIndexFirstCandidateV2({command_id:issuedSelectionIntent.command_id,
@@ -3679,6 +3773,20 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     // advance or phase17; all existing complete-original/ending fences apply.
     prepareOriginalFrozenCaptureJobFirstSelectedTransactionIndexCandidateReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_selected_transaction_first_candidate_refs_v2'),
+    // Inactive READ-ONLY native NEXT seam. Exact16/17 native admission and the
+    // complete original/retained-member/current+ending owner are connected, but
+    // no blob, child, head, checkpoint, yield or worker activation is issued.
+    async readOriginalFrozenCaptureJobNextSelectedTransactionIndexReferencesV2(...args){
+      if(args.length!==2)fail('invalid_options');
+      return frozenCaptureJobSourceStage(args[0],args[1], 'original_selected_transaction_index_source_refs_v2');
+    },
+    // Inactive atomic native NEXT owner, no route/worker/default dispatch.
+    // Installed guards refuse issuance until the unregistered coherent native
+    // guard/continuation migration and full native proofs are complete.
+    async progressOriginalFrozenCaptureJobSelectedTransactionIndexReferencesV2(...args){
+      if(args.length!==2)fail('invalid_options');
+      return frozenCaptureJobSourceStage(args[0],args[1], 'original_selected_transaction_index_progress_refs_v2');
+    },
     // Inactive ninth population owner; no route/worker/default activation.
     progressOriginalFrozenCaptureJobSelectedNumericReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_selected_numeric_progress_refs_v2'),

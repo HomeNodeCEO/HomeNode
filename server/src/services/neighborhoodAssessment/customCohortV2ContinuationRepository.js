@@ -57,6 +57,44 @@ export function createCustomCohortV2ContinuationRepository(client){
     if(await tx()!==started)fail('caller_transaction_required');
     return Object.freeze({status:'continuation_pending',continuation_sequence:row.sequence,phase:row.phase,
       progress_reference:reference,attempts:row.attempts,fresh_claim_required:true,context_complete:false,pin_transfer:false});
+  },async yieldTransactionIndexIssued(...args){
+    if(args.length!==2)fail('invalid_input');
+    const claim=prepareCustomCohortCaptureJobClaim(args[0]),options=data(args[1],['scope','actorUserId']),scope=scopeOf(options.scope);
+    if(typeof options.actorUserId!=='string'||!UUID.test(options.actorUserId))fail('invalid_scope');
+    const values=[claim.operation_id,claim.claim_token,claim.attempts,scope.organization_id,scope.report_file_id,
+      scope.assignment_file_id,scope.account_id,options.actorUserId],started=await tx();
+    if(await tx()!==started)fail('caller_transaction_required');
+    const row=one(await client.query(`/* custom-cohort-v2-continuation:yield-transaction-index */
+      WITH issued AS (
+        INSERT INTO app.neighborhood_custom_cohort_v2_continuations
+          (operation_id,organization_id,sequence,phase,progress_reference,issued_claim_token,issued_attempts,consumed_claim_token)
+        SELECT job.operation_id,job.organization_id,1,job.checkpoint->>'phase',h.receipt_reference,job.claim_token,job.attempts,NULL
+        FROM app.neighborhood_custom_cohort_capture_jobs job
+        JOIN app.neighborhood_custom_cohort_selected_transaction_index_v2_heads h USING(operation_id,organization_id)
+        WHERE job.operation_id=$1::uuid AND job.claim_token=$2::uuid AND job.attempts=$3::integer
+          AND job.organization_id=$4::uuid AND job.report_file_id=$5::uuid AND job.assignment_file_id=$6::bigint
+          AND job.account_id=$7 AND job.actor_user_id=$8::uuid AND job.status='running'
+          AND job.lease_expires_at>clock_timestamp() AND job.cancellation_requested_at IS NULL AND job.context_sha256 IS NULL
+          AND job.checkpoint->>'phase'='frozen_selected_transaction_index_refs_v2'
+          AND h.issued_transaction_id=txid_current()
+          AND app.neighborhood_selected_transaction_index_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)
+        ON CONFLICT(operation_id) DO UPDATE SET sequence=neighborhood_custom_cohort_v2_continuations.sequence+1,
+          phase=EXCLUDED.phase,progress_reference=EXCLUDED.progress_reference,issued_claim_token=EXCLUDED.issued_claim_token,
+          issued_attempts=EXCLUDED.issued_attempts,consumed_claim_token=NULL
+        WHERE neighborhood_custom_cohort_v2_continuations.consumed_claim_token IS NOT NULL
+          AND neighborhood_custom_cohort_v2_continuations.progress_reference<>EXCLUDED.progress_reference
+        RETURNING operation_id,sequence,phase,progress_reference
+      ) UPDATE app.neighborhood_custom_cohort_capture_jobs job
+        SET status='retry',claim_token=NULL,lease_expires_at=NULL,run_after=clock_timestamp(),updated_at=clock_timestamp()
+        FROM issued WHERE job.operation_id=issued.operation_id AND job.claim_token=$2::uuid AND job.attempts=$3::integer
+        RETURNING issued.sequence,issued.phase,issued.progress_reference,job.attempts`,values));
+    if(row.phase!=='frozen_selected_transaction_index_refs_v2'||!Number.isInteger(row.sequence)||row.sequence<1
+      ||row.sequence>22000011||row.attempts!==claim.attempts)fail('corrupt');
+    const r=data(row.progress_reference,['content_sha256','canonical_utf8_bytes']),reference=prepareNeighborhoodCohortBlobReference(r.content_sha256,r.canonical_utf8_bytes);
+    if(Number(reference.canonical_utf8_bytes)>4096)fail('corrupt');
+    if(await tx()!==started)fail('caller_transaction_required');
+    return Object.freeze({status:'continuation_pending',continuation_sequence:row.sequence,phase:row.phase,
+      progress_reference:reference,attempts:row.attempts,fresh_claim_required:true,context_complete:false,pin_transfer:false});
   },async claimDue(rawOptions={limit:1,leaseSeconds:120}){
     const {limit,leaseSeconds}=data(rawOptions,['limit','leaseSeconds']);
     if(!Number.isInteger(limit)||limit<1||limit>4||!Number.isInteger(leaseSeconds)

@@ -93,6 +93,37 @@ function checkpointOf(value) {
   if (Buffer.byteLength(canonicalAssessmentJson(checkpoint), 'utf8') > 65536) fail('invalid_checkpoint');
   return checkpoint;
 }
+// Separate inactive exact16/17 grammar. Ordinary checkpoint read/save and
+// worker dispatch remain unchanged. Claim metadata alone may retain17 after
+// an ordinary failed claim; it grants no source authority or phase issuance.
+// Native intent/admission must still bind every reference to current heads.
+function transactionIndexData(value,keys){
+  if(!value||isProxy(value)||Object.getPrototypeOf(value)!==Object.prototype)fail('invalid_checkpoint');
+  const d=Object.getOwnPropertyDescriptors(value);
+  if(Reflect.ownKeys(d).length!==keys.length||!keys.every(k=>d[k]?.enumerable&&Object.hasOwn(d[k],'value')))fail('invalid_checkpoint');
+  return Object.fromEntries(keys.map(k=>[k,d[k].value]));
+}
+function transactionIndexCheckpointOf(raw){
+  const value=transactionIndexData(raw,['phase','evidence_refs']),length=value.phase==='frozen_selected_semantic_refs_v2'?16:
+    value.phase==='frozen_selected_transaction_index_refs_v2'?17:0,a=value.evidence_refs;
+  if(!length||!Array.isArray(a)||isProxy(a)||Object.getPrototypeOf(a)!==Array.prototype||a.length!==length
+    ||Reflect.ownKeys(a).length!==length+1)fail('invalid_checkpoint');
+  const refs=[];
+  for(let i=0;i<length;i++){
+    const d=Object.getOwnPropertyDescriptor(a,String(i));if(!d?.enumerable||!Object.hasOwn(d,'value'))fail('invalid_checkpoint');
+    const r=transactionIndexData(d.value,['content_sha256','canonical_utf8_bytes']);
+    if(typeof r.content_sha256!=='string'||!SHA.test(r.content_sha256)||typeof r.canonical_utf8_bytes!=='string'
+      ||!/^[1-9]\d{0,8}$/.test(r.canonical_utf8_bytes)||i===16&&Number(r.canonical_utf8_bytes)>4096)fail('invalid_checkpoint');
+    refs.push(Object.freeze(r));
+  }
+  const checkpoint=Object.freeze({phase:value.phase,evidence_refs:Object.freeze(refs)});
+  if(Buffer.byteLength(canonicalAssessmentJson(checkpoint))>65536)fail('invalid_checkpoint');return checkpoint;
+}
+function claimedCheckpointOf(value){
+  if(isProxy(value))fail('invalid_checkpoint');
+  return Object.getOwnPropertyDescriptor(value,'phase')?.value==='frozen_selected_transaction_index_refs_v2'
+    ?transactionIndexCheckpointOf(value):checkpointOf(value);
+}
 function one(result, reason) {
   if (result?.rowCount !== 1 || !Array.isArray(result.rows) || result.rows.length !== 1)
     fail(reason);
@@ -288,7 +319,7 @@ export function createCustomCohortCaptureJobRepository(client) {
           // A resume must not trust an unvalidated JSONB checkpoint. The
           // worker still verifies every referenced immutable blob before use.
           const checkpoint = row.checkpoint === null || row.checkpoint === undefined
-            ? null : checkpointOf(row.checkpoint);
+            ? null : claimedCheckpointOf(row.checkpoint);
           valid.push(Object.freeze({ ...row, request_payload: admitted, checkpoint }));
         } catch {
           // The claimed row is locked by the caller's transaction. Retire only
@@ -328,6 +359,37 @@ export function createCustomCohortCaptureJobRepository(client) {
         SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs
         WHERE ${SCOPED_CHECKPOINT_FENCE}`, scopedClaimOf(claim, options)), 'claim_lost');
       return row.checkpoint === null ? null : checkpointOf(row.checkpoint);
+    },
+
+    async readTransactionIndexCheckpoint(...args){
+      if(args.length!==2)fail('invalid_input');
+      const options=transactionIndexData(args[1],['scope','actorUserId']);
+      options.scope=transactionIndexData(options.scope,['organization_id','report_file_id','assignment_file_id','account_id']);
+      const row=one(await client.query(`/* custom-cohort-job:transaction-index-checkpoint-read */
+        SELECT checkpoint FROM app.neighborhood_custom_cohort_capture_jobs
+        WHERE ${SCOPED_CHECKPOINT_FENCE} AND context_sha256 IS NULL`,scopedClaimOf(args[0],options)),'claim_lost');
+      return transactionIndexCheckpointOf(row.checkpoint);
+    },
+
+    async saveTransactionIndexCheckpoint(...args){
+      if(args.length!==3)fail('invalid_input');
+      const options=transactionIndexData(args[1],['scope','actorUserId']);
+      options.scope=transactionIndexData(options.scope,['organization_id','report_file_id','assignment_file_id','account_id']);
+      const values=scopedClaimOf(args[0],options),checkpoint=transactionIndexCheckpointOf(args[2]);
+      if(checkpoint.phase!=='frozen_selected_transaction_index_refs_v2')fail('invalid_checkpoint');
+      const checkpointJson=canonicalAssessmentJson(checkpoint);
+      // The dedicated native transition reopens actual16/17, all first16 roots,
+      // the prior receipt and the NEW head issued in this SAME native TX. A
+      // caller-provided hash/count/phase cannot replace that graph or old prefix.
+      const row=one(await client.query(`/* custom-cohort-job:transaction-index-checkpoint-save */
+        UPDATE app.neighborhood_custom_cohort_capture_jobs
+          SET checkpoint=$9::jsonb,updated_at=clock_timestamp()
+          WHERE ${SCOPED_CHECKPOINT_FENCE} AND context_sha256 IS NULL
+            AND app.neighborhood_transaction_index_v2_checkpoint_transition_matches(
+              operation_id,organization_id,checkpoint,$9::jsonb)
+          RETURNING checkpoint`,[...values,checkpointJson]),'claim_lost');
+      const stored=transactionIndexCheckpointOf(row.checkpoint);
+      if(canonicalAssessmentJson(stored)!==checkpointJson)fail('job_corrupt');return stored;
     },
 
     async saveCheckpoint(claim, options, checkpoint) {

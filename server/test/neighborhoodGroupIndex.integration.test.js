@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID,createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
 import { prepareNeighborhoodCiDatabase } from './helpers/neighborhoodCiDatabase.js';
 import { observeNeighborhoodCiPreparedQueries } from './helpers/neighborhoodCiPreparedQueries.js';
@@ -134,7 +135,8 @@ import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL,
   NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_NEXT_SELECTED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL,
   NEIGHBORHOOD_FIRST_COMPLETED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL,
   NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL,
-  NEIGHBORHOOD_FIRST_COMPLETED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL }
+  NEIGHBORHOOD_FIRST_COMPLETED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL,
+  NEIGHBORHOOD_NEXT_SELECTED_TRANSACTION_INDEX_ORIGINAL_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSelectedTransactionOriginalPackageV2.js';
 import { expandCohortDiagnosticCompressedJsonV1 } from './helpers/expandCohortDiagnosticCompressedJsonV1.js';
 
@@ -1365,11 +1367,16 @@ test('isolated PostgreSQL: freezes a complete 60001-account original source popu
 // Independent real-native captures: preserve the original five-failure terminal
 // test, and build an entirely new issued graph for the waiting boundary. Never
 // clone/rebind job roots, summaries, original payloads or caller DONE metadata.
-for(const selectionWaitFixture of [false,true,'intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction']) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
-  +(['intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction'].includes(selectionWaitFixture)?` with explicit new-study selection ${selectionWaitFixture}`:selectionWaitFixture?' with issued selection waiting':''),{
-  skip:!process.env.DATABASE_URL,timeout:180_000,
+for(const selectionWaitFixture of [false,true,'intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner']) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
+  +(['intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner'].includes(selectionWaitFixture)?` with explicit new-study selection ${selectionWaitFixture}`:selectionWaitFixture?' with issued selection waiting':''),{
+  // The tenth graph replays every real parent before its own A/B/EMPTY owner
+  // proof. Keep all nine pre-existing paths at their original 180-second
+  // deadline; reserve extra fixture time only for that new graph. This does
+  // not change the per-statement or bounded production-owner budgets.
+  skip:!process.env.DATABASE_URL,timeout:selectionWaitFixture==='union-all-transaction-index-owner'?240_000:180_000,
 },async()=>{
-  const sharedTransactionFixture=selectionWaitFixture==='union-all-shared-transaction',
+  const transactionIndexOwnerFixture=selectionWaitFixture==='union-all-transaction-index-owner',
+    sharedTransactionFixture=selectionWaitFixture==='union-all-shared-transaction'||transactionIndexOwnerFixture,
     semanticRecoveryFixture=selectionWaitFixture==='union-all-semantic-recovery',
     positiveIndexedSourceFixture=selectionWaitFixture==='union-all-site-positive'||semanticRecoveryFixture,
     observedHousingFixture=selectionWaitFixture==='union-all'||positiveIndexedSourceFixture||sharedTransactionFixture;
@@ -1797,12 +1804,13 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       assert.equal(fresh.operation_id,refsOperation);assert.equal(fresh.attempts,2);assert.notEqual(fresh.claim_token,refsClaim.claim_token);
       Object.assign(refsClaim,{operation_id:fresh.operation_id,claim_token:fresh.claim_token,attempts:fresh.attempts});
     }
-    const refsCalls=[],refsQueryParameters=[],refsBlobPuts=[],sharedSelectedEvidencePackets=new Map();let refsFault=null,refsAbort=null;
+    const refsCalls=[],refsQueryParameters=[],refsBlobPuts=[],sharedSelectedEvidencePackets=new Map(),transactionIndexPackets=[];let refsFault=null,refsAbort=null;
     const refsPool={async connect(){const client=await pool.connect();let cadHeaderReads=0,transactionHeaderReads=0,nativeTransactionKeyReads=0,transactionCandidatePlanReads=0;return {release:client.release.bind(client),async query(config){
       refsCalls.push(config.text);
       refsQueryParameters.push(config.values);
       if(config.text.includes('neighborhood-cohort-blob:insert */'))refsBlobPuts.push(config.values[3]);
-      const orphanUnionYield=['union_orphan_commit','eligibility_orphan_commit','evidence_orphan_commit','metrics_orphan_commit','stats_orphan_commit','numeric_orphan_commit','semantic_orphan_commit'].includes(refsFault)&&config.text.includes('custom-cohort-v2-continuation:yield');
+      const orphanUnionYield=(['union_orphan_commit','eligibility_orphan_commit','evidence_orphan_commit','metrics_orphan_commit','stats_orphan_commit','numeric_orphan_commit','semantic_orphan_commit'].includes(refsFault)
+        ||transactionIndexOwnerFixture&&refsFault==='transaction_index_orphan_commit')&&config.text.includes('custom-cohort-v2-continuation:yield');
       // Negative native guard test: execute the REAL yield, then roll back ONLY
       // that statement. The earlier real group/head/root writes remain pending;
       // REAL COMMIT must reject orphan progress. No fabricated SQL result.
@@ -1844,6 +1852,27 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       }
       if(refsFault==='union_delta_count'&&config.text.includes('custom-cohort-selected-union-v2:member-insert'))
         refsFault='union_delta_after_member';
+      if(transactionIndexOwnerFixture&&config.text===NEIGHBORHOOD_NEXT_SELECTED_TRANSACTION_INDEX_ORIGINAL_PACKAGE_V2_SQL){
+        const p=result.rows[0];assert.ok(p);assert.equal(p.page_count,p.original_count);
+        if(p.account_id!==null){
+          const rows=JSON.parse(p.page_json).filter(r=>['source_records','sales','sale_links'].includes(r.kind));
+          assert.ok(rows.every(r=>typeof r.original_text==='string'&&typeof r.typed==='object'));
+          assert.equal(rows.filter(r=>r.source_record_id==='501').length,4,'EVERY index step reopens all four shared501 originals');
+          assert.ok(rows.some(r=>r.account_id==='CLOSURE-OUTSIDE'));assert.ok(!rows.some(r=>r.source_record_id==='502'));
+          if(p.account_id==='CLOSURE-B')assert.deepEqual(rows.filter(r=>r.kind==='sales'&&r.source_record_id===null).map(r=>r.row_key),['10','3']);
+          transactionIndexPackets.push({account:p.account_id,shared_originals:4,whole_transaction_originals:rows.length});
+        }else transactionIndexPackets.push({account:null,whole_transaction_originals:0});
+        if(refsFault==='transaction_index_assignment_ending'){
+          refsFault=null;await client.query('UPDATE app.assignment_files SET assigned_appraiser_user_id=NULL WHERE id=$1',[assignment]);
+        }
+      }
+      if(transactionIndexOwnerFixture)for(const [fault,tag] of [
+        ['transaction_index_member_rollback','custom-cohort-selected-transaction-index-v2:member-insert'],
+        ['transaction_index_head_rollback','custom-cohort-selected-transaction-index-v2:head-insert'],
+        ['transaction_index_checkpoint_rollback','custom-cohort-job:transaction-index-checkpoint-save'],
+        ['transaction_index_yield_rollback','custom-cohort-v2-continuation:yield-transaction-index']]){
+        if(refsFault===fault&&config.text.includes(tag)){refsFault=null;throw Error('actual '+fault);}
+      }
       if(sharedTransactionFixture&&config.text===NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL&&result.rows[0]?.account_id
         &&result.rows[0].page_count===result.rows[0].original_count&&result.rows[0].page_count>0){
         // Bounded TWO-account test oracle only, never fed back into the owner
@@ -4471,7 +4500,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       assert.equal(await pinCount(),pinsBeforeContinuation);assert.deepEqual(await readTargetWorkspace(),targetWorkspace);
       assert.deepEqual(await readTargetHistory(),targetHistory);assert.deepEqual(await readTargetReport(),targetReport);
       assert.deepEqual(await readTargetWorkfile(),targetWorkfile);assert.deepEqual(await readPriorTargetMetadata(),priorTargetMetadata);
-      if(['intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction'].includes(selectionWaitFixture)){
+      if(['intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner'].includes(selectionWaitFixture)){
         const allSelected=selectionWaitFixture==='union-all'||positiveIndexedSourceFixture||sharedTransactionFixture,selectedCount=selectionWaitFixture==='union-empty'?0:allSelected?2:1;
         const intentMethod='resumeOriginalFrozenCaptureJobSelectionIntentReferencesV2',
           selectionIntent={command_id:randomUUID(),catalog_reference:catalogFinal.receipt_reference,workspace_revision:1,
@@ -5732,7 +5761,9 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           }
           // The unchanged original both-selected graph proves seventh reclaim;
           // the independent positive graph reserves its last attempt for ninth.
-          if(allSelected&&!positiveIndexedSourceFixture){
+          // Only the NEW independent index graph reserves its real fifth claim
+          // for an eleventh nonempty prefix. All nine older paths are unchanged.
+          if(allSelected&&!positiveIndexedSourceFixture&&!transactionIndexOwnerFixture){
             assert.equal(pendingMetrics.job.attempts,4,'both-selected fixture reserves the final REAL failure attempt for seventh; B-only reserves it for eighth');
             const failedMetrics=await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).failClaim(liveClaim,'synthetic_metrics_reclaim',{retrySeconds:1}));
             assert.equal(failedMetrics.status,'retry');
@@ -6922,6 +6953,152 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
               maximum_whole_owner_sql_queries:Math.max(...candidateQueries),whole_owner_limits:ORIGINAL_OWNER_LIMITS,
               durable_index_issued:false,phase17:false,global_selected_native_deduplication:false,economic_transactions:false,calendar_quarters:false,
               licensed_acquisition:false,production_speed:false,worker_activation:false});
+            if(transactionIndexOwnerFixture){
+              // TENTH independently captured graph, never added work on either
+              // tight old fixture. Install the ENTIRE unregistered candidate in
+              // ONE transaction in this disposable CI database, only after its
+              // own actual complete-original semantic DONE/exact16 checkpoint.
+              assert.equal(selectedCount,2);assert.equal(liveClaim.attempts,4);
+              const exact16=await readRefsCheckpoint(),indexQueries=[],indexInitialBlobs=await refsBlobCount(),
+                indexTables=['selected_transaction_index_v2_rows','selected_transaction_source_v2_keys','selected_transaction_legacy_v2_keys',
+                  'selected_transaction_index_v2_edges','selected_transaction_index_v2_heads'],
+                indexSnapshot=async()=>({job:await continuationJob(),continuation:await continuationRow(),blobs:await refsBlobCount(),
+                  tables:await Promise.all(indexTables.map(async table=>(await pool.query(
+                    `SELECT * FROM app.neighborhood_custom_cohort_${table} WHERE operation_id=$1 ORDER BY 1,2,3,4`,[refsOperation])).rows))}),
+                indexParents=async()=>{await numericParents();
+                  const s=await semanticSnapshot();assert.deepEqual(s.semantic_heads,semanticFinished.semantic_heads);
+                  assert.deepEqual(s.semantic_rows,semanticFinished.semantic_rows);assert.deepEqual(s.numeric_heads,semanticFinished.numeric_heads);
+                  assert.deepEqual(s.numeric_population_rows,semanticFinished.numeric_population_rows);},
+                indexUnchanged=async state=>{assert.deepEqual(await indexSnapshot(),state);await indexParents();},
+                indexStep=async()=>{const start=refsCalls.length;try{return await cadOwner()
+                  .progressOriginalFrozenCaptureJobSelectedTransactionIndexReferencesV2(refsInput,{captureJobClaim:liveClaim});}
+                  finally{indexQueries.push(refsCalls.length-start-3);}},
+                nativeIndexTriggers=async()=>(await pool.query(`SELECT c.relname,t.tgname,t.tgdeferrable,t.tginitdeferred,
+                  pg_get_triggerdef(t.oid) AS definition FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid
+                  JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='app' AND NOT t.tgisinternal
+                  AND c.relname=ANY($1::text[]) ORDER BY c.relname,t.tgname`,
+                  [[...indexTables.map(t=>'neighborhood_custom_cohort_'+t),'neighborhood_custom_cohort_v2_continuations','neighborhood_custom_cohort_capture_jobs']])).rows;
+              assert.equal(exact16.phase,'frozen_selected_semantic_refs_v2');assert.equal(exact16.evidence_refs.length,16);
+              const triggersBefore=await nativeIndexTriggers();
+              await withCustomCohortJobTransaction(pool,client=>client.query(readFileSync(
+                new URL('../migrations/20261206_custom_cohort_selected_transaction_index_owner_v2.sql',import.meta.url),'utf8')));
+              const triggersAfter=await nativeIndexTriggers();assert.equal(triggersAfter.length,triggersBefore.length);
+              for(const t of triggersBefore.filter(t=>!t.tgname.endsWith('_commit')&&!t.tgname.endsWith('_head_guard')
+                ||!t.relname.includes('selected_transaction_')))assert.deepEqual(triggersAfter.find(n=>n.tgname===t.tgname&&n.relname===t.relname),t,
+                  'all prior child identity/TRUNCATE and deferred job/continuation triggers stay attached unchanged');
+              for(const table of indexTables){const ts=triggersAfter.filter(t=>t.relname==='neighborhood_custom_cohort_'+table);
+                assert.equal(ts.length,3);assert.ok(ts.some(t=>t.definition.includes('BEFORE TRUNCATE')));
+                assert.ok(ts.some(t=>t.tgdeferrable&&t.tginitdeferred&&t.definition.includes('_commit_issued')));}
+              const unissued=await indexSnapshot();assert.ok(unissued.tables.every(rows=>rows.length===0));
+              const keySql='app.neighborhood_selected_transaction_index_v2_next_keys($1::uuid,$2::uuid)',bound=[refsOperation,organization],
+                insertIndexMember=`INSERT INTO app.neighborhood_custom_cohort_selected_transaction_index_v2_rows
+                  (operation_id,organization_id,generation_id,ordinal,account_id,partition_ordinal,entry_reference,metric_row_reference,contribution_row_reference)
+                  SELECT DISTINCT $1::uuid,$2::uuid,generation_id,ordinal,account_id,partition_ordinal,entry_reference,metric_row_reference,contribution_row_reference
+                  FROM ${keySql} WHERE account_id IS NOT NULL`;
+              // Fast REAL DML negatives are storage proofs, NOT substitutes for
+              // the complete-original owner calls below. Every failed TX must
+              // leave actual rows/head/blobs/checkpoint/yield/parents unchanged.
+              for(const [projection,reason] of [['native_key::bigint,ordinal+1',/first_seen/],['502,ordinal',/native_key/]]){
+                await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
+                  assert.equal((await client.query(insertIndexMember,bound)).rowCount,1);
+                  await client.query(`INSERT INTO app.neighborhood_custom_cohort_selected_transaction_source_v2_keys
+                    (operation_id,organization_id,generation_id,source_record_id,first_selected_ordinal)
+                    SELECT $1::uuid,$2::uuid,generation_id,${projection} FROM ${keySql} WHERE kind='source_record'`,bound);
+                }),reason);await indexUnchanged(unissued);
+              }
+              await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(insertIndexMember,bound)),/orphan_child/);
+              await indexUnchanged(unissued);
+              await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
+                await client.query(insertIndexMember,bound);
+                assert.equal((await client.query('SELECT app.neighborhood_selected_transaction_index_v2_next_edges_match($1::uuid,$2::uuid) AS matched',bound)).rows[0].matched,false);
+                throw Error('actual incomplete index edges rollback');
+              }),/actual incomplete index edges rollback/);await indexUnchanged(unissued);
+              await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+              const deniedIndexFrom=refsCalls.length;await assert.rejects(indexStep(),/market_data_access_denied/);
+              assert.ok(!refsCalls.slice(deniedIndexFrom).includes(NEIGHBORHOOD_NEXT_SELECTED_TRANSACTION_INDEX_ORIGINAL_PACKAGE_V2_SQL));
+              assert.ok(!refsCalls.slice(deniedIndexFrom).some(q=>q.includes('neighborhood-cohort-blob:read-batch')));
+              await setFixtureGrant(pool,organization,fixtureGrant(organization));await indexUnchanged(unissued);
+              for(const [fault,reason] of [['transaction_index_assignment_ending',/assignment_access_denied/],
+                ['transaction_index_member_rollback',/actual transaction_index_member_rollback/],
+                ['transaction_index_head_rollback',/actual transaction_index_head_rollback/],
+                ['transaction_index_checkpoint_rollback',/actual transaction_index_checkpoint_rollback/],
+                ['transaction_index_yield_rollback',/actual transaction_index_yield_rollback/],
+                ['transaction_index_orphan_commit',/orphan_child|orphan_progress|continuation.*conflict/]]){
+                refsFault=fault;await assert.rejects(indexStep(),reason);assert.equal(refsFault,null);await indexUnchanged(unissued);
+              }
+              const issuedIndexReferences=[],indexPriorContinuation=await continuationRow();
+              for(const ordinal of [1,2,3]){
+                const oldClaim=liveClaim,prior=await indexSnapshot();let result;
+                if(ordinal===1){refsFault='commit';await assert.rejects(indexStep(),/COMMIT acknowledgment lost/);assert.equal(refsFault,null);}
+                else result=await indexStep();
+                const state=await indexSnapshot(),h=state.tables[4][0],body=JSON.parse((await pool.query(
+                  `SELECT canonical_utf8 FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1
+                    AND content_sha256=$2 AND canonical_utf8_bytes::text=$3`,[organization,h.receipt_reference.content_sha256,h.receipt_reference.canonical_utf8_bytes])).rows[0].canonical_utf8);
+                assert.equal(h.sequence,ordinal);assert.equal(h.generation_id,frozen.generationId);
+                for(const key of ['union','eligibility','evidence','metrics','statistics','numeric'])assert.deepEqual(h[key+'_reference'],semanticFinished.semantic_heads[0][key+'_reference']);
+                assert.deepEqual(h.semantic_reference,semanticFinished.semantic_heads[0].receipt_reference);
+                assert.equal(body.sequence,ordinal);assert.deepEqual(body.previous,ordinal===1?null:issuedIndexReferences.at(-1));
+                assert.deepEqual(body.after,{selected_ordinal:Math.min(ordinal,2),source_record_keys:ordinal===1?1:3,
+                  legacy_sale_keys:ordinal===1?0:2,done:ordinal===3});
+                assert.equal(body.new_source_record_keys,ordinal===1?1:ordinal===2?2:0);assert.equal(body.new_legacy_sale_keys,ordinal===2?2:0);
+                assert.equal(body.source_package_count,ordinal===1?1:ordinal===2?3:0);assert.equal(body.legacy_package_count,ordinal===2?2:0);
+                assert.equal(body.selected_entry?.account_id??null,ordinal===1?'CLOSURE-A':ordinal===2?'CLOSURE-B':null);
+                assert.equal(state.tables[0].length,Math.min(ordinal,2));assert.equal(state.tables[1].length,ordinal===1?1:3);
+                assert.equal(state.tables[2].length,ordinal===1?0:2);assert.equal(state.tables[3].length,ordinal===1?1:6);
+                assert.equal(state.blobs,indexInitialBlobs+ordinal);assert.equal(state.job.status,'retry');assert.equal(state.job.context_sha256,null);
+                assert.equal(state.job.attempts,oldClaim.attempts);assert.equal(state.job.last_error_code,prior.job.last_error_code);
+                assert.equal(state.job.checkpoint.phase,'frozen_selected_transaction_index_refs_v2');assert.equal(state.job.checkpoint.evidence_refs.length,17);
+                assert.deepEqual(state.job.checkpoint.evidence_refs.slice(0,16),exact16.evidence_refs);assert.deepEqual(state.job.checkpoint.evidence_refs[16],h.receipt_reference);
+                assert.equal((await pool.query('SELECT app.neighborhood_selected_transaction_index_v2_checkpoint_matches($1::uuid,$2::uuid,$3::jsonb) AS matched',
+                  [refsOperation,organization,JSON.stringify(state.job.checkpoint)])).rows[0].matched,true);
+                assert.equal(state.continuation.sequence,indexPriorContinuation.sequence+ordinal);assert.equal(state.continuation.phase,'frozen_selected_transaction_index_refs_v2');
+                assert.equal(state.continuation.issued_attempts,oldClaim.attempts);assert.equal(state.continuation.consumed_claim_token,null);
+                assert.deepEqual(state.continuation.progress_reference,h.receipt_reference);assert.ok(Buffer.byteLength(JSON.stringify(body))<=4096);
+                if(result){assert.equal(result.status,'original_selected_transaction_index_progress_retained');assert.deepEqual(result.progress,body.after);
+                  assert.equal(result.complete_original_reconciled_selected_index,ordinal===3);assert.equal(result.context_complete,false);
+                  assert.equal(result.calendar_quarters,'not_established');assert.equal(result.publication,'not_established');assert.equal(result.pin_transfer,false);}
+                issuedIndexReferences.push(h.receipt_reference);await indexParents();
+                await assert.rejects(indexStep(),/claim_lost/);await indexUnchanged(state);
+                const claims=await withCustomCohortJobTransaction(pool,client=>createCustomCohortV2ContinuationRepository(client).claimDue({limit:1,leaseSeconds:900}));
+                assert.equal(claims.length,1);liveClaim=claims[0].claim;assert.equal(liveClaim.attempts,oldClaim.attempts);assert.notEqual(liveClaim.claim_token,oldClaim.claim_token);
+                assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>createCustomCohortV2ContinuationRepository(client).claimDue({limit:1,leaseSeconds:900})),[]);
+                if(ordinal===1){
+                  const retained=await indexSnapshot(),stale=liveClaim;assert.equal(stale.attempts,4);
+                  assert.equal((await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client)
+                    .failClaim(liveClaim,'synthetic_transaction_index_prefix_reclaim',{retrySeconds:1}))).status,'retry');
+                  const pending=await indexSnapshot();assert.equal(pending.job.attempts,4);assert.deepEqual(pending.tables,retained.tables);
+                  assert.deepEqual(pending.job.checkpoint,retained.job.checkpoint);assert.deepEqual(pending.continuation,retained.continuation);
+                  assert.equal(pending.blobs,retained.blobs);await new Promise(resolve=>setTimeout(resolve,1100));
+                  const [replacement]=await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900}));
+                  assert.ok(replacement);assert.equal(replacement.operation_id,refsOperation);assert.equal(replacement.attempts,5);assert.notEqual(replacement.claim_token,stale.claim_token);
+                  liveClaim={operation_id:replacement.operation_id,claim_token:replacement.claim_token,attempts:replacement.attempts};
+                  const recovered=await indexSnapshot();assert.deepEqual(recovered.tables,retained.tables);assert.deepEqual(recovered.job.checkpoint,retained.job.checkpoint);
+                  assert.deepEqual(recovered.continuation,retained.continuation);assert.equal(recovered.blobs,retained.blobs);
+                  assert.equal(recovered.job.last_error_code,'synthetic_transaction_index_prefix_reclaim');assert.equal(recovered.job.context_sha256,null);
+                  await assert.rejects(cadOwner().progressOriginalFrozenCaptureJobSelectedTransactionIndexReferencesV2(refsInput,{captureJobClaim:stale}),/claim_lost/);
+                  await indexUnchanged(recovered);
+                }
+              }
+              const indexDone=await indexSnapshot();assert.deepEqual(indexDone.tables[1].map(r=>[r.source_record_id,r.first_selected_ordinal]),[['501',1],['503',2],['504',2]]);
+              assert.deepEqual(indexDone.tables[2].map(r=>[r.legacy_sale_key,r.first_selected_ordinal]),[['10',2],['3',2]]);
+              assert.deepEqual(indexDone.tables[3].map(r=>[r.ordinal,r.account_id,r.kind,r.source_record_id,r.legacy_sale_key]).sort(),[
+                [1,'CLOSURE-A','source_record','501',null],[2,'CLOSURE-B','source_record','501',null],
+                [2,'CLOSURE-B','source_record','503',null],[2,'CLOSURE-B','source_record','504',null],
+                [2,'CLOSURE-B','legacy_sale',null,'10'],[2,'CLOSURE-B','legacy_sale',null,'3']].sort());
+              assert.ok(transactionIndexPackets.some(p=>p.account==='CLOSURE-A'&&p.whole_transaction_originals===4));
+              assert.ok(transactionIndexPackets.some(p=>p.account==='CLOSURE-B'&&p.whole_transaction_originals===11));
+              assert.ok(transactionIndexPackets.some(p=>p.account===null));
+              await assert.rejects(indexStep(),/native_plan_missing_or_corrupt/);await indexUnchanged(indexDone);
+              assert.ok(indexQueries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries));
+              console.info('[native-selected-transaction-index-complete-original-owner-v2]',{independent_tenth_live_source_capture:true,
+                actual_current_and_ALL_ending_complete_original_owner_A_B_fresh_EMPTY:true,shared501_entire_four_originals_reopened_each_account:true,
+                actual_global_source_keys:3,actual_C_text_legacy_keys:2,actual_per_account_edges:6,first_seen_immutable:true,
+                actual_native_head_exact17_checkpoint_single_use_yield_one_transaction:true,ordinary_nonempty_fourth_to_fifth_recovery:true,
+                actual_row_head_checkpoint_yield_rollback_orphan_COMMIT_and_lost_COMMIT_ack:true,current_license_and_ending_assignment_refusals:true,
+                unchanged_sixteen_original_roots_seven_parents_reports_choices_pins:true,maximum_whole_owner_sql_queries:Math.max(...indexQueries),
+                whole_owner_limits:ORIGINAL_OWNER_LIMITS,old_nine_fixture_proofs_and_deadlines_preserved:true,
+                economic_transactions:false,calendar_quarters:false,publication:false,licensed_acquisition:false,production_speed:false,worker_activation:false});
+            }
           }
 
           }

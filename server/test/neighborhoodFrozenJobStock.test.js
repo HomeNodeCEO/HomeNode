@@ -51,7 +51,8 @@ import { NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL }
 import { NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSelectedAmenityOriginalPackageV2.js';
 import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL,
-  NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL }
+  NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL,
+  NEIGHBORHOOD_NEXT_SELECTED_TRANSACTION_INDEX_ORIGINAL_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSelectedTransactionOriginalPackageV2.js';
 
 const id='70000000-0000-4000-8000-000000000001',date='2026-10-07T00:00:00.000000Z';
@@ -1222,6 +1223,160 @@ function selectedTransactionOriginal(kind,key,patch={}){
     cached_source_record_id:r.source_record_id,stock_member:null};
 }
 const selectedPeriod={start_date:'2025-01-01',end_date:'2026-10-07'};
+
+// Small DATA/SQL-protocol double ONLY. These native context/selection flags are
+// simulated, not an issued graph, original source right, cursor or receipt.
+// Keep the old fixture's FIRST branch byte-for-byte unchanged.
+async function transactionIndexOriginalFixture({next='STOCK-B',selected=['STOCK-B'],change=()=>{},hook=()=>{}}={}){
+  const f=await selectedTransactionFixture(async call=>{
+    const supplied=await hook(call);if(supplied)return supplied;
+    if(call.text!==NEIGHBORHOOD_NEXT_SELECTED_TRANSACTION_INDEX_ORIGINAL_PACKAGE_V2_SQL)return;
+    const originals=Object.values(call.rows).flat(),ids=[...new Set(originals.map(r=>r.account_id))],
+      subject=call.values[9]&&ids.includes(options.scope.account_id)?options.scope.account_id:null,
+      anchors=next===null?[]:call.transactionRows.filter(r=>r.account_id===next),
+      sources=new Set(anchors.map(r=>r.source_record_id).filter(k=>k!==null)),
+      transactions=call.transactionRows.filter(r=>r.source_record_id===null?r.kind==='sales'&&r.account_id===next:sources.has(r.source_record_id))
+        .map(r=>({...r,stock_member:r.account_id===null?null:ids.includes(r.account_id),
+          selected_union_member:r.account_id===null?null:selected.includes(r.account_id)})),
+      cad=call.cadRows.filter(r=>r.account_id===next),
+      packet=[...originals.filter(r=>r.account_id===next||r.account_id===subject),...transactions,...cad].sort((a,b)=>
+        Buffer.compare(Buffer.from(`${a.account_id}\u0000${a.kind}\u0000${a.row_key}`),Buffer.from(`${b.account_id}\u0000${b.kind}\u0000${b.row_key}`))),
+      n=(account,kind)=>account===null?0:originals.filter(r=>r.account_id===account&&r.kind===kind).length,
+      raw={transaction_index_context_present:true,transaction_index_account_id:next,
+        account_id:next,geographic_parcel_count:next===null?null:'1',subject_account_id:subject,subject_geographic_parcel_count:subject===null?null:'1',
+        next_parcels:n(next,'parcels'),next_accounts:n(next,'accounts'),subject_parcels:n(subject,'parcels'),subject_accounts:n(subject,'accounts'),
+        cad_primary:cad.filter(r=>r.kind==='primary').length,cad_secondary:cad.filter(r=>r.kind==='secondary').length,
+        subject_selected_union_member:selected.includes(options.scope.account_id),anchor_count:anchors.length,
+        transaction_original_count:transactions.length,package_count:sources.size+anchors.filter(r=>r.kind==='sales'&&r.source_record_id===null).length,
+        original_count:packet.length,page_count:packet.length,invalid_count:0,packet_oversize:false,page_json:JSON.stringify(packet)};
+    change(raw,packet);return result(raw);
+  });
+  f.cadRows.push(selectedCadOriginal('primary','STOCK-B'));return f;
+}
+
+test('native NEXT child reopens the entire shared source for B with required subject and CAD, outside NULL and source-less all-date originals',async()=>{
+  const f=await transactionIndexOriginalFixture({selected:['STOCK-A','STOCK-B']});
+  f.transactionRows[0]=selectedTransactionOriginal('source_records','10',{primary_account_id:'STOCK-A'});
+  f.transactionRows.push(selectedTransactionOriginal('sale_links','3',{account_id:'OUTSIDE',source_position:2}));
+  const reader=f.pages(),from=f.calls.length,p=await reader.subjectAndNextSelectedTransactionIndexAccountPackage({includeSubject:true},selectedPeriod),
+    tx=p.selected_transactions,membership=p.selected_transaction_membership,shared=tx.packages.find(p=>p.native_key==='10');
+  assert.equal(p.status,'reconciled_subject_and_native_next_selected_transaction_index_original_package');
+  assert.equal(p.account_id,'STOCK-B');assert.equal(p.subject.account_id,'STOCK-A');assert.equal(p.distinct_original_count,10);
+  assert.equal(tx.anchor_original_count,2);assert.equal(tx.original_count,5);assert.equal(shared.rows.length,4);
+  assert.deepEqual(shared.counts,{source_records:'1',sales:'1',sale_links:'2'});
+  assert.deepEqual(membership.associations.map(r=>[r.account_id,r.stock_member,r.selected_union_member]).sort(),[
+    ['OUTSIDE',false,false],['STOCK-A',true,true],['STOCK-B',true,true],['STOCK-B',true,true],[null,null,null]].sort());
+  assert.equal(membership.subject_selected_union_member,true);
+  assert.equal(membership.coverage,'whole_native_packages_for_native_next_selected_account_only');
+  assert.equal(membership.global_selected_native_deduplication,false);assert.equal(membership.economic_property_membership,'not_established');
+  assert.equal(tx.complete_selected_union_transactions,false);
+  assert.equal(shared.rows.find(r=>r.projection.kind==='source_records').projection.same_payload_reported_sale.period_disposition.state,'outside_period');
+  assert.equal(f.calls.slice(from).filter(c=>c.text===NEIGHBORHOOD_NEXT_SELECTED_TRANSACTION_INDEX_ORIGINAL_PACKAGE_V2_SQL).length,1);
+  assert.ok(!f.calls.slice(from).some(c=>/INSERT|UPDATE|DELETE|FROM core\.|ST_DWithin/.test(c.text)));
+  for(const method of ['subjectAndNextSelectedTransactionIndexAccountPackage','subjectAndFirstSelectedCombinedAccountPackage',
+    'subjectAndFirstCompletedSemanticAccountPackage'])await assert.rejects(reader[method]({includeSubject:true},selectedPeriod),/single_use/);
+});
+
+test('NEXT child accepts a genuine empty native context while still reconciling a required nonselected subject; no missing context is EMPTY',async()=>{
+  const f=await transactionIndexOriginalFixture({next:null,selected:[]}),p=await f.pages()
+    .subjectAndNextSelectedTransactionIndexAccountPackage({includeSubject:true},selectedPeriod);
+  assert.equal(p.next,null);assert.equal(p.account_id,null);assert.equal(p.subject.account_id,'STOCK-A');assert.equal(p.distinct_original_count,3);
+  assert.equal(p.selected_transaction_membership.subject_selected_union_member,false);
+  assert.deepEqual(p.selected_transaction_membership.associations,[]);assert.deepEqual(p.selected_transactions.packages,[]);
+  assert.equal(p.selected_CAD.amenity_evidence,null);
+  for(const change of [r=>{r.transaction_index_context_present=false;r.page_json='invalid JSON';},
+    r=>{delete r.transaction_index_context_present;},r=>{r.transaction_index_context_present=1;},
+    r=>{r.transaction_index_account_id='STOCK-B';},r=>{delete r.transaction_index_account_id;}]){
+    const bad=await transactionIndexOriginalFixture({next:null,change});
+    await assert.rejects(bad.pages().subjectAndNextSelectedTransactionIndexAccountPackage({includeSubject:true},selectedPeriod),/transaction_index_context_missing|transaction_index_account_mismatch/);
+  }
+});
+
+test('NEXT child never substitutes subject identity for a selected flag or native cursor and rejects inconsistent flags',async()=>{
+  const f=await transactionIndexOriginalFixture();f.transactionRows[0]=selectedTransactionOriginal('source_records','10',{primary_account_id:'STOCK-A'});
+  const p=await f.pages().subjectAndNextSelectedTransactionIndexAccountPackage({includeSubject:true},selectedPeriod);
+  assert.equal(p.selected_transaction_membership.subject_selected_union_member,false);
+  assert.equal(p.selected_transaction_membership.associations.find(r=>r.account_id==='STOCK-A').selected_union_member,false);
+  for(const change of [r=>{r.transaction_index_account_id='STOCK-A';},(r,rows)=>{
+    rows.find(v=>v.kind==='sales'&&v.account_id==='STOCK-B').selected_union_member=false;r.page_json=JSON.stringify(rows);
+  },(r,rows)=>{rows.find(v=>v.account_id===null).selected_union_member=false;r.page_json=JSON.stringify(rows);
+  },(r,rows)=>{rows.find(v=>v.kind==='source_records').selected_union_member=true;r.page_json=JSON.stringify(rows);}]){
+    const bad=await transactionIndexOriginalFixture({change});
+    await assert.rejects(bad.pages().subjectAndNextSelectedTransactionIndexAccountPackage({includeSubject:true},selectedPeriod),/transaction_index_account_mismatch|selected_membership_mismatch/);
+  }
+  const inconsistent=await transactionIndexOriginalFixture({change(r){r.subject_selected_union_member=true;}});
+  inconsistent.transactionRows[0]=selectedTransactionOriginal('source_records','10',{primary_account_id:'STOCK-A'});
+  await assert.rejects(inconsistent.pages().subjectAndNextSelectedTransactionIndexAccountPackage({includeSubject:true},selectedPeriod),/selected_membership_mismatch/);
+});
+
+test('NEXT child reconciles subject aliases only once and a native EMPTY with no required subject delivers no originals',async()=>{
+  const f=await transactionIndexOriginalFixture({next:'STOCK-A',selected:['STOCK-A']});
+  f.cadRows[0]=selectedCadOriginal();f.transactionRows[0]=selectedTransactionOriginal('source_records','10',{primary_account_id:'STOCK-A'});
+  const p=await f.pages().subjectAndNextSelectedTransactionIndexAccountPackage({includeSubject:true},selectedPeriod);
+  assert.equal(p.subject_equals_next,true);assert.equal(p.subject,null);assert.equal(p.next.account_id,'STOCK-A');
+  assert.equal(p.distinct_original_count,7);assert.equal(p.selected_transactions.original_count,3);
+  assert.equal(p.selected_transaction_membership.subject_selected_union_member,true);
+  assert.ok(p.selected_transaction_membership.associations.some(r=>r.account_id==='STOCK-B'&&r.stock_member&&r.selected_union_member===false));
+  const empty=await transactionIndexOriginalFixture({next:null,selected:[]}),value=await empty.pages()
+    .subjectAndNextSelectedTransactionIndexAccountPackage({includeSubject:false},selectedPeriod);
+  assert.equal(value.distinct_original_count,0);assert.equal(value.next,null);assert.equal(value.subject,null);
+  assert.equal(value.end_of_accounts,true);assert.deepEqual(value.selected_transactions.packages,[]);
+});
+
+test('NEXT child refuses inconsistent simulated native selection flags for the same other stock account',async()=>{
+  const f=await transactionIndexOriginalFixture({change(raw,rows){
+    rows.find(r=>r.kind==='sale_links'&&r.account_id==='STOCK-C').selected_union_member=true;raw.page_json=JSON.stringify(rows);
+  }});
+  f.rows.parcels.push(stockOriginalCell('parcels','4',{account_id:'STOCK-C'}));
+  f.transactionRows[0]=selectedTransactionOriginal('source_records','10',{primary_account_id:'STOCK-C'});
+  f.transactionRows.push(selectedTransactionOriginal('sale_links','3',{account_id:'STOCK-C',source_position:2}));
+  await assert.rejects(f.pages().subjectAndNextSelectedTransactionIndexAccountPackage({includeSubject:true},selectedPeriod),/selected_membership_mismatch/);
+});
+
+test('NEXT child replays whole originals and ENTIRE neutral caches for every source family, including outside and source-less originals',async()=>{
+  for(const family of ['subject','next','CAD','source','legacy','unresolved']){
+    const f=await transactionIndexOriginalFixture();
+    f.rows.parcels=f.rows.parcels.map(r=>structuredClone(r));
+    for(const rows of [f.cadRows,f.transactionRows])rows.splice(0,rows.length,...rows.map(r=>structuredClone(r)));
+    if(family==='subject')f.rows.parcels[0].typed.observations.reported_residential_area.exact_value='1';
+    if(family==='next')f.rows.parcels.at(-1).original_text=f.rows.parcels.at(-1).original_text.replace('1960','1900');
+    if(family==='CAD')f.cadRows[0].typed.observations.reported_living_area.exact_value='1';
+    if(family==='source')f.transactionRows[0].typed.observations.normalized_current_price.exact_value='1';
+    if(family==='legacy')f.transactionRows[3].typed.observations.recorded_sale_price.exact_value='7';
+    if(family==='unresolved')f.transactionRows[2].cached_source_record_id='11';
+    await assert.rejects(f.pages().subjectAndNextSelectedTransactionIndexAccountPackage({includeSubject:true},selectedPeriod),/original_mismatch/);
+  }
+});
+
+test('NEXT child preserves aggregate count and raw-byte refusal without a second budget or partial packet',async()=>{
+  for(const [change,error] of [[r=>{r.packet_oversize=true;r.page_count=0;r.page_json='[]';},/account_package_byte_limit/],
+    [r=>{r.anchor_count=251;r.page_count=0;r.page_json='[]';},/account_package_row_limit/],
+    [r=>{r.transaction_original_count=247;r.original_count=252;r.page_count=0;r.page_json='[]';},/account_package_row_limit/],
+    [r=>{r.invalid_count=1;},/invalid_result/]]){
+    const f=await transactionIndexOriginalFixture({change});
+    await assert.rejects(f.pages().subjectAndNextSelectedTransactionIndexAccountPackage({includeSubject:true},selectedPeriod),error);
+  }
+});
+
+test('NEXT child independently rechecks ending market and CAD cache metadata under the same single-use reader',async()=>{
+  for(const sql of [NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read,NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read]){
+    let reads=0;const f=await transactionIndexOriginalFixture({hook:({text,sharedHeader,cadHeader})=>text===sql&&++reads===2
+      ?result({...sql===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read?sharedHeader:cadHeader,status:'building'}):null});
+    await assert.rejects(f.pages().subjectAndNextSelectedTransactionIndexAccountPackage({includeSubject:true},selectedPeriod),/cache_unavailable/);
+  }
+});
+
+test('NEXT child rejects caller account ordinal prior receipt source callback and hostile period DATA before any SQL',async()=>{
+  const f=await transactionIndexOriginalFixture(),from=f.calls.length;let invoked=false;
+  const getter={...selectedPeriod};Object.defineProperty(getter,'start_date',{enumerable:true,get(){invoked=true;return selectedPeriod.start_date;}});
+  for(const args of [[{includeSubject:true,account_id:'STOCK-B'},selectedPeriod],
+    [{includeSubject:true,ordinal:2},selectedPeriod],[{includeSubject:true,receipt_reference:{}},selectedPeriod],
+    [{includeSubject:true},selectedPeriod,()=>{}],[{includeSubject:true},new Proxy(selectedPeriod,{})],
+    [{includeSubject:true},getter],[{includeSubject:true},{...selectedPeriod,end_date:'2027-01-01'}]])
+    await assert.rejects(f.pages().subjectAndNextSelectedTransactionIndexAccountPackage(...args),/invalid_input|invalid_period|future_or_reversed_period/);
+  assert.equal(invoked,false);assert.equal(f.calls.length,from);
+});
+
 async function selectedTransactionFixture(hook=()=>{}){
   const f=await stockOriginalCellFixture(hook,{source_records:3,sales:3,sale_links:3});
   f.rows.parcels.push(stockOriginalCell('parcels','3',{account_id:'STOCK-B',residential_year_built:1960}));

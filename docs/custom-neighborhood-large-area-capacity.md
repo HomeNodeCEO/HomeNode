@@ -1,5 +1,23 @@
 # Complete larger-area Custom neighborhood studies
 
+## Tenth native orphan-COMMIT assertion correction (2026-10-13, UTC)
+
+Exact draft PR #1292 head `0b670a347e561df7af5101284d26e33636bd27b4`
+ran foundation `38422611818`. Migration417/417 and subject1/1 passed; all
+nine older prepared-index graph paths passed. The tenth independently captured
+graph advanced beyond the previous wall-clock limit (134.2 seconds), applied
+the full candidate and exercised real native DML. It then stopped at fixture
+line7027 because its orphan-COMMIT negative assertion expected a job/continuation
+refusal but PostgreSQL's earlier deferred **child** guard correctly rejected the
+same orphan with `neighborhood_selected_transaction_index_v2_orphan_child`.
+That real COMMIT failed; no partial index/head/checkpoint/yield was accepted.
+The A/B/fresh-EMPTY owner marker still has NOT executed or passed.
+
+The assertion now admits that exact native child refusal while preserving the
+real COMMIT, rollback and unchanged-state checks. No SQL, guards, source rights,
+owner budgets, older fixture deadlines, activation or deployment change. Fresh
+cloud CI on the new exact head must still prove the complete owner path.
+
 ## Tenth native fixture wall-clock correction (2026-10-13, UTC)
 
 Corrected exact head `33726466a115b3a6f2ec0875f8e1ac6fc836ad92` on

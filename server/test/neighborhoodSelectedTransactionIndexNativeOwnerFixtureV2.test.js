@@ -93,6 +93,8 @@ test('native fixture exercises actual A then B shared full originals, exact firs
 });
 
 test('native fixture retains exact orphan/row/head/checkpoint/yield rollback and lost real COMMIT ACK plus nonempty ordinary4->5 recovery proofs',()=>{
+  assert.ok(native.includes("['transaction_index_orphan_commit',/orphan_child|orphan_progress|continuation.*conflict/]"),
+    'the first deferred child guard may refuse an orphaned real COMMIT before the head or job guard');
   for(const text of ['transaction_index_assignment_ending','transaction_index_member_rollback','transaction_index_head_rollback',
     'transaction_index_checkpoint_rollback','transaction_index_yield_rollback','transaction_index_orphan_commit',
     'orphan_child','actual incomplete index edges rollback','COMMIT acknowledgment lost',"'native_key::bigint,ordinal+1',/first_seen/",

@@ -7023,7 +7023,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
                 ['transaction_index_head_rollback',/actual transaction_index_head_rollback/],
                 ['transaction_index_checkpoint_rollback',/actual transaction_index_checkpoint_rollback/],
                 ['transaction_index_yield_rollback',/actual transaction_index_yield_rollback/],
-                ['transaction_index_orphan_commit',/orphan_progress|continuation.*conflict/]]){
+                ['transaction_index_orphan_commit',/orphan_child|orphan_progress|continuation.*conflict/]]){
                 refsFault=fault;await assert.rejects(indexStep(),reason);assert.equal(refsFault,null);await indexUnchanged(unissued);
               }
               const issuedIndexReferences=[],indexPriorContinuation=await continuationRow();

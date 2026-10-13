@@ -171,9 +171,15 @@ test('cleanup claims retirement in a separate transaction before deleting facts 
   const sql=f.calls.map(call=>call.sql);
   const begin=sql.indexOf('BEGIN ISOLATION LEVEL READ COMMITTED');
   assert.ok(begin>sql.indexOf('COMMIT'),'publication is already committed');
-  const claim=sql[begin+1];
-  assert.match(claim,/NOT EXISTS \(SELECT 1 FROM app\.neighborhood_custom_cohort_prepared_generation_pins/);
-  assert.match(claim,/FOR UPDATE OF generation SKIP LOCKED/);
-  assert.equal(sql[begin+2],'COMMIT');
+  const retired=sql[begin+1],fresh=sql[begin+2];
+  for(const claim of [retired,fresh]){
+    assert.match(claim,/NOT EXISTS \(SELECT 1 FROM app\.neighborhood_custom_cohort_prepared_generation_pins/);
+    assert.match(claim,/FOR UPDATE OF generation SKIP LOCKED/);
+  }
+  assert.match(retired,/retirement_started_at IS NOT NULL/);
+  assert.doesNotMatch(retired,/OFFSET 1/,'an interrupted retirement must resume even if it is the only predecessor');
+  assert.match(fresh,/retirement_started_at IS NULL/);
+  assert.match(fresh,/OFFSET 1/,'keep the newest unretired predecessor');
+  assert.equal(sql[begin+3],'COMMIT');
   assert.equal(sql.slice(begin).some(value=>value.includes('DELETE FROM')),false,'empty retirement does not delete any facts');
 });

@@ -184,9 +184,16 @@ JOIN app.neighborhood_group_summary summary ON summary.generation_id=active.gene
 WHERE active.id=true AND summary.county_key=$1 AND summary.city_key=$2
   AND summary.subdivision_key=$3`;
 
+const RETIRED_GENERATION = `SELECT generation.generation_id FROM app.neighborhood_group_generations generation
+  WHERE generation.generation_id<>(SELECT generation_id FROM app.neighborhood_group_active WHERE id=true)
+    AND generation.status='complete' AND generation.retirement_started_at IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM app.neighborhood_custom_cohort_prepared_generation_pins pin
+      WHERE pin.generation_id=generation.generation_id)
+  ORDER BY generation.retirement_started_at, generation.completed_at
+  LIMIT 1 FOR UPDATE OF generation SKIP LOCKED`;
 const OLD_GENERATION = `SELECT generation.generation_id FROM app.neighborhood_group_generations generation
   WHERE generation.generation_id<>(SELECT generation_id FROM app.neighborhood_group_active WHERE id=true)
-    AND generation.status='complete'
+    AND generation.status='complete' AND generation.retirement_started_at IS NULL
     AND NOT EXISTS (SELECT 1 FROM app.neighborhood_custom_cohort_prepared_generation_pins pin
       WHERE pin.generation_id=generation.generation_id)
   ORDER BY generation.completed_at DESC OFFSET 1 LIMIT 1 FOR UPDATE OF generation SKIP LOCKED`;
@@ -221,7 +228,8 @@ async function pruneObsoleteGeneration(client,batchSize,deadline) {
   let old;
   await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
   try {
-    old=(await client.query(OLD_GENERATION)).rows?.[0]?.generation_id;
+    old=(await client.query(RETIRED_GENERATION)).rows?.[0]?.generation_id
+      ?? (await client.query(OLD_GENERATION)).rows?.[0]?.generation_id;
     if (old) {
       const result=await client.query(`UPDATE app.neighborhood_group_generations
         SET retirement_started_at=coalesce(retirement_started_at,clock_timestamp())
@@ -358,7 +366,15 @@ export async function runNeighborhoodGroupIndex(pool,{batchSize=1000,maximumRunt
     await client.query('COMMIT');transaction=false;
     // Cleanup is intentionally outside the publication transaction. A crash
     // cannot roll back the new active generation, and the next run can resume.
-    try { await pruneObsoleteGeneration(client,batchSize,deadline); }
+    try {
+      // A failed bounded cleanup must not strand a retired generation behind
+      // each newly published predecessor. Resume it first, then drain any
+      // backlog while retaining the newest unretired predecessor.
+      while (Date.now()<=deadline) {
+        const cleanup=await pruneObsoleteGeneration(client,batchSize,deadline);
+        if (cleanup.status!=='pruned') break;
+      }
+    }
     catch(error) { logger.warn?.(`[neighborhood-group-index] cleanup_deferred=${error?.code??'error'}`); }
     return {status:'complete',generationId,parcels:parcels.copied,sales:sales.copied};
   } catch(error) {

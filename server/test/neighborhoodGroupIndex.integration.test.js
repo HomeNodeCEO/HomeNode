@@ -711,10 +711,31 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     assert.equal((await getPreparedNeighborhoodGroupSummary(pool,{county:'Dallas',city:'Garland',subdivision:'Monica Park 4'})).median_living_area_sqft,2500);
     assert.notEqual(first.generationId,second.generationId);
     const third=await runNeighborhoodGroupIndex(pool,{batchSize:2,logger:{info(){}}});
-    const fourth=await runNeighborhoodGroupIndex(pool,{batchSize:2,logger:{info(){}}});
+    let interrupted=false;const cleanupWarnings=[];
+    const interruptedCleanupPool={async connect(){const raw=await pool.connect();return {
+      async query(...args){const sql=typeof args[0]==='string'?args[0]:args[0]?.text;
+        if(!interrupted&&sql?.startsWith('WITH old AS')){
+          interrupted=true;throw new Error('synthetic_retirement_cleanup_interrupted');
+        }
+        return raw.query(...args);
+      },release(error){raw.release(error);},
+    };}};
+    const fourth=await runNeighborhoodGroupIndex(interruptedCleanupPool,{batchSize:2,
+      logger:{info(){},warn:line=>cleanupWarnings.push(line)}});
     assert.equal(third.status,'complete');assert.equal(fourth.status,'complete');
+    assert.equal(interrupted,true,'the fourth publication committed before its cleanup fault');
+    assert.deepEqual(cleanupWarnings,['[neighborhood-group-index] cleanup_deferred=error']);
+    const interruptedGeneration=(await pool.query(`SELECT retirement_started_at IS NOT NULL AS retired
+      FROM app.neighborhood_group_generations WHERE generation_id=$1`,[second.generationId])).rows[0];
+    assert.equal(interruptedGeneration?.retired,true,'the interrupted retirement remains claimed for recovery');
+    const fifth=await runNeighborhoodGroupIndex(pool,{batchSize:2,logger:{info(){}}});
+    assert.equal(fifth.status,'complete');
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM app.neighborhood_group_generations WHERE generation_id=$1',[second.generationId])).rows[0].count,0,
-      'an old unpinned generation is still pruned');
+      'the older interrupted retirement resumes before newer predecessors');
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM app.neighborhood_group_generations WHERE generation_id=$1',[third.generationId])).rows[0].count,0,
+      'the same bounded cleanup drains the unpinned backlog after recovery');
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM app.neighborhood_group_generations WHERE generation_id=$1',[fourth.generationId])).rows[0].count,1,
+      'the newest unretired predecessor remains available');
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM app.neighborhood_frozen_source_rows WHERE generation_id=$1',[second.generationId])).rows[0].count,0,
       'obsolete unpinned original pages retire with their generation');
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_typed_rows WHERE generation_id=$1',[second.generationId])).rows[0].n,0);

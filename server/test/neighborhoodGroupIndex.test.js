@@ -203,6 +203,11 @@ test('bounded retirement worker resumes a claimed generation and drains fresh ba
     ||value.includes('FROM gis.dcad_parcels')||value.includes('FROM core.accounts')) ,false);
   assert.equal(sql.filter(value=>value.includes('pg_try_advisory_lock')).length,1);
   assert.equal(sql.filter(value=>value.includes('pg_advisory_unlock')).length,1);
+  const terminalDeletes=f.calls.filter(call=>call.sql.startsWith('DELETE FROM app.neighborhood_group_summary')
+    ||call.sql.startsWith('DELETE FROM app.neighborhood_frozen_source_generations')
+    ||call.sql.startsWith('DELETE FROM app.neighborhood_group_generations'));
+  assert.equal(terminalDeletes.length,6);
+  assert.ok(terminalDeletes.every(call=>call.queryTimeout===120_000));
   assert.equal(f.released,true);assert.equal(f.releaseError,undefined);
 });
 

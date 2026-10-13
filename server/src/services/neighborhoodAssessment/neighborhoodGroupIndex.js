@@ -250,9 +250,17 @@ async function pruneObsoleteGeneration(client,batchSize,deadline) {
     if (!Number.isSafeInteger(count) || count<0 || count>batchSize) throw new Error('neighborhood_group_index_prune_invalid');
     if (count<batchSize) break;
   }
-  await client.query('DELETE FROM app.neighborhood_group_summary WHERE generation_id=$1::uuid',[old]);
-  await client.query('DELETE FROM app.neighborhood_frozen_source_generations WHERE generation_id=$1::uuid',[old]);
-  await client.query('DELETE FROM app.neighborhood_group_generations WHERE generation_id=$1::uuid',[old]);
+  // These terminal deletes can be large too. Preserve the same deadline and
+  // per-statement ceiling as the fact batches; an interrupted step is safe to
+  // repeat because the retirement claim and earlier deletions are durable.
+  for (const text of [
+    'DELETE FROM app.neighborhood_group_summary WHERE generation_id=$1::uuid',
+    'DELETE FROM app.neighborhood_frozen_source_generations WHERE generation_id=$1::uuid',
+    'DELETE FROM app.neighborhood_group_generations WHERE generation_id=$1::uuid',
+  ]) {
+    if (Date.now()>deadline) return {status:'deferred',generationId:old};
+    await client.query({text,values:[old],query_timeout:120_000});
+  }
   return {status:'pruned',generationId:old};
 }
 

@@ -23,6 +23,12 @@ builds or publishes a generation. It is not on any npm maintenance schedule;
 no production invocation, live worker, terminal pin transfer or deployment is
 enabled by this change. Its own exact-head CI remains pending.
 
+A further inactive recovery follow-up applies the same runtime deadline and
+120-second query ceiling to the terminal summary/source-generation/generation
+deletes, not only the fact-row batches. A deadline reached between those
+committed steps returns deferred; the next pass resumes the already claimed
+unpinned generation. This is not a terminal **job pin** release policy.
+
 As of the last exact-head checks before this follow-up, draft parent PR #1292
 at `c6eecea18b56f4a364e51f24b5f1e4f1be157324` passed its full native
 complete-original owner graph, and child draft PR #1293 at

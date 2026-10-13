@@ -184,9 +184,16 @@ JOIN app.neighborhood_group_summary summary ON summary.generation_id=active.gene
 WHERE active.id=true AND summary.county_key=$1 AND summary.city_key=$2
   AND summary.subdivision_key=$3`;
 
+const RETIRED_GENERATION = `SELECT generation.generation_id FROM app.neighborhood_group_generations generation
+  WHERE generation.generation_id<>(SELECT generation_id FROM app.neighborhood_group_active WHERE id=true)
+    AND generation.status='complete' AND generation.retirement_started_at IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM app.neighborhood_custom_cohort_prepared_generation_pins pin
+      WHERE pin.generation_id=generation.generation_id)
+  ORDER BY generation.retirement_started_at, generation.completed_at
+  LIMIT 1 FOR UPDATE OF generation SKIP LOCKED`;
 const OLD_GENERATION = `SELECT generation.generation_id FROM app.neighborhood_group_generations generation
   WHERE generation.generation_id<>(SELECT generation_id FROM app.neighborhood_group_active WHERE id=true)
-    AND generation.status='complete'
+    AND generation.status='complete' AND generation.retirement_started_at IS NULL
     AND NOT EXISTS (SELECT 1 FROM app.neighborhood_custom_cohort_prepared_generation_pins pin
       WHERE pin.generation_id=generation.generation_id)
   ORDER BY generation.completed_at DESC OFFSET 1 LIMIT 1 FOR UPDATE OF generation SKIP LOCKED`;
@@ -221,7 +228,8 @@ async function pruneObsoleteGeneration(client,batchSize,deadline) {
   let old;
   await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
   try {
-    old=(await client.query(OLD_GENERATION)).rows?.[0]?.generation_id;
+    old=(await client.query(RETIRED_GENERATION)).rows?.[0]?.generation_id
+      ?? (await client.query(OLD_GENERATION)).rows?.[0]?.generation_id;
     if (old) {
       const result=await client.query(`UPDATE app.neighborhood_group_generations
         SET retirement_started_at=coalesce(retirement_started_at,clock_timestamp())
@@ -242,10 +250,52 @@ async function pruneObsoleteGeneration(client,batchSize,deadline) {
     if (!Number.isSafeInteger(count) || count<0 || count>batchSize) throw new Error('neighborhood_group_index_prune_invalid');
     if (count<batchSize) break;
   }
-  await client.query('DELETE FROM app.neighborhood_group_summary WHERE generation_id=$1::uuid',[old]);
-  await client.query('DELETE FROM app.neighborhood_frozen_source_generations WHERE generation_id=$1::uuid',[old]);
-  await client.query('DELETE FROM app.neighborhood_group_generations WHERE generation_id=$1::uuid',[old]);
+  // These terminal deletes can be large too. Preserve the same deadline and
+  // per-statement ceiling as the fact batches; an interrupted step is safe to
+  // repeat because the retirement claim and earlier deletions are durable.
+  for (const text of [
+    'DELETE FROM app.neighborhood_group_summary WHERE generation_id=$1::uuid',
+    'DELETE FROM app.neighborhood_frozen_source_generations WHERE generation_id=$1::uuid',
+    'DELETE FROM app.neighborhood_group_generations WHERE generation_id=$1::uuid',
+  ]) {
+    if (Date.now()>deadline) return {status:'deferred',generationId:old};
+    await client.query({text,values:[old],query_timeout:120_000});
+  }
   return {status:'pruned',generationId:old};
+}
+
+/** Bounded recovery for retired/backlogged generations without building or
+ * publishing a new source snapshot. This is an internal worker primitive,
+ * deliberately not attached to the shipped schedule or an HTTP route. It
+ * shares the publisher's advisory lock and the exact pin/active exclusions. */
+export async function runNeighborhoodGroupIndexRetirement(pool,{batchSize=1000,maximumRuntimeMinutes=15}={}) {
+  positiveInteger(batchSize,5000,'batch_size');
+  positiveInteger(maximumRuntimeMinutes,180,'maximum_runtime_minutes');
+  if (!pool || typeof pool.connect!=='function') throw new TypeError('neighborhood_group_index_pool_required');
+  const client=await pool.connect(),deadline=Date.now()+maximumRuntimeMinutes*60_000;
+  let locked=false,retireClient=true,pruned=0;
+  try {
+    const lockResult=await client.query('SELECT pg_try_advisory_lock($1::bigint) AS locked',[LOCK_KEY]);
+    if (typeof lockResult.rows?.[0]?.locked!=='boolean') throw new Error('neighborhood_group_index_lock_state_unverified');
+    locked=lockResult.rows[0].locked;
+    retireClient=false;
+    if (!locked) return {status:'already_running'};
+    while (Date.now()<=deadline) {
+      const cleanup=await pruneObsoleteGeneration(client,batchSize,deadline);
+      if (cleanup.status==='none') return {status:'complete',pruned};
+      if (cleanup.status==='deferred') return {status:'deferred',pruned};
+      pruned++;
+    }
+    return {status:'deferred',pruned};
+  } finally {
+    if (locked) {
+      try {
+        const {rows}=await client.query('SELECT pg_advisory_unlock($1::bigint)',[LOCK_KEY]);
+        if (rows?.[0]?.pg_advisory_unlock!==true) retireClient=true;
+      } catch { retireClient=true; }
+    }
+    client.release(retireClient ? new Error('neighborhood_group_index_lock_state_unverified') : undefined);
+  }
 }
 
 function positiveInteger(value, max, name) {
@@ -358,7 +408,15 @@ export async function runNeighborhoodGroupIndex(pool,{batchSize=1000,maximumRunt
     await client.query('COMMIT');transaction=false;
     // Cleanup is intentionally outside the publication transaction. A crash
     // cannot roll back the new active generation, and the next run can resume.
-    try { await pruneObsoleteGeneration(client,batchSize,deadline); }
+    try {
+      // A failed bounded cleanup must not strand a retired generation behind
+      // each newly published predecessor. Resume it first, then drain any
+      // backlog while retaining the newest unretired predecessor.
+      while (Date.now()<=deadline) {
+        const cleanup=await pruneObsoleteGeneration(client,batchSize,deadline);
+        if (cleanup.status!=='pruned') break;
+      }
+    }
     catch(error) { logger.warn?.(`[neighborhood-group-index] cleanup_deferred=${error?.code??'error'}`); }
     return {status:'complete',generationId,parcels:parcels.copied,sales:sales.copied};
   } catch(error) {

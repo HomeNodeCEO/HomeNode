@@ -7,11 +7,21 @@ generations in a separate bounded database worker without rebuilding or
 publishing another source snapshot. It shares the nightly writer's advisory
 lock, current active-generation and pin exclusions, row-batched FK-safe cleanup
 order, deadline and connection-retirement checks. The shipped schedule and HTTP
-routes do not call it. A focused local test passes 17/17; the native PostgreSQL
-fixture also now exercises post-claim cleanup-only recovery while requiring the
-active pointer and the pinned original generation to remain unchanged. That new
-native assertion still requires cloud CI; no live worker or pin transfer is
-enabled by this change.
+routes do not call it. A focused local test passes 17/17. The native PostgreSQL
+fixture exercises post-claim cleanup-only recovery while requiring the active
+pointer and pinned original generation to remain unchanged. Exact child PR
+#1293 head `95d3488e9fa99de0e0820911ce7a3ccaf0cceace` passed foundation
+run `38442063178`, including the new native recovery marker, and sales-rich
+gate `38442063196`. This is small protocol evidence, not a licensed large-area
+run or live worker acceptance.
+
+The new `server/scripts/runNeighborhoodGroupIndexRetirement.js` is an explicit
+operator-only entry point for that bounded worker. It requires
+`NEIGHBORHOOD_GROUP_RETIREMENT_RECOVERY=1` and a PostgreSQL `DATABASE_URL`,
+rejects invalid batch/runtime budgets before constructing a pool, and never
+builds or publishes a generation. It is not on any npm maintenance schedule;
+no production invocation, live worker, terminal pin transfer or deployment is
+enabled by this change. Its own exact-head CI remains pending.
 
 As of the last exact-head checks before this follow-up, draft parent PR #1292
 at `c6eecea18b56f4a364e51f24b5f1e4f1be157324` passed its full native

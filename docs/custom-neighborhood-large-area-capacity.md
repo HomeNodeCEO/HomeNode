@@ -1,5 +1,36 @@
 # Complete larger-area Custom neighborhood studies
 
+## Owner candidate cloud syntax failure and correction (2026-10-13, UTC)
+
+Exact head `779b0de748d59f2fe4c5cb789ae1e4ebc873fa46`, PR1292,
+run38323202328/native115055785381 failed the newly added tenth owner graph.
+The full3,742,182-character native log shows417/417 migration and1/1 subject
+tests passed, then16/17 prepared-index tests passed. All nine historical
+fixture paths passed unchanged. The new graph reached its independently
+captured semantic/shared-original prerequisites but stopped while applying the
+whole unregistered candidate: PostgreSQL42601, syntax error near a comma, at
+fixture line6979. Its complete-original transaction-index owner marker did NOT
+execute. Edge/idempotence/bootstrap steps were consequently skipped, not PASS.
+Server/frontend/redteam and both other feature workflows passed; this is not
+an incident cancellation, protected-main clearance or licensed/live acceptance.
+
+The checkpoint-transition SQL body lacked one closing parenthesis: its prior
+EXISTS, retained-phase branch and phase disjunction closed, but the outer EXISTS
+did not close before the coalesce false fallback. The correction adds that one
+parenthesis without changing any predicate, trigger attachment, authorization,
+original reconciliation, finite budget or deadline. A new structure regression
+first failed the original body2 as an unclosed expression; it checks balanced
+expressions in all five SQL bodies plus the exact transition closure. Local
+focused verification now passes486/486 across the same44 files,0fail/cancel/skip/
+todo,4627.7065ms; JS syntax and diff checks pass. This remains structure/protocol
+verification, not a PostgreSQL compile or owner acceptance result.
+
+The corrected head needs a fresh complete native cloud run, with every old
+proof and unchanged256-SQL/32MB/60s/250-original,180s fixture,120s statement and
+pool2 limits. The migration remains unregistered and internal stages inactive.
+Actual review allowance remains unestablished; draft skips do not count.
+No merge, deployment, source grants, accepted report/Hardy choice or pin changes.
+
 ## Coherent dormant index candidate and independent native acceptance fixture (2026-10-11, 12:57 UTC)
 
 Unregistered20261206 now contains the complete candidate attachment package,

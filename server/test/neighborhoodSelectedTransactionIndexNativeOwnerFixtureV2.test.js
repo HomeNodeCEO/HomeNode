@@ -9,6 +9,27 @@ const read=path=>readFileSync(new URL(path,import.meta.url),'utf8').replace(/\r/
   end=fixture.indexOf("console.info('[native-selected-transaction-index-complete-original-owner-v2]'",start),
   native=fixture.slice(start,end),attachment=candidate.slice(candidate.indexOf('-- Coherent candidate attachment.'));
 
+test('all five candidate SQL bodies close their nested expressions before the coalesce fallback',()=>{
+  // This catches the cloud42601 regression, not native compilation/execution.
+  // Quoted SQL values and comments cannot add expression parentheses.
+  const bodies=[...candidate.matchAll(/LANGUAGE sql STABLE AS \$\$([\s\S]*?)\$\$;/g)];
+  assert.equal(bodies.length,5);
+  for(const [index,match] of bodies.entries()){
+    const expression=match[1].replace(/'(?:''|[^'])*'|--[^\n]*|\/\*[\s\S]*?\*\//g,'');
+    let depth=0;
+    for(const character of expression){
+      if(character==='(')depth++;
+      if(character===')')depth--;
+      assert.ok(depth>=0,`SQL body${index+1} has an unmatched closing parenthesis`);
+    }
+    assert.equal(depth,0,`SQL body${index+1} has an unclosed expression`);
+  }
+  const transition=candidate.slice(candidate.indexOf('CREATE FUNCTION app.neighborhood_transaction_index_v2_checkpoint_transition_matches'),
+    candidate.indexOf('CREATE FUNCTION app.neighborhood_selected_transaction_index_v2_admission_matches'));
+  assert.ok(transition.includes("prior.canonical_utf8::jsonb->'semantic_reference'=h.semantic_reference)))),false)"),
+    'close prior EXISTS, retained-phase branch, phase disjunction and outer EXISTS before coalesce false');
+});
+
 test('index native candidate is still unregistered; coherent replacements keep old identity/TRUNCATE and deferred pair attachments',()=>{
   assert.ok(start>0&&end>start);assert.doesNotMatch(registered,/20261206_custom_cohort_selected_transaction_index_owner_v2/);
   assert.ok(candidate.includes('Apply ONLY as one complete transaction'));

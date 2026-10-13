@@ -84,7 +84,7 @@ RETURNS boolean LANGUAGE sql STABLE AS $$
        AND prior.canonical_utf8::jsonb->'metrics_reference'=h.metrics_reference
        AND prior.canonical_utf8::jsonb->'statistics_reference'=h.statistics_reference
        AND prior.canonical_utf8::jsonb->'numeric_reference'=h.numeric_reference
-       AND prior.canonical_utf8::jsonb->'semantic_reference'=h.semantic_reference))),false)
+       AND prior.canonical_utf8::jsonb->'semantic_reference'=h.semantic_reference)))),false)
 $$;
 
 CREATE FUNCTION app.neighborhood_selected_transaction_index_v2_admission_matches(op uuid,org uuid,cp jsonb)

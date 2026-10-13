@@ -1,5 +1,31 @@
 # Complete larger-area Custom neighborhood studies
 
+## Independent bounded retirement recovery worker (2026-10-13, authored, inactive)
+
+The prepared-generation writer can now resume retired/backlogged unpinned
+generations in a separate bounded database worker without rebuilding or
+publishing another source snapshot. It shares the nightly writer's advisory
+lock, current active-generation and pin exclusions, row-batched FK-safe cleanup
+order, deadline and connection-retirement checks. The shipped schedule and HTTP
+routes do not call it. A focused local test passes 17/17; the native PostgreSQL
+fixture also now exercises post-claim cleanup-only recovery while requiring the
+active pointer and the pinned original generation to remain unchanged. That new
+native assertion still requires cloud CI; no live worker or pin transfer is
+enabled by this change.
+
+As of the last exact-head checks before this follow-up, draft parent PR #1292
+at `c6eecea18b56f4a364e51f24b5f1e4f1be157324` passed its full native
+complete-original owner graph, and child draft PR #1293 at
+`157dec7ae5f4e18d8badca3f23e9155b2ef97347` passed foundation run
+`38433999820` including 417/417 migrations and 17/17 prepared-index tests,
+plus sales-rich gate `38433999822`. Those are small native protocol fixtures,
+not licensed >50k acquisition, economic semantics, exact selected-union
+reportable statistics, production speed, protected-main clearance or actual
+review. The index-owner migration remains unregistered and stages inactive;
+no merge, activation or deployment occurred. Current source/provider meaning,
+terminal pin transfer, coherent publication, licensed large-area and Hardy
+saved-map/live acceptance remain open.
+
 ## Tenth native orphan-COMMIT assertion correction (2026-10-13, UTC)
 
 Exact draft PR #1292 head `0b670a347e561df7af5101284d26e33636bd27b4`

@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getPreparedNeighborhoodGroupSummary,runNeighborhoodGroupIndex,NEIGHBORHOOD_GROUP_INDEX_SQL }
+import { getPreparedNeighborhoodGroupSummary,runNeighborhoodGroupIndex,runNeighborhoodGroupIndexRetirement,
+  NEIGHBORHOOD_GROUP_INDEX_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodGroupIndex.js';
 
 function fixture({locked=true,fail=false,failSummary=false,failSalesSummary=false,
-  lockError=false,unlockOutcome='succeeded'}={}) {
+  lockError=false,unlockOutcome='succeeded',retirementCandidates=[],freshCandidates=[]}={}) {
   const calls=[];let released=false,releaseError;
   const client={
     async query(input,values) {
@@ -18,6 +19,11 @@ function fixture({locked=true,fail=false,failSummary=false,failSalesSummary=fals
         if (unlockOutcome==='rejected') throw new Error('synthetic_unlock_failure');
         return unlockOutcome==='missing' ? {rows:[]} : {rows:[{pg_advisory_unlock:unlockOutcome==='succeeded'}]};
       }
+      if (sql.startsWith('SELECT generation.generation_id') && sql.includes('retirement_started_at IS NOT NULL'))
+        return {rows:retirementCandidates.length?[{generation_id:retirementCandidates.shift()}]:[]};
+      if (sql.startsWith('SELECT generation.generation_id') && sql.includes('retirement_started_at IS NULL'))
+        return {rows:freshCandidates.length?[{generation_id:freshCandidates.shift()}]:[]};
+      if (sql.startsWith('WITH old AS')) return {rows:[{removed:0}]};
       if (sql===NEIGHBORHOOD_GROUP_INDEX_SQL.parcelBatch || sql===NEIGHBORHOOD_GROUP_INDEX_SQL.saleBatch) {
         if (fail) throw new Error('synthetic_batch_error');
         return {rows:[{cursor:'-9223372036854775808',scanned:0,copied:0}]};
@@ -182,4 +188,32 @@ test('cleanup claims retirement in a separate transaction before deleting facts 
   assert.match(fresh,/OFFSET 1/,'keep the newest unretired predecessor');
   assert.equal(sql[begin+3],'COMMIT');
   assert.equal(sql.slice(begin).some(value=>value.includes('DELETE FROM')),false,'empty retirement does not delete any facts');
+});
+
+test('bounded retirement worker resumes a claimed generation and drains fresh backlog without republishing',async()=>{
+  const retired='00000000-0000-4000-8000-000000000001';
+  const fresh='00000000-0000-4000-8000-000000000002';
+  const f=fixture({retirementCandidates:[retired],freshCandidates:[fresh]});
+  assert.deepEqual(await runNeighborhoodGroupIndexRetirement(f.pool,{batchSize:2}),{status:'complete',pruned:2});
+  const sql=f.calls.map(call=>call.sql);
+  assert.equal(sql.filter(value=>value==='BEGIN ISOLATION LEVEL READ COMMITTED').length,3);
+  assert.deepEqual(f.calls.filter(call=>call.sql.startsWith('UPDATE app.neighborhood_group_generations'))
+    .map(call=>call.values),[[retired],[fresh]]);
+  assert.equal(sql.some(value=>value.includes('INSERT INTO app.neighborhood_group_active')
+    ||value.includes('FROM gis.dcad_parcels')||value.includes('FROM core.accounts')) ,false);
+  assert.equal(sql.filter(value=>value.includes('pg_try_advisory_lock')).length,1);
+  assert.equal(sql.filter(value=>value.includes('pg_advisory_unlock')).length,1);
+  assert.equal(f.released,true);assert.equal(f.releaseError,undefined);
+});
+
+test('retirement worker refuses overlapping publication, invalid budgets and uncertain unlock',async()=>{
+  const overlapping=fixture({locked:false});
+  assert.deepEqual(await runNeighborhoodGroupIndexRetirement(overlapping.pool),{status:'already_running'});
+  assert.equal(overlapping.calls.length,1);
+  for(const options of [{batchSize:5001},{maximumRuntimeMinutes:181}])
+    await assert.rejects(runNeighborhoodGroupIndexRetirement(overlapping.pool,options),/invalid_neighborhood_group_index/);
+  assert.equal(overlapping.calls.length,1);
+  const uncertain=fixture({unlockOutcome:'missing'});
+  assert.deepEqual(await runNeighborhoodGroupIndexRetirement(uncertain.pool),{status:'complete',pruned:0});
+  assert.equal(uncertain.releaseError?.message,'neighborhood_group_index_lock_state_unverified');
 });

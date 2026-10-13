@@ -256,6 +256,40 @@ async function pruneObsoleteGeneration(client,batchSize,deadline) {
   return {status:'pruned',generationId:old};
 }
 
+/** Bounded recovery for retired/backlogged generations without building or
+ * publishing a new source snapshot. This is an internal worker primitive,
+ * deliberately not attached to the shipped schedule or an HTTP route. It
+ * shares the publisher's advisory lock and the exact pin/active exclusions. */
+export async function runNeighborhoodGroupIndexRetirement(pool,{batchSize=1000,maximumRuntimeMinutes=15}={}) {
+  positiveInteger(batchSize,5000,'batch_size');
+  positiveInteger(maximumRuntimeMinutes,180,'maximum_runtime_minutes');
+  if (!pool || typeof pool.connect!=='function') throw new TypeError('neighborhood_group_index_pool_required');
+  const client=await pool.connect(),deadline=Date.now()+maximumRuntimeMinutes*60_000;
+  let locked=false,retireClient=true,pruned=0;
+  try {
+    const lockResult=await client.query('SELECT pg_try_advisory_lock($1::bigint) AS locked',[LOCK_KEY]);
+    if (typeof lockResult.rows?.[0]?.locked!=='boolean') throw new Error('neighborhood_group_index_lock_state_unverified');
+    locked=lockResult.rows[0].locked;
+    retireClient=false;
+    if (!locked) return {status:'already_running'};
+    while (Date.now()<=deadline) {
+      const cleanup=await pruneObsoleteGeneration(client,batchSize,deadline);
+      if (cleanup.status==='none') return {status:'complete',pruned};
+      if (cleanup.status==='deferred') return {status:'deferred',pruned};
+      pruned++;
+    }
+    return {status:'deferred',pruned};
+  } finally {
+    if (locked) {
+      try {
+        const {rows}=await client.query('SELECT pg_advisory_unlock($1::bigint)',[LOCK_KEY]);
+        if (rows?.[0]?.pg_advisory_unlock!==true) retireClient=true;
+      } catch { retireClient=true; }
+    }
+    client.release(retireClient ? new Error('neighborhood_group_index_lock_state_unverified') : undefined);
+  }
+}
+
 function positiveInteger(value, max, name) {
   if (!Number.isSafeInteger(value) || value<1 || value>max) throw new TypeError(`invalid_neighborhood_group_index:${name}`);
   return value;

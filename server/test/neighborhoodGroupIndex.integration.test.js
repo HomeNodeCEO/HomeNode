@@ -10,7 +10,7 @@ import { runNeighborhoodSelectedNumericPopulationV2DatabaseChecks } from './help
 import { runNeighborhoodSelectedTransactionIndexV2DatabaseChecks } from './helpers/neighborhoodSelectedTransactionIndexV2DatabaseChecks.js';
 import { assertBoundedCohortAuthorityAggregates } from './helpers/boundedCohortAuthorityAggregateAssertions.js';
 import { NEIGHBORHOOD_CACHED_SOURCE_SCHEMA } from './fixtures/neighborhoodCachedSourceSchemaFixture.js';
-import { runNeighborhoodGroupIndex,getPreparedNeighborhoodGroupSummary }
+import { runNeighborhoodGroupIndex,runNeighborhoodGroupIndexRetirement,getPreparedNeighborhoodGroupSummary }
   from '../src/services/neighborhoodAssessment/neighborhoodGroupIndex.js';
 import { materializeNeighborhoodFrozenSourceGeneration }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenSourceGeneration.js';
@@ -751,6 +751,19 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     for(const table of ['neighborhood_frozen_typed_cad_rows','neighborhood_frozen_typed_cad_totals','neighborhood_frozen_typed_cad_generations'])
       assert.equal((await pool.query(`SELECT count(*)::int AS n FROM app.${table} WHERE generation_id=$1`,[second.generationId])).rows[0].n,0,
         'partial CAD cache retires before its companion originals without disabling FKs');
+    // Simulate a claim that committed just before a previous cleanup worker
+    // stopped. Recover it without another expensive publication/snapshot.
+    await pool.query('UPDATE app.neighborhood_group_generations SET retirement_started_at=clock_timestamp() WHERE generation_id=$1',
+      [fourth.generationId]);
+    assert.deepEqual(await runNeighborhoodGroupIndexRetirement(pool,{batchSize:2}),{status:'complete',pruned:1});
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_group_generations WHERE generation_id=$1',
+      [fourth.generationId])).rows[0].n,0,'retirement-only worker finishes the already claimed generation');
+    assert.equal((await pool.query('SELECT generation_id::text FROM app.neighborhood_group_active WHERE id=true')).rows[0].generation_id,
+      fifth.generationId,'retirement-only worker never republishes or changes the active pointer');
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_group_generations WHERE generation_id=$1',
+      [first.generationId])).rows[0].n,1,'retirement-only worker preserves the pinned original generation');
+    console.info('[native-retirement-only-recovery]',{interrupted_unpinned_pruned:true,
+      active_unchanged:true,pinned_originals_preserved:true,new_publication:false});
     assert.deepEqual((await sharedTypedCadStep(pool,first.generationId)).progress,cadComplete.progress);
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_frozen_cad_improvement_rows WHERE generation_id=$1',[first.generationId])).rows[0].n,7);
     console.info('[native-frozen-CAD-retirement]',{unpinned_companion_retired:true,pinned_originals_preserved:true,

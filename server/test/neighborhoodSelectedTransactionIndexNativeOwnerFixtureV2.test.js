@@ -63,7 +63,11 @@ test('tenth fixture independently captures sources, reserves only its own last f
   assert.ok(fixture.includes("sharedTransactionFixture=selectionWaitFixture==='union-all-shared-transaction'||transactionIndexOwnerFixture"));
   assert.ok(fixture.includes("positiveIndexedSourceFixture=selectionWaitFixture==='union-all-site-positive'||semanticRecoveryFixture"));
   assert.ok(fixture.includes('if(allSelected&&!positiveIndexedSourceFixture&&!transactionIndexOwnerFixture)'));
-  for(const text of ['skip:!process.env.DATABASE_URL,timeout:180_000','max:2,statement_timeout:120_000',
+  const timeoutLiteral="skip:!process.env.DATABASE_URL,timeout:selectionWaitFixture==='union-all-transaction-index-owner'?240_000:180_000";
+  assert.equal(fixture.split(timeoutLiteral).length-1,1);
+  assert.ok(fixture.indexOf(timeoutLiteral)>fixture.indexOf('for(const selectionWaitFixture of'));
+  for(const text of [timeoutLiteral,
+    'max:2,statement_timeout:120_000',
     'indexQueries.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries)'])assert.ok(fixture.includes(text),text);
   const seed=fixture.indexOf("UPDATE core.sale_parcels SET account_id='CLOSURE-B' WHERE id=2");
   assert.ok(seed>0&&fixture.indexOf('const frozen=await runNeighborhoodGroupIndex(pool',seed)>seed);

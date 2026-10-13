@@ -1,5 +1,27 @@
 # Complete larger-area Custom neighborhood studies
 
+## Tenth native fixture wall-clock correction (2026-10-13, UTC)
+
+Corrected exact head `33726466a115b3a6f2ec0875f8e1ac6fc836ad92` on
+draft PR #1292 ran foundation `38417105789`. The server, frontend and red-team
+jobs passed, as did the separate readiness workflows. In native job
+`115364350102`, all 417 migrations and the subject test passed; the prepared
+index suite finished 16/17, with the nine older graph paths passing. The new
+tenth independently captured graph reached its complete-original candidate
+marker after about 175 seconds, and the full unregistered owner SQL compiled
+and began its real native DML refusals. The test's 180-second wall-clock
+deadline expired before A/B/fresh-EMPTY issuance and its final marker. This is
+not a completed owner proof, nor a native SQL failure to dismiss.
+
+The next correction gives **only** the new tenth graph 240 seconds of fixture
+wall-clock time. All nine older paths retain their 180-second deadlines. The
+120-second statement timeout, pool size two, and actual owner limits of 256
+SQL calls, 32 MB decoded rows, 60 seconds per owner operation and 250 originals
+are unchanged. The new graph must still pass every original/current-and-ending
+authority, atomic head/checkpoint/yield, recovery and A/B/fresh-EMPTY assertion
+in cloud CI before the owner migration is registered or considered for release.
+No paid/forced review, merge, activation or deployment is part of this fix.
+
 ## Owner candidate cloud syntax failure and correction (2026-10-13, UTC)
 
 Exact head `779b0de748d59f2fe4c5cb789ae1e4ebc873fa46`, PR1292,

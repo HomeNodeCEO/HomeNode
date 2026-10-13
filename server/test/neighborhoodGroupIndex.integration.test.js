@@ -1369,7 +1369,11 @@ test('isolated PostgreSQL: freezes a complete 60001-account original source popu
 // clone/rebind job roots, summaries, original payloads or caller DONE metadata.
 for(const selectionWaitFixture of [false,true,'intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner']) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
   +(['intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner'].includes(selectionWaitFixture)?` with explicit new-study selection ${selectionWaitFixture}`:selectionWaitFixture?' with issued selection waiting':''),{
-  skip:!process.env.DATABASE_URL,timeout:180_000,
+  // The tenth graph replays every real parent before its own A/B/EMPTY owner
+  // proof. Keep all nine pre-existing paths at their original 180-second
+  // deadline; reserve extra fixture time only for that new graph. This does
+  // not change the per-statement or bounded production-owner budgets.
+  skip:!process.env.DATABASE_URL,timeout:selectionWaitFixture==='union-all-transaction-index-owner'?240_000:180_000,
 },async()=>{
   const transactionIndexOwnerFixture=selectionWaitFixture==='union-all-transaction-index-owner',
     sharedTransactionFixture=selectionWaitFixture==='union-all-shared-transaction'||transactionIndexOwnerFixture,

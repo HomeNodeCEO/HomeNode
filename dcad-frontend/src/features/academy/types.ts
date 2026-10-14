@@ -34,4 +34,27 @@ export type Progress = {
     answers: Record<string, AnswerRecord>;
     bookmarks: string[];
     lastId?: string;
+    readModules?: string[];
+    lastModuleId?: string;
+};
+export type KnowledgeCheck = {
+    prompt: string;
+    options: string[];
+    answer: number;
+    explanation: string;
+};
+export type ReadingSection = {
+    id: string;
+    title: string;
+    paragraphs: string[];
+    formula?: string;
+    example?: { title: string; columns: string[]; rows: string[][]; explanation: string };
+    check?: KnowledgeCheck;
+};
+export type ModuleReading = {
+    moduleId: string;
+    introduction: string;
+    objectives: string[];
+    sections: ReadingSection[];
+    summary: string[];
 };

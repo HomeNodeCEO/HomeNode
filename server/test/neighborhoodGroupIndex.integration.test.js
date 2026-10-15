@@ -66,6 +66,10 @@ import { parseExactDecimalPagedObservationV1 as rankCandidateDecimal }
 import { createCustomCohortSelectedEvidenceV2Repository } from '../src/services/neighborhoodAssessment/customCohortSelectedEvidenceV2Repository.js';
 import { createCustomCohortV2ContinuationRepository }
   from '../src/services/neighborhoodAssessment/customCohortV2ContinuationRepository.js';
+import { createCustomCohortV2CatalogWorkerRepository }
+  from '../src/services/neighborhoodAssessment/customCohortV2CatalogWorkerRepository.js';
+import { runCustomCohortV2CatalogJobOnce }
+  from '../src/services/neighborhoodAssessment/customCohortV2CatalogJobWorker.js';
 import { createCustomCohortV2SelectionWaitRepository }
   from '../src/services/neighborhoodAssessment/customCohortV2SelectionWaitRepository.js';
 import { CUSTOM_COHORT_ORIGINAL_ACCOUNT_OWNER_LIMITS as ORIGINAL_OWNER_LIMITS }
@@ -4118,8 +4122,10 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       await assert.rejects(freshRefsOwner()[catalogMethod](refsInput,refsOptions),/claim_lost/);
       assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900})),[]);
       const claims=await Promise.all([1,2].map(()=>withCustomCohortJobTransaction(pool,client=>
-        createCustomCohortV2ContinuationRepository(client).claimDue({limit:1,leaseSeconds:900}))));
+        createCustomCohortV2CatalogWorkerRepository(client).claimDue({leaseSeconds:900}))));
       assert.equal(claims.flat().length,1);const fresh=claims.flat()[0];assert.equal(fresh.claim.attempts,oldClaim.attempts);
+      assert.equal(fresh.phase,'frozen_recorded_catalog_refs_v2');assert.equal(fresh.progress_done,sequence===5);
+      assert.equal(fresh.authority,'not_established');
       assert.notEqual(fresh.claim.claim_token,beforeClaim.claim_token);Object.assign(refsClaim,fresh.claim);
       assert.equal((await continuationRow()).consumed_claim_token,refsClaim.claim_token);
       assert.deepEqual((await continuationJob()).checkpoint,released.checkpoint);assert.equal(await pinCount(),pinsBeforeContinuation);
@@ -4501,15 +4507,27 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       }
       refsFault='wait_release_rollback';await assert.rejects(freshRefsOwner()[waitMethod](refsInput,refsOptions),/actual waiting release rollback/);
       assert.equal(refsFault,null);await assertTargetUnchanged();
+      const workerRecovery=selectionWaitFixture===true;
+      if(workerRecovery){
+        const failed=await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client)
+          .failClaim(refsClaim,'synthetic_catalog_worker_recovery',{retrySeconds:1}));
+        assert.equal(failed.status,'retry');
+        await pool.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET run_after=clock_timestamp() WHERE operation_id=$1',[refsOperation]);
+      }
       const commitWaitFrom=refsCalls.length;refsFault='commit';
-      await assert.rejects(freshRefsOwner()[waitMethod](refsInput,refsOptions),e=>e.outcome_unknown===true);
+      if(workerRecovery){
+        const result=await runCustomCohortV2CatalogJobOnce({pool,cohortService:freshRefsOwner(),leaseSeconds:900});
+        assert.deepEqual(result,{status:'outcome_unknown',operation_id:refsOperation});
+        assert.equal(refsFault,null);
+      }else await assert.rejects(freshRefsOwner()[waitMethod](refsInput,refsOptions),e=>e.outcome_unknown===true);
       const waitCalls=refsCalls.slice(commitWaitFrom),waiting=await continuationJob();
       assert.equal(waitCalls.filter(sql=>sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,1);
       const releaseIndex=waitCalls.findIndex(sql=>sql.includes('custom-cohort-v2-selection-wait:release'));
       assert.ok(releaseIndex>waitCalls.findLastIndex(sql=>sql.includes('custom-cohort-group-workspace:read')));
       assert.ok(waitCalls.length-3<=ORIGINAL_OWNER_LIMITS.sql_queries);
       assert.equal(waiting.status,'awaiting_selection');assert.equal(waiting.claim_token,null);assert.equal(waiting.lease_expires_at,null);
-      assert.equal(waiting.attempts,beforeWaitJob.attempts);assert.equal(waiting.last_error_code,beforeWaitJob.last_error_code);
+      assert.equal(waiting.attempts,beforeWaitJob.attempts+(workerRecovery?1:0));
+      assert.equal(waiting.last_error_code,workerRecovery?'synthetic_catalog_worker_recovery':beforeWaitJob.last_error_code);
       assert.equal(waiting.context_sha256,null);assert.deepEqual(waiting.checkpoint,beforeWaitJob.checkpoint);
       const staleFrom=refsCalls.length;await assert.rejects(freshRefsOwner()[waitMethod](refsInput,refsOptions),/claim_lost/);
       assert.ok(!refsCalls.slice(staleFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
@@ -4519,6 +4537,13 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         createCustomCohortCaptureJobRepository(client)[method](refsClaim,...(method==='failClaim'?['synthetic_failure']:[]))),/claim_lost/);
       const status=await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).status(scope,refsOperation));
       assert.equal(status.status,'awaiting_selection');assert.ok(!Object.hasOwn(status,'context_ref'));
+      if(workerRecovery){
+        assert.deepEqual(await runCustomCohortV2CatalogJobOnce({pool,cohortService:freshRefsOwner()}),{status:'idle'});
+        console.info('[native-v2-catalog-worker-recovery-wait]',{actual_worker_and_original_owner:true,
+          ordinary_recovery_spends_one_failure_attempt:true,fresh_actor_assignment_subject_and_source_fences:true,
+          fresh_terminal_original_cache_partition_probe:true,lost_commit_does_not_downgrade_wait:true,
+          awaiting_selection_not_claimed_again:true,human_group_choice:false,context_complete:false,pin_transfer:false});
+      }
       for(const set of ["status='queued'","status='retry'","status='failed'","status='awaiting_selection'",
         "status='running',claim_token=gen_random_uuid(),lease_expires_at=clock_timestamp()+interval '5 minutes'",
         "status='succeeded',context_sha256=repeat('a',64)","status='cancelled'","attempts=0",'checkpoint=NULL',
@@ -4703,6 +4728,14 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           .claimDue({limit:1,leaseSeconds:900})),[]);
         await assert.rejects(readRetained(),/claim_lost/);
         await new Promise(resolve=>setTimeout(resolve,1100));
+        const selectedRetryJob=await continuationJob(),selectedRetryIntent=await readIntents(),
+          selectedRetryContinuation=await continuationRow(),catalogHandoffFrom=refsCalls.length;
+        assert.deepEqual(await runCustomCohortV2CatalogJobOnce({pool,cohortService:freshRefsOwner()}),{status:'idle'},
+          'a failed NEW-study command still belongs to the selected-union owner, not the catalog worker');
+        assert.equal(refsCalls.length,catalogHandoffFrom,'catalog handoff reads no source or original owner');
+        assert.deepEqual(await continuationJob(),selectedRetryJob);
+        assert.deepEqual(await readIntents(),selectedRetryIntent);
+        assert.deepEqual(await continuationRow(),selectedRetryContinuation);
         const replacementClaims=(await Promise.all([1,2].map(()=>withCustomCohortJobTransaction(pool,client=>
           createCustomCohortCaptureJobRepository(client).claimDue({limit:1,leaseSeconds:900}))))).flat();
         assert.equal(replacementClaims.length,1);const replacement=replacementClaims[0];
@@ -7184,11 +7217,13 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,refsOperation)),{status:'cancelled'});
       assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,refsOperation)),{status:'cancelled'});
       const cancelledWait=await continuationJob();
+      assert.deepEqual(cancelledWait,{...waiting,status:'cancelled'},
+        'cancellation preserves the actual waiting claim history, including an ordinary worker recovery');
       for(const set of ["status='retry'",'checkpoint=NULL',"cancellation_requested_at=NULL"])
         await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
           `UPDATE app.neighborhood_custom_cohort_capture_jobs SET ${set} WHERE operation_id=$1`,[refsOperation])),/selection_wait_immutable/);
       assert.deepEqual(await continuationJob(),cancelledWait);
-      assert.equal((await continuationJob()).attempts,beforeWaitJob.attempts);assert.equal(await pinCount(),pinsBeforeContinuation);
+      assert.equal((await continuationJob()).attempts,waiting.attempts);assert.equal(await pinCount(),pinsBeforeContinuation);
       }
       await removeSyntheticTargetWorkspace();
       assertBoundedCohortAuthorityAggregates(refsCalls.slice(waitFrom).map((text,index)=>({text,values:refsQueryParameters[waitFrom+index]})),

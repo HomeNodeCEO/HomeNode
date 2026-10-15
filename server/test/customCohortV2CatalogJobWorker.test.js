@@ -52,6 +52,14 @@ test('an invalid caller transaction cannot issue a claim', async () => {
   await assert.rejects(fixture.owner.claimDue(), /caller_transaction_required/);
   assert.equal(fixture.queries.length, 2);
 });
+test('a retained human selection excludes all catalog claiming and expiry paths', async () => {
+  const { owner, queries } = repositoryFixture({ success: [], recovery: [] });
+  assert.deepEqual(await owner.claimDue(), []);
+  for (const query of queries.filter(q => !q.sql.includes(':transaction'))) {
+    assert.match(query.sql, /NOT EXISTS \(SELECT 1 FROM app\.neighborhood_custom_cohort_v2_selection_intents intent/);
+    assert.match(query.sql, /intent\.operation_id=job\.operation_id AND intent\.organization_id=job\.organization_id/);
+  }
+});
 test('caller phase, counts, callbacks, accessors and unbounded leases are refused before SQL', async () => {
   const { owner, queries } = repositoryFixture();
   for (const value of [{ leaseSeconds: 14 }, { leaseSeconds: 901 }, { leaseSeconds: 120, phase },

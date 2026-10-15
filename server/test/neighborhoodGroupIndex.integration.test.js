@@ -4728,6 +4728,14 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           .claimDue({limit:1,leaseSeconds:900})),[]);
         await assert.rejects(readRetained(),/claim_lost/);
         await new Promise(resolve=>setTimeout(resolve,1100));
+        const selectedRetryJob=await continuationJob(),selectedRetryIntent=await readIntents(),
+          selectedRetryContinuation=await continuationRow(),catalogHandoffFrom=refsCalls.length;
+        assert.deepEqual(await runCustomCohortV2CatalogJobOnce({pool,cohortService:freshRefsOwner()}),{status:'idle'},
+          'a failed NEW-study command still belongs to the selected-union owner, not the catalog worker');
+        assert.equal(refsCalls.length,catalogHandoffFrom,'catalog handoff reads no source or original owner');
+        assert.deepEqual(await continuationJob(),selectedRetryJob);
+        assert.deepEqual(await readIntents(),selectedRetryIntent);
+        assert.deepEqual(await continuationRow(),selectedRetryContinuation);
         const replacementClaims=(await Promise.all([1,2].map(()=>withCustomCohortJobTransaction(pool,client=>
           createCustomCohortCaptureJobRepository(client).claimDue({limit:1,leaseSeconds:900}))))).flat();
         assert.equal(replacementClaims.length,1);const replacement=replacementClaims[0];

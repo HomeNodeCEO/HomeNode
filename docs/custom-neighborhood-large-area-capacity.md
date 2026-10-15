@@ -17,8 +17,15 @@ human group choice. Successful continuations retain their failure-attempt count;
 ordinary retry/expired-lease recovery consumes the existing five-claim budget.
 Cancellation and uncertain COMMIT outcomes preserve the native fences.
 
+A retained authenticated NEW-study command transfers ownership to the selected
+union even while the checkpoint still names the completed catalog. Catalog
+claims and expired-claim cleanup explicitly exclude that immutable intent.
+The native fixture requires the actual catalog worker to remain idle on a due
+failed selection command, preserving its attempt/error history, intent and
+continuation before the selected owner receives its normal replacement claim.
+
 The entry point has no default worker, route, CLI or schedule. Focused local
-checks pass 11/11 with no database or full local suite. The cloud PostgreSQL
+checks pass 12/12 with no database or full local suite. The cloud PostgreSQL
 fixture now exercises concurrent catalog claims and the actual worker's
 ordinary recovery into selection-wait after a lost COMMIT acknowledgment.
 The first cloud run at `10aa51dd` passed 417 migrations and the subject test,

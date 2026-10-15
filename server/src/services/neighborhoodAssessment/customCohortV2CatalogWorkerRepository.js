@@ -37,6 +37,11 @@ const ROUTING_FENCE = `
     WHEN 'frozen_recorded_partition_refs_v2' THEN 'cohort_recorded_group_partition_receipt_v2'
     ELSE 'cohort_recorded_catalog_receipt_v2' END
   AND jsonb_typeof(routing.receipt->'after'->'done')='boolean'
+  -- A genuine NEW-study command keeps the catalog checkpoint until its first
+  -- union step. That job belongs to the selected-union owner, even on failure
+  -- recovery; never spend its claims trying to return it to selection-wait.
+  AND NOT EXISTS (SELECT 1 FROM app.neighborhood_custom_cohort_v2_selection_intents intent
+    WHERE intent.operation_id=job.operation_id AND intent.organization_id=job.organization_id)
   AND job.context_sha256 IS NULL AND job.cancellation_requested_at IS NULL`;
 const RETURN_CLAIM = `job.operation_id::text,job.claim_token::text,job.attempts,
   job.organization_id::text,job.report_file_id::text,job.assignment_file_id::text,
@@ -65,11 +70,13 @@ export function createCustomCohortV2CatalogWorkerRepository(client) {
     // Finish only expired terminal claims in this worker's installed phases.
     // Retain their original graph and generation pin for the separate owner.
     await client.query(`/* custom-cohort-v2-catalog-worker:expire */ WITH expired AS (
-      SELECT operation_id FROM app.neighborhood_custom_cohort_capture_jobs
-      WHERE status='running' AND lease_expires_at<=clock_timestamp()
-        AND checkpoint->>'phase'=ANY($1::text[])
-        AND (cancellation_requested_at IS NOT NULL OR attempts>=5)
-      ORDER BY lease_expires_at,operation_id LIMIT 64 FOR UPDATE SKIP LOCKED
+      SELECT job.operation_id FROM app.neighborhood_custom_cohort_capture_jobs job
+      WHERE job.status='running' AND job.lease_expires_at<=clock_timestamp()
+        AND job.checkpoint->>'phase'=ANY($1::text[])
+        AND NOT EXISTS (SELECT 1 FROM app.neighborhood_custom_cohort_v2_selection_intents intent
+          WHERE intent.operation_id=job.operation_id AND intent.organization_id=job.organization_id)
+        AND (job.cancellation_requested_at IS NOT NULL OR job.attempts>=5)
+      ORDER BY job.lease_expires_at,job.operation_id LIMIT 64 FOR UPDATE OF job SKIP LOCKED
     ) UPDATE app.neighborhood_custom_cohort_capture_jobs job
       SET status=CASE WHEN job.cancellation_requested_at IS NULL THEN 'failed' ELSE 'cancelled' END,
         claim_token=NULL,lease_expires_at=NULL,

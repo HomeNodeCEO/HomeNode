@@ -1,5 +1,30 @@
 # Complete larger-area Custom neighborhood studies
 
+## Existing-database V2 catalog worker (2026-10-15, inactive)
+
+The current roadmap uses CAD, sales and retained originals already present in
+the database, under their existing current permissions. The user confirmed
+that Trestle agreements/feed definitions have not been issued and that Trestle
+is outside the present work; they are not a prerequisite for this implementation.
+
+`runCustomCohortV2CatalogJobOnce` now connects pending issued stock-traversal,
+recorded-partition and catalog progress to their actual original-reconciling
+owners. A fixed, bounded receipt chooses only the next route. Each owner still
+reopens its complete prerequisites, originals and caches and checks current
+actor, assignment, draft, subject and source rights at both ends. One invocation
+processes one step; it stops at `awaiting_selection` rather than inventing a
+human group choice. Successful continuations retain their failure-attempt count;
+ordinary retry/expired-lease recovery consumes the existing five-claim budget.
+Cancellation and uncertain COMMIT outcomes preserve the native fences.
+
+The entry point has no default worker, route, CLI or schedule. Focused local
+checks pass 11/11 with no database or full local suite. The cloud PostgreSQL
+fixture now exercises concurrent catalog claims and the actual worker's
+ordinary recovery into selection-wait after a lost COMMIT acknowledgment.
+That new native execution is pending. Initial geographic/source acquisition,
+post-selection worker dispatch, terminal pin transfer, coherent publication,
+licensed large-area and Hardy live acceptance remain unfinished.
+
 ## Independent bounded retirement recovery worker (2026-10-13, authored, inactive)
 
 The prepared-generation writer can now resume retired/backlogged unpinned

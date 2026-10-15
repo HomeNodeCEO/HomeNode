@@ -69,6 +69,19 @@ test('each installed receipt format matches its actual original-owner builder', 
   assert.equal(formats.length, 7);
   for (const format of formats) assert.ok(capture.includes(`format:'${format}'`), format);
 });
+test('expiry cleanup also refuses semantic DONE and cannot retire a different owner\'s expired cancelled claim', async () => {
+  const { owner, queries } = repositoryFixture({ success: [], recovery: [] });
+  await owner.claimDue();
+  const expiry = queries.find(query => query.sql.includes(':expire'));
+  assert.deepEqual(expiry.values, [phases]);
+  assert.match(expiry.sql, /JOIN app\.neighborhood_custom_cohort_v2_continuations c/);
+  assert.match(expiry.sql, /routing\.receipt->>'command_id'=intent\.command_id::text/);
+  assert.match(expiry.sql, /blob\.canonical_utf8_bytes BETWEEN 1 AND 16000/);
+  assert.match(expiry.sql, /c\.phase<>'frozen_selected_semantic_refs_v2' OR routing\.receipt->'after'->>'done'='false'/);
+  assert.match(expiry.sql, /job\.cancellation_requested_at IS NOT NULL OR job\.attempts>=5/);
+  assert.doesNotMatch(expiry.sql.slice(0, expiry.sql.indexOf(') UPDATE app.')), /job\.cancellation_requested_at IS NULL/);
+  assert.doesNotMatch(expiry.sql, /DELETE|checkpoint=/);
+});
 test('caller phases, sources, accessors, proxies and unsafe leases refuse before SQL', async () => {
   const { owner, queries } = repositoryFixture();
   for (const options of [{ leaseSeconds: 14 }, { leaseSeconds: 901 }, { leaseSeconds: 120, phase: phases[0] },

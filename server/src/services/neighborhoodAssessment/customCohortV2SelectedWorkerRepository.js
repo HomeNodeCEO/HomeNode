@@ -30,7 +30,7 @@ const ROUTING_RECEIPT = `
   CROSS JOIN LATERAL (SELECT CASE WHEN blob.canonical_utf8_bytes BETWEEN 1 AND 16000
       AND octet_length(blob.canonical_utf8)<=16000 THEN blob.canonical_utf8::jsonb END AS receipt) routing`;
 const ROUTING_FENCE = `
-  job.checkpoint->>'phase'=ANY($2::text[]) AND c.phase=job.checkpoint->>'phase'
+  c.phase=job.checkpoint->>'phase'
   AND c.progress_reference=job.checkpoint->'evidence_refs'->-1
   AND routing.receipt->>'command_id'=intent.command_id::text
   AND jsonb_array_length(job.checkpoint->'evidence_refs')=CASE c.phase
@@ -49,7 +49,7 @@ const ROUTING_FENCE = `
   -- DONE semantic progress has no installed next owner in this worker. Leave
   -- its token untouched; never spend a failure attempt at the dormant index.
   AND (c.phase<>'frozen_selected_semantic_refs_v2' OR routing.receipt->'after'->>'done'='false')
-  AND job.context_sha256 IS NULL AND job.cancellation_requested_at IS NULL`;
+  AND job.context_sha256 IS NULL`;
 const RETURN_CLAIM = `job.operation_id::text,job.claim_token::text,job.attempts,
   job.organization_id::text,job.report_file_id::text,job.assignment_file_id::text,
   job.account_id,job.actor_user_id::text,due.phase,due.progress_done`;
@@ -74,13 +74,14 @@ export function createCustomCohortV2SelectedWorkerRepository(client) {
       || leaseSeconds > CAPTURE_JOB_LEASE_SECONDS.max) fail('invalid_options');
     const started = await transactionId();
     if (await transactionId() !== started) fail('caller_transaction_required');
-    // Expiry settles only this lane. Originals and pins remain retained.
+    // Expiry settles only this lane, including the same semantic-DONE stop
+    // boundary as claiming. An expired next-owner claim still belongs to that
+    // next owner, even if cancellation or its final failure attempt is due.
+    // Originals and pins remain retained.
     await client.query(`/* custom-cohort-v2-selected-worker:expire */ WITH expired AS (
-      SELECT job.operation_id FROM app.neighborhood_custom_cohort_capture_jobs job
+      SELECT job.operation_id FROM app.neighborhood_custom_cohort_capture_jobs job ${ROUTING_RECEIPT}
       WHERE job.status='running' AND job.lease_expires_at<=clock_timestamp()
-        AND job.checkpoint->>'phase'=ANY($1::text[])
-        AND EXISTS (SELECT 1 FROM app.neighborhood_custom_cohort_v2_selection_intents intent
-          WHERE intent.operation_id=job.operation_id AND intent.organization_id=job.organization_id)
+        AND job.checkpoint->>'phase'=ANY($1::text[]) AND ${ROUTING_FENCE}
         AND (job.cancellation_requested_at IS NOT NULL OR job.attempts>=5)
       ORDER BY job.lease_expires_at,job.operation_id LIMIT 64 FOR UPDATE OF job SKIP LOCKED
     ) UPDATE app.neighborhood_custom_cohort_capture_jobs job
@@ -93,7 +94,8 @@ export function createCustomCohortV2SelectedWorkerRepository(client) {
       WITH due AS MATERIALIZED (
         SELECT job.operation_id,c.phase,(routing.receipt->'after'->>'done')::boolean AS progress_done
         FROM app.neighborhood_custom_cohort_capture_jobs job ${ROUTING_RECEIPT}
-        WHERE ${ROUTING_FENCE} AND c.consumed_claim_token IS NULL
+        WHERE job.checkpoint->>'phase'=ANY($2::text[]) AND ${ROUTING_FENCE}
+          AND job.cancellation_requested_at IS NULL AND c.consumed_claim_token IS NULL
           AND job.status='retry' AND job.attempts=c.issued_attempts AND job.attempts BETWEEN 1 AND 5
           AND job.claim_token IS NULL AND job.lease_expires_at IS NULL AND job.run_after<=clock_timestamp()
         ORDER BY job.run_after,job.operation_id LIMIT 1 FOR UPDATE OF job SKIP LOCKED
@@ -110,7 +112,8 @@ export function createCustomCohortV2SelectedWorkerRepository(client) {
         WITH due AS MATERIALIZED (
           SELECT job.operation_id,c.phase,(routing.receipt->'after'->>'done')::boolean AS progress_done
           FROM app.neighborhood_custom_cohort_capture_jobs job ${ROUTING_RECEIPT}
-          WHERE ${ROUTING_FENCE} AND c.consumed_claim_token IS NOT NULL AND job.attempts<5
+          WHERE job.checkpoint->>'phase'=ANY($2::text[]) AND ${ROUTING_FENCE}
+            AND job.cancellation_requested_at IS NULL AND c.consumed_claim_token IS NOT NULL AND job.attempts<5
             AND ((job.status='retry' AND job.run_after<=clock_timestamp())
               OR (job.status='running' AND job.lease_expires_at<=clock_timestamp()))
           ORDER BY job.run_after,job.operation_id LIMIT 1 FOR UPDATE OF job SKIP LOCKED

@@ -4936,6 +4936,23 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
             for(let pass=0;pass<2;pass++)assert.deepEqual(await runCustomCohortV2SelectedJobOnce({pool,cohortService:cadOwner()}),{status:'idle'});
             assert.deepEqual({job:await continuationJob(),continuation:await continuationRow(),blobs:await refsBlobCount(),union:await readUnion()},stopped);
             assert.equal(stopped.continuation.consumed_claim_token,null,'semantic DONE token belongs to no installed next route');
+            // Exercise a REAL generic native claim (not a forged claim/token)
+            // at the next-owner boundary, validate its deferred issue first,
+            // then simulate expired cancellation inside a rolled-back QA TX.
+            // This selected worker may neither claim nor retire that lane.
+            await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
+              const [nextOwner]=await createCustomCohortV2ContinuationRepository(client).claimDue({limit:1,leaseSeconds:900});
+              assert.ok(nextOwner);assert.equal(nextOwner.claim.attempts,4);
+              await client.query('SET CONSTRAINTS ALL IMMEDIATE');
+              assert.deepEqual(await createCustomCohortCaptureJobRepository(client).cancel(scope,refsOperation),{status:'running'});
+              await client.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[refsOperation]);
+              const read=async()=>(await client.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[refsOperation])).rows;
+              const expired=await read();assert.equal(expired[0].status,'running');assert.ok(expired[0].cancellation_requested_at);
+              assert.deepEqual(await createCustomCohortV2SelectedWorkerRepository(client).claimDue(),[]);
+              assert.deepEqual(await read(),expired,'no terminal expiry write by the wrong lane');
+              throw new Error('synthetic next-owner expired cancellation rollback');
+            }),/synthetic next-owner expired cancellation rollback/);
+            assert.deepEqual({job:await continuationJob(),continuation:await continuationRow(),blobs:await refsBlobCount(),union:await readUnion()},stopped);
             assert.deepEqual(await readIntents(),retainedIntents);assert.deepEqual(await readCatalogHead(),catalogFinal);
             assert.deepEqual(await readCatalogGroups(),catalogGroups);assert.deepEqual(await readPartitionHead(),partitionFinal);
             assert.deepEqual(await readPartitionRows(),partitionRows);assert.equal(await pinCount(),pinsBeforeContinuation);
@@ -4946,6 +4963,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
               actual_concurrent_single_token_claim:true,current_revocation_before_source_reads:true,
               ordinary_recovery_and_lost_real_owner_COMMIT_ack:true,seven_actual_original_population_owners:true,
               successful_steps:successfulSteps,failure_attempts_preserved:4,semantic_DONE_unconsumed_after_repeated_idle:true,
+              expired_cancelled_next_owner_claim_untouched_and_real_native_rollback:true,
               actual_selected_B_not_first_stock_A:true,original_aggregate_budgets_unchanged:true,
               choices_workspace_history_reports_pins_unchanged:true,context_complete:false,pin_transfer:false,
               licensed_acquisition:false,production_speed:false,publication:false,activation:false});

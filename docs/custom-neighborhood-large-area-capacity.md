@@ -14,13 +14,13 @@ cursors or full-population arrays are accepted. Each invocation makes one
 step and returns status only. Successful pages retain the failure-attempt
 count; ordinary failed/expired recovery uses the existing five-attempt cap.
 
-Semantic DONE is deliberately excluded from both claim paths. Its pending
+Semantic DONE is deliberately excluded from both claim paths and expiry cleanup. Its pending
 token remains unconsumed rather than entering the unregistered transaction
 index or claiming publication/context completion. The initial authenticated
 selection command remains a separate worker lane. No route, CLI, default
 worker, schedule or migration registration activates either entry point.
 
-Focused tests pass 12/12, serially in about 1.1 seconds. A new independent
+Focused tests pass 13/13, serially in about 1.1 seconds. A new independent
 cloud PostgreSQL graph exercises actual concurrent single-token claiming,
 current source revocation before original reads, ordinary recovery, lost
 real owner-COMMIT acknowledgment, all seven actual population owners and
@@ -28,6 +28,15 @@ repeated idle at semantic DONE while preserving user choices, workspace,
 history, reports and pins. Execution of that new graph and full exact-head
 cloud validation is pending. This small native protocol test is not licensed
 large-area acquisition, live acceptance or production-speed proof.
+
+The next-owner expiry test obtains a real generic native claim at semantic
+DONE, validates its deferred issue, and simulates expired cancellation inside
+a rolled-back isolated QA transaction. The selected worker must leave that
+entire claim unchanged; rollback must restore the original unconsumed DONE
+token. No caller-supplied token, attempt reset or source-authority shortcut is
+used. Current pre-fix `00cc43af` full server CI passed 11,050 tests with zero
+failures and 72 expected skips; that result does not validate this new expiry
+fence. The expiry correction needs its own complete cloud/native proof.
 
 ## Initial selected-union worker handoff (2026-10-15, inactive)
 

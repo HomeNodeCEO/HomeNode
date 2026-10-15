@@ -1,5 +1,67 @@
 # Complete larger-area Custom neighborhood studies
 
+## Cloud protocol-test cost diagnostics (2026-10-15)
+
+Exact selected-worker head `5ca1eecd` executed the new expiry regression and
+all seven original-owner worker stages successfully, but the full native run
+finished 16/18 with two unchanged 180-second fixture timeouts (positive-site
+and semantic-recovery), zero assertion failures and zero skips. This is not a
+full native pass, and the failed job is not being blindly retried.
+
+The disposable loopback CI graph sessions now disable JIT and use generic
+prepared plans to avoid repeated small-probe setup. Each session asserts the
+actual settings. Production pools, source SQL, original reads, fault probes,
+query/byte budgets, statement timeouts and fixture deadlines are unchanged.
+This is a protocol-correctness fixture configuration, not production tuning or
+proof of a speed improvement. The new cloud run must establish its result.
+
+A bounded timing observer reports at most twelve static query-comment families
+from at most 128 named families plus an overflow bucket. It retains no SQL,
+parameters, result rows, source evidence or authority decisions. Exact result
+and error values, callbacks, custom query objects and transaction calls pass
+through without retries; unawaited native failures still fail the process.
+Promise settlement is observed without replacing its result or error. Callback/custom executions
+are not timed. Diagnostics print even on the independent worker graph's early
+return. Eight focused helper checks pass; full cloud execution is pending.
+
+## Selected-study continuation worker (2026-10-15, inactive)
+
+`runCustomCohortV2SelectedJobOnce` now connects issued selected-union,
+recorded-eligibility, evidence, reported-metric, contribution-statistics,
+numeric and semantic continuations to their existing complete-original
+owners. It reads at most one bounded immutable receipt for routing only;
+the original owner still reopens all required originals, entire caches and
+native parents, and rechecks current actor, assignment, draft, subject and
+each source purpose at both ends under its unchanged aggregate budgets.
+The worker reloads the saved request; no caller groups, sources, dates,
+cursors or full-population arrays are accepted. Each invocation makes one
+step and returns status only. Successful pages retain the failure-attempt
+count; ordinary failed/expired recovery uses the existing five-attempt cap.
+
+Semantic DONE is deliberately excluded from both claim paths and expiry cleanup. Its pending
+token remains unconsumed rather than entering the unregistered transaction
+index or claiming publication/context completion. The initial authenticated
+selection command remains a separate worker lane. No route, CLI, default
+worker, schedule or migration registration activates either entry point.
+
+Focused tests pass 13/13, serially in about 1.1 seconds. A new independent
+cloud PostgreSQL graph exercises actual concurrent single-token claiming,
+current source revocation before original reads, ordinary recovery, lost
+real owner-COMMIT acknowledgment, all seven actual population owners and
+repeated idle at semantic DONE while preserving user choices, workspace,
+history, reports and pins. Execution of that new graph and full exact-head
+cloud validation is pending. This small native protocol test is not licensed
+large-area acquisition, live acceptance or production-speed proof.
+
+The next-owner expiry test obtains a real generic native claim at semantic
+DONE, validates its deferred issue, and simulates expired cancellation inside
+a rolled-back isolated QA transaction. The selected worker must leave that
+entire claim unchanged; rollback must restore the original unconsumed DONE
+token. No caller-supplied token, attempt reset or source-authority shortcut is
+used. Current pre-fix `00cc43af` full server CI passed 11,050 tests with zero
+failures and 72 expected skips; that result does not validate this new expiry
+fence. The expiry correction needs its own complete cloud/native proof.
+
 ## Initial selected-union worker handoff (2026-10-15, inactive)
 
 A genuine authenticated NEW-study command already owns a live resume claim,
@@ -60,8 +122,15 @@ and executed the actual worker recovery/wait marker. The prepared-index suite
 finished 16/17: its final cancellation assertion still expected the two claims
 from before the deliberately injected recovery, while the correct saved value
 was three. The correction compares cancellation with the independently checked
-waiting state and asserts that its whole history is preserved. New full cloud
-execution is required; this partial run is not overall native acceptance.
+waiting state and asserts that its whole history is preserved. Exact corrected
+head `1cdd4b7bed6ebfe6e74123878c4f88023ce40f5d` subsequently passed all four
+foundation jobs in run `38760927115` and sales-rich run `38760927158`.
+The full native log (`116511674199`) was inspected: migrations 417/417,
+subject persistence 1/1, prepared-index 17/17, edge 1/1 and bootstrap 2/2,
+with zero failures, cancellations or skips. Both actual catalog-worker
+recovery/wait and retained-selection-intent exclusion markers executed.
+That is exact-parent small protocol evidence, not a newer child's acceptance,
+actual review, protected-main clearance or licensed/live capacity acceptance.
 Initial geographic/source acquisition,
 post-selection worker dispatch, terminal pin transfer, coherent publication,
 licensed large-area and Hardy live acceptance remain unfinished.

@@ -101,7 +101,7 @@ test('authored indexed cloud fixture uses independent issued graph, full prior-s
 
 test('positive first-index source fixture is a fourth independently captured graph, never a rewrite of the three exclusion/EMPTY graphs',()=>{
   const s=readFileSync(new URL('./neighborhoodGroupIndex.integration.test.js',import.meta.url),'utf8'),
-    fixtureAt=s.indexOf("for(const selectionWaitFixture of [false,true,'intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner'])"),
+    fixtureAt=s.indexOf("for(const selectionWaitFixture of [false,true,'intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner','union-worker'])"),
     positiveAt=s.indexOf("positiveIndexedSourceFixture=selectionWaitFixture==='union-all-site-positive'||semanticRecoveryFixture",fixtureAt),
     wholePartAt=s.indexOf('if(positiveIndexedSourceFixture)await pool.query("UPDATE gis.dcad_parcels SET class_code=\'A11\' WHERE object_id=4")',positiveAt),
     freezeAt=s.indexOf('const frozen=await runNeighborhoodGroupIndex(',positiveAt);

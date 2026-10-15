@@ -1,5 +1,34 @@
 # Complete larger-area Custom neighborhood studies
 
+## Selected-study continuation worker (2026-10-15, inactive)
+
+`runCustomCohortV2SelectedJobOnce` now connects issued selected-union,
+recorded-eligibility, evidence, reported-metric, contribution-statistics,
+numeric and semantic continuations to their existing complete-original
+owners. It reads at most one bounded immutable receipt for routing only;
+the original owner still reopens all required originals, entire caches and
+native parents, and rechecks current actor, assignment, draft, subject and
+each source purpose at both ends under its unchanged aggregate budgets.
+The worker reloads the saved request; no caller groups, sources, dates,
+cursors or full-population arrays are accepted. Each invocation makes one
+step and returns status only. Successful pages retain the failure-attempt
+count; ordinary failed/expired recovery uses the existing five-attempt cap.
+
+Semantic DONE is deliberately excluded from both claim paths. Its pending
+token remains unconsumed rather than entering the unregistered transaction
+index or claiming publication/context completion. The initial authenticated
+selection command remains a separate worker lane. No route, CLI, default
+worker, schedule or migration registration activates either entry point.
+
+Focused tests pass 12/12, serially in about 1.1 seconds. A new independent
+cloud PostgreSQL graph exercises actual concurrent single-token claiming,
+current source revocation before original reads, ordinary recovery, lost
+real owner-COMMIT acknowledgment, all seven actual population owners and
+repeated idle at semantic DONE while preserving user choices, workspace,
+history, reports and pins. Execution of that new graph and full exact-head
+cloud validation is pending. This small native protocol test is not licensed
+large-area acquisition, live acceptance or production-speed proof.
+
 ## Initial selected-union worker handoff (2026-10-15, inactive)
 
 A genuine authenticated NEW-study command already owns a live resume claim,
@@ -60,8 +89,15 @@ and executed the actual worker recovery/wait marker. The prepared-index suite
 finished 16/17: its final cancellation assertion still expected the two claims
 from before the deliberately injected recovery, while the correct saved value
 was three. The correction compares cancellation with the independently checked
-waiting state and asserts that its whole history is preserved. New full cloud
-execution is required; this partial run is not overall native acceptance.
+waiting state and asserts that its whole history is preserved. Exact corrected
+head `1cdd4b7bed6ebfe6e74123878c4f88023ce40f5d` subsequently passed all four
+foundation jobs in run `38760927115` and sales-rich run `38760927158`.
+The full native log (`116511674199`) was inspected: migrations 417/417,
+subject persistence 1/1, prepared-index 17/17, edge 1/1 and bootstrap 2/2,
+with zero failures, cancellations or skips. Both actual catalog-worker
+recovery/wait and retained-selection-intent exclusion markers executed.
+That is exact-parent small protocol evidence, not a newer child's acceptance,
+actual review, protected-main clearance or licensed/live capacity acceptance.
 Initial geographic/source acquisition,
 post-selection worker dispatch, terminal pin transfer, coherent publication,
 licensed large-area and Hardy live acceptance remain unfinished.

@@ -144,7 +144,7 @@ test('native sixth fault injection stays armed until actual source-ending, DML o
   assert.ok(block.includes("!fault?.startsWith('evidence_')"));
   for(const tag of ['evidence_insert_rollback','evidence_advance_rollback','evidence_checkpoint_rollback','evidence_yield_rollback',
     'evidence_orphan_commit','evidence_head_ending'])assert.ok(fixture.includes(tag),tag);
-  assert.ok(fixture.includes("'evidence_orphan_commit','metrics_orphan_commit','stats_orphan_commit','numeric_orphan_commit','semantic_orphan_commit'].includes(refsFault)"));
+  assert.ok(fixture.includes("'evidence_orphan_commit','metrics_orphan_commit','stats_orphan_commit','numeric_orphan_commit','semantic_orphan_commit','early_orphan_commit'].includes(refsFault)"));
 });
 
 test('native sixth fresh EMPTY preserves explicit-null subject precedence and exact zero-original admission',()=>{

@@ -156,6 +156,10 @@ test('early native candidate keeps original guards, same-TX issuance and deferre
     'NEW.issued_transaction_id IS DISTINCT FROM OLD.issued_transaction_id','BEFORE TRUNCATE'])
     assert.ok(sql.includes(text),text);
   assert.doesNotMatch(sql,/DISABLE TRIGGER|DROP TRIGGER|DROP TABLE|DELETE FROM|UPDATE app\.|SET attempts|attempts=0|CREATE EXTENSION/);
+  // PL/pgSQL scans outer IF up to THEN; an unparenthesized CASE exposes its
+  // inner THEN as the IF terminator and fails native compilation (42601).
+  assert.match(sql,/evidence_refs'\)<>\(CASE NEW\.phase[\s\S]*?ELSE 6 END\) OR job\.context_sha256/);
+  assert.doesNotMatch(sql,/<>CASE NEW\.phase/);
   for(const match of sql.matchAll(/CREATE (?:TABLE|FUNCTION|TRIGGER|CONSTRAINT TRIGGER) (?:app\.)?([a-z0-9_]+)/g))
     assert.ok(Buffer.byteLength(match[1])<=63,match[1]);
   assert.ok(owner.indexOf('if(yieldingEarlyProgress)')>owner.indexOf('const decision=await boundedPolicy(authorizeMarketData'));

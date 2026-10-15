@@ -1,5 +1,32 @@
 # Complete larger-area Custom neighborhood studies
 
+## Initial selected-union worker handoff (2026-10-15, inactive)
+
+A genuine authenticated NEW-study command already owns a live resume claim,
+but catalog workers must not reclaim it or infer its selected groups. The new
+initial selected worker adopts that exact native claim once, reloads the saved
+request and current database actor, and invokes the existing complete-original
+selected-union owner for one contribution. Its result is an issued continuation,
+not a completed context. Ordinary failure/expired-claim recovery retains the
+existing five-attempt ceiling and uses a fresh native token.
+
+Migration `20261207_custom_cohort_selected_initial_worker_v2.sql` remains
+unregistered. Its immutable, at-most-five-row-per-operation dispatch ledger
+binds the actual job, command, organization, actor, token and attempt. Native
+insertion and deferred COMMIT checks require the live original intent/claim;
+neither the ledger nor its request digest authorizes source data. Every original,
+cache, assignment, draft, subject and current source decision still passes
+through the unchanged bounded original owner.
+
+Focused local tests pass 11/11. The cloud-only independent union fixture installs
+this dormant schema explicitly, refuses forged/orphan adoptions, validates a
+real ordinary recovery and rollback, then runs two actual initial workers with
+one adopter/one source-owner invocation and a lost original-owner COMMIT ACK.
+New native/full cloud execution is pending. No route, CLI, default worker or
+schedule imports the entry point. Subsequent selected continuations, initial
+geographic/source dispatch, coherent publication, terminal pin transfer and
+licensed/live large-area acceptance remain unfinished.
+
 ## Existing-database V2 catalog worker (2026-10-15, inactive)
 
 The current roadmap uses CAD, sales and retained originals already present in

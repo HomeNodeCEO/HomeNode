@@ -70,6 +70,10 @@ import { createCustomCohortV2CatalogWorkerRepository }
   from '../src/services/neighborhoodAssessment/customCohortV2CatalogWorkerRepository.js';
 import { runCustomCohortV2CatalogJobOnce }
   from '../src/services/neighborhoodAssessment/customCohortV2CatalogJobWorker.js';
+import { createCustomCohortV2SelectedInitialWorkerRepository }
+  from '../src/services/neighborhoodAssessment/customCohortV2SelectedInitialWorkerRepository.js';
+import { runCustomCohortV2SelectedInitialJobOnce }
+  from '../src/services/neighborhoodAssessment/customCohortV2SelectedInitialJobWorker.js';
 import { createCustomCohortV2SelectionWaitRepository }
   from '../src/services/neighborhoodAssessment/customCohortV2SelectionWaitRepository.js';
 import { CUSTOM_COHORT_ORIGINAL_ACCOUNT_OWNER_LIMITS as ORIGINAL_OWNER_LIMITS }
@@ -4815,7 +4819,55 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
           const originalResumeToken=liveClaim.claim_token,unionFrom=refsCalls.length;
           // REAL COMMIT happened before transport failure. Never recapture or
           // duplicate first-account progress on recovery.
-          refsFault='commit';await assert.rejects(step(),e=>e.outcome_unknown===true);
+          if(selectionWaitFixture==='union'){
+            // Explicit isolated installation only. The runtime migration
+            // registry/default worker must remain inactive for this slice.
+            await pool.query(readFileSync(new URL('../migrations/20261207_custom_cohort_selected_initial_worker_v2.sql',import.meta.url),'utf8'));
+            const dispatchRows=async()=>(await pool.query(
+              'SELECT operation_id::text,organization_id::text,command_id::text,claim_token::text,attempts,actor_user_id::text FROM app.neighborhood_custom_cohort_selected_initial_dispatch_v2 WHERE operation_id=$1',
+              [refsOperation])).rows;
+            for(const [token,attempt,user,command] of [[randomUUID(),2,actor,selectionIntent.command_id],
+              [liveClaim.claim_token,3,actor,selectionIntent.command_id],[liveClaim.claim_token,2,randomUUID(),selectionIntent.command_id],
+              [liveClaim.claim_token,2,actor,randomUUID()]])
+              await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
+                'INSERT INTO app.neighborhood_custom_cohort_selected_initial_dispatch_v2(operation_id,organization_id,command_id,claim_token,attempts,actor_user_id) VALUES($1,$2,$3,$4,$5,$6)',
+                [refsOperation,organization,command,token,attempt,user])),/selected_initial_dispatch_v2_live_intent_required/);
+            await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
+              const [adopted]=await createCustomCohortV2SelectedInitialWorkerRepository(client).claimDue({leaseSeconds:900});
+              assert.deepEqual(adopted.claim,liveClaim);
+              await createCustomCohortCaptureJobRepository(client).failClaim(liveClaim,'synthetic_orphan_dispatch');
+            }),/selected_initial_dispatch_v2_orphan_claim/);
+            assert.deepEqual(await dispatchRows(),[]);await unionUnchanged();
+            await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
+              await createCustomCohortCaptureJobRepository(client).failClaim(liveClaim,'synthetic_initial_dispatch_recovery',{retrySeconds:1});
+              await client.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET run_after=clock_timestamp() WHERE operation_id=$1',[refsOperation]);
+              const [recovered]=await createCustomCohortV2SelectedInitialWorkerRepository(client).claimDue({leaseSeconds:900});
+              assert.equal(recovered.claim.attempts,3);assert.notEqual(recovered.claim.claim_token,liveClaim.claim_token);
+              await client.query('SET CONSTRAINTS ALL IMMEDIATE');
+              throw new Error('synthetic initial dispatcher recovery rollback');
+            }),/synthetic initial dispatcher recovery rollback/);
+            assert.deepEqual(await dispatchRows(),[]);await unionUnchanged();
+            const dispatchFrom=refsCalls.length;refsFault='commit';
+            const dispatched=await Promise.all([1,2].map(()=>runCustomCohortV2SelectedInitialJobOnce({
+              pool,cohortService:freshRefsOwner(),leaseSeconds:900})));
+            assert.deepEqual(dispatched.map(result=>result.status).sort(),['idle','outcome_unknown']);
+            assert.equal(dispatched.find(result=>result.status==='outcome_unknown').operation_id,refsOperation);
+            assert.equal(refsFault,null);unionStepQueryCounts.push(refsCalls.length-dispatchFrom-3);
+            assert.deepEqual(await dispatchRows(),[{operation_id:refsOperation,organization_id:organization,
+              command_id:selectionIntent.command_id,claim_token:originalResumeToken,attempts:2,actor_user_id:actor}]);
+            for(const sql of ['DELETE FROM app.neighborhood_custom_cohort_selected_initial_dispatch_v2 WHERE operation_id=$1',
+              'UPDATE app.neighborhood_custom_cohort_selected_initial_dispatch_v2 SET attempts=attempts WHERE operation_id=$1',
+              'TRUNCATE app.neighborhood_custom_cohort_selected_initial_dispatch_v2'])
+              await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql,sql.includes('$1')?[refsOperation]:[])),
+                /selected_initial_dispatch_v2_immutable/);
+            console.info('[native-selected-initial-worker-handoff-v2]',{real_authenticated_command_and_live_resume_token:true,
+              two_workers_one_adopter_one_actual_original_owner:true,ordinary_recovery_native_commit_guard_and_rollback:true,
+              forged_actor_command_token_attempt_and_orphan_commit_refused:true,immutable_five_attempt_dispatch_ledger:true,
+              original_current_authority_and_complete_packet_fences_preserved:true,lost_real_owner_commit_ack_preserves_union_progress:true,
+              new_group_choice:false,context_complete:false,pin_transfer:false,activation:false});
+          }else{
+            refsFault='commit';await assert.rejects(step(),e=>e.outcome_unknown===true);
+          }
           const firstState=await readUnion(),firstJob=await continuationJob(),firstContinuation=await continuationRow();
           assert.equal(firstState.heads.length,1);assert.equal(firstState.heads[0].sequence,1);
           assert.equal(firstState.groups.length,1);assert.equal(firstState.rows.length,allSelected?1:0,

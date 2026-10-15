@@ -21,7 +21,14 @@ The entry point has no default worker, route, CLI or schedule. Focused local
 checks pass 11/11 with no database or full local suite. The cloud PostgreSQL
 fixture now exercises concurrent catalog claims and the actual worker's
 ordinary recovery into selection-wait after a lost COMMIT acknowledgment.
-That new native execution is pending. Initial geographic/source acquisition,
+The first cloud run at `10aa51dd` passed 417 migrations and the subject test,
+and executed the actual worker recovery/wait marker. The prepared-index suite
+finished 16/17: its final cancellation assertion still expected the two claims
+from before the deliberately injected recovery, while the correct saved value
+was three. The correction compares cancellation with the independently checked
+waiting state and asserts that its whole history is preserved. New full cloud
+execution is required; this partial run is not overall native acceptance.
+Initial geographic/source acquisition,
 post-selection worker dispatch, terminal pin transfer, coherent publication,
 licensed large-area and Hardy live acceptance remain unfinished.
 

@@ -7209,11 +7209,13 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,refsOperation)),{status:'cancelled'});
       assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,refsOperation)),{status:'cancelled'});
       const cancelledWait=await continuationJob();
+      assert.deepEqual(cancelledWait,{...waiting,status:'cancelled'},
+        'cancellation preserves the actual waiting claim history, including an ordinary worker recovery');
       for(const set of ["status='retry'",'checkpoint=NULL',"cancellation_requested_at=NULL"])
         await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
           `UPDATE app.neighborhood_custom_cohort_capture_jobs SET ${set} WHERE operation_id=$1`,[refsOperation])),/selection_wait_immutable/);
       assert.deepEqual(await continuationJob(),cancelledWait);
-      assert.equal((await continuationJob()).attempts,beforeWaitJob.attempts);assert.equal(await pinCount(),pinsBeforeContinuation);
+      assert.equal((await continuationJob()).attempts,waiting.attempts);assert.equal(await pinCount(),pinsBeforeContinuation);
       }
       await removeSyntheticTargetWorkspace();
       assertBoundedCohortAuthorityAggregates(refsCalls.slice(waitFrom).map((text,index)=>({text,values:refsQueryParameters[waitFrom+index]})),

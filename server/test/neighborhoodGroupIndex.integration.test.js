@@ -4,7 +4,7 @@ import { randomUUID,createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
 import { prepareNeighborhoodCiDatabase } from './helpers/neighborhoodCiDatabase.js';
-import { observeNeighborhoodCiPreparedQueries } from './helpers/neighborhoodCiPreparedQueries.js';
+import { observeNeighborhoodCiPreparedQueries, NEIGHBORHOOD_CI_PROTOCOL_SESSION_OPTIONS } from './helpers/neighborhoodCiPreparedQueries.js';
 import { runNeighborhoodSelectedNumericIndexV2DatabaseChecks } from './helpers/neighborhoodSelectedNumericIndexV2DatabaseChecks.js';
 import { runNeighborhoodSelectedNumericPopulationV2DatabaseChecks } from './helpers/neighborhoodSelectedNumericPopulationV2DatabaseChecks.js';
 import { runNeighborhoodSelectedTransactionIndexV2DatabaseChecks } from './helpers/neighborhoodSelectedTransactionIndexV2DatabaseChecks.js';
@@ -1427,9 +1427,12 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     positiveIndexedSourceFixture=selectionWaitFixture==='union-all-site-positive'||semanticRecoveryFixture,
     observedHousingFixture=selectionWaitFixture==='union-all'||positiveIndexedSourceFixture||sharedTransactionFixture;
   const target=await prepareNeighborhoodCiDatabase();const {default:pg}=await import('pg');
-  const pool=new pg.Pool({connectionString:target.connectionString,max:2,statement_timeout:120_000});
+  const pool=new pg.Pool({connectionString:target.connectionString,max:2,statement_timeout:120_000,options:NEIGHBORHOOD_CI_PROTOCOL_SESSION_OPTIONS});
   const preparedCiQueries=observeNeighborhoodCiPreparedQueries(pool);
+  let protocolQueryOptions=null;
   try {
+    protocolQueryOptions=(await pool.query("SELECT current_setting('jit') AS jit,current_setting('plan_cache_mode') AS plan_cache_mode")).rows[0];
+    assert.deepEqual(protocolQueryOptions,{jit:'off',plan_cache_mode:'force_generic_plan'});
     await pool.query(NEIGHBORHOOD_CACHED_SOURCE_SCHEMA);
     await pool.query('ALTER TABLE core.primary_improvements ADD COLUMN IF NOT EXISTS pool boolean');
     // Only this disposable fixture accepts a Polygon CAD geometry, proving
@@ -7771,8 +7774,12 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,operation));
     await assert.rejects(withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSourceClosurePages(client,
       frozenSpatialOptions({...options,claim})).page({kind:'source_records',cursor:''})),/claim_lost/);
+  }finally{
     console.info('[native-original-protocol-prepared-CI-queries]',{fixture:selectionWaitFixture,...preparedCiQueries.snapshot()});
-  }finally{await pool.end();}
+    console.info('[native-original-protocol-query-timings]',{fixture:selectionWaitFixture,session:protocolQueryOptions,
+      families:preparedCiQueries.timings(),diagnostic_only:true,production_speed_acceptance:false});
+    await pool.end();
+  }
 });
 
 test('isolated PostgreSQL: current CAD account pages preserve missing primary members and native false without inferred amenities',{

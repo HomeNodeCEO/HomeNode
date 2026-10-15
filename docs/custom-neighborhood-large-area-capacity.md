@@ -1,5 +1,29 @@
 # Complete larger-area Custom neighborhood studies
 
+## Cloud protocol-test cost diagnostics (2026-10-15)
+
+Exact selected-worker head `5ca1eecd` executed the new expiry regression and
+all seven original-owner worker stages successfully, but the full native run
+finished 16/18 with two unchanged 180-second fixture timeouts (positive-site
+and semantic-recovery), zero assertion failures and zero skips. This is not a
+full native pass, and the failed job is not being blindly retried.
+
+The disposable loopback CI graph sessions now disable JIT and use generic
+prepared plans to avoid repeated small-probe setup. Each session asserts the
+actual settings. Production pools, source SQL, original reads, fault probes,
+query/byte budgets, statement timeouts and fixture deadlines are unchanged.
+This is a protocol-correctness fixture configuration, not production tuning or
+proof of a speed improvement. The new cloud run must establish its result.
+
+A bounded timing observer reports at most twelve static query-comment families
+from at most 128 named families plus an overflow bucket. It retains no SQL,
+parameters, result rows, source evidence or authority decisions. Exact result
+and error values, callbacks, custom query objects and transaction calls pass
+through without retries; unawaited native failures still fail the process.
+Promise settlement is observed without replacing its result or error. Callback/custom executions
+are not timed. Diagnostics print even on the independent worker graph's early
+return. Eight focused helper checks pass; full cloud execution is pending.
+
 ## Selected-study continuation worker (2026-10-15, inactive)
 
 `runCustomCohortV2SelectedJobOnce` now connects issued selected-union,

@@ -1413,8 +1413,8 @@ test('isolated PostgreSQL: freezes a complete 60001-account original source popu
 // Independent real-native captures: preserve the original five-failure terminal
 // test, and build an entirely new issued graph for the waiting boundary. Never
 // clone/rebind job roots, summaries, original payloads or caller DONE metadata.
-for(const selectionWaitFixture of [false,true,'intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner','union-worker']) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
-  +(['intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner','union-worker'].includes(selectionWaitFixture)?` with explicit new-study selection ${selectionWaitFixture}`:selectionWaitFixture?' with issued selection waiting':''),{
+for(const selectionWaitFixture of [false,true,'intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner','union-worker','early-continuations']) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
+  +(selectionWaitFixture==='early-continuations'?' with early original-owner continuations':['intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner','union-worker'].includes(selectionWaitFixture)?` with explicit new-study selection ${selectionWaitFixture}`:selectionWaitFixture?' with issued selection waiting':''),{
   // The tenth graph replays every real parent before its own A/B/EMPTY owner
   // proof. Keep all nine pre-existing paths at their original 180-second
   // deadline; reserve extra fixture time only for that new graph. This does
@@ -1422,6 +1422,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
   skip:!process.env.DATABASE_URL,timeout:selectionWaitFixture==='union-all-transaction-index-owner'?240_000:180_000,
 },async()=>{
   const transactionIndexOwnerFixture=selectionWaitFixture==='union-all-transaction-index-owner',
+    earlyContinuationFixture=selectionWaitFixture==='early-continuations',
     sharedTransactionFixture=selectionWaitFixture==='union-all-shared-transaction'||transactionIndexOwnerFixture,
     semanticRecoveryFixture=selectionWaitFixture==='union-all-semantic-recovery',
     positiveIndexedSourceFixture=selectionWaitFixture==='union-all-site-positive'||semanticRecoveryFixture,
@@ -1858,7 +1859,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       refsCalls.push(config.text);
       refsQueryParameters.push(config.values);
       if(config.text.includes('neighborhood-cohort-blob:insert */'))refsBlobPuts.push(config.values[3]);
-      const orphanUnionYield=(['union_orphan_commit','eligibility_orphan_commit','evidence_orphan_commit','metrics_orphan_commit','stats_orphan_commit','numeric_orphan_commit','semantic_orphan_commit'].includes(refsFault)
+      const orphanUnionYield=(['union_orphan_commit','eligibility_orphan_commit','evidence_orphan_commit','metrics_orphan_commit','stats_orphan_commit','numeric_orphan_commit','semantic_orphan_commit','early_orphan_commit'].includes(refsFault)
         ||transactionIndexOwnerFixture&&refsFault==='transaction_index_orphan_commit')&&config.text.includes('custom-cohort-v2-continuation:yield');
       // Negative native guard test: execute the REAL yield, then roll back ONLY
       // that statement. The earlier real group/head/root writes remain pending;
@@ -2353,7 +2354,71 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       }
       if(config.text==='COMMIT'&&refsFault==='commit'){refsFault=null;throw Error('synthetic V2 owner COMMIT acknowledgment lost');}
       return result;}};}};
-    const refsOwner=createCustomCohortContextCapture({pool:refsPool,sourceMode:'combined-witness2-v1',authorizeMarketData:fixturePolicy()});
+    const readEarlyProtected=async()=>({
+      report:(await pool.query('SELECT to_jsonb(r) AS body FROM app.report_files r WHERE id=$1',[scope.report_file_id])).rows,
+      assignment:(await pool.query('SELECT to_jsonb(a) AS body FROM app.assignment_files a WHERE id=$1',[assignment])).rows});
+    const earlyProtected=earlyContinuationFixture?await readEarlyProtected():null;
+    if(earlyContinuationFixture)await withCustomCohortJobTransaction(pool,async client=>{
+      for(const name of ['20261206_custom_cohort_selected_transaction_index_owner_v2.sql',
+        '20261208_custom_cohort_early_continuations_v2.sql'])
+        await client.query(readFileSync(new URL(`../migrations/${name}`,import.meta.url),'utf8'));
+    });
+    const earlyCounts={frozen_verify_refs_v2:0,frozen_geo_verify_refs_v2:0,frozen_identity_refs_v2:0};
+    const createRefsOwner=()=>{
+      const service=createCustomCohortContextCapture({pool:refsPool,sourceMode:'combined-witness2-v1',authorizeMarketData:fixturePolicy()});
+      if(!earlyContinuationFixture)return service;
+      const names=[
+        ['verifyFrozenCaptureJobSourceReferencesV2Page','continueFrozenCaptureJobSourceReferencesV2Page'],
+        ['verifyFrozenCaptureJobStockOriginalReferencesV2','continueFrozenCaptureJobStockOriginalReferencesV2'],
+        ['verifyFrozenCaptureJobSourceIdentityReferencesV2','continueFrozenCaptureJobSourceIdentityReferencesV2']];
+      // Test harness only: execute the REAL fixed original owner, then consume
+      // its actual single-use native success with an independently committed
+      // fresh token. No owner result, source read or checkpoint is fabricated.
+      return {...service,...Object.fromEntries(names.map(([oldName,name])=>[oldName,async(...args)=>{
+        let result,failure;
+        try{result=await service[name](...args);}catch(error){failure=error;}
+        const pending=(await pool.query(`SELECT c.*,job.status,job.claim_token,job.attempts
+          FROM app.neighborhood_custom_cohort_v2_continuations c
+          JOIN app.neighborhood_custom_cohort_capture_jobs job USING(operation_id)
+          WHERE c.operation_id=$1 AND c.consumed_claim_token IS NULL`,[refsOperation])).rows[0];
+        if(pending){
+          assert.equal(pending.status,'retry');assert.equal(pending.claim_token,null);
+          assert.equal(pending.attempts,refsClaim.attempts);assert.equal(pending.issued_attempts,refsClaim.attempts);
+          assert.ok(Object.hasOwn(earlyCounts,pending.phase));earlyCounts[pending.phase]++;
+          // Generic failure claiming must not spend a new attempt on success.
+          assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>
+            createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900})),[]);
+          const claims=await Promise.all([1,2].map(()=>withCustomCohortJobTransaction(pool,client=>
+            createCustomCohortV2ContinuationRepository(client).claimDue({limit:1,leaseSeconds:900}))));
+          const actual=claims.flat();assert.equal(actual.length,1);assert.equal(actual[0].claim.attempts,refsClaim.attempts);
+          assert.notEqual(actual[0].claim.claim_token,refsClaim.claim_token);
+          Object.assign(refsClaim,actual[0].claim);
+          // A consumed/previous-TX head is not fresh new issuance.
+          await assert.rejects(withCustomCohortJobTransaction(pool,client=>
+            createCustomCohortV2ContinuationRepository(client).yieldIssued(refsClaim,options)),
+          error=>error.code==='55000');
+          if(Object.values(earlyCounts).reduce((sum,count)=>sum+count,0)===1){
+            // A genuine ordinary failure after success still spends ONE
+            // failure attempt; later successful pages must retain that history.
+            const before=refsClaim.attempts,oldToken=refsClaim.claim_token;
+            await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client)
+              .failClaim(refsClaim,'synthetic_early_recovery',{retrySeconds:1}));
+            await new Promise(resolve=>setTimeout(resolve,1100));
+            const recovered=await withCustomCohortJobTransaction(pool,client=>
+              createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900}));
+            assert.equal(recovered.length,1);assert.equal(recovered[0].operation_id,refsOperation);
+            assert.equal(recovered[0].attempts,before+1);assert.notEqual(recovered[0].claim_token,oldToken);
+            Object.assign(refsClaim,{operation_id:refsOperation,claim_token:recovered[0].claim_token,attempts:recovered[0].attempts});
+          }
+        }
+        if(failure)throw failure;
+        if(result.advanced){assert.equal(result.continuation.status,'continuation_pending');
+          assert.equal(result.continuation.attempts,refsClaim.attempts);}
+        else assert.equal(result.continuation,undefined);
+        return result;
+      }]))};
+    };
+    const refsOwner=createRefsOwner();
     const refsOptions={captureJobClaim:refsClaim};
     const cadClock=(await pool.query(`WITH t AS (SELECT clock_timestamp() AS now) SELECT
       to_char((now-interval '1 minute') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS past,
@@ -2420,7 +2485,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     await assert.rejects(refsOwner.prepareFrozenCaptureJobSourceReferencesV2Page(refsInput,refsOptions),error=>error.outcome_unknown===true);
     const refsCommitted=await readRefsCheckpoint();
     assert.equal(refsCommitted.phase,'frozen_source_refs_v2');assert.equal(refsCommitted.evidence_refs.length,3);
-    const freshRefsOwner=()=>createCustomCohortContextCapture({pool:refsPool,sourceMode:'combined-witness2-v1',authorizeMarketData:fixturePolicy()});
+    const freshRefsOwner=createRefsOwner;
     let refsPrefix=await freshRefsOwner().prepareFrozenCaptureJobSourceReferencesV2Page(refsInput,refsOptions);
     assert.equal(refsPrefix.layers.parcels.page_count,1,'lost real COMMIT ACK resumes at the next unfinished layer');
     assert.equal(refsPrefix.layers.accounts.page_count,1);
@@ -2536,6 +2601,14 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     assert.ok(!refsCalls.slice(graphRoleFrom).some(sql=>/neighborhood-cohort-blob:|neighborhood-frozen-job-closure:|custom-cohort-graph-v2:/.test(sql)));
     await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
     const graphBeforeBlobs=await refsBlobCount();
+    if(earlyContinuationFixture){
+      refsFault='early_orphan_commit';
+      await assert.rejects(refsOwner[graphMethod](refsInput,refsOptions),
+        error=>error.code==='55000'&&/early_v2_commit_conflict/.test(error.message));
+      assert.equal(refsFault,null);assert.equal(await readRefsAnchor(),null);
+      assert.deepEqual(await readRefsCheckpoint(),refsGraphCheckpoint);assert.equal(await refsBlobCount(),graphBeforeBlobs);
+      assert.equal((await pool.query('SELECT 1 FROM app.neighborhood_custom_cohort_early_v2_jobs WHERE operation_id=$1',[refsOperation])).rowCount,0);
+    }
     for(const [fault,reason] of [['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],
       ['subject',/subject_changed/],['claim',/claim_lost/],['cancel',/cancelled/]]){
       refsFault=fault;refsAbort=new AbortController();
@@ -2974,6 +3047,27 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       independent_identity_head:true,unissued_done_refused_before_original:true,next_prefix_and_origin_counts_guarded:true,
       short_prefix_guard_only_rollback:true,both_end_rights_rollback:true,lost_commit_resumes_next_layer:true,
       ended_replay_no_original:true,legacy_cast_refused:true,generation_pin_retained:true,source_acquisition:false,production_latency:false});
+    if(earlyContinuationFixture){
+      assert.deepEqual(earlyCounts,{frozen_verify_refs_v2:graphPages,frozen_geo_verify_refs_v2:1,frozen_identity_refs_v2:7});
+      const job=(await pool.query('SELECT status,attempts,last_error_code,context_sha256 FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[refsOperation])).rows[0];
+      assert.equal(job.status,'running');assert.equal(job.attempts,3);
+      assert.equal(job.last_error_code,'synthetic_early_recovery');assert.equal(job.context_sha256,null);
+      const c=(await pool.query('SELECT sequence,phase,consumed_claim_token FROM app.neighborhood_custom_cohort_v2_continuations WHERE operation_id=$1',[refsOperation])).rows[0];
+      assert.equal(c.sequence,graphPages+8);assert.equal(c.phase,'frozen_identity_refs_v2');
+      assert.equal(c.consumed_claim_token,refsClaim.claim_token);
+      assert.equal((await pool.query('SELECT 1 FROM app.neighborhood_custom_cohort_early_v2_jobs WHERE operation_id=$1',[refsOperation])).rowCount,1);
+      for(const sql of ['UPDATE app.neighborhood_custom_cohort_early_v2_jobs SET request_sha256=request_sha256 WHERE operation_id=$1',
+        'DELETE FROM app.neighborhood_custom_cohort_early_v2_jobs WHERE operation_id=$1'])
+        await assert.rejects(pool.query(sql,[refsOperation]),error=>error.code==='55000');
+      await assert.rejects(pool.query('TRUNCATE app.neighborhood_custom_cohort_early_v2_jobs'),error=>error.code==='55000');
+      assert.deepEqual(await readEarlyProtected(),earlyProtected);
+      console.info('[native-early-original-success-continuations-v2]',{graph_pages:graphPages,geographic_pages:1,identity_pages:7,
+        actual_owner_ending_rights_and_faults:true,orphan_real_COMMIT_refused:true,three_lost_owner_COMMIT_ACKs:true,
+        concurrent_single_fresh_token:true,generic_failure_claim_excluded:true,previous_TX_head_cannot_reissue:true,
+        ordinary_failure_preserves_history:true,unchanged_reports_assignment_and_pin:true,source_prefix_worker:false,
+        automatic_dispatch:false,licensed_large_area_acceptance:false,production_speed_acceptance:false});
+      return;
+    }
     // Shared neutral syntax is read only after actual V2 issued graph,
     // geography and identity completion. The retained appraisal date remains
     // a consumer policy, never a cache key or caller-provided owner option.

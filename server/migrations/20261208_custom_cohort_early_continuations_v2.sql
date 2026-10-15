@@ -130,8 +130,8 @@ BEGIN
       SELECT receipt_reference,sequence,issued_transaction_id INTO STRICT actual_reference,actual_sequence,early_issued_tx
         FROM app.neighborhood_custom_cohort_identity_v2_anchors WHERE operation_id=NEW.operation_id AND organization_id=NEW.organization_id;
     END IF;
-    IF jsonb_array_length(job.checkpoint->'evidence_refs')<>CASE NEW.phase WHEN 'frozen_verify_refs_v2' THEN 4
-      WHEN 'frozen_geo_verify_refs_v2' THEN 5 ELSE 6 END OR job.context_sha256 IS NOT NULL THEN
+    IF jsonb_array_length(job.checkpoint->'evidence_refs')<>(CASE NEW.phase WHEN 'frozen_verify_refs_v2' THEN 4
+      WHEN 'frozen_geo_verify_refs_v2' THEN 5 ELSE 6 END) OR job.context_sha256 IS NOT NULL THEN
       RAISE EXCEPTION 'neighborhood_v2_continuation_checkpoint_conflict' USING ERRCODE='55000'; END IF;
     SELECT canonical_utf8::jsonb INTO STRICT early_receipt FROM app.neighborhood_cohort_evidence_blobs
       WHERE organization_id=NEW.organization_id AND content_sha256=actual_reference->>'content_sha256'

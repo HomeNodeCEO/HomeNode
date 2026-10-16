@@ -252,6 +252,9 @@ const FROZEN_SOURCE_STAGES = freeze({
     partitioningRecordedGroups: true, allowedPhases: ['frozen_stock_traversal_refs_v2', 'frozen_recorded_partition_refs_v2'] },
   original_recorded_partition_account_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingStockAccountPackages: true, readingRecordedPartition: true, allowedPhases: ['frozen_recorded_partition_refs_v2'] },
+  covered_recorded_partition_account_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    readingStockAccountPackages:true,readingRecordedPartition:true,coveredNeutralOriginals:true,
+    allowedPhases:['frozen_recorded_partition_refs_v2'] },
   original_stock_traversal_continue_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     traversingStock: true, yieldingV2Progress: true, allowedPhases: ['frozen_identity_refs_v2', 'frozen_stock_traversal_refs_v2'] },
   covered_stock_traversal_continue_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
@@ -259,6 +262,9 @@ const FROZEN_SOURCE_STAGES = freeze({
     allowedPhases:['frozen_identity_refs_v2','frozen_stock_traversal_refs_v2'] },
   original_recorded_partition_continue_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     partitioningRecordedGroups: true, yieldingV2Progress: true, allowedPhases: ['frozen_stock_traversal_refs_v2', 'frozen_recorded_partition_refs_v2'] },
+  covered_recorded_partition_continue_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    partitioningRecordedGroups:true,yieldingV2Progress:true,coveredNeutralOriginals:true,
+    allowedPhases:['frozen_stock_traversal_refs_v2','frozen_recorded_partition_refs_v2'] },
   original_recorded_catalog_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, allowedPhases: ['frozen_recorded_partition_refs_v2', 'frozen_recorded_catalog_refs_v2'] },
   original_recorded_catalog_continue_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
@@ -2957,7 +2963,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           :catalogingRecordedGroups?catalogIssued?.after??{after_account:'',account_count:0,done:false}
           :issued?.after??{after_account:'',account_count:0,done:false},
           graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
-        const accountOriginals=createNeighborhoodSharedStockOriginalCellsV2(client,stockOptions,graph,context.effective_date);
+        const createOriginals=coveredNeutralOriginals?createNeighborhoodCoveredStockOriginalCellsV2:createNeighborhoodSharedStockOriginalCellsV2;
+        const accountOriginals=createOriginals(client,stockOptions,graph,context.effective_date);
         // Future selection eligibility must not reopen the same account for
         // housing under a second child budget. The pending-target reader gets
         // every retained-date cell, full recorded label and housing state from
@@ -3518,6 +3525,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const initialCacheStock=cacheStockHandoff&&checkpoint.phase==='frozen_identity_refs_v2';
         if(initialCacheStock)await createCustomCohortCacheStockV2BridgeRepository(client).complete(claim,jobOptions);
         budget.check();return freeze({...(catalogingRecordedGroups?catalogResult:partitioningRecordedGroups?partitionResult:traversalResult),continuation,
+          ...(coveredNeutralOriginals&&partitioningRecordedGroups?{covered_neutral_originals:true,context_complete:false,pin_transfer:false}:{}),
           ...(cacheStockHandoff?{automatic_cache_stock_handoff:initialCacheStock,context_complete:false,pin_transfer:false}:{})});
       }
       // Every unchanged original/current-authority ending fence above must
@@ -3858,12 +3866,20 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       frozenCaptureJobSourceStage(value, options, 'covered_stock_traversal_continue_refs_v2'),
     continueOriginalFrozenCaptureJobRecordedPartitionReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_recorded_partition_continue_refs_v2'),
+    /** Independent native job-cache coverage admits whole-original replay;
+     * global cache status, source grants and every ending fence stay intact. */
+    continueCoveredOriginalFrozenCaptureJobRecordedPartitionReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'covered_recorded_partition_continue_refs_v2'),
     continueOriginalFrozenCaptureJobRecordedCatalogReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_recorded_catalog_continue_refs_v2'),
     /** Reconcile one indexed derived partition entry against EVERY original,
      * not a selected-union capability or a hash/count-only group reader. */
     readOriginalFrozenCaptureJobRecordedPartitionAccountReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_recorded_partition_account_refs_v2'),
+    /** Reconcile the complete partition entry against whole originals using
+     * actual native job-cache coverage; no global completion is fabricated. */
+    readCoveredOriginalFrozenCaptureJobRecordedPartitionAccountReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'covered_recorded_partition_account_refs_v2'),
     /** Reopen ONE whole original/ENTIRE cache/ENTIRE partition entry only after
      * independently issued catalog DONE. Same aggregate/current-ending fences;
      * no source authority from catalog counts, selection, new head or release. */

@@ -31,20 +31,27 @@ A caller cursor/DATA loop cannot reset the future selected-union owner's total
 budget or substitute this per-account result for complete original reconciliation.
 No source acquisition, metric/eligibility/historical inference or report readiness.
 
-209 focused tests PASS0fail0skip1466.8196ms; source/native syntax and diff checks
-pass. New native assertions AUTHORED for two original-backed accounts/one
-assigned/one conflicting,512-byte labels and entire derived/original equality,
-native metadata/ending row/blob/original-cache forgeries, all current/ending
-authority/cache/cancel fences, partial/unissued/corrupt heads, fresh dual empty
-probe, lost-ACK reopen and zero row/head/checkpoint/payload copies. New native/
-full cloud execution for the newly integrated head is PENDING. The actual
-protected parent #1246 merged as1b35afac after all16 exact817e checks passed,
-actual included review and its confirmed documentation fix. Native116867488884
-passed417 migrations/subject1/prepared8/edge1/bootstrap2, zero failures/skips/
-cancellations, with the actual partition marker at2026-10-16T07:47:32.2133205Z.
-That is parent evidence, not this new consumer head's acceptance. This branch
-was retargeted to main before integrating that actual merge. No heavy local
-suite or Indexer operation.
+209 focused consumer tests passed in 1,466.8196 ms, with zero failures or skips;
+source/native syntax and diff checks pass. Native assertions cover two
+original-backed accounts (one assigned and one conflicting), 512-byte labels,
+entire derived/original equality, native metadata/ending-row/blob/original-cache
+forgeries, all current/ending authority/cache/cancel fences, partial/unissued/
+corrupt heads, fresh dual empty probes, lost-ACK reopen and zero row/head/
+checkpoint/payload copies. Integrated consumer runtime head `c3d39e03` passed
+all 14 checks, including foundation run 38869765008. Its native job 116870842442
+passed 417 migration, 1 subject, 8 prepared-index, 1 edge and 2 bootstrap tests,
+with zero failures, skips or cancellations. The actual replayed-partition marker
+executed at 2026-10-16T08:01:04.5584699Z. This documentation correction still
+requires fresh exact-head cloud checks.
+
+Separately, the protected parent #1246 merged as `1b35afac` after all 16 checks
+on exact head `817e3163` passed, with an actual included review and its confirmed
+documentation fix. Parent native job 116867488884 passed 417 migration, 1 subject,
+8 prepared-index, 1 edge and 2 bootstrap tests, with zero failures, skips or
+cancellations. Its partition marker executed at 2026-10-16T07:47:32.2133205Z.
+These parent native results are distinct from this consumer's 209 focused tests
+and integrated runtime proof. This branch was retargeted to main before
+integrating the actual parent merge. No heavy local suite or Indexer operation.
 
 Bounded complete catalog grouping, server-owned exact distinct selected union/
 metric ordinals, original-reconciled medians/COD/calendar quarters, economic/

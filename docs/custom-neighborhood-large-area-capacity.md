@@ -1,5 +1,39 @@
 # Complete larger-area Custom neighborhood studies
 
+## Covered selected statistics-contribution worker (2026-10-16, not activated)
+
+`progressCoveredOriginalFrozenCaptureJobSelectedStatisticsReferencesV2` connects
+the existing eighth-pass original owner to the actual adopted neutral and CAD
+DONE coverage. Every native next selected account reopens all stock, CAD,
+all-date transaction and required subject originals and ENTIRE caches. Every
+retained seventh-pass metric-row field is independently compared to that fresh
+original reconstruction before deriving a contribution. A stored row, reference,
+count, hash or previous acknowledgement cannot replace source reconciliation.
+
+Only metrics DONE or incomplete contributions belong to this closed worker.
+All claim/recovery/expiry lanes stop at contribution DONE. Contribution row,
+receipt, head, exact fourteen-reference checkpoint and single-use continuation
+share one transaction AFTER all unchanged current and ending rights, actor,
+assignment, draft, subject, workspace, native lineage, claim and pin fences.
+Success preserves failure/error history. The five-failure ceiling and aggregate
+32MB/256-query/60s owner, single-use paired 250-original/128-query subbudget and
+16KB whole-result cap remain unchanged. No caller row/ordinal/DONE/callback.
+
+137 serial focused owner/worker/contribution/traversal/source-reopen checks
+passed, zero failures/cancellations/skips (2,201.2634ms). New native assertions
+extend the independently issued job through genuine failure/recovery, ending
+CAD/role/workspace and orphan-COMMIT rollback of rows AND head, lost ACK/fresh
+NEXT, two original-bound contributions, distinct EMPTY and the DONE expiry stop.
+Native execution and full cloud CI for this new slice are pending; authored
+checks and synthetic component fixtures are not licensed/speed acceptance.
+
+Contribution completion does not establish frequency/numeric indexes, complete
+medians/CODs/calendar quarters, historical/economic applicability, coherent
+publication or terminal pin handoff. No registry/default worker/route/schedule,
+source grant, genuine Hardy choice, accepted report, Apply, publication or pin
+activation changes. These remaining stages and licensed large-area/current-
+authority/production-speed acceptance stay open.
+
 ## Covered selected reported-metric worker (2026-10-16, not activated)
 
 `progressCoveredOriginalFrozenCaptureJobSelectedMetricReferencesV2` composes

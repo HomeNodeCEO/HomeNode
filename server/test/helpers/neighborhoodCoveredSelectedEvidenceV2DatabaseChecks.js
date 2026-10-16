@@ -18,8 +18,10 @@ import { runCustomCohortCoveredSelectedInitialV2JobOnce as runSelectedInitial } 
 import { runCustomCohortCoveredSelectedProgressV2JobOnce as runSelectedProgress } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectedProgressV2JobWorker.js';
 import { runCustomCohortCoveredSelectedEvidenceV2JobOnce as runEvidence } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectedEvidenceV2JobWorker.js';
 import { runCustomCohortCoveredSelectedMetricsV2JobOnce as runMetrics } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectedMetricsV2JobWorker.js';
+import { runCustomCohortCoveredSelectedStatisticsV2JobOnce as runStatistics } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectedStatisticsV2JobWorker.js';
 import { NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL as PACKET,
-  NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL as METRIC_PACKET }
+  NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL as METRIC_PACKET,
+  NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL as STATISTICS_PACKET }
   from '../../src/services/neighborhoodAssessment/neighborhoodSelectedTransactionOriginalPackageV2.js';
 import { CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_RIGHTS_KEY as CAD_RIGHTS }
   from '../../src/security/customNeighborhoodCadImprovementSourcePolicy.js';
@@ -36,7 +38,7 @@ export async function runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks({ p
     if (orphan) await raw.query('SAVEPOINT synthetic_evidence_orphan');
     const result = await raw.query(c);
     if (orphan) { fault = null; await raw.query('ROLLBACK TO SAVEPOINT synthetic_evidence_orphan'); await raw.query('RELEASE SAVEPOINT synthetic_evidence_orphan'); }
-    if (text === PACKET || text === METRIC_PACKET) {
+    if (text === PACKET || text === METRIC_PACKET || text === STATISTICS_PACKET) {
       originalReads++;
       if (fault === 'role') { fault = null; await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2', [scope.organization_id, actor]); }
       if (fault === 'workspace') { fault = null; await raw.query(`UPDATE app.custom_appraisal_workfile_sections
@@ -178,16 +180,73 @@ export async function runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks({ p
   assert.deepEqual(await evidence(), evidenceDone); assert.deepEqual(await nativeParents(), parents); assert.deepEqual(await workspace(), pendingWorkspace);
   assert.deepEqual(await runMetrics(args), { status: 'idle' }); assert.deepEqual(await runMetrics(args), { status: 'idle' });
   assert.deepEqual(await runEvidence(args), { status: 'idle' }); assert.deepEqual(await job(), metricsDoneJob);
+  const metricHeadDone = await metrics(), statisticsMethod = 'progressCoveredOriginalFrozenCaptureJobSelectedStatisticsReferencesV2',
+    statistics = async () => (await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_statistics_v2_heads WHERE operation_id=$1', [operation])).rows[0],
+    contributionRows = async () => (await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_statistics_v2_rows WHERE operation_id=$1 ORDER BY ordinal', [operation])).rows;
+  fault = 'cad'; assert.equal((await runStatistics(args)).reason, 'capture_failed'); assert.equal(fault, null);
+  assert.equal((await job()).attempts, 3); assert.equal(await statistics(), undefined); assert.deepEqual(await contributionRows(), []);
+  assert.deepEqual(await metrics(), metricHeadDone); assert.deepEqual(await metricRows(), rows);
+  await pool.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET run_after=clock_timestamp() WHERE operation_id=$1', [operation]);
+  let statisticsClaim;
+  assert.equal((await runStatistics({ ...args, cohortService: { async [statisticsMethod](value, options) {
+    statisticsClaim = options.captureJobClaim; assert.equal(statisticsClaim.attempts, 4); const claimed = await job();
+    for (const [probe, reason] of [['workspace', /custom_cohort_group_workspace_study_changed/], ['role', /job_actor_access_revoked/],
+      ['cad', /market_data_access_denied/], ['orphan', e => e.outcome_unknown === true && e.code === '55000']]) {
+      fault = probe; const reads = originalReads; await assert.rejects(service[statisticsMethod](value, options), reason);
+      assert.equal(fault, null); assert.equal(originalReads, reads + 1);
+      if (probe === 'role') await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')", [scope.organization_id, actor]);
+      assert.deepEqual(await job(), claimed); assert.equal(await statistics(), undefined); assert.deepEqual(await contributionRows(), []);
+      assert.deepEqual(await metrics(), metricHeadDone); assert.deepEqual(await metricRows(), rows);
+      assert.deepEqual(await evidence(), evidenceDone); assert.deepEqual(await nativeParents(), parents); assert.deepEqual(await workspace(), pendingWorkspace);
+    }
+    fault = 'ack'; return service[statisticsMethod](value, options);
+  } } })).status, 'outcome_unknown');
+  assert.equal(fault, null); assert.equal((await statistics()).sequence, 1); assert.equal((await contributionRows()).length, 1);
+  await assert.rejects(service[statisticsMethod](input, { captureJobClaim: statisticsClaim }), /claim_lost/);
+  for (const done of [false, true]) {
+    assert.equal((await runStatistics({ ...args, cohortService: { async [statisticsMethod](value, options) {
+      assert.equal(options.captureJobClaim.attempts, 4); assert.notEqual(options.captureJobClaim.claim_token, statisticsClaim.claim_token);
+      const reads = originalReads, step = await service[statisticsMethod](value, options); assert.equal(originalReads, reads + 1);
+      assert.equal(step.covered_CAD_originals, true); assert.equal(step.covered_neutral_originals, true);
+      assert.equal(step.read_only, false); assert.equal(step.progress.done, done); assert.equal(step.statistics_contribution_retained, !done);
+      assert.equal(step.complete_original_reconciled_contribution_pass, done); assert.equal(step.statistics, 'not_established');
+      assert.equal(step.exact_distributions, false); assert.equal(step.frequency_ledger, false);
+      assert.equal(step.context_complete, false); assert.equal(step.pin_transfer, false); assert.equal(step.report_update, 'none');
+      assert.ok(Buffer.byteLength(JSON.stringify(step)) <= 16000); return step;
+    } } })).status, 'continuation_pending');
+    assert.equal((await job()).attempts, 4); assert.equal((await job()).last_error_code, 'capture_failed');
+  }
+  const contributions = await contributionRows(); assert.deepEqual(contributions.map(r => r.ordinal), [1, 2]);
+  for (let i = 0; i < rows.length; i++) { assert.equal(contributions[i].account_id, rows[i].account_id);
+    assert.deepEqual(contributions[i].metric_row_reference, rows[i].row_reference); }
+  assert.equal((await statistics()).sequence, 3); const statisticsDoneJob = await job();
+  assert.equal(statisticsDoneJob.checkpoint.phase, 'frozen_selected_statistics_refs_v2'); assert.equal(statisticsDoneJob.checkpoint.evidence_refs.length, 14);
+  assert.deepEqual(await metrics(), metricHeadDone); assert.deepEqual(await metricRows(), rows);
+  assert.deepEqual(await evidence(), evidenceDone); assert.deepEqual(await nativeParents(), parents); assert.deepEqual(await workspace(), pendingWorkspace);
+  assert.deepEqual(await runStatistics(args), { status: 'idle' }); assert.deepEqual(await runStatistics(args), { status: 'idle' });
+  assert.deepEqual(await runMetrics(args), { status: 'idle' }); assert.deepEqual(await runEvidence(args), { status: 'idle' });
+  assert.deepEqual(await job(), statisticsDoneJob);
   const [nextOwner] = await tx(pool, client => mainClaims(client).claimDue({ limit: 1, leaseSeconds: 900 }));
-  assert.equal(nextOwner.claim.operation_id, operation); assert.equal(nextOwner.claim.attempts, 3);
+  assert.equal(nextOwner.claim.operation_id, operation); assert.equal(nextOwner.claim.attempts, 4);
   await pool.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1", [operation]);
   await tx(pool, client => jobs(client).cancel(scope, operation)); const nextPending = await job();
   assert.deepEqual(await runEvidence(args), { status: 'idle' }); assert.deepEqual(await job(), nextPending,
     'both claim AND expiry leave the expired/cancelled evidence-DONE numerical owner untouched');
   assert.deepEqual(await runMetrics(args), { status: 'idle' }); assert.deepEqual(await job(), nextPending,
     'all metric claim AND expiry lanes leave the expired/cancelled metrics-DONE statistics owner untouched');
+  assert.deepEqual(await runStatistics(args), { status: 'idle' }); assert.deepEqual(await job(), nextPending,
+    'all contribution claim AND expiry lanes leave the expired/cancelled statistics-DONE numeric owner untouched');
   assert.deepEqual(await nativeParents(), parents); assert.deepEqual(await workspace(), pendingWorkspace);
   assert.deepEqual(await evidence(), evidenceDone); assert.deepEqual(await metricRows(), rows);
+  assert.deepEqual(await metrics(), metricHeadDone); assert.deepEqual(await contributionRows(), contributions);
+  console.info('[native-covered-selected-original-statistics-contribution-population-v2]', { actual_metrics_DONE_parent_and_independent_job: true,
+    whole_stock_CAD_transaction_subject_originals_entire_caches_and_every_metric_row_field_reconciled: true,
+    native_two_selected_contribution_rows_and_fresh_EMPTY_same_TX_head_checkpoint_release: true,
+    ending_CAD_role_workspace_and_orphan_COMMIT_roll_back_head_and_rows: true,
+    actual_failure_then_attempt4_fresh_success_preserves_failure_history: true, lost_ACK_fresh_NEXT_and_stale_claim_refusal: true,
+    contribution_DONE_all_claim_and_expiry_lanes_excluded: true, all_metric_rows_heads_parents_choices_workspace_and_pins_preserved: true,
+    aggregate_original_byte_query_runtime_and_output_caps_unchanged: true, complete_statistics: false,
+    economic_historical_calendar_quarter_completeness: false, publication: false, pin_transfer: false, licensed_large_area: false, production_speed: false });
   console.info('[native-covered-selected-original-reported-metric-population-v2]', { actual_evidence_DONE_parent_and_independent_job: true,
     whole_stock_CAD_transaction_subject_originals_and_entire_caches_each_ordinal: true,
     native_two_distinct_selected_metric_rows_and_fresh_EMPTY_same_TX_head_checkpoint_release: true,

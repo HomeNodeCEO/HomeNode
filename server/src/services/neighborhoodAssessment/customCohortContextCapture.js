@@ -71,6 +71,7 @@ import { prepareCohortGeographicOriginalReceiptV2 } from './cohortGeographicOrig
 import { createCustomCohortIdentityV2AnchorRepository } from './customCohortIdentityV2AnchorRepository.js';
 import { prepareCohortSourceIdentityReceiptV2 } from './cohortSourceIdentityReceiptV2.js';
 import { prepareCohortStockTraversalReceiptV2 } from './cohortStockTraversalReceiptV2.js';
+import { prepareCohortStockTraversalBatchReceiptV3 } from './cohortStockTraversalBatchReceiptV3.js';
 import { createCustomCohortStockTraversalV2AnchorRepository } from './customCohortStockTraversalV2AnchorRepository.js';
 import { createCustomCohortNeutralCacheV2HeadRepository,createCustomCohortNeutralCacheV2AutomaticHeadRepository,
   createCustomCohortNeutralCacheV2CadParentHeadRepository } from './customCohortNeutralCacheV2HeadRepository.js';
@@ -281,6 +282,9 @@ const FROZEN_SOURCE_STAGES = freeze({
     traversingStock: true, yieldingV2Progress: true, allowedPhases: ['frozen_identity_refs_v2', 'frozen_stock_traversal_refs_v2'] },
   covered_stock_traversal_continue_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
     traversingStock:true,yieldingV2Progress:true,coveredNeutralOriginals:true,cacheStockHandoff:true,
+    allowedPhases:['frozen_identity_refs_v2','frozen_stock_traversal_refs_v2'] },
+  covered_stock_batch_continue_refs_v3: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    traversingStock:true,batchingStock:true,yieldingV2Progress:true,coveredNeutralOriginals:true,cacheStockHandoff:true,
     allowedPhases:['frozen_identity_refs_v2','frozen_stock_traversal_refs_v2'] },
   original_recorded_partition_continue_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     partitioningRecordedGroups: true, yieldingV2Progress: true, allowedPhases: ['frozen_stock_traversal_refs_v2', 'frozen_recorded_partition_refs_v2'] },
@@ -1923,7 +1927,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,cachingNeutralOriginals=false,yieldingNeutralProgress=false,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,cachingCadOriginals=false,cachingCadCoverage=false,yieldingCadProgress=false,readingCoveredCadAmenities=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,readingStockWholeAccountBatch=false,coveredNeutralOriginals=false,cacheStockHandoff=false,
-      resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,partitioningRecordedGroups=false,
+      resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,batchingStock=false,partitioningRecordedGroups=false,
       readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,readingSelectedUnionFirstEligibility=false,readingSelectedUnionFirstAmenities=false,readingSelectedUnionFirstTransactions=false,progressingSelectedEligibility=false,progressingSelectedEvidence=false,readingSelectedMetricSource=false,progressingSelectedMetrics=false,readingSelectedStatisticsSource=false,progressingSelectedStatistics=false,readingSelectedFrequencySource=false,readingSelectedNumericSource=false,progressingSelectedNumeric=false,readingSelectedRankCandidates=false,progressingSelectedSemantic=false,readingSelectedTransactionSource=false,preparingSelectedTransactionFirstCandidate=false,readingSelectedTransactionIndex=false,progressingSelectedTransactionIndex=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     const readingCadSource=readingCadPages||readingSelectedUnionFirstAmenities;
     if(referencesV2){
@@ -2010,7 +2014,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       }};
       await assertManualCadCache();
       if(cadContinuation)await cadContinuation.assertClaim(claim,jobOptions);
-      if(readingStockWholeAccountBatch||readingSelectionWorkspaceTarget||awaitingSelection||readingRetainedSelectionIntent||replayingSelectedUnion){
+      if(batchingStock||readingStockWholeAccountBatch||readingSelectionWorkspaceTarget||awaitingSelection||readingRetainedSelectionIntent||replayingSelectedUnion){
         if(readingRetainedSelectionIntent||replayingSelectedUnion)authorizePublicCadastralCatalogRead(input.auth,input.accountId,{workflows:['custom_appraisal'],
           permissionChecker:(auth,workflow,permission)=>hasApplicationPermission(auth,workflow,permission,scope.organization_id)});
         selectionWorkspaceTarget=await readCustomCohortFrozenSelectionWorkspaceTarget({
@@ -2546,12 +2550,13 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         traversalAnchor=await traversalAnchorStore.read();
         if(checkpoint.phase==='frozen_identity_refs_v2'?traversalAnchor!==null
           :traversalAnchor===null||!same(traversalAnchor.receipt_reference,checkpoint.evidence_refs[6]))fail('checkpoint_conflict');
+        const prepareTraversal=batchingStock?prepareCohortStockTraversalBatchReceiptV3:prepareCohortStockTraversalReceiptV2;
         let issued=null;
         if(traversalAnchor){
           const text=await blobs.get(traversalAnchor.receipt_reference.content_sha256,traversalAnchor.receipt_reference.canonical_utf8_bytes);
           if(text===null||Buffer.byteLength(text)>16000)fail('checkpoint_conflict');
           try{issued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
-          issued=prepareCohortStockTraversalReceiptV2(issued,expected);
+          issued=prepareTraversal(issued,expected);
           if(issued.sequence!==traversalAnchor.sequence)fail('checkpoint_conflict');
         }
         // ONLY the independent issued head chooses this next account. There is
@@ -2562,13 +2567,17 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
         const createOriginals=coveredNeutralOriginals?createNeighborhoodCoveredStockOriginalCellsV2:createNeighborhoodSharedStockOriginalCellsV2;
         const packet=await createOriginals(client,stockOptions,graph,context.effective_date)
-          .housingAccountPackage({cursor:before.after_account});
-        if(packet.recorded_housing!==null&&!same(packet.recorded_housing.retained_housing_interpretation,housingProfile))fail('checkpoint_conflict');
+          [batchingStock?'wholeAccountBatch':'housingAccountPackage']({cursor:before.after_account});
+        if(batchingStock){
+          if(packet.accounts.some(account=>!same(account.recorded_housing.retained_housing_interpretation,housingProfile)))fail('checkpoint_conflict');
+        }else if(packet.recorded_housing!==null&&!same(packet.recorded_housing.retained_housing_interpretation,housingProfile))fail('checkpoint_conflict');
         if(before.done&&!packet.end_of_accounts)fail('checkpoint_conflict');
         let receipt=issued,advanced=false;
         if(!before.done){
-          const after={after_account:packet.next_cursor,account_count:before.account_count+(packet.account_id===null?0:1),done:packet.end_of_accounts};
-          receipt=prepareCohortStockTraversalReceiptV2({format:'cohort_stock_traversal_receipt_v2',...expected,
+          const after={after_account:packet.next_cursor,account_count:before.account_count+(batchingStock?packet.account_count:packet.account_id===null?0:1),done:packet.end_of_accounts};
+          receipt=prepareTraversal({format:batchingStock?'cohort_stock_traversal_batch_receipt_v3':'cohort_stock_traversal_receipt_v2',...expected,
+            ...(batchingStock?{accounts:packet.accounts.map(account=>({account_id:account.account_id,
+              geographic_parcel_count:account.geographic_parcel_count,original_counts:account.original_counts})),original_count:packet.original_count}:{}),
             sequence:(traversalAnchor?.sequence??0)+1,previous:traversalAnchor?.receipt_reference??null,before,after},expected);
           const receiptReference=await blobs.put(canonicalAssessmentJson(receipt));
           traversalAnchor=await traversalAnchorStore.advance(traversalAnchor,receiptReference);
@@ -2576,7 +2585,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             stockReference,reference,verificationReference,stockVerificationReference,identityVerificationReference,receiptReference]});
           advanced=true;
         }
-        traversalResult={status:'original_stock_traversal_progress_retained',operation_id:input.operationId,advanced,
+        traversalResult={status:batchingStock?'original_stock_batch_traversal_progress_retained':'original_stock_traversal_progress_retained',
+          ...(batchingStock?{batch_accounts:packet.account_count,batch_originals:packet.original_count,
+            receipt_format:'cohort_stock_traversal_batch_receipt_v3',one_receipt_per_whole_batch:true}:{}),operation_id:input.operationId,advanced,
           traversal_reference:traversalAnchor.receipt_reference,progress:receipt.after,stock_reference:stockReference,
           source_reference:reference,verification_reference:verificationReference,stock_verification_reference:stockVerificationReference,
           identity_verification_reference:identityVerificationReference,generation_id:stock.generation_id,
@@ -3347,7 +3358,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(!readingSelectedUnionSubjectHousing&&(readingRecordedPartition||catalogingRecordedGroups)&&!same(await partitionStore.readNextEntry(partitionReadCursor),partitionReadEntry))fail('partition_original_mismatch');
       if(catalogStore&&(!same(await catalogStore.read(),catalogAnchor)||!same(await catalogStore.counts(),catalogCounts)))fail('catalog_original_mismatch');
       if(catalogReadGroupKey&&!same(await catalogStore.readGroup(catalogReadGroupKey),catalogReadGroup))fail('catalog_original_mismatch');
-      if((readingStockWholeAccountBatch||readingSelectionWorkspaceTarget||awaitingSelection||selectingCatalogIntent||readingRetainedSelectionIntent||replayingSelectedUnion)&&!same(await readCustomCohortFrozenSelectionWorkspaceTarget({
+      if((batchingStock||readingStockWholeAccountBatch||readingSelectionWorkspaceTarget||awaitingSelection||selectingCatalogIntent||readingRetainedSelectionIntent||replayingSelectedUnion)&&!same(await readCustomCohortFrozenSelectionWorkspaceTarget({
         client,input,scopeJson:canonicalAssessmentJson(scope),checkBudget:budget.check}),selectionWorkspaceTarget))fail('workspace_target_changed');
       budget.check();
       if(cachingCadCoverage){
@@ -4126,6 +4137,14 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * whole-original/current-ending fences precede the native main handoff. */
     continueCoveredOriginalFrozenCaptureJobStockTraversalReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'covered_stock_traversal_continue_refs_v2'),
+    /** Closed batch owner. A NEW native grammar must be installed and proved
+     * before use; historical V2 jobs/readers stay exact and cannot switch format.
+     * Every account shares original/current/ending fences and one atomic native
+     * receipt/head/checkpoint/release. No default registration or activation. */
+    continueCoveredOriginalFrozenCaptureJobStockBatchReferencesV3(...args){
+      if(args.length!==2)fail('invalid_options');
+      return frozenCaptureJobSourceStage(args[0],args[1],'covered_stock_batch_continue_refs_v3');
+    },
     continueOriginalFrozenCaptureJobRecordedPartitionReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_recorded_partition_continue_refs_v2'),
     /** Independent native job-cache coverage admits whole-original replay;

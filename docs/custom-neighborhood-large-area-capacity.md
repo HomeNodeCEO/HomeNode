@@ -1,5 +1,35 @@
 # Complete larger-area Custom neighborhood studies
 
+## Whole-account batch traversal candidate (2026-10-16, not activated)
+
+The separate V3 traversal path reuses the current-authorized whole-account
+original reader. Each run admits at most eight consecutive native stock accounts
+and 250 originals under one existing query/byte/runtime budget. Every outside
+original and ENTIRE neutral cache is replayed before one receipt, native head,
+seven-reference checkpoint and continuation are retained together. Receipt
+sequence is separate from account ordinal; reaching the stock count still
+requires a fresh EMPTY run. Historical single-account V2 receipts retain their
+grammar and native next-key rules. The V3 native guard remains an unregistered
+development fixture, and the two format-specific workers remain inactive.
+
+A new independently captured `initial-dispatch-stock-batch` scenario is authored
+alongside all seventeen existing scenarios, with their deadlines unchanged. It
+reuses actual initial/source-prefix/graph/geography/identity/neutral/CAD owners,
+the genuine 3-to-4-to-5 failure history, current and ending workspace/actor/source
+rights, whole outside-original/cache reconciliation, orphan COMMIT refusal and
+lost first-batch COMMIT acknowledgment. Its actual stock owner must retain both
+accounts in receipt 1 and a distinct EMPTY in receipt 2, preserve pins and source
+parents, refuse forged native prefix/before/EMPTY/format transitions, and leave
+DONE outside every stock claim/recovery/expiry lane. The explicit pending-study
+command belongs only to this disposable fixture; no genuine choices are inferred.
+
+Focused codec/worker and existing native-fixture inventory checks pass (39 tests,
+zero failures/skips, 814.3908ms). Actual new-head native/full cloud execution is
+pending. This component does not establish coherent batch partition/catalog,
+generic dispatcher activation, complete selected-union statistics/publication,
+licensed large-area acquisition or live speed acceptance. Those remain required
+before registering or activating this format or transferring/retiring pins.
+
 ## Whole-account batch source owner (2026-10-16, not activated)
 
 The closed `readCoveredFrozenCaptureJobWholeAccountBatchReferencesV2` owner

@@ -8217,3 +8217,34 @@ semantics, statistics/calendar quarters, automatic success handoff, coherent
 publication, terminal pins or licensed large-area/Hardy production speed.
 No migration registration, route/default worker, scheduler, grant, appraiser
 choice, Apply, publication or pin transfer is activated.
+
+## Covered CAD originals while the global scan is unfinished (2026-10-16)
+
+The existing independent manual CAD coverage case now starts from a newly
+captured retained source generation. The actual repeatable-read source-index
+builder acquires its seven-layer and separate CAD originals together; no old
+generation, payload, root, receipt, cache or DONE flag is copied or rebound.
+The new job pins that actual generation and issues all its original native
+parents. Its global CAD header, rows and totals must initially be absent.
+
+The actual current-authorized coverage owner must bootstrap that global cache
+and reconcile both complete stock accounts under its unchanged shared budget.
+Every ending refusal, including actual deferred COMMIT lease expiry, must roll
+the new cache/header/totals and coverage metadata back. After a real lost COMMIT
+ACK, genuine failure recovery, account B and a distinct terminal EMPTY, the
+independent job CAD head must be DONE while the global header stays building,
+with its original zero scan progress and no completion timestamp. The covered
+first-account amenity reader then replays every original against the entire
+cache. The legacy complete-global reader must still refuse before its original
+packet. The covered read, all ending faults and read-only lost-ACK reopen must
+leave that same building header unchanged.
+
+This reuses the existing false-case matrix entry and its original deadline;
+no extra full graph, query/runtime allowance or failure ceiling is introduced.
+The earlier native component case with a complete global cache remains separate
+historical proof. New-head cloud/native execution of this building-cache case
+is pending. Syntax and small serial focused checks do not substitute for that
+execution or licensed large-area/current-authority speed acceptance. Runtime
+owners and migration registration are unchanged; automatic CAD success/lease
+handoff, complete selected semantics/statistics/calendar quarters, publication
+and terminal pin transfer remain open.

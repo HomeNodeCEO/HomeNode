@@ -8321,8 +8321,21 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,operation));
     await assert.rejects(withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSourceClosurePages(client,
       frozenSpatialOptions({...options,claim})).page({kind:'source_records',cursor:''})),/claim_lost/);
-    if(selectionWaitFixture===false)await runNeighborhoodCadCacheCoverageV2DatabaseChecks({pool,input:sourceInput,scope,actor,
-      authorizeMarketData:fixturePolicy(),authorizeCadImprovementData:fixtureCadPolicy()});
+    if(selectionWaitFixture===false){
+      // A new actual repeatable-read acquisition, never a copied/rebound old
+      // generation, cache, parent, root or DONE receipt. Its global CAD cache
+      // is absent; only the current-authorized coverage owner may bootstrap it.
+      const cadSource=await runNeighborhoodGroupIndex(pool,{batchSize:2,logger:{info(){}},
+        retainOriginalSources:true,retainCadImprovementOriginals:true});
+      assert.notEqual(cadSource.generationId,frozen.generationId);
+      const covered=await runNeighborhoodCadCacheCoverageV2DatabaseChecks({pool,input:sourceInput,scope,actor,
+        authorizeMarketData:fixturePolicy(),authorizeCadImprovementData:fixtureCadPolicy()});
+      assert.equal(covered.generation_id,cadSource.generationId);assert.equal(covered.global_cache_status,'building');
+      console.info('[native-new-source-CAD-coverage-building-v2]',{actual_new_repeatable_read_source_capture:true,
+        original_generation_and_roots_not_copied:true,actual_coverage_owner_bootstraps_global_cache:true,
+        independent_job_CAD_DONE_and_original_amenity_replay_while_global_building:true,
+        global_scan_or_consumer_activation:false,licensed_large_area:false,production_speed:false});
+    }
   }finally{
     console.info('[native-original-protocol-prepared-CI-queries]',{fixture:selectionWaitFixture,...preparedCiQueries.snapshot()});
     console.info('[native-original-protocol-query-timings]',{fixture:selectionWaitFixture,session:protocolQueryOptions,

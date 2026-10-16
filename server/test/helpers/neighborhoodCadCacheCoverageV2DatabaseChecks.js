@@ -8,6 +8,7 @@ import { canonicalAssessmentJson as json } from '../../src/services/neighborhood
 import { withCustomCohortJobTransaction as tx } from '../../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
 import { NEIGHBORHOOD_SCOPED_CAD_ORIGINAL_ACCOUNT_V2_SQL as PAGE } from '../../src/services/neighborhoodAssessment/neighborhoodScopedCadOriginalAccountV2.js';
 import { NEIGHBORHOOD_SHARED_TYPED_CAD_SQL as CAD } from '../../src/services/neighborhoodAssessment/neighborhoodSharedTypedGeneration.js';
+import { getNeighborhoodFrozenTypedCadImprovementV1Profile } from '../../src/services/neighborhoodAssessment/neighborhoodFrozenTypedCadImprovementV1.js';
 import { NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL as AMENITY_PACKET }
   from '../../src/services/neighborhoodAssessment/neighborhoodOriginalCadAccountPackagesV2.js';
 import { CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_RIGHTS_KEY as RIGHTS } from '../../src/security/customNeighborhoodCadImprovementSourcePolicy.js';
@@ -59,7 +60,14 @@ export async function runNeighborhoodCadCacheCoverageV2DatabaseChecks({pool,inpu
     {...options,...(controller?{signal:controller.signal}:{})});
   const drive=async(method,key)=>{let result;for(let i=0;i<30;i++){result=await service[method](input,options);if(result[key]===true)return result;}
     assert.fail(`${method} did not complete its small actual original fixture`);};
-  await service.prepareFrozenCaptureJobStock(input,options);
+  const prepared=await service.prepareFrozenCaptureJobStock(input,options),cacheKey=[prepared.generation_id,
+    getNeighborhoodFrozenTypedCadImprovementV1Profile().definition_blob.ref.content_sha256];
+  const cacheHeader=async()=>(await pool.query(CAD.read,cacheKey)).rows[0]??null,
+    cacheState=async()=>Object.fromEntries(await Promise.all([
+      'neighborhood_frozen_typed_cad_generations','neighborhood_frozen_typed_cad_rows','neighborhood_frozen_typed_cad_totals'
+    ].map(async table=>[table,(await pool.query(`SELECT to_jsonb(r) AS body FROM app.${table} r
+      WHERE generation_id=$1 AND profile_sha256=$2 ORDER BY to_jsonb(r)::text LIMIT 251`,cacheKey)).rows])));
+  const absentCache=await cacheState();assert.ok(Object.values(absentCache).every(rows=>rows.length===0));
   await drive('prepareFrozenCaptureJobSourceReferencesV2Page','all_layers_ended');
   await drive('verifyFrozenCaptureJobSourceReferencesV2Page','all_layers_verified');
   await drive('verifyFrozenCaptureJobStockOriginalReferencesV2','all_parcels_verified');
@@ -85,11 +93,15 @@ export async function runNeighborhoodCadCacheCoverageV2DatabaseChecks({pool,inpu
     ['subject',/subject_changed/],['claim',/claim_lost/],['cancel',/cancelled/],['text',/original_mismatch/],['bytes',/owner_byte_limit/]]){
     fault=mode;controller=new AbortController();await assert.rejects(step(),reason);assert.equal(fault,null);controller=null;
     assert.equal(await head(),null);assert.equal(await blobCount(),blobs);assert.deepEqual(await parents(),before);
+    assert.deepEqual(await cacheState(),absentCache,'ending refusal rolls back the newly bootstrapped CAD cache');
   }
   fault='expire_commit';await assert.rejects(step(),e=>e.code==='55000'&&/neighborhood_cad_cache_v2_binding_conflict/.test(e.message));
   assert.equal(fault,null);assert.equal(await head(),null);assert.equal(await blobCount(),blobs);assert.deepEqual(await parents(),before);
+  assert.deepEqual(await cacheState(),absentCache);
   fault='ack';await assert.rejects(step(),e=>e.outcome_unknown===true);assert.equal(fault,null);
   const first=await head();assert.equal(first.sequence,1);assert.deepEqual(await parents(),before);
+  const buildingHeader=await cacheHeader();assert.equal(buildingHeader.status,'building');assert.equal(buildingHeader.completed_at,null);
+  assert.equal(buildingHeader.progress.kind_index,0);assert.equal(buildingHeader.progress.typed_rows,'0');
   const body=JSON.parse((await pool.query('SELECT canonical_utf8 FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1 AND content_sha256=$2',
     [scope.organization_id,first.receipt_reference.content_sha256])).rows[0].canonical_utf8);
   assert.equal(body.after.after_account,'CLOSURE-A');assert.equal(body.after.original_count,3);assert.equal(body.after.done,false);
@@ -120,6 +132,8 @@ export async function runNeighborhoodCadCacheCoverageV2DatabaseChecks({pool,inpu
   const terminal=await step();assert.equal(terminal.progress.done,true);assert.equal(terminal.progress.original_count,5);assert.equal((await head()).sequence,3);
   const complete=await head(),finalBlobs=await blobCount(),reopened=await step();assert.equal(reopened.advanced,false);
   assert.equal(reopened.progress.done,true);assert.deepEqual(await head(),complete);assert.equal(await blobCount(),finalBlobs);
+  assert.deepEqual(await cacheHeader(),buildingHeader,'native job DONE never finishes the independent global scan');
+  assert.equal((await cacheState()).neighborhood_frozen_typed_cad_rows.length,5);
   const after=await parents();assert.deepEqual(after.neutral,before.neutral);assert.deepEqual(after.graph,before.graph);
   assert.deepEqual(after.geography,before.geography);assert.deepEqual(after.identity,before.identity);assert.deepEqual(after.pins,before.pins);
   assert.deepEqual(after.job.checkpoint,before.job.checkpoint);assert.equal(after.job.attempts,2);assert.equal(after.job.last_error_code,'synthetic_cad_retry');
@@ -130,6 +144,11 @@ export async function runNeighborhoodCadCacheCoverageV2DatabaseChecks({pool,inpu
   assert.equal(covered.amenity_evidence.reported_pool.state,'observed');assert.equal(covered.amenity_evidence.reported_pool.exact_value,true);
   assert.ok(covered.amenity_evidence.secondary_inventory.rows.every(r=>r.semantic_type==='unsupported'));
   assert.ok(Buffer.byteLength(JSON.stringify(covered))<=16000);assert.ok(calls.slice(coveredFrom).includes(AMENITY_PACKET));
+  assert.equal(covered.global_generation_complete,'not_established');assert.deepEqual(await cacheHeader(),buildingHeader);
+  const legacyFrom=calls.length;
+  await assert.rejects(service.readOriginalFrozenCaptureJobCadAmenityEvidenceReferencesV2(input,
+    {...options,cadAccountPackagePage:{cursor:''}}),/cache_unavailable/);
+  assert.ok(!calls.slice(legacyFrom).includes(AMENITY_PACKET),'the legacy complete-global lane still refuses before originals');
   const protectedState=await parents();
   for(const [mode,reason] of [['cad_deny',/market_data_access_denied/],['cad_revision',/CAD_source_policy_changed/],['market_deny',/market_data_access_denied/],
     ['role',/job_actor_access_revoked/],['assignment',/assignment_access_denied/],['draft',/private_source_read_only/],
@@ -141,19 +160,23 @@ export async function runNeighborhoodCadCacheCoverageV2DatabaseChecks({pool,inpu
   fault='ack';await assert.rejects(amenity(),e=>e.outcome_unknown===true);assert.equal(fault,null);
   assert.deepEqual(await amenity(),covered);assert.deepEqual(await head(),complete);assert.equal(await blobCount(),finalBlobs);
   assert.deepEqual(await parents(),protectedState);
+  assert.deepEqual(await cacheHeader(),buildingHeader);
   assert.ok(!calls.slice(coveredFrom).some(sql=>sql===CAD.insert||/anchor-(insert|advance)|checkpoint-save/.test(sql)));
   console.info('[native-covered-first-CAD-amenity-original-owner-v2]',{actual_first_stock_account:'CLOSURE-A',actual_CAD_originals:3,
     missing_partial_and_pre_EMPTY_coverage_refused_before_originals:true,actual_complete_CAD_and_neutral_native_heads:true,
     every_original_and_entire_cache_replayed:true,duplicate_native_secondary_numbers_not_deduplicated:true,
     both_end_current_CAD_actor_assignment_draft_subject_claim_cache_cancel:true,same_aggregate_byte_ceiling:true,
     real_read_only_lost_COMMIT_ACK_identical_reopen:true,all_heads_job_parents_pins_and_blobs_unchanged:true,
-    global_cache_fixture:'complete',building_global_native_proof:false,full_amenity_dictionary:false,
+    global_cache_fixture:'building',building_global_native_proof:true,global_scan_progress_unchanged:true,
+    global_cache_bootstrapped_by_actual_coverage_owner:true,legacy_complete_global_consumer_still_refuses:true,full_amenity_dictionary:false,
     selected_union:false,automatic_handoff:false,licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
   console.info('[native-issued-current-authorized-CAD-cache-coverage-v2]',{actual_accounts:2,actual_complete_originals:5,
     missing_and_partial_E_refused_before_originals:true,independent_native_parents_and_same_snapshot_CAD:true,
     every_original_and_ENTIRE_cache_reconciled_under_one_budget:true,all_ending_authority_refusals_atomic:true,
     actual_deferred_COMMIT_expiry_refused:true,free_DONE_NULL_bytes_and_delete_refused:true,real_lost_ACK_resumes_B_not_A:true,
     genuine_failure_fresh_claim_preserves_history:true,separate_terminal_EMPTY_and_unchanged_reopen:true,
-    original_parent_checkpoint_and_pins_unchanged:true,automatic_success_handoff:false,consumer_activation:false,
+    original_parent_checkpoint_and_pins_unchanged:true,actual_building_global_cache_without_scan_completion:true,
+    automatic_success_handoff:false,consumer_activation:false,
     licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
+  return Object.freeze({generation_id:prepared.generation_id,global_cache_status:buildingHeader.status});
 }

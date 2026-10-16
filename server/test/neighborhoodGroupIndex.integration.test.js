@@ -1457,7 +1457,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     sharedTransactionFixture=selectionWaitFixture==='union-all-shared-transaction'||transactionIndexOwnerFixture,
     semanticRecoveryFixture=selectionWaitFixture==='union-all-semantic-recovery',
     positiveIndexedSourceFixture=selectionWaitFixture==='union-all-site-positive'||semanticRecoveryFixture,
-    observedHousingFixture=selectionWaitFixture==='union-all'||positiveIndexedSourceFixture||sharedTransactionFixture;
+    observedHousingFixture=selectionWaitFixture==='union-all'||positiveIndexedSourceFixture||sharedTransactionFixture||initialDispatchFixture;
   const target=await prepareNeighborhoodCiDatabase();const {default:pg}=await import('pg');
   const pool=new pg.Pool({connectionString:target.connectionString,max:2,statement_timeout:120_000,options:NEIGHBORHOOD_CI_PROTOCOL_SESSION_OPTIONS});
   const preparedCiQueries=observeNeighborhoodCiPreparedQueries(pool);
@@ -1503,6 +1503,12 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     // freezing originals/caches. The original conflicting-housing graphs above
     // remain unchanged. No existing root/row/head/pin/claim is copied or edited.
     if(positiveIndexedSourceFixture)await pool.query("UPDATE gis.dcad_parcels SET class_code='A11' WHERE object_id=4");
+    // The covered-worker graph is independently captured from actual positive
+    // recorded comparisons. Both A parts, including its outside-geometry part,
+    // agree exactly; B keeps its invalid future year/zero residential area and
+    // valid zero site area. No issued original, cache, head or receipt is edited.
+    if(initialDispatchFixture)await pool.query(`UPDATE gis.dcad_parcels SET class_code='A11',
+      residential_year_built=1960,residential_area_sqft=1000.01 WHERE object_id IN (1,4)`);
     await pool.query(`INSERT INTO core.primary_improvements(account_id,bedroom_count,bath_count,pool)
       VALUES ('CLOSURE-A',3,2.00,true),('CLOSURE-B',4,NULL,NULL),('CLOSURE-OUTSIDE',NULL,NULL,false)`);
     await pool.query(`INSERT INTO core.secondary_improvements(id,account_id,sec_imp_number,sec_imp_type,sec_imp_sqft)

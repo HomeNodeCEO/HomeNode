@@ -435,6 +435,19 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     const read=await service[method](input,{captureJobClaim:eligibilityOwner.claim});
     assert.equal(read.covered_neutral_originals,true);assert.equal(read.read_only,true);assert.equal(read.lease_extended,false);
     assert.equal(read.context_complete,false);assert.equal(read.pin_transfer,false);
+    if(method==='readCoveredOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2'){
+      assert.equal(read.subject_original_fallback,false);assert.equal(read.selected_entry.account_id,'CLOSURE-A');
+      assert.equal(read.decision.housing.state,'matching');
+      for(const [key,expected] of Object.entries({reported_year_built:'1960',reported_residential_area:'1000.01',reported_site_area:'8000'})){
+        assert.equal(read.decision.metrics[key].recorded_comparison_eligible,true);
+        assert.equal(read.decision.metrics[key].exact_value,expected);
+        assert.equal(read.decision.metrics[key].complete_observed_parts,true);
+        assert.equal(read.decision.metrics[key].source_part_count,2,'outside-geometry A part must be reconciled too');
+      }
+      assert.equal(read.decision.metrics.reported_market_value.recorded_comparison_eligible,false);
+      assert.ok(read.decision.metrics.reported_market_value.reasons.includes('currency_not_established'));
+      assert.equal(read.decision.economic_unit,'not_established');assert.equal(read.decision.statistics,'not_established');
+    }
     assert.deepEqual(await job(),eligibilityBefore);assert.deepEqual(await unionHead(),unionBefore);
     assert.deepEqual(await unionGroups(),nativeGroupsBefore);assert.deepEqual(await intents(),humanOwnedIntents);
   }
@@ -446,11 +459,36 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   assert.equal((await runSelectedProgress(eligibilityArgs)).status,'outcome_unknown');assert.equal(eligibilityCalls,1);
   assert.equal(fault,null);assert.equal((await eligibilityHead()).sequence,1);assert.equal((await job()).attempts,5);
   assert.equal((await job()).last_error_code,'access_revoked');assert.deepEqual(await intents(),humanOwnedIntents);
+  const readEligibilityReceipt=async()=>JSON.parse((await pool.query(`SELECT canonical_utf8 FROM app.neighborhood_cohort_evidence_blobs
+    WHERE organization_id=$1 AND content_sha256=$2 AND canonical_utf8_bytes<=16000`,
+    [scope.organization_id,(await eligibilityHead()).receipt_reference.content_sha256])).rows[0].canonical_utf8);
+  const firstRecordedReceipt=await readEligibilityReceipt();
+  assert.deepEqual(firstRecordedReceipt.eligible,{reported_year_built:true,reported_residential_area:true,reported_site_area:true});
+  assert.deepEqual(firstRecordedReceipt.before_counts,{reported_year_built:0,reported_residential_area:0,reported_site_area:0});
+  assert.deepEqual(firstRecordedReceipt.after_counts,{reported_year_built:1,reported_residential_area:1,reported_site_area:1});
   // The first real eligibility owner handled selected ordinal one. Fresh
   // worker claims must read ordinal two and then prove terminal EMPTY. An
   // account count, cached bit or initial-page callback cannot finish this pass.
   for(let step=0;step<2;step++){
-    assert.equal((await runSelectedProgress(args)).status,'continuation_pending');
+    let actualOwnerResult=null;
+    const positiveArgs={...args,cohortService:{...service,async [eligibilityMethod](value,options){
+      actualOwnerResult=await service[eligibilityMethod](value,options);return actualOwnerResult;
+    }}};
+    assert.equal((await runSelectedProgress(positiveArgs)).status,'continuation_pending');
+    assert.ok(actualOwnerResult,'the real worker must invoke the actual original-reconciling owner');
+    assert.deepEqual(actualOwnerResult.recorded_comparison_counts,{reported_year_built:1,reported_residential_area:1,reported_site_area:2});
+    if(step===0){
+      assert.equal(actualOwnerResult.selected_entry.account_id,'CLOSURE-B');assert.equal(actualOwnerResult.selected_entry.ordinal,2);
+      assert.equal(actualOwnerResult.decision.housing.state,'matching');
+      assert.equal(actualOwnerResult.decision.metrics.reported_site_area.recorded_comparison_eligible,true);
+      assert.equal(actualOwnerResult.decision.metrics.reported_site_area.exact_value,'0');
+      for(const key of ['reported_year_built','reported_residential_area','reported_market_value'])
+        assert.equal(actualOwnerResult.decision.metrics[key].recorded_comparison_eligible,false);
+      assert.equal(actualOwnerResult.complete_selected_recorded_comparison_pass,false);
+    }else{
+      assert.equal(actualOwnerResult.selected_entry,null);assert.equal(actualOwnerResult.decision,null);
+      assert.equal(actualOwnerResult.complete_selected_recorded_comparison_pass,true);
+    }
     assert.equal((await job()).attempts,5);assert.equal((await job()).last_error_code,'access_revoked');
     assert.deepEqual(await intents(),humanOwnedIntents);
   }
@@ -459,6 +497,9 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     WHERE organization_id=$1 AND content_sha256=$2 AND canonical_utf8_bytes<=16000`,
     [scope.organization_id,completedEligibility.receipt_reference.content_sha256])).rows[0].canonical_utf8);
   assert.deepEqual(eligibilityReceipt.after,{selected_ordinal:2,done:true});
+  assert.deepEqual(eligibilityReceipt.eligible,null);
+  assert.deepEqual(eligibilityReceipt.before_counts,{reported_year_built:1,reported_residential_area:1,reported_site_area:2});
+  assert.deepEqual(eligibilityReceipt.after_counts,eligibilityReceipt.before_counts,'fresh EMPTY cannot refund or add eligible comparisons');
   const eligibilityDone=await job();assert.deepEqual(await runSelectedProgress(args),{status:'idle'});
   assert.deepEqual(await runSelectedProgress(args),{status:'idle'});assert.deepEqual(await job(),eligibilityDone);
   const [laterOwner]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));
@@ -533,6 +574,17 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     real_expired_cancelled_human_lease_native_claim_expiry_probe_rolled_back_without_revival:true,
     completed_workers_leave_later_owner_including_expired_cancelled_untouched:true,
     global_header_still_building:true,nonempty_selected_metric_population:false,CAD_companion:false,
+    default_worker_activation:false,licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
+  console.info('[native-covered-nonempty-recorded-comparisons-v2]',{
+    actual_original_source_fixture_captured_before_roots_caches_and_heads:true,
+    retained_preferred_subject_and_both_native_accounts_recorded_detached:true,
+    both_A_parcel_originals_including_outside_part_complete_equal_positive_values:true,
+    first_actual_owner_lost_COMMIT_ACK_preserves_three_eligible_native_bits:true,
+    next_fresh_worker_native_B_ordinal_preserves_eligible_site_zero_and_invalid_year_area:true,
+    native_complete_counts:{reported_year_built:1,reported_residential_area:1,reported_site_area:2},
+    separate_fresh_EMPTY_preserves_counts_without_addition_or_refund:true,
+    currency_and_economic_unit_not_established:true,native_parents_pins_history_and_human_command_preserved:true,
+    nonempty_selected_metric_population:false,CAD_companion:false,complete_semantics:false,
     default_worker_activation:false,licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
   console.info('[native-covered-nonempty-selection-v2]',{explicit_fixture_assigned_and_unassigned_groups:2,
     actual_distinct_selected_stock_accounts:2,complete_native_union_rows_match_entire_fixture_stock:true,

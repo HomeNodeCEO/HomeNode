@@ -7,6 +7,7 @@ import { compileNeighborhoodFrozenTypedOriginalV1, getNeighborhoodFrozenTypedOri
 import { compileNeighborhoodFrozenTypedCadImprovementV1,getNeighborhoodFrozenTypedCadImprovementV1Profile }
   from './neighborhoodFrozenTypedCadImprovementV1.js';
 import { getNeighborhoodFrozenCadImprovementProfile } from './neighborhoodFrozenCadImprovements.js';
+import { isCustomCohortNeutralCacheOwnerBudget } from './customCohortOriginalAccountOwnerBudget.js';
 
 export const NEIGHBORHOOD_SHARED_TYPED_LIMITS = Object.freeze({
   rows: 250, page_utf8_bytes: 2_100_000, step_utf8_bytes: 32_000_000,
@@ -245,6 +246,93 @@ export function prepareNeighborhoodSharedTypedCadSource(result,generationId){
  * This establishes neither issued job heads nor current source authority. */
 export function prepareNeighborhoodSharedTypedSource(result,generationId){
   return sourceOf(result,generationId);
+}
+
+/** One date-neutral syntax page from originals ALREADY read by the actual job
+ * owner. No whole-generation page query, caller compiler/profile, completion
+ * flag, report date, source grant or job continuation is accepted here. The
+ * upcoming native coverage owner must bind every page to its issued root and
+ * fence current/ending actor, assignment, draft, subject, source and claim.
+ * Global builder progress is never advanced by this scoped producer.
+ */
+export function createNeighborhoodSharedTypedOriginalPageV2(client,rawOptions){
+  if(!isCustomCohortNeutralCacheOwnerBudget(client))fail('aggregate_owner_required');
+  const o=data(rawOptions,['generationId'],['signal','checkBudget']);
+  if(typeof o.generationId!=='string'||!UUID.test(o.generationId)
+    ||o.signal!==undefined&&!(o.signal instanceof AbortSignal)
+    ||o.checkBudget!==undefined&&typeof o.checkBudget!=='function')fail('invalid_input');
+  const generation=o.generationId,profile=getNeighborhoodFrozenTypedOriginalV2Profile(),
+    key=[generation,profile.profile_ref.content_sha256],deadline=performance.now()+L.step_ms;
+  let used=false,queries=0;
+  const check=()=>{if(o.signal?.aborted)fail('cancelled');o.checkBudget?.();
+    if(o.signal?.aborted)fail('cancelled');if(performance.now()>=deadline)fail('deadline');};
+  const query=async(text,values)=>{check();if(++queries>L.queries)fail('query_limit');
+    const r=await client.query({text,values,query_timeout:Math.max(1,Math.min(5000,Math.ceil(deadline-performance.now())))});
+    check();return r;};
+  const transactionOf=result=>{
+    const row=data(one(result),['transaction_id','source_snapshot','isolation','read_only','timezone','backend_pid']);
+    if(!['read committed','repeatable read'].includes(row.isolation)||row.read_only!=='off'||row.timezone!=='UTC'
+      ||!/^[1-9][0-9]{0,19}$/.test(row.transaction_id??'')||!isSnapshotText(row.source_snapshot)
+      ||!Number.isInteger(row.backend_pid)||row.backend_pid<1)fail('caller_transaction_required');
+    // READ COMMITTED snapshots may change. The connection and actual native
+    // transaction may not; immutable generation/source locks remain mandatory.
+    const {source_snapshot:_snapshot,...identity}=row;return identity;
+  };
+  return Object.freeze({async reconcile(rawPage){
+    if(used)fail('builder_already_used');used=true;check();
+    const page=data(rawPage,['kind','rows']);
+    if(!KINDS.includes(page.kind)||!Array.isArray(page.rows)||types.isProxy(page.rows)
+      ||page.rows.length>L.rows||Reflect.ownKeys(page.rows).length!==page.rows.length+1)fail('invalid_original');
+    const seen=new Set(),rows=[];
+    for(let i=0;i<page.rows.length;i++){
+      const descriptor=Object.getOwnPropertyDescriptor(page.rows,String(i));
+      if(!descriptor?.enumerable||!Object.hasOwn(descriptor,'value'))fail('invalid_original');
+      const row=data(descriptor.value,['row_key','payload_text']);
+      if(!isRowKey(row.row_key)||!row.row_key||!row.row_key.isWellFormed()||seen.has(row.row_key)||typeof row.payload_text!=='string'
+        ||!row.payload_text.isWellFormed()||Buffer.byteLength(row.payload_text)>1_000_000)fail('invalid_original');
+      seen.add(row.row_key);rows.push(row);
+    }
+    if(Buffer.byteLength(JSON.stringify(rows))>L.page_utf8_bytes)fail('byte_limit');
+    const tx=transactionOf(await query(SNAPSHOT));
+    if(!same(transactionOf(await query(SNAPSHOT)),tx))fail('caller_transaction_changed');
+    const source=sourceOf(await query(SOURCE,[generation]),generation),binding=assessmentEvidenceDigest({source,profile});
+    let found=await query(READ_V2,key);
+    if(found.rowCount===0&&found.rows?.length===0){
+      const initial=progressOf({format:'shared_frozen_typed_progress_v2',binding_sha256:binding,
+        kind_index:0,after:'',layer_rows:0,typed_rows:'0',typed_utf8_bytes:'0'},'shared_frozen_typed_progress_v2');
+      await query(`${BEGIN_V2} ON CONFLICT(generation_id,profile_sha256) DO NOTHING`,
+        [...key,binding,JSON.stringify(source),profile.definition_blob.canonical_json,JSON.stringify(initial)]);
+    }
+    const header=data(one(await query(`${READ_V2} FOR UPDATE NOWAIT`,key)),
+      ['binding_sha256','source_metadata','definition_json','progress','status','completed_at']);
+    const progress=progressOf(header.progress,'shared_frozen_typed_progress_v2');
+    if(!progress||progress.binding_sha256!==binding||header.binding_sha256!==binding||!same(header.source_metadata,source)
+      ||header.definition_json!==profile.definition_blob.canonical_json
+      ||header.status!==(progress.kind_index===KINDS.length?'complete':'building')
+      ||(header.status==='complete'?!DATE.test(header.completed_at??''):header.completed_at!==null))fail('checkpoint_mismatch');
+    const scanned=KINDS.slice(0,progress.kind_index).reduce((n,k)=>n+Number(source.layer_counts[k].row_count),0)+progress.layer_rows;
+    if(String(scanned)!==progress.typed_rows||progress.kind_index<KINDS.length
+      &&progress.layer_rows>Number(source.layer_counts[KINDS[progress.kind_index]].row_count))fail('checkpoint_mismatch');
+    const input=rows.map(row=>{check();return {row_key:row.row_key,original_text:row.payload_text,
+      typed:compileNeighborhoodFrozenTypedOriginalV2({kind:page.kind,...row})};});
+    let inserted=0,typedBytes='0';
+    if(input.length){
+      const encoded=JSON.stringify(input);
+      if(Buffer.byteLength(encoded)>L.step_utf8_bytes)fail('byte_limit');
+      const ack=one(await query(INSERT_V2,[...key,page.kind,encoded]));
+      if(ack.reconciled_count!==input.length||!Number.isInteger(ack.inserted_count)
+        ||ack.inserted_count<0||ack.inserted_count>input.length||!count(ack.typed_utf8_bytes,L.step_utf8_bytes)
+        ||Number(ack.typed_utf8_bytes)<input.length)fail('original_mismatch');
+      inserted=ack.inserted_count;typedBytes=ack.typed_utf8_bytes;
+    }
+    if(!same(one(await query(READ_V2,key)),header)||!same(sourceOf(await query(SOURCE,[generation]),generation),source)
+      ||!same(transactionOf(await query(SNAPSHOT)),tx))fail('source_changed');
+    check();return freeze({status:'shared_neutral_original_page_reconciled_v2',authority:'not_established',
+      generation_id:generation,profile_reference:profile.definition_blob.ref,kind:page.kind,
+      reconciled_rows:input.length,inserted_rows:inserted,typed_utf8_bytes:typedBytes,
+      shared_cache_status:header.status,global_progress_advanced:false,job_coverage:'not_established',
+      source_acquisition:'not_established',report_update:'none'});
+  }});
 }
 
 function sharedTypedGeneration(client, rawOptions, neutral) {

@@ -269,9 +269,15 @@ const FROZEN_SOURCE_STAGES = freeze({
     catalogingRecordedGroups: true, allowedPhases: ['frozen_recorded_partition_refs_v2', 'frozen_recorded_catalog_refs_v2'] },
   original_recorded_catalog_continue_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, yieldingV2Progress: true, allowedPhases: ['frozen_recorded_partition_refs_v2', 'frozen_recorded_catalog_refs_v2'] },
+  covered_recorded_catalog_continue_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,yieldingV2Progress:true,coveredNeutralOriginals:true,
+    allowedPhases:['frozen_recorded_partition_refs_v2','frozen_recorded_catalog_refs_v2'] },
   original_recorded_catalog_account_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingStockAccountPackages: true, readingRecordedPartition: true, readingRecordedCatalog: true,
     allowedPhases: ['frozen_recorded_catalog_refs_v2'] },
+  covered_recorded_catalog_account_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    readingStockAccountPackages:true,readingRecordedPartition:true,readingRecordedCatalog:true,coveredNeutralOriginals:true,
+    allowedPhases:['frozen_recorded_catalog_refs_v2'] },
   original_selection_workspace_target_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingStockAccountPackages: true, readingRecordedPartition: true, readingRecordedCatalog: true,
     readingSelectionWorkspaceTarget: true, allowedPhases: ['frozen_recorded_catalog_refs_v2'] },
@@ -3525,7 +3531,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const initialCacheStock=cacheStockHandoff&&checkpoint.phase==='frozen_identity_refs_v2';
         if(initialCacheStock)await createCustomCohortCacheStockV2BridgeRepository(client).complete(claim,jobOptions);
         budget.check();return freeze({...(catalogingRecordedGroups?catalogResult:partitioningRecordedGroups?partitionResult:traversalResult),continuation,
-          ...(coveredNeutralOriginals&&partitioningRecordedGroups?{covered_neutral_originals:true,context_complete:false,pin_transfer:false}:{}),
+          ...(coveredNeutralOriginals&&(partitioningRecordedGroups||catalogingRecordedGroups)
+            ?{covered_neutral_originals:true,context_complete:false,pin_transfer:false}:{}),
           ...(cacheStockHandoff?{automatic_cache_stock_handoff:initialCacheStock,context_complete:false,pin_transfer:false}:{})});
       }
       // Every unchanged original/current-authority ending fence above must
@@ -3872,6 +3879,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       frozenCaptureJobSourceStage(value, options, 'covered_recorded_partition_continue_refs_v2'),
     continueOriginalFrozenCaptureJobRecordedCatalogReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_recorded_catalog_continue_refs_v2'),
+    /** Every whole original and entire partition entry must reconcile again
+     * under actual native cache coverage before one catalog contribution. */
+    continueCoveredOriginalFrozenCaptureJobRecordedCatalogReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'covered_recorded_catalog_continue_refs_v2'),
     /** Reconcile one indexed derived partition entry against EVERY original,
      * not a selected-union capability or a hash/count-only group reader. */
     readOriginalFrozenCaptureJobRecordedPartitionAccountReferencesV2: (value, options = {}) =>
@@ -3885,6 +3896,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * no source authority from catalog counts, selection, new head or release. */
     readOriginalFrozenCaptureJobRecordedCatalogAccountReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_recorded_catalog_account_refs_v2'),
+    /** Completed native catalog plus current whole originals/entire cache and
+     * partition entry; does not infer human selection or complete semantics. */
+    readCoveredOriginalFrozenCaptureJobRecordedCatalogAccountReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'covered_recorded_catalog_account_refs_v2'),
     // Current editor target only. A worker claim is NOT a genuine new human
     // group command; no selection is inferred from the prior active head.
     readOriginalFrozenCaptureJobSelectionWorkspaceTargetReferencesV2: (value, options = {}) =>

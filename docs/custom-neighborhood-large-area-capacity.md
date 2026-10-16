@@ -1,5 +1,15 @@
 ## Native selected progress recovery (2026-10-16, authored, inactive)
 
+Actual native run 38968850062 (job 117201958477) passed 417 migrations,
+subject persistence and both early-owner cases, then 20 source-prefix cases
+before graph 34 refused its test assertion. The real fourth progress claim
+correctly committed its consumed continuation token before source IO; the
+fixture incorrectly compared that parent with the pre-claim NULL token. The
+correction requires the exact native claim token and all other parent fields
+unchanged, then requires the failed source owner to preserve that consumed
+parent. No production guard, claim, failure history or deadline changes. Fresh
+native verification is required; this failed head is not rerun unchanged.
+
 A new thirty-fourth independent capture reserves one failure slot for
 the ordinary batch selected progress worker. Initial adoption and original A
 commit on their genuine fourth attempt, including a lost actual COMMIT ACK.

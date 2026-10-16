@@ -136,16 +136,21 @@ export async function runNeighborhoodBatchSelectedWorkersV3DatabaseChecks({pool,
     // Initial adoption and original A committed on attempt four; the real
     // progress worker now fails on B after reading its whole original packet.
     assert.equal(firstJob.attempts,4);assert.equal(firstJob.last_error_code,'capture_failed');
-    const reads=originalReads(),priorUnion=await union();let failedClaim,calls=0;
+    const reads=originalReads(),priorUnion=await union();let failedClaim,claimedParent,calls=0;
     const failed=await progress({...args,cohortService:{async [method](value,options){
       calls++;failedClaim=options.captureJobClaim;assert.equal(failedClaim.attempts,4);
-      assert.notEqual(failedClaim.claim_token,claim.claim_token);setFault('union_role');return service[method](value,options);
+      assert.notEqual(failedClaim.claim_token,claim.claim_token);claimedParent=await parent();
+      // The real native claim commits consumption BEFORE original IO. Only
+      // that token changes; the failed source owner must retain the consumed
+      // parent, rather than restoring its pre-claim NULL token.
+      assert.deepEqual(claimedParent,{...firstParent,consumed_claim_token:failedClaim.claim_token});
+      setFault('union_role');return service[method](value,options);
     }}});
     assert.equal(failed.status,'retry');assert.equal(failed.reason,'access_revoked');assert.equal(calls,1);
     assert.equal(readFault(),null);assert.equal(originalReads(),reads+1);
     const retry=await job();assert.equal(retry.attempts,4);assert.equal(retry.last_error_code,'access_revoked');
     assert.equal(retry.claim_token,null);assert.equal(retry.lease_expires_at,null);assert.deepEqual(retry.checkpoint,firstJob.checkpoint);
-    assert.deepEqual(await union(),priorUnion);assert.deepEqual(await parent(),firstParent);assert.deepEqual(await blobs(),firstBlobs);
+    assert.deepEqual(await union(),priorUnion);assert.deepEqual(await parent(),claimedParent);assert.deepEqual(await blobs(),firstBlobs);
     assert.deepEqual(await dispatches(),ownedDispatch);await immutable();
     await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);
     await pool.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET run_after=clock_timestamp() WHERE operation_id=$1',[operation]);

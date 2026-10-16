@@ -12,6 +12,7 @@ import { withCustomCohortJobTransaction as tx } from '../../src/services/neighbo
 import { NEIGHBORHOOD_SHARED_TYPED_V2_SQL as SQL } from '../../src/services/neighborhoodAssessment/neighborhoodSharedTypedGeneration.js';
 import { createCustomCohortCacheStockV2BridgeRepository as bridgeClaims } from '../../src/services/neighborhoodAssessment/customCohortCacheStockV2BridgeRepository.js';
 import { runCustomCohortCacheStockV2JobOnce as runBridge } from '../../src/services/neighborhoodAssessment/customCohortCacheStockV2JobWorker.js';
+import { runCustomCohortCoveredStockV2JobOnce as runStock } from '../../src/services/neighborhoodAssessment/customCohortCoveredStockV2JobWorker.js';
 import { NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL as STOCK_PACKET } from '../../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
 
 /** Independent disposable job; all acquisition owners, authorization, original
@@ -121,12 +122,20 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   assert.deepEqual(await cacheState(),complete);assert.deepEqual(await head(),nativeHead);
   assert.deepEqual(await runBridge(args),{status:'idle'});assert.deepEqual(await runCache(args),{status:'idle'});
   for(let i=0;i<2;i++){
-    const [next]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));assert.equal(next.claim.operation_id,operation);
-    const result=await service.continueCoveredOriginalFrozenCaptureJobStockTraversalReferencesV2(input,{captureJobClaim:next.claim});
-    assert.equal(result.automatic_cache_stock_handoff,false);assert.equal(result.continuation.attempts,5);
-    assert.equal(result.progress.done,i===1);
+    const result=await runStock(args);assert.equal(result.status,'continuation_pending');assert.equal(result.operation_id,operation);
+    assert.equal((await job()).attempts,5);assert.equal((await job()).last_error_code,'access_revoked');
+    const currentHead=await stockHead(),body=JSON.parse((await pool.query(
+      'SELECT canonical_utf8 FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1 AND content_sha256=$2',
+      [scope.organization_id,currentHead.receipt_reference.content_sha256])).rows[0].canonical_utf8);
+    assert.equal(body.after.done,i===1);
   }
   assert.equal((await stockHead()).sequence,3);assert.equal((await parent()).sequence,parentBefore.sequence+3);
+  const terminalStock=await job();assert.deepEqual(await runStock(args),{status:'idle'});assert.deepEqual(await job(),terminalStock);
+  const [nextOwner]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));assert.equal(nextOwner.claim.operation_id,operation);
+  await pool.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);
+  await tx(pool,client=>jobs(client).cancel(scope,operation));const nextOwnerPending=await job();
+  assert.deepEqual(await runStock(args),{status:'idle'});assert.deepEqual(await job(),nextOwnerPending,
+    'stock DONE next-owner expired/cancelled claim is untouched by incomplete-stock claim AND expiry');
   const sourceGeneration=(await pool.query('SELECT generation_id FROM app.neighborhood_custom_cohort_job_stocks WHERE operation_id=$1',[operation])).rows[0].generation_id;
   const cacheHeader=(await pool.query(SQL.read,[sourceGeneration,JSON.parse((await pool.query(
     'SELECT canonical_utf8 FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1 AND content_sha256=$2',
@@ -137,6 +146,10 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     every_original_and_entire_cache_replayed:true,current_and_ending_role_refusal:true,lost_actual_first_stock_COMMIT_ACK:true,
     failure_history_preserved_at_attempt:5,main_sequence_exact_parent_plus_three:true,cache_success_parent_unchanged:true,
     native_first_then_second_and_EMPTY:true,global_header_still_building:true,later_worker_activation:false,pin_transfer:false,production_speed:false});
+  console.info('[native-covered-stock-success-worker-v2]',{actual_second_and_EMPTY_original_owners:true,
+    successful_pages_at_failure_ceiling:5,error_history_preserved:true,fresh_main_claim_each_step:true,
+    completed_stock_repeated_idle:true,expired_cancelled_next_owner_claim_untouched:true,
+    same_global_building_cache_and_native_parents:true,default_worker_activation:false,licensed_large_area:false,production_speed:false,pin_transfer:false});
   await tx(pool,client=>jobs(client).cancel(scope,operation));const cancelled=await job();
   assert.deepEqual(await runCache(args),{status:'idle'});assert.deepEqual(await job(),cancelled);
   assert.deepEqual((await pool.query('SELECT * FROM app.neighborhood_custom_cohort_prepared_generation_pins WHERE operation_id=$1',[operation])).rows,pin);

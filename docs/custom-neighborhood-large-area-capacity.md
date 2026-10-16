@@ -7740,3 +7740,23 @@ unchanged cache parent, preserved failure history at attempt five and exact
 first/second/EMPTY stock continuations with the global header still building.
 Actual new-head cloud execution is pending. These small protocol checks do not
 establish licensed large-area acquisition, selected-union statistics or speed.
+
+## Bounded covered-stock success worker (2026-10-16, not activated)
+
+`runCustomCohortCoveredStockV2JobOnce` consumes only incomplete native stock
+continuations after actual cache-to-first-stock adoption. Fixed PK lineage
+joins bind the immutable completed cache, first-stock bridge, actual current
+stock head, full actor/request scope and closed execution mode. Every bounded
+step calls the real covered original owner with its retained dates and fresh
+claim. Success preserves attempts and errors even at the five-failure ceiling;
+ordinary failure/expiry alone spends the unchanged failure budget.
+
+Native stock DONE is excluded from success, recovery AND expiry. A completed
+stock's expired or cancelled next-owner claim remains untouched. No catalog
+adoption, source permission, default worker, route, publication or pin transfer
+is activated. The existing native fixture now requires actual second-account
+and fresh EMPTY owners through this worker, success at attempt five, preserved
+error history, repeated terminal idle and untouched expired/cancelled next-owner
+state. Eight focused worker/claim checks passed serially105.2602ms; syntax/diff
+checks pass. Actual cloud execution remains pending, with no local database or
+full suite run. Licensed large-area acquisition and production speed remain open.

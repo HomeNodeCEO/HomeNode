@@ -8871,3 +8871,34 @@ recovery below five is not established by this new scenario. No default worker,
 schedule, route, migration registration, grant, appraiser choice, publication,
 Apply or pin transfer is activated. Large-area acquisition, downstream semantics
 and real production speed acceptance remain unfinished.
+
+## Recorded eligibility after a V3 catalog union (2026-10-16, inactive)
+
+Two closed V3 owners reopen subject housing and advance the recorded-comparison
+pass after an actual completed union over the V3 stock, partition and catalog.
+Subject precedence remains saved, retained public, then complete original CAD
+only when preferred observations are absent. Missing, unknown and conflicting
+housing is preserved. One required-subject/next-selected original packet supplies
+all retained-date cells and reconciles every original, ENTIRE neutral cache and
+immutable partition entry under the same aggregate owner/child budgets.
+
+The existing exact 13-key eligibility receipt and native head/deferred COMMIT
+guards remain unchanged. They retain only the actual selected entry, subject
+state/category and three recorded-comparison bits/counts; later consumers must
+reopen originals again. Current and ending purpose, actor/assignment/private
+draft/subject, exact pending workspace, command, native parents and counts are
+still fenced. Legacy V2 owners keep their format admission. V3 responses remain
+bounded after adding explicit parent-format metadata.
+
+A separate inactive worker claims union DONE or incomplete recorded eligibility
+under current V3 parents and pending study. Recorded-eligibility DONE is excluded
+from success, recovery and expiry; it awaits the separate CAD/evidence owner.
+A twenty-sixth independent native scenario preserves all twenty-five previous
+scenarios/deadlines and authors read-only subject precedence, real A/B/EMPTY,
+ending refusals, deferred orphan rollback, lost actual COMMIT ACK, concurrent
+single ownership, exact bits/counts/ordinals and terminal exclusion at attempt
+five while preserving union, command, catalog, dispatch history, reports and pins.
+Native/cloud execution is pending. Recorded comparison is not economic-unit or
+complete semantic eligibility. No migration registration, default worker,
+schedule, source grant, appraiser choice, publication, Apply or pin transfer is
+activated; licensed large-area acquisition and live speed remain open.

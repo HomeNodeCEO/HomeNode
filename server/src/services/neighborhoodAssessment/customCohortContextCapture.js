@@ -351,6 +351,13 @@ const FROZEN_SOURCE_STAGES = freeze({
   covered_batch_selected_union_refs_v3: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
     catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,coveredNeutralOriginals:true,catalogBatchLineage:true,
     allowedPhases:['frozen_recorded_catalog_refs_v2','frozen_selected_union_refs_v2'] },
+  covered_batch_selected_subject_housing_refs_v3: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,readingSelectedUnionSubjectHousing:true,
+    coveredNeutralOriginals:true,catalogBatchLineage:true,allowedPhases:['frozen_selected_union_refs_v2'] },
+  covered_batch_selected_eligibility_progress_refs_v3: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,readingSelectedUnionSubjectHousing:true,
+    readingSelectedUnionFirstEligibility:true,progressingSelectedEligibility:true,coveredNeutralOriginals:true,catalogBatchLineage:true,
+    allowedPhases:['frozen_selected_union_refs_v2','frozen_selected_eligibility_refs_v2'] },
   original_selected_union_subject_housing_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true, readingSelectedUnionSubjectHousing: true,
     allowedPhases: ['frozen_selected_union_refs_v2'] },
@@ -3776,16 +3783,21 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           await jobs.saveCheckpoint(claim,jobOptions,{phase:'frozen_selected_eligibility_refs_v2',
             evidence_refs:[...checkpoint.evidence_refs.slice(0,10),receiptReference]});
           const continuation=await createCustomCohortV2ContinuationRepository(client).yieldIssued(claim,jobOptions);
-          budget.check();return freeze({...subjectHousingResult,status:'original_selected_recorded_eligibility_progress_retained',
+          const result={...subjectHousingResult,status:'original_selected_recorded_eligibility_progress_retained',
+            ...(catalogBatchLineage?{catalog_receipt_format:'cohort_recorded_catalog_batch_receipt_v3'}:{}),
             ...(coveredNeutralOriginals?{covered_neutral_originals:true}:{}),
             eligibility_reference:receiptReference,progress:eligibilityPlan.after,recorded_comparison_counts:eligibilityPlan.after_counts,
             coverage:'one_native_selected_ordinal_or_fresh_terminal_empty_probe',read_only:false,issued_eligibility_progress:true,
             empty_selected_union:unionCounts.selected_count===0,
             complete_selected_recorded_comparison_pass:eligibilityPlan.after.done,
-            complete_selected_union_eligibility:false,continuation});
+            complete_selected_union_eligibility:false,continuation};
+          if(catalogBatchLineage&&Buffer.byteLength(JSON.stringify(result))>16000)fail('byte_limit');
+          budget.check();return freeze(result);
         }
         if(readingSelectedUnionSubjectHousing&&coveredNeutralOriginals){
           const coveredResult={...subjectHousingResult,covered_neutral_originals:true,
+            ...(catalogBatchLineage?{catalog_receipt_format:'cohort_recorded_catalog_batch_receipt_v3',
+              current_authorized_owner:'V3_batch_stock_partition_catalog_completed_union_and_current_rights'}:{}),
             ...(readingSelectedUnionFirstAmenities?{covered_CAD_originals:true}:{})};
           if(Buffer.byteLength(JSON.stringify(coveredResult))>16000)fail('byte_limit');
           return freeze(coveredResult);
@@ -4346,6 +4358,15 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       frozenCaptureJobSourceStage(value, options, 'original_selected_union_subject_housing_refs_v2'),
     readCoveredOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'covered_selected_union_subject_housing_refs_v2'),
+    // Closed V3 batch-catalog parent entries; legacy V2 grammar remains exact.
+    readCoveredOriginalFrozenCaptureJobBatchSelectedUnionSubjectHousingReferencesV3(...args){
+      if(args.length!==2)fail('invalid_options');
+      return frozenCaptureJobSourceStage(args[0],args[1],'covered_batch_selected_subject_housing_refs_v3');
+    },
+    progressCoveredOriginalFrozenCaptureJobBatchSelectedRecordedEligibilityReferencesV3(...args){
+      if(args.length!==2)fail('invalid_options');
+      return frozenCaptureJobSourceStage(args[0],args[1],'covered_batch_selected_eligibility_progress_refs_v3');
+    },
     // Inactive read-only ordinal1 original admission, NOT the fifth issued pass.
     // No caller account/ordinal/cursor/decision, lease, new head or continuation.
     readOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2: (value, options = {}) =>

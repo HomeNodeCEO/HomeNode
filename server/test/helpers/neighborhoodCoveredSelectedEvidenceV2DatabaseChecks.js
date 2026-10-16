@@ -59,7 +59,21 @@ export async function runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks({ p
   for (const [worker, limit] of [[runPrefix, 12], [runEarly, 100], [runCache, 50], [runCad, 10]]) await drain(worker, limit);
   assert.equal((await runBridge(args)).status, 'continuation_pending');
   for (const worker of [runStock, runPartition, runCatalog]) await drain(worker, 10);
-  const beforeWorkspace = await workspace(), stored = await service.startRecordedGroupCapture({ auth: input.auth, accountId: input.accountId,
+  let beforeWorkspace = await workspace();
+  if (beforeWorkspace?.section_value.pending_capture) {
+    // The earlier independent fixture intentionally leaves its pending study.
+    // Respect the real closed transition: explicitly cancel THAT fixture-only
+    // pending command through its current scoped owner, preserving active data.
+    const activeBefore = beforeWorkspace.section_value.active;
+    const cancelled = await service.cancelRecordedGroupCapture({ auth: input.auth, accountId: input.accountId,
+      assignmentFileId: input.assignmentFileId, expectedWorkspaceRevision: beforeWorkspace.revision,
+      expectedWorkspaceCheckpoint: beforeWorkspace.section_value });
+    assert.equal(cancelled.status, 'stored');
+    const cleared = await workspace(); assert.equal(cleared.revision, beforeWorkspace.revision + 1);
+    assert.equal(cleared.section_value.pending_capture, null); assert.deepEqual(cleared.section_value.active, activeBefore);
+    beforeWorkspace = cleared;
+  }
+  const stored = await service.startRecordedGroupCapture({ auth: input.auth, accountId: input.accountId,
     assignmentFileId: input.assignmentFileId, expectedWorkspaceRevision: beforeWorkspace?.revision ?? 0,
     expectedWorkspaceCheckpoint: beforeWorkspace?.section_value ?? { workspace_version: 7, active: null, pending_capture: null },
     pendingCapture: { operation_id: operation, observation_period: input.observationPeriod, discovery: input.discovery } });

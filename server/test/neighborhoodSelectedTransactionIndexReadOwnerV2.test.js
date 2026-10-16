@@ -24,7 +24,7 @@ test('inactive NEXT owner retains the complete original graph stack and uses ded
 });
 
 test('native NEXT and the retained compact prefix precede the whole original packet, not a semantic FIRST/caller cursor projection',()=>{
-  const next=capture.indexOf('selectedTransactionIndexPacket=await selectedTransactionIndexStore.readNext()'),
+  const next=capture.indexOf("selectedTransactionIndexPacket=await selectedTransactionIndexStore[readingCompletedIndexFirstSource?'readFirstAccount':'readNext']()"),
     decoded=capture.indexOf('retained=prepareCohortSelectedTransactionIndexReceiptV2(retained,expected)',next),
     before=capture.indexOf('eligibilityBefore={selected_ordinal:nativePlan.before.selected_ordinal,done:false}',decoded),
     selected=capture.indexOf('firstSelectedEntry=selectedTransactionIndexPacket.selected_entry',before),
@@ -46,7 +46,7 @@ test('every retained field, complete native package set and full ending checkpoi
     ending=capture.indexOf('const ending=await createCustomCohortV2SelectionIntentRepository(client)',keys),
     heads=capture.indexOf('!same(await semanticStore.read(),semanticAnchor)',ending),
     checkpoint=capture.indexOf('!same(await jobs.readTransactionIndexCheckpoint(claim,jobOptions),checkpoint)',heads),
-    plan=capture.indexOf('!same(await selectedTransactionIndexStore.readNext(),selectedTransactionIndexPacket)',checkpoint),
+    plan=capture.indexOf("!same(await selectedTransactionIndexStore[readingCompletedIndexFirstSource?'readFirstAccount':'readNext'](),selectedTransactionIndexPacket)",checkpoint),
     result=capture.indexOf("status:'current_authorized_native_next_selected_transaction_index_originals_reconciled'",plan),
     returned=capture.indexOf('return freeze(result)',result),writes=capture.indexOf('await blobs.put(canonicalAssessmentJson(afterSummary))',returned);
   assert.ok(original>0&&seventh>original&&eighth>seventh&&numeric>eighth&&keys>numeric&&ending>keys&&heads>ending

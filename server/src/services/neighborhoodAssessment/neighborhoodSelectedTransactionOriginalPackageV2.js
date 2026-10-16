@@ -1,3 +1,5 @@
+import { COMPLETED_INDEX_FIRST_SOURCE_CONTEXT_V3_SQL } from './completedIndexFirstSourceV3Sql.js';
+
 // Fixed actual DONE-union ordinal1. The actual owner must independently reopen
 // the full original graph, native partition/catalog/intent and both-end rights.
 // Three indexed ORIGINAL account prefixes find native source IDs without dates
@@ -366,7 +368,7 @@ export const NEIGHBORHOOD_FIRST_COMPLETED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL=
 // The owner must separately compare the independently read native plan and
 // every prior original-derived field, then repeat ALL ending authority fences.
 // No index/job/continuation write or source right is established by this SQL.
-function transactionIndexOriginalPackageSql(){
+function transactionIndexOriginalPackageSql(completedFirst=false){
   let result=NEIGHBORHOOD_FIRST_COMPLETED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL;
   // Fail closed if an inherited fixed fragment moves or becomes ambiguous;
   // these are module-owned literals, never caller strings or SQL callbacks.
@@ -375,8 +377,11 @@ function transactionIndexOriginalPackageSql(){
       throw new TypeError('neighborhood_selected_transaction_index_original_sql_shape');
     result=result.replace(from,to);
   };
-  replace('neighborhood-first-completed-semantic-original-package-v2','neighborhood-next-selected-transaction-index-original-package-v2');
-  replace('WITH next_account AS MATERIALIZED (',`WITH transaction_index_context AS MATERIALIZED (
+  replace('neighborhood-first-completed-semantic-original-package-v2',completedFirst
+    ?'neighborhood-first-completed-index-source-original-package-v3':'neighborhood-next-selected-transaction-index-original-package-v2');
+  replace('WITH next_account AS MATERIALIZED (',completedFirst?`WITH transaction_index_context AS MATERIALIZED (
+${COMPLETED_INDEX_FIRST_SOURCE_CONTEXT_V3_SQL}
+), next_account AS MATERIALIZED (`:`WITH transaction_index_context AS MATERIALIZED (
   SELECT DISTINCT k.generation_id,k.account_id,k.ordinal,k.partition_ordinal,
     k.entry_reference,k.metric_row_reference,k.contribution_row_reference
   FROM app.neighborhood_custom_cohort_capture_jobs job
@@ -390,7 +395,8 @@ function transactionIndexOriginalPackageSql(){
   JOIN app.neighborhood_custom_cohort_stock_accounts a ON a.operation_id=r.operation_id AND a.account_id=r.account_id`);
   replace('r.ordinal=1 AND $4::text=',"r.ordinal=index_next.ordinal AND $4::text=");
   replace('app.neighborhood_selected_semantic_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)',
-    'app.neighborhood_selected_transaction_index_v2_admission_matches(job.operation_id,job.organization_id,job.checkpoint)');
+    completedFirst?'app.neighborhood_selected_transaction_index_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)'
+      :'app.neighborhood_selected_transaction_index_v2_admission_matches(job.operation_id,job.organization_id,job.checkpoint)');
   replace('WHERE job.operation_id=$1::uuid AND a.account_id=job.account_id AND $10::boolean',
     `WHERE job.operation_id=$1::uuid AND a.account_id=job.account_id AND $10::boolean
     AND EXISTS(SELECT 1 FROM transaction_index_context)`);
@@ -401,3 +407,4 @@ function transactionIndexOriginalPackageSql(){
   return result;
 }
 export const NEIGHBORHOOD_NEXT_SELECTED_TRANSACTION_INDEX_ORIGINAL_PACKAGE_V2_SQL=transactionIndexOriginalPackageSql();
+export const NEIGHBORHOOD_FIRST_COMPLETED_INDEX_SOURCE_ORIGINAL_PACKAGE_V3_SQL=transactionIndexOriginalPackageSql(true);

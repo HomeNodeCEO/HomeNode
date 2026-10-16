@@ -9221,3 +9221,40 @@ recovery below five still requires a separate independently issued graph with
 reserved failure budget. No migration registration, default dispatcher, route,
 schedule, source grant, appraiser choice, Apply, publication or pin transfer is
 activated.
+
+## Completed-index first registered source original owner (2026-10-16, inactive)
+
+The closed two-argument
+`readCoveredOriginalFrozenCaptureJobCompletedIndexFirstSourceReferencesV3`
+requires the actual V3 stock, partition and catalog lineage, all independent
+neutral/CAD parents and the complete exact17 transaction index with its fresh
+EMPTY. Native source IDs are ordered as BIGINT; only a source-less index uses
+the legacy C-text namespace. The selected account is the package's actual first
+seen member, which may be later than selected ordinal one. No caller supplies
+an account, source key, generation, cursor, prior receipt or source adapter.
+
+Two independent native reads select that same first package/account. The owner
+reopens the whole selected stock/CAD/all-date transaction package and required
+subject, reconciles every original and entire cache, every retained metric,
+contribution, numeric/index/semantic member and the account's complete bounded
+native key set in both directions. It confirms the chosen whole package is
+present exactly once. Both current and ending source-purpose decisions and
+database actor, assignment, draft, subject, pending study, native parent, live
+claim and pin fences remain required. The entire native plan/account key set is
+read again after those ending fences, in the same transaction.
+
+This first nonempty source reader retains no progress, receipt, lease extension,
+context, report update or pin transfer. No registered source is an explicit
+refusal; it cannot fabricate EMPTY economic progress. Subsequent source traversal,
+economic equivalence, at-sale facts, calendar-quarter resolution, publication,
+terminal pins and licensed large-area/live-speed acceptance remain open. The
+256-query owner, 128-query child, 250-original, 32 MB, 60-second and 16 KB response
+ceilings are unchanged. There is no production activation or new migration.
+
+Focused protocol/hostile-input and preserved original SQL checks pass locally.
+The existing independent graph32 now authors actual source-owner admission,
+current actor refusal before original I/O, ending market/CAD/role/workspace and
+header/coverage refusals, entire-cache corruption, real lost read-only COMMIT
+acknowledgment and identical fresh reopen without changing the claimed job,
+native parents, blobs, reports, choices or pins. Native/cloud execution of this
+new owner is pending; earlier metadata-only FIRST proof is not source proof.

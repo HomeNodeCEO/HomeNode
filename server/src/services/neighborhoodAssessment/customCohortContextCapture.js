@@ -55,7 +55,7 @@ import { projectNeighborhoodTransactionTemporalV1, prepareNeighborhoodTransactio
   from './neighborhoodTransactionTemporalV1.js';
 import { createNeighborhoodSharedTransactionPackagesV1, prepareNeighborhoodTransactionPackagePageV1 }
   from './neighborhoodSharedTransactionPackagesV1.js';
-import { createNeighborhoodSharedStockOriginalCellsV2, createNeighborhoodCoveredStockOriginalCellsV2, prepareNeighborhoodStockOriginalCellPageV2,
+import { createNeighborhoodSharedStockOriginalCellsV2, createNeighborhoodCoveredStockOriginalCellsV2, createNeighborhoodCoveredCadStockOriginalCellsV2, prepareNeighborhoodStockOriginalCellPageV2,
   prepareNeighborhoodStockAccountPackagePageV2, NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_LIMITS }
   from './neighborhoodSharedStockOriginalCellsV2.js';
 import { createCohortOriginalSourceChainV1Store, COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS }
@@ -335,6 +335,10 @@ const FROZEN_SOURCE_STAGES = freeze({
     catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
     readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true, readingSelectedUnionFirstAmenities: true,
     allowedPhases: ['frozen_selected_union_refs_v2'] },
+  covered_selected_union_first_amenities_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,
+    readingSelectedUnionSubjectHousing:true,readingSelectedUnionFirstEligibility:true,readingSelectedUnionFirstAmenities:true,
+    coveredNeutralOriginals:true,allowedPhases:['frozen_selected_union_refs_v2'] },
   original_selected_union_first_transactions_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
     readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true, readingSelectedUnionFirstTransactions: true,
@@ -2822,7 +2826,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           }
           const preferred=resolveCustomCohortRetainedSubjectHousing(retained.subject.material,retained.subject.target,{check:budget.check}),
             graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))},
-            paired=await (coveredNeutralOriginals?createNeighborhoodCoveredStockOriginalCellsV2:createNeighborhoodSharedStockOriginalCellsV2)(client,stockOptions,graph,context.effective_date)
+            paired=await (coveredNeutralOriginals&&readingSelectedUnionFirstAmenities?createNeighborhoodCoveredCadStockOriginalCellsV2
+              :coveredNeutralOriginals?createNeighborhoodCoveredStockOriginalCellsV2:createNeighborhoodSharedStockOriginalCellsV2)(client,stockOptions,graph,context.effective_date,
+                ...(coveredNeutralOriginals&&readingSelectedUnionFirstAmenities?[{purpose:cadPurpose,decision:cadDecision}]:[]))
               [readingSelectedTransactionIndex?'subjectAndNextSelectedTransactionIndexAccountPackage':readingSelectedTransactionSource?'subjectAndFirstCompletedSemanticAccountPackage':progressingSelectedSemantic?'subjectAndNextSelectedSemanticAccountPackage':readingSelectedRankCandidates?'subjectAndFirstCompletedNumericAccountPackage':progressingSelectedNumeric?'subjectAndNextSelectedNumericAccountPackage':readingSelectedFrequencySource?'subjectAndFirstSelectedFrequencyAccountPackage':progressingSelectedStatistics?'subjectAndNextSelectedStatisticsAccountPackage':readingSelectedStatisticsSource?'subjectAndFirstSelectedStatisticsAccountPackage':progressingSelectedMetrics?'subjectAndNextSelectedMetricAccountPackage':readingSelectedMetricSource?'subjectAndFirstSelectedMetricAccountPackage':progressingSelectedEvidence?'subjectAndNextSelectedCombinedAccountPackage':
                 readingSelectedUnionFirstTransactions&&readingSelectedUnionFirstAmenities?'subjectAndFirstSelectedCombinedAccountPackage':
                 readingSelectedUnionFirstTransactions?'subjectAndFirstSelectedTransactionAccountPackage':
@@ -3629,7 +3635,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             complete_selected_union_eligibility:false,continuation});
         }
         if(readingSelectedUnionSubjectHousing&&coveredNeutralOriginals){
-          const coveredResult={...subjectHousingResult,covered_neutral_originals:true};
+          const coveredResult={...subjectHousingResult,covered_neutral_originals:true,
+            ...(readingSelectedUnionFirstAmenities?{covered_CAD_originals:true}:{})};
           if(Buffer.byteLength(JSON.stringify(coveredResult))>16000)fail('byte_limit');
           return freeze(coveredResult);
         }
@@ -4138,6 +4145,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     // Separate current CAD purpose at BOTH ends; no extra child/row budget.
     readOriginalFrozenCaptureJobFirstSelectedAmenitiesReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_selected_union_first_amenities_refs_v2'),
+    readCoveredOriginalFrozenCaptureJobFirstSelectedAmenitiesReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'covered_selected_union_first_amenities_refs_v2'),
     readOriginalFrozenCaptureJobFirstSelectedTransactionsReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_selected_union_first_transactions_refs_v2'),
     /** Fixed first native selected account only. Job-cache coverage is never

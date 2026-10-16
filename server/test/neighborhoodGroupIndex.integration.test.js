@@ -3762,7 +3762,9 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     const catalogReadQueries=refsCalls.slice(catalogReadFrom);
     assert.ok(!catalogReadQueries.some(sql=>/ST_DWithin|checkpoint-save|anchor-(?:advance|insert)|:entry-insert|:contribute|INSERT INTO|UPDATE app\./.test(sql)));
     assertBoundedCohortAuthorityAggregates(catalogReadQueries.map((text,index)=>({text,values:refsQueryParameters[catalogReadFrom+index]})),
-      {actorUserId:actor,organizationId:organization,assignmentFileId:assignment});
+      {actorUserId:actor,organizationId:organization,assignmentFileId:assignment,
+        originals:{operationId:refsOperation,generationId:refsBinding.generation_id,
+          profileSha256:getNeighborhoodFrozenTypedOriginalV2Profile().profile_ref.content_sha256}});
     console.info('[native-original-completed-catalog-account-replay-v2]',{accounts:2,assigned:1,unassigned:1,
       exactly_one_whole_original_packet_per_call:true,every_original_entire_neutral_cache_entire_partition_entry_reconciled:true,
       retained_date_original_metric_cells_and_outside_label_conflicts_preserved:true,unissued_partial_and_corrupt_heads_refused_before_original_packet:true,

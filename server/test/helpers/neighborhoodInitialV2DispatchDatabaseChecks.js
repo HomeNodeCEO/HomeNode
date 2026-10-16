@@ -51,6 +51,12 @@ export async function runNeighborhoodInitialV2DispatchDatabaseChecks({pool,input
     WHERE operation_id=$1`,[operation])),error=>error.code==='55000'&&/initial_v2_claim_conflict/.test(error.message));
   const claimed=(await Promise.all([1,2].map(()=>tx(pool,client=>initial(client).claimDue({leaseSeconds:900}))))).flat();
   assert.equal(claimed.length,1);const firstClaim=claimed[0].claim;assert.equal(firstClaim.attempts,1);
+  const beforeExpiredReplay=await job();
+  await assert.rejects(tx(pool,async client=>{
+    await client.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);
+    await client.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()+interval '900 seconds' WHERE operation_id=$1",[operation]);
+  }),error=>error.code==='55000'&&/initial_v2_claim_conflict/.test(error.message));
+  assert.deepEqual(await job(),beforeExpiredReplay,'an expired initial running token requires a native fresh claim');
   // Actual revoked DB identity refuses the original stock owner. Settling the
   // genuine failed claim preserves the ordinary history for later successes.
   await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[scope.organization_id,actor]);
@@ -96,7 +102,7 @@ export async function runNeighborhoodInitialV2DispatchDatabaseChecks({pool,input
   assert.deepEqual(await protectedRows(),beforeProtected);
   console.info('[native-initial-original-dispatch-v2]',{pristine_queue_and_native_enrollment:true,orphan_enrollment_and_claim_COMMIT_refused:true,
     queue_ending_revocation_rollback:true,lost_real_queue_and_stock_COMMIT_ACKs:3,stock_reopened_without_repreparation:true,
-    concurrent_single_fresh_claim:true,old_token_replay_refused:true,generic_claim_and_expiry_excluded:true,
+    concurrent_single_fresh_claim:true,old_token_replay_refused:true,expired_running_token_revival_refused:true,generic_claim_and_expiry_excluded:true,
     actual_stock_prefix_graph_owners:true,prefix_pages:7,graph_steps:1,preserved_failure_attempt:4,
     next_owner_cancelled_expired_claim_untouched:true,reports_assignment_and_pin_unchanged:true,
     neutral_cache_handoff:false,licensed_large_area:false,production_speed:false,pin_transfer:false});

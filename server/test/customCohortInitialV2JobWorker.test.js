@@ -76,5 +76,6 @@ test('initial migration remains dormant and requires independent enrollment, nat
   assert.ok(!registry.includes(name));
   for(const m of sql.matchAll(/CREATE (?:TABLE|FUNCTION|TRIGGER) (?:app\.)?([a-z0-9_]+)/g))assert.ok(Buffer.byteLength(m[1])<=63);
   for(const text of ['job.attempts<>0','job.checkpoint IS NOT NULL','NEW.claim_transaction_id:=txid_current()',
-    'DEFERRABLE INITIALLY DEFERRED','neighborhood_initial_v2_enrollment_required','NEW.attempts<>job.attempts+1','job.attempts>=5'])assert.ok(sql.includes(text),text);
+    'DEFERRABLE INITIALLY DEFERRED','neighborhood_initial_v2_enrollment_required','NEW.attempts<>job.attempts+1','job.attempts>=5',
+    'OLD.lease_expires_at<=clock_timestamp()'])assert.ok(sql.includes(text),text);
 });

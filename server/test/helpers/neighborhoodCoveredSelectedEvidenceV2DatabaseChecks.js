@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { runNeighborhoodGroupIndex } from '../../src/services/neighborhoodAssessment/neighborhoodGroupIndex.js';
 import { createCustomCohortContextCapture } from '../../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { createCustomCohortCaptureJobRepository as jobs } from '../../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
 import { createCustomCohortV2ContinuationRepository as mainClaims } from '../../src/services/neighborhoodAssessment/customCohortV2ContinuationRepository.js';
@@ -34,6 +35,24 @@ import { CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_RIGHTS_KEY as CAD_RIGHTS }
 export async function runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks({ pool, input: sourceInput, scope, actor,
   authorizeMarketData, authorizeCadImprovementData }) {
   const input = { ...sourceInput, operationId: randomUUID() }, operation = input.operationId;
+  // The preceding independent fixture already exercises its large original
+  // byte boundary. Capture a NEW positive-worker source from live fixture
+  // tables, without cloning/rebinding any old original, cache, parent or head.
+  // Every worker below still reopens this generation's COMPLETE originals.
+  const priorGeneration = (await pool.query('SELECT generation_id::text FROM app.neighborhood_group_active WHERE id=true')).rows[0].generation_id,
+    priorLargeOriginal = async () => (await pool.query(`SELECT row_key,payload::text AS original FROM app.neighborhood_frozen_source_rows
+      WHERE generation_id=$1 AND kind='accounts' AND account_id='CLOSURE-A' ORDER BY row_key LIMIT 2`, [priorGeneration])).rows,
+    largeBefore = await priorLargeOriginal(), sync = randomUUID();
+  assert.equal(largeBefore.length, 1); assert.ok(Buffer.byteLength(largeBefore[0].original) > 480000);
+  await pool.query("UPDATE core.accounts SET legal_description='Independent covered worker positive source' WHERE account_id='CLOSURE-A'");
+  await pool.query("INSERT INTO gis.source_sync_runs(id,source_key,status,records_seen) VALUES($1,'dcad_parcels','complete',5)", [sync]);
+  await pool.query("UPDATE gis.source_sync_state SET status='complete',last_run_id=$1 WHERE source_key='dcad_parcels'", [sync]);
+  const positiveSource = await runNeighborhoodGroupIndex(pool, { batchSize: 2, logger: { info() {} },
+    retainOriginalSources: true, retainCadImprovementOriginals: true });
+  assert.notEqual(positiveSource.generationId, priorGeneration); assert.deepEqual(await priorLargeOriginal(), largeBefore);
+  assert.equal((await pool.query(`SELECT payload->>'legal_description' AS original FROM app.neighborhood_frozen_source_rows
+    WHERE generation_id=$1 AND kind='accounts' AND account_id='CLOSURE-A'`, [positiveSource.generationId])).rows[0].original,
+  'Independent covered worker positive source');
   let fault = null, originalReads = 0;
   const observed = { async connect() { const raw = await pool.connect(); return { release: raw.release.bind(raw), async query(c) {
     const text = typeof c === 'string' ? c : c.text, orphan = fault === 'orphan' && text.includes('custom-cohort-v2-continuation:yield');
@@ -292,6 +311,7 @@ export async function runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks({ p
   assert.deepEqual(await metrics(), metricHeadDone); assert.deepEqual(await contributionRows(), contributions);
   assert.deepEqual(await statistics(), statisticsHeadDone); assert.deepEqual(await numericRows(), numericCompletedRows); assert.deepEqual(await numericIndex(), indexBefore);
   console.info('[native-covered-selected-original-indexed-population-v2]', { actual_statistics_DONE_parent_and_independent_job: true,
+    independent_actual_compact_source_capture_and_prior_large_original_preserved: true,
     whole_stock_CAD_transaction_subject_originals_entire_caches_every_metric_contribution_and_index_field_reconciled: true,
     native_two_selected_ordinals_and_fresh_EMPTY_same_TX_rows_head_checkpoint_release: true,
     ending_CAD_role_workspace_and_orphan_COMMIT_roll_back_head_and_rows: true,

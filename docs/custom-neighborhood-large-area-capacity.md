@@ -9258,3 +9258,41 @@ header/coverage refusals, entire-cache corruption, real lost read-only COMMIT
 acknowledgment and identical fresh reopen without changing the claimed job,
 native parents, blobs, reports, choices or pins. Native/cloud execution of this
 new owner is pending; earlier metadata-only FIRST proof is not source proof.
+
+## First source native membership and date resolution (2026-10-16, inactive)
+
+The closed two-argument
+`readCoveredOriginalFrozenCaptureJobCompletedIndexFirstSourceResolutionReferencesV3`
+uses the same actual completed-index FIRST original owner. Inside its single
+bounded transaction, it interprets the chosen whole package after original,
+entire-cache, native-member and bidirectional key reconciliation. Its compact
+result is exposed only after every current and ending authority fence and the
+repeat native FIRST/account read. It retains no economic progress or lease.
+
+Native source and link accounts cannot overwrite a canonical sale's outside or
+unselected account. Distinct selected, other-stock, outside and unresolved
+associations remain separate; a non-null account does not make an unresolved
+link resolved. Multiple native sale IDs remain multiple, with no preferred
+price or inferred economic equivalence. Normalized source and sale closing
+dates must all be observed and agree for a unique native date. Same-payload
+reported status, closing date, prices and area units remain independent, with
+no CurrentPrice, date, currency, area or current-CAD fallback. Missing,
+unsupported, invalid and conflicting observations and exact decimal text remain
+intact, including zero and values beyond the JavaScript safe-integer range.
+
+Calendar placement uses each independently observed date and exact retained
+inclusive period; it cannot establish quarter statistics, eligible economic
+transactions, at-sale GLA or price allocation. Source-less native sales keep
+their own identity/date and acquire no fabricated source witness. All earlier
+original SQL, cache bytes, source reads and owner/child/original/byte/runtime
+budgets are unchanged; the compact resolution has an additional 8 KB cap inside
+the existing 16 KB owner response limit.
+
+Focused checks pass. Graph32 additionally authors actual source501 reconciliation
+with selected A/B and an outside canonical sale, exact unsupported-currency
+price, normalized 2010-Q1 outside the study versus missing reported date/status,
+cache and ending market/workspace refusals, real lost read-only COMMIT ACK and
+identical fresh reopen with retained state unchanged. This new resolution's
+native/cloud execution is pending. Complete source traversal, economic
+population/quarter statistics, publication, terminal pins and licensed large-area
+or live-speed acceptance remain open; no production activation is introduced.

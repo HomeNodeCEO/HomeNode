@@ -24,42 +24,38 @@ existing legacy worker is NOT switched to this path: fixed V2 worker dispatch,
 the remaining original-backed catalog/selection/metric/publication stages and
 terminal retention handoff must be implemented and verified before activation.
 
-109 focused tests passed, 0 failures and 0 skips (587.5861ms), including closed admission, fifth-
-attempt preservation, autocommit refusal before writes, fresh-token/bounded-claim
-mechanics, unchanged old profiles and registered native/deferred guards. Actual
-PostgreSQL assertions are AUTHORED for original/current-ending refusals, same-TX
-orphan refusal, lost-COMMIT pending recovery, stale claim, concurrent single
-consume, duplicate DONE refusal, unchanged heads/root/pins and actual failure
-claims reaching the unchanged fifth-claim terminal. The initial b74a206a native
-execution passed: Foundation 38039343149, native 114176298905, 417 migration /
-8 index / 1 subject / 1 edge / 2 bootstrap tests, 0 failures and 0 skips;
-index 482617.405903ms. The continuation marker executed at 09:02:24Z. Frontend
-114176298846 passed 3959 tests with 0 failures/skips (74535.837703ms); server,
-redteam, Sales, Mobile and GSE also passed. That initial continuation fixture
-covered release after a completed head's fresh empty probe.
+The original focused run passed 109 tests in 587.5861 ms, with zero failures
+or skips. It covered closed admission, fifth-attempt preservation, autocommit
+refusal before writes, fresh-token claims, unchanged profiles and registered
+native/deferred guards. The extended native fixture additionally asserts
+nonempty account progression: ending refusals roll back the new entry, blobs,
+head, checkpoint and release; lost COMMIT leaves one appended account and one
+pending continuation; stale claims refuse; the next fresh token preserves the
+attempt and resumes at a distinct terminal empty probe. Two distinct successes
+advance the continuation sequence without spending or refunding failure history.
+Other native assertions cover orphan-COMMIT refusal, concurrent single consume,
+duplicate DONE refusal, unchanged roots/pins and failed claims reaching five.
 
-The extended actual native fixture now also authors NONEMPTY account progression:
-all ending refusals roll back the new entry, blobs, head, checkpoint and release;
-lost COMMIT leaves exactly one newly appended account and pending continuation;
-the stale claim refuses, a fresh token preserves the attempt, and the next owner
-resumes at the distinct terminal empty probe. A second distinct success advances
-the continuation sequence without spending or refunding failure attempts. New
-exact-head native/full cloud execution is PENDING; the initial receipt does not
-verify these new assertions. SQL doubles are not database/source authority. No local
-heavy suite, source acquisition, selector/report/Apply/production change or
-Indexer operation. QA7 only future Apply. Protected integration, exact-head
-security/native/full suites and ACTUAL included review remain required.
+This branch was retargeted to main before integrating the actual protected
+parent #1247 merge `dd513882`. Parent exact head `688e8c19` passed all 14 checks,
+with actual included review `61970e8b` and provider verification/resolution of
+its documentation fix. Parent native job 116893183654 passed 417 migration,
+1 subject, 8 prepared-index, 1 edge and 2 bootstrap tests, with zero failures,
+skips or cancellations. Its original-reconciled partition consumer marker ran
+at 2026-10-16T09:03:45.0337790Z. These parent results do not prove this newly
+integrated continuation stage: its fresh exact-head native/security/full-suite
+checks and actual included review remain required.
 
-Initial UNPROTECTED parent-stack receipts are now independently decoded:
-#1246 exact47f6b1b5 Foundation38037824246 all four jobs and Sales/Mobile/GSE PASS;
-native114171849912417migration/8index/1subject/1edge/2bootstrap PASS0fail0skip,
-issued-partition marker08:35:54Z, frontend3959PASS0fail0skip. #1247 exactc93e2a27
-Foundation38038180592 all four/Sales38038180558 PASS; native114172914125 same
-417/8/1/1/2 PASS0fail0skip with new whole-original/ENTIRE-derived-entry consumer
-marker08:42:16Z, frontend3959PASS0fail0skip. These SMALL protocol fixtures do not
-establish licensed >50k/5-mile/10-mile/city/retrospective acquisition, a current
-complete selected union, protected integrated readiness or production speed.
-Older pending statements below describe their original publication time.
+After this integration, 92 serial focused continuation, job, owner and receipt
+checks passed in 1,220.3239 ms, with zero failures, cancellations or skips.
+
+Small protocol fixtures and SQL doubles do not establish licensed acquisition,
+complete selected semantics or production speed. The CAD companion, original-
+reconciled medians/COD/calendar quarters, coherent publication, terminal pins,
+licensed >50k/5-mile/10-mile/city/retrospective and Hardy live-speed acceptance
+remain unfinished. No default worker/route, source grant, appraiser choice,
+report Apply or pin transfer is activated. QA7 remains the only Apply target.
+No local heavy suite, acquisition worker or Indexer operation.
 
 ## Original-reconciled recorded-partition consumer (2026-10-10, not activated)
 
@@ -102,8 +98,11 @@ checkpoint/payload copies. Integrated consumer runtime head `c3d39e03` passed
 all 14 checks, including foundation run 38869765008. Its native job 116870842442
 passed 417 migration, 1 subject, 8 prepared-index, 1 edge and 2 bootstrap tests,
 with zero failures, skips or cancellations. The actual replayed-partition marker
-executed at 2026-10-16T08:01:04.5584699Z. This documentation correction still
-requires fresh exact-head cloud checks.
+executed at 2026-10-16T08:01:04.5584699Z. The documentation-corrected head
+`688e8c19` then passed all 14 fresh checks and the actual provider resolved its
+finding. Native job 116893183654 passed the same 417/1/8/1/2 test groups, with
+zero failures, skips or cancellations, and the consumer marker ran at
+2026-10-16T09:03:45.0337790Z. The protected merge is `dd513882`.
 
 Separately, the protected parent #1246 merged as `1b35afac` after all 16 checks
 on exact head `817e3163` passed, with an actual included review and its confirmed

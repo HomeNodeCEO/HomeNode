@@ -1915,15 +1915,6 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       // Mutate actual native authority only AFTER the actual sixth combined
       // original/EMPTY query. Same client/TX: every refusal must roll these
       // changes back together with any progress, never a mocked return row.
-      if(config.text===NEIGHBORHOOD_NATIVE_NEUTRAL_CACHE_COVERAGE_V2_SQL&&refsFault?.startsWith('coverage_')){
-        assert.equal(result.rowCount,1,'nonvacuous actual native DONE coverage transport probe');
-        const fault=refsFault;
-        if(fault==='coverage_ending'){refsFault='coverage_after_first';return result;}
-        if(fault==='coverage_transaction'){refsFault='coverage_transaction_after_first';return result;}
-        refsFault=null;
-        if(fault==='coverage_transaction_after_first')return {...result,rows:result.rows.map(r=>({...r,transaction_id:String(BigInt(r.transaction_id)+1n)}))};
-        return {rowCount:0,rows:[]};
-      }
       if(config.text===NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL
         &&['evidence_assignment_ending','evidence_draft_ending'].includes(refsFault)){
         const fault=refsFault;refsFault=null;
@@ -1949,6 +1940,15 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       if(orphanPrefixYield){await client.query('ROLLBACK TO SAVEPOINT synthetic_prefix_yield');refsFault=null;prefixOrphanYieldSeen++;}
       if(refsFault==='union_delta_count'&&config.text.includes('custom-cohort-selected-union-v2:member-insert'))
         refsFault='union_delta_after_member';
+      if(config.text===NEIGHBORHOOD_NATIVE_NEUTRAL_CACHE_COVERAGE_V2_SQL&&refsFault?.startsWith('coverage_')){
+        assert.equal(result.rowCount,1,'nonvacuous actual native DONE coverage transport probe');
+        const fault=refsFault;
+        if(fault==='coverage_ending'){refsFault='coverage_after_first';return result;}
+        if(fault==='coverage_transaction'){refsFault='coverage_transaction_after_first';return result;}
+        refsFault=null;
+        if(fault==='coverage_transaction_after_first')return {...result,rows:result.rows.map(r=>({...r,transaction_id:String(BigInt(r.transaction_id)+1n)}))};
+        return {rowCount:0,rows:[]};
+      }
       if(transactionIndexOwnerFixture&&config.text===NEIGHBORHOOD_NEXT_SELECTED_TRANSACTION_INDEX_ORIGINAL_PACKAGE_V2_SQL){
         const p=result.rows[0];assert.ok(p);assert.equal(p.page_count,p.original_count);
         if(p.account_id!==null){

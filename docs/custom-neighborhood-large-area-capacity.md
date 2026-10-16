@@ -1,5 +1,32 @@
 # Complete larger-area Custom neighborhood studies
 
+## Manual current-authorized CAD account cache (2026-10-16, not activated)
+
+`cacheOriginalFrozenCaptureJobCadAccountReferencesV2` is an explicit internal
+manual operation. It reopens the actual issued DONE graph, geography and identity,
+retained stock and same-snapshot complete CAD originals. The separate current CAD
+purpose and the existing actor, assignment, private draft, subject, claim, pin and
+source decisions are checked at both ends. Automatic enrolled jobs refuse until
+a separately guarded CAD coverage and successful-continuation bridge exists.
+
+Only a cursor page locator is accepted. Fixed SQL chooses the next exact stock
+account and caps both native improvement counters at 251 before payload reads;
+the complete account must fit 250 originals, 1 MB per original and 2.1 MB per
+encoded packet. Every native primary/secondary key and entire original is freshly
+compiled and reconciled against the entire shared cache row. All authority,
+original, compiled-input and ending SQL share one 32 MB, 256-query, 60-second owner
+budget. Global builder progress and existing complete-cache consumer gates remain
+unchanged. No job head, checkpoint, lease release, source grant or pin transfer.
+
+233 serial focused checks passed in 3,780.2614 ms with zero failures, cancellations
+or skips. Native assertions are authored for current and ending refusals, actual
+cache bootstrap rollback, lost-COMMIT acknowledgement and fresh reopen, complete
+native keys, exact original-text forgery, aggregate bytes, separate empty probes
+and unchanged parents. Their new exact-head cloud execution is pending. The
+temporary SQL plan fixture is separate from the real authorized owner fixture;
+neither establishes licensed large-area acquisition or production speed. Durable
+CAD job coverage, automatic handoff and the remaining roadmap are still open.
+
 ## Early original-owner continuation worker (2026-10-15, inactive)
 
 `runCustomCohortV2EarlyJobOnce` connects an already-issued graph,

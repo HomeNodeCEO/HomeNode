@@ -30,6 +30,7 @@ import { createNeighborhoodSharedJobCadImprovementPages,prepareNeighborhoodShare
   createNeighborhoodSharedJobCadAccountPages,prepareNeighborhoodSharedJobCadAccountPage }
   from './neighborhoodSharedJobCadImprovementPages.js';
 import { prepareNeighborhoodOriginalCadAccountPackagePageV2 } from './neighborhoodOriginalCadAccountPackagesV2.js';
+import { createNeighborhoodScopedCadOriginalAccountV2 } from './neighborhoodScopedCadOriginalAccountV2.js';
 import { describeNeighborhoodCadImprovementPurpose } from '../../security/customNeighborhoodCadImprovementSourcePolicy.js';
 import { createNeighborhoodFrozenJobTypedOriginals } from './neighborhoodFrozenJobTypedOriginals.js';
 import { getNeighborhoodFrozenTypedOriginalV1Profile,getNeighborhoodFrozenTypedOriginalV2Profile } from './neighborhoodFrozenTypedOriginalV1.js';
@@ -226,6 +227,9 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingCadPages: true, projectingCadAccounts: true, allowedPhases: ['frozen_identity_refs_v2'] },
   original_CAD_account_packages_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingCadPages: true, projectingCadAccounts: true, reconcilingCadAccounts: true, allowedPhases: ['frozen_identity_refs_v2'] },
+  cache_CAD_original_account_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    readingCadPages: true, projectingCadAccounts: true, reconcilingCadAccounts: true, cachingCadOriginals: true,
+    allowedPhases: ['frozen_identity_refs_v2'] },
   original_CAD_amenity_evidence_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingCadPages: true, projectingCadAccounts: true, reconcilingCadAccounts: true, resolvingCadAmenities: true, allowedPhases: ['frozen_identity_refs_v2'] },
   shared_transaction_pages_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
@@ -1856,7 +1860,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       fail('frozen_source_representation_unsupported');
     const {referencesV2=false,issuingSourcePrefix=false,yieldingSourcePrefix=false,verifying=false,stockVerifying=false,identityVerifying=false,yieldingEarlyProgress=false,
       typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,cachingNeutralOriginals=false,yieldingNeutralProgress=false,
-      readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
+      readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,cachingCadOriginals=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,coveredNeutralOriginals=false,cacheStockHandoff=false,
       resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,partitioningRecordedGroups=false,
       readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,readingSelectedUnionFirstEligibility=false,readingSelectedUnionFirstAmenities=false,readingSelectedUnionFirstTransactions=false,progressingSelectedEligibility=false,progressingSelectedEvidence=false,readingSelectedMetricSource=false,progressingSelectedMetrics=false,readingSelectedStatisticsSource=false,progressingSelectedStatistics=false,readingSelectedFrequencySource=false,readingSelectedNumericSource=false,progressingSelectedNumeric=false,readingSelectedRankCandidates=false,progressingSelectedSemantic=false,readingSelectedTransactionSource=false,preparingSelectedTransactionFirstCandidate=false,readingSelectedTransactionIndex=false,progressingSelectedTransactionIndex=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
@@ -1897,11 +1901,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     if(!reportedProfile) fail('frozen_source_profile_unsupported');
     if(originalInput.privateSalesImport || originalInput.discovery?.profile_id!=='custom-suburban-radius-v2') fail('frozen_discovery_unsupported');
     if(readingCadSource&&typeof authorizeCadImprovementData!=='function')fail('CAD_source_policy_required');
-    const boundedOriginalAccountOwner=cachingNeutralOriginals||coveredNeutralOriginals||traversingStock||partitioningRecordedGroups||readingRecordedPartition||catalogingRecordedGroups;
+    const boundedOriginalAccountOwner=cachingCadOriginals||cachingNeutralOriginals||coveredNeutralOriginals||traversingStock||partitioningRecordedGroups||readingRecordedPartition||catalogingRecordedGroups;
     const budget=operationBudget(budgetOptions,boundedOriginalAccountOwner
       ?CUSTOM_COHORT_ORIGINAL_ACCOUNT_OWNER_LIMITS.operation_ms:LIMITS.capture_duration_ms);
     return transaction(pool,'READ COMMITTED',budget,async transactionClient=>{
-      const client=cachingNeutralOriginals?createCustomCohortNeutralCacheOwnerBudget(transactionClient,{checkBudget:budget.check})
+      const client=cachingCadOriginals||cachingNeutralOriginals?createCustomCohortNeutralCacheOwnerBudget(transactionClient,{checkBudget:budget.check})
         :boundedOriginalAccountOwner?createCustomCohortOriginalAccountOwnerBudget(transactionClient,{checkBudget:budget.check}):transactionClient;
       const locator=one(await client.query(`/* custom-cohort-capture:job-organization */
         SELECT organization_id FROM app.assignment_files WHERE id=$1::bigint AND account_id=$2`,
@@ -1927,6 +1931,19 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         claim=issuedSelectionIntent.claim;
       }
       if(!sameFrozenRequest(await jobs.readRequest(claim,jobOptions),requested)) fail('operation_conflict');
+      // This is one manual cache operation, not durable automatic coverage.
+      // An enrolled job must wait for a separately guarded CAD success bridge.
+      const assertManualCadCache=async()=>{if(cachingCadOriginals){
+        const manual=one(await client.query(`/* custom-cohort-CAD-cache-account-v2:manual */
+          SELECT job.request_payload->>'execution_mode' IS NULL
+            AND NOT EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_v2_continuations c WHERE c.operation_id=job.operation_id) AS allowed
+          FROM app.neighborhood_custom_cohort_capture_jobs job WHERE job.operation_id=$1::uuid
+            AND job.claim_token=$2::uuid AND job.attempts=$3::integer AND job.status='running'
+            AND job.lease_expires_at>clock_timestamp() AND job.cancellation_requested_at IS NULL`,
+        [claim.operation_id,claim.claim_token,claim.attempts]));
+        if(manual.allowed!==true)fail('CAD_automatic_handoff_unavailable');
+      }};
+      await assertManualCadCache();
       if(readingSelectionWorkspaceTarget||awaitingSelection||readingRetainedSelectionIntent||replayingSelectedUnion){
         if(readingRetainedSelectionIntent||replayingSelectedUnion)authorizePublicCadastralCatalogRead(input.auth,input.accountId,{workflows:['custom_appraisal'],
           permissionChecker:(auth,workflow,permission)=>hasApplicationPermission(auth,workflow,permission,scope.organization_id)});
@@ -2344,7 +2361,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       }
       if(readingCadPages){
         const graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
-        if(projectingCadAccounts){
+        if(cachingCadOriginals){
+          stockMetricResult=await createNeighborhoodScopedCadOriginalAccountV2(client,stockOptions).reconcile(cadPage);
+        }else if(projectingCadAccounts){
           const accounts=createNeighborhoodSharedJobCadAccountPages(client,stockOptions,graph,context.effective_date);
           stockMetricResult=await (resolvingCadAmenities?accounts.originalAmenityEvidence(cadPage)
             :reconcilingCadAccounts?accounts.originalAccountPackage(cadPage):accounts.page(cadPage));
@@ -3171,6 +3190,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(selectingCatalogIntent||readingRetainedSelectionIntent||replayingSelectedUnion)await checkSelectionIntentKnownGroups();
       if(readingCadSource&&!same(await boundedPolicy(authorizeCadImprovementData,client,input.auth,context,cadPurpose,budget),cadDecision))
         fail('CAD_source_policy_changed');
+      await assertManualCadCache();
       if(!sameFrozenRequest(await jobs.readRequest(claim,jobOptions),requested)||!same(await stockStore.read(),stock)) fail('checkpoint_conflict');
       if(!same((await chain.describe(root)).layers,prefix.layers)) fail('checkpoint_conflict');
       if(sourcePrefixStore&&!same(await sourcePrefixStore.read(),sourcePrefixHead))fail('checkpoint_conflict');
@@ -3845,6 +3865,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       frozenCaptureJobSourceStage(value, options, 'shared_CAD_accounts_refs_v2'),
     readOriginalFrozenCaptureJobCadAccountPackagesReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_CAD_account_packages_refs_v2'),
+    /** Explicit manual cache operation; caller cursor is only a page locator.
+     * Both current CAD decisions and every issued parent/original are reopened.
+     * No native coverage head, checkpoint, lease handoff or consumer activation. */
+    cacheOriginalFrozenCaptureJobCadAccountReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'cache_CAD_original_account_refs_v2'),
     /** Resolve retained local amenity evidence only after full original replay;
      * no provider dictionary, verified presence, aggregate or live activation. */
     readOriginalFrozenCaptureJobCadAmenityEvidenceReferencesV2: (value, options = {}) =>

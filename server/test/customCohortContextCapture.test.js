@@ -257,7 +257,8 @@ test('CAD account owner obtains its date from retained context and accepts no ca
   assert.equal(connections,0);
 });
 
-for(const method of ['readOriginalFrozenCaptureJobCadAccountPackagesReferencesV2','readOriginalFrozenCaptureJobCadAmenityEvidenceReferencesV2'])
+for(const method of ['readOriginalFrozenCaptureJobCadAccountPackagesReferencesV2','readOriginalFrozenCaptureJobCadAmenityEvidenceReferencesV2',
+  'cacheOriginalFrozenCaptureJobCadAccountReferencesV2'])
 test(`${method} admits only a cursor and separate current CAD policy before any connection`,async()=>{
   const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
     claim={operation_id:base.operationId,claim_token:'70000000-0000-4000-8000-000000000002',attempts:1};

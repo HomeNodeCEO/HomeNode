@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL as SQL,NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_LIMITS as L }
   from '../../src/services/neighborhoodAssessment/neighborhoodOriginalCadAccountPackagesV2.js';
+import { NEIGHBORHOOD_SCOPED_CAD_ORIGINAL_ACCOUNT_V2_SQL }
+  from '../../src/services/neighborhoodAssessment/neighborhoodScopedCadOriginalAccountV2.js';
 
 /** Rolled-back TEMP SQL admission/plan DATA. Does not issue originals, cache,
  * source rights, selected-union authority or licensed/live acceptance. */
@@ -11,6 +13,11 @@ export async function runNeighborhoodOriginalCadAccountPackageDatabaseChecks(cli
     .replaceAll('app.neighborhood_frozen_cad_improvement_rows','pg_temp.cad_originals')
     .replaceAll('app.neighborhood_frozen_typed_cad_rows','pg_temp.cad_typed');
   const values=[operation,generation,profile,'',L.rows,L.packet_utf8_bytes,L.row_utf8_bytes,L.original_utf8_bytes,L.output_utf8_bytes];
+  const producerSql=NEIGHBORHOOD_SCOPED_CAD_ORIGINAL_ACCOUNT_V2_SQL
+    .replaceAll('app.neighborhood_custom_cohort_stock_accounts','pg_temp.cad_stock')
+    .replaceAll('app.neighborhood_frozen_cad_improvement_rows','pg_temp.cad_originals');
+  const producerValues=[operation,generation,'',250,1_000_000,2_100_000];
+  const producer=async()=>{const result=await client.query(producerSql,producerValues);assert.equal(result.rowCount,1);return result.rows[0];};
   /** Read one complete envelope with independently chosen fixed test bounds. */
   const read=async(overrides={})=>{const args=[...values];for(const [i,v] of Object.entries(overrides))args[Number(i)]=v;
     const r=await client.query(sql,args);assert.equal(r.rowCount,1);return r.rows[0];};
@@ -35,6 +42,16 @@ export async function runNeighborhoodOriginalCadAccountPackageDatabaseChecks(cli
       CROSS JOIN generate_series(1,10000) n`,[generation,profile]);
     for(const table of ['cad_stock','cad_originals','cad_typed'])await client.query(`ANALYZE pg_temp.${table}`);
     const huge=await read();assert.deepEqual(huge.counts,{primary:'251',secondary:'251'});assert.equal(huge.row_count,0);assert.equal(huge.packet_json,'[]');
+    const hugeProducer=await producer();assert.deepEqual(hugeProducer.counts,{primary:251,secondary:251});
+    assert.equal(hugeProducer.row_count,0);assert.equal(hugeProducer.packet_json,'[]');
+    const producerPlan=(await client.query(`EXPLAIN (ANALYZE,FORMAT JSON) ${producerSql}`,producerValues)).rows[0]['QUERY PLAN'][0].Plan,producerNodes=[];
+    const walkProducer=node=>{producerNodes.push(node);(node.Plans??[]).forEach(walkProducer);};walkProducer(producerPlan);
+    const producerCap=producerNodes.filter(n=>n['Node Type']==='Limit'&&n['Actual Rows']===251&&n['Actual Loops']===2);assert.equal(producerCap.length,1);
+    const producerInput=producerCap[0].Plans.filter(n=>n['Parent Relationship']==='Outer');assert.equal(producerInput.length,1);
+    assert.equal(producerInput[0]['Actual Rows'],251);assert.ok(['Index Scan','Index Only Scan'].includes(producerInput[0]['Node Type']));
+    assert.equal(producerInput[0]['Index Name'],'cad_original_account_idx');
+    assert.equal(producerNodes.find(n=>n['Subplan Name']==='CTE raw_sizes')['Actual Rows'],0);
+    assert.equal(producerNodes.find(n=>n['Subplan Name']==='CTE members')['Actual Rows'],0);
     const plan=(await client.query(`EXPLAIN (ANALYZE,FORMAT JSON) ${sql}`,values)).rows[0]['QUERY PLAN'][0].Plan,nodes=[];
     /** Identify actual bounded counter input separately from scalar InitPlans. */
     const walk=node=>{nodes.push(node);(node.Plans??[]).forEach(walk);};walk(plan);
@@ -47,24 +64,33 @@ export async function runNeighborhoodOriginalCadAccountPackageDatabaseChecks(cli
       '{"SQL_DATA_only":true}'::jsonb FROM pg_temp.cad_originals`,[profile]);
     const full=await read();assert.deepEqual(full.counts,{primary:'1',secondary:'249'});assert.equal(full.row_count,250);
     assert.equal(full.invalid_count,0);assert.equal(full.packet_oversize,false);assert.equal(JSON.parse(full.packet_json).length,250);
+    const fullProducer=await producer();assert.deepEqual(fullProducer.counts,{primary:1,secondary:249});assert.equal(fullProducer.row_count,250);
+    assert.equal(fullProducer.packet_oversize,false);assert.equal(JSON.parse(fullProducer.packet_json).length,250);
     const planNodes=async()=>{const p=(await client.query(`EXPLAIN (ANALYZE,FORMAT JSON) ${sql}`,values)).rows[0]['QUERY PLAN'][0].Plan,all=[];
       const visit=n=>{all.push(n);(n.Plans??[]).forEach(visit);};visit(p);return all;};
     // All 250 originals individually fit 1 MB; their raw sum exceeds 8 MB.
     // The actual plan must execute ZERO envelope-encoding members.
     await client.query("UPDATE pg_temp.cad_originals SET payload=jsonb_build_object('SQL_DATA_only',repeat('x',40000))");
     const rawOver=await read();assert.equal(rawOver.row_count,0);assert.equal(rawOver.packet_oversize,true);assert.equal(rawOver.packet_json,'[]');
+    const overProducer=await producer();assert.equal(overProducer.row_count,0);assert.equal(overProducer.packet_oversize,true);assert.equal(overProducer.packet_json,'[]');
     const rawPlan=await planNodes();assert.equal(rawPlan.find(n=>n['Subplan Name']==='CTE raw_sizes')['Actual Rows'],250);
     assert.equal(rawPlan.find(n=>n['Subplan Name']==='CTE members')['Actual Rows'],0);
     await client.query(`UPDATE pg_temp.cad_originals SET payload='{"SQL_DATA_only":true}'::jsonb`);
     await client.query("UPDATE pg_temp.cad_originals SET payload=jsonb_build_object('SQL_DATA_only',repeat('x',1000000)) WHERE kind='primary'");
     const largeOriginal=await read();assert.equal(largeOriginal.row_count,0);assert.equal(largeOriginal.packet_oversize,true);
+    const largeProducer=await producer();assert.equal(largeProducer.row_count,0);assert.equal(largeProducer.packet_oversize,true);
     await client.query(`UPDATE pg_temp.cad_originals SET payload='{"SQL_DATA_only":true}'::jsonb WHERE kind='primary'`);
     const lower=Number((await client.query(`SELECT (sum(octet_length(o.payload::text)::bigint+octet_length(t.typed::text)+1)+2)::text AS n
       FROM pg_temp.cad_originals o JOIN pg_temp.cad_typed t USING(generation_id,kind,row_key)`)).rows[0].n);
     const encodedOver=await read({5:lower});assert.equal(encodedOver.row_count,250);assert.equal(encodedOver.packet_oversize,true);
     assert.equal(encodedOver.packet_json,'[]','raw admission must still pass the exact encoded-byte gate');
+    producerValues[5]=Number((await client.query('SELECT (sum(octet_length(payload::text)::bigint+1)+2)::text AS n FROM pg_temp.cad_originals')).rows[0].n);
+    const producerEncodedOver=await producer();assert.equal(producerEncodedOver.row_count,250);
+    assert.equal(producerEncodedOver.packet_oversize,true);assert.equal(producerEncodedOver.packet_json,'[]');producerValues[5]=2_100_000;
     await client.query(`INSERT INTO pg_temp.cad_originals VALUES($1::uuid,'secondary','1000250','A','{}',$2::text,2)`,[generation,profile]);
     const over=await read();assert.deepEqual(over.counts,{primary:'1',secondary:'250'});assert.equal(over.row_count,0);assert.equal(over.packet_json,'[]');
+    const tooManyProducer=await producer();assert.deepEqual(tooManyProducer.counts,{primary:1,secondary:250});
+    assert.equal(tooManyProducer.row_count,0);assert.equal(tooManyProducer.packet_json,'[]');
     const countPlan=await planNodes();assert.equal(countPlan.find(n=>n['Subplan Name']==='CTE raw_sizes')['Actual Rows'],0);
     assert.equal(countPlan.find(n=>n['Subplan Name']==='CTE members')['Actual Rows'],0);
     await client.query("DELETE FROM pg_temp.cad_originals WHERE kind='secondary' AND row_key='1000250'");
@@ -75,6 +101,13 @@ export async function runNeighborhoodOriginalCadAccountPackageDatabaseChecks(cli
     const absent=await read({3:'A'});assert.equal(absent.account_id,'B');assert.equal(absent.row_count,0);assert.equal(absent.packet_json,'[]');
     assert.deepEqual(absent.counts,{primary:'0',secondary:'0'});
     const end=await read({3:'B'});assert.equal(end.account_id,null);assert.equal(end.geographic_parcel_count,null);assert.equal(end.row_count,0);
+    producerValues[2]='A';const absentProducer=await producer();assert.equal(absentProducer.account_id,'B');
+    assert.deepEqual(absentProducer.counts,{primary:0,secondary:0});assert.equal(absentProducer.row_count,0);
+    producerValues[2]='B';const emptyProducer=await producer();assert.equal(emptyProducer.account_id,null);assert.equal(emptyProducer.row_count,0);
+    console.info('[native-scoped-CAD-account-original-admission-DATA-v2]',{actual_count_input_rows:251,actual_count_loops:2,
+      complete_account_limit:250,count_refusal_zero_original_size_and_payload_rows:true,indexed_exact_stock_account:true,
+      whole_raw_and_encoded_byte_refusal:true,no_cache_required:true,absent_primary_and_fresh_EMPTY:true,
+      temporary_DATA_only:true,current_authorized_owner:false,licensed_large_area:false,production_speed:false});
     console.info('[native-original-CAD-account-package-admission-DATA-v2]',{kind_count_cap:251,actual_count_input_rows:251,
       actual_count_loops:2,complete_total_cap:250,whole_251_refusal:true,count_over_zero_raw_size_and_encoded_rows:true,
       actual_raw_size_rows:250,actual_raw_over_limit_encoded_rows:0,original_1MB_gate:true,raw_fit_exact_encoding_over_refused:true,

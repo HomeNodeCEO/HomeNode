@@ -3487,8 +3487,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             complete_selected_recorded_comparison_pass:eligibilityPlan.after.done,
             complete_selected_union_eligibility:false,continuation});
         }
-        if(readingSelectedUnionSubjectHousing)return freeze({...subjectHousingResult,
-          ...(coveredNeutralOriginals?{covered_neutral_originals:true}:{})});
+        if(readingSelectedUnionSubjectHousing&&coveredNeutralOriginals)
+          return freeze({...subjectHousingResult,covered_neutral_originals:true});
+        if(readingSelectedUnionSubjectHousing)return freeze(subjectHousingResult);
         const beforeCounts=unionCounts,{selected_count:beforeSelected,...beforeGroupCounts}=beforeCounts;
         if(unionPlan.entry)unionCounts=await unionStore.contribute(unionAnchor,unionPlan.entry);
         const {selected_count:afterSelected,...afterGroupCounts}=unionCounts;

@@ -113,6 +113,7 @@ import { emptyCohortSelectedStatisticsCountsV2, advanceCohortSelectedStatisticsC
 import { encodeCohortDiagnosticCompressedJsonV1 } from './cohortDiagnosticCompressedJsonV1.js';
 import { createCustomCohortV2ContinuationRepository } from './customCohortV2ContinuationRepository.js';
 import { createCustomCohortV2SelectionWaitRepository } from './customCohortV2SelectionWaitRepository.js';
+import { createCustomCohortBatchSelectionWaitV3Repository } from './customCohortBatchSelectionWaitV3Repository.js';
 import { createCustomCohortV2SelectionIntentRepository, prepareCustomCohortV2SelectionIntent } from './customCohortV2SelectionIntentRepository.js';
 import { createCustomCohortOriginalAccountOwnerBudget,createCustomCohortNeutralCacheOwnerBudget,
   CUSTOM_COHORT_ORIGINAL_ACCOUNT_OWNER_LIMITS } from './customCohortOriginalAccountOwnerBudget.js';
@@ -324,6 +325,9 @@ const FROZEN_SOURCE_STAGES = freeze({
     catalogingRecordedGroups: true, awaitingSelection: true, allowedPhases: ['frozen_recorded_catalog_refs_v2'] },
   covered_catalog_selection_wait_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
     catalogingRecordedGroups:true,awaitingSelection:true,coveredNeutralOriginals:true,allowedPhases:['frozen_recorded_catalog_refs_v2'] },
+  covered_batch_selection_wait_refs_v3: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,awaitingSelection:true,coveredNeutralOriginals:true,catalogBatchLineage:true,
+    allowedPhases:['frozen_recorded_catalog_refs_v2'] },
   original_catalog_selection_intent_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, selectingCatalogIntent: true, allowedPhases: ['frozen_recorded_catalog_refs_v2'] },
   covered_catalog_selection_intent_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
@@ -3833,9 +3837,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         // The server chose the issued DONE cursor; a fresh whole original/cache
         // and partition empty probe plus ALL current ending fences ran above.
         // Release ONLY the lease. No groups, publication or old choice carried.
-        const waiting=await createCustomCohortV2SelectionWaitRepository(client).awaitSelection(claim,jobOptions);
+        const waiting=await (catalogBatchLineage?createCustomCohortBatchSelectionWaitV3Repository:createCustomCohortV2SelectionWaitRepository)(client).awaitSelection(claim,jobOptions);
         budget.check();return freeze({...waiting,operation_id:input.operationId,selection_workspace_target:selectionWorkspaceTarget,
           ...(coveredNeutralOriginals?{covered_neutral_originals:true}:{}),
+          ...(catalogBatchLineage?{receipt_format:'cohort_recorded_catalog_batch_receipt_v3'}:{}),
           original_reconciliation:'fresh_terminal_original_cache_and_partition_empty_probe_after_issued_catalog_DONE',
           complete_catalog_semantic_replay:'not_established',selected_union:'not_established',statistics:'not_established',
           publication:'not_established',source_acquisition:'not_established',report_update:'none'});
@@ -4277,6 +4282,13 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * pending workspace and prior active head. Releases only the live lease. */
     awaitCoveredOriginalFrozenCaptureJobSelectionReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'covered_catalog_selection_wait_refs_v2'),
+    /** Closed, dormant V3 boundary. The server chooses its independently issued
+     * DONE cursor and performs a fresh whole-original/cache/partition EMPTY and
+     * every current/ending authority fence before releasing ONLY the lease. */
+    awaitCoveredOriginalFrozenCaptureJobBatchSelectionReferencesV3(...args){
+      if(args.length!==2)fail('invalid_options');
+      return frozenCaptureJobSourceStage(args[0],args[1],'covered_batch_selection_wait_refs_v3');
+    },
     // Inactive internal owner: explicit IDs are intent ONLY. No HTTP exposure,
     // browser claim, prior-choice carryover, membership, statistics or Apply.
     resumeOriginalFrozenCaptureJobSelectionIntentReferencesV2: (value, options = {}) =>

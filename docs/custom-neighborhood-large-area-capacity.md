@@ -8061,3 +8061,28 @@ the separately authorized CAD companion, remaining semantics, publication,
 terminal pins and licensed large-area/Hardy speed acceptance remain open.
 No migration registration, default worker, route, scheduler, source grant,
 appraiser choice, report Apply, publication or pin transfer is activated.
+
+## Covered nonempty selected-union native case (2026-10-16, execution pending)
+
+The existing initial-dispatch fixture now issues its explicit disposable human
+command with both native catalog groups: one recorded assigned group and the
+unassigned group. The server-owned union must include both distinct stock
+accounts, preserving each native partition ordinal and matching the entire
+fixture stock. Whole-original/entire-cache/partition/catalog replays and all
+existing rollback, orphan COMMIT, lost ACK, failure-history, native-parent and
+next-owner guards remain in place. No production choice or source grant changes.
+
+After the actual worker's first eligibility COMMIT loses its acknowledgment,
+fresh worker claims must process the second selected ordinal and then a fresh
+terminal EMPTY. The independently issued eligibility head must reach sequence
+three with selected ordinal two and DONE. A count or initial-page callback does
+not finish the pass. The separate existing legacy union-empty scenario retains
+explicit empty-command coverage; this case exercises the nonempty covered lane.
+
+The changed fixture passes syntax and diff checks. New-head native/cloud
+execution is pending. The existing matrix and deadlines are unchanged, and no
+local database, acquisition worker or full suite is run. A two-account protocol
+case does not establish a nonempty metric population, the separate CAD
+companion, complete amenities/economic/transaction semantics, medians/CODs,
+calendar quarters, coherent publication, terminal pins, licensed large-area or
+saved Hardy production-speed acceptance. Those remain required.

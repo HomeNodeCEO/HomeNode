@@ -1,5 +1,46 @@
 # Complete larger-area Custom neighborhood studies
 
+## Covered selected original-evidence pass (2026-10-16, not activated)
+
+`progressCoveredOriginalFrozenCaptureJobSelectedEvidenceReferencesV2` connects
+the existing native evidence head to the covered neutral/CAD original readers.
+The head chooses ONE next selected ordinal, followed by a distinct fresh EMPTY.
+Every selected account and required subject original, outside parcel part,
+primary/secondary CAD original and all-date associated transaction package is
+recompiled against the ENTIRE cached JSON in the SAME existing aggregate packet.
+The complete catalog/partition/immutable selection and actual current/ending
+actor, assignment, private draft, subject, CAD/market purpose, live claim, pin,
+source and independent native parents remain mandatory.
+
+The new dormant `runCustomCohortCoveredSelectedEvidenceV2JobOnce` accepts only
+actual eligibility DONE or incomplete native evidence. Every claim, recovery
+and expiry SQL lane requires the exact stock-adopted CAD DONE receipt, its native
+head/ledger and neutral DONE, the retained original parents, immutable command,
+request and scope. Source authorization belongs to the actual owner. Successful
+progress consumes one fresh native token while preserving attempts/error history;
+ordinary failure recovery alone spends the unchanged five-attempt ceiling.
+Evidence DONE is excluded from all three lanes, including an expired/cancelled
+claim belonging to the separately unfinished numerical owner.
+
+Receipt, evidence head, exact twelve-reference checkpoint and continuation
+release commit in one transaction after all ending checks. The covered result
+correctly declares that progress writes metadata. The same 250-original packet,
+128-query child ceiling, 32 MB/256-query/60-second actual owner and whole 16 KB
+output cap remain; no per-account budget reset, dense population array, callback
+or hash/count substitute is introduced. The legacy consumers stay unchanged.
+
+126 serial focused checks pass with zero failures/cancellations/skips in
+1,789.9231 ms. The existing native matrix now authors a third independent real
+job, its full original parent/selection chain, genuine failure and attempt-2
+recovery, ending rights/workspace/orphan-COMMIT rollback, real lost ACK, next
+ordinal and terminal EMPTY, and evidence-DONE next-owner exclusion. Earlier
+boundary and five-failure fixtures remain intact. New exact-head cloud/native
+execution is pending; no local DB/full suite or deadline increase. This is
+original-evidence traversal, not complete numerical/economic/historical
+interpretation, coherent publication, terminal pin transfer, licensed large-area
+acquisition or production-speed acceptance. No registry/default/route/scheduler,
+source grant, genuine appraiser choice, Apply, publication or pin activation.
+
 ## Covered first selected CAD amenity owner (2026-10-16, not activated)
 
 `readCoveredOriginalFrozenCaptureJobFirstSelectedAmenitiesReferencesV2` is a

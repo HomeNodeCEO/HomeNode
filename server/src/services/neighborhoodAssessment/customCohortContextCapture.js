@@ -365,6 +365,11 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true,
     readingSelectedUnionFirstAmenities: true, readingSelectedUnionFirstTransactions: true, progressingSelectedEvidence: true,
     allowedPhases: ['frozen_selected_eligibility_refs_v2','frozen_selected_evidence_refs_v2'] },
+  covered_selected_evidence_progress_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,
+    readingSelectedUnionSubjectHousing:true,readingSelectedUnionFirstEligibility:true,
+    readingSelectedUnionFirstAmenities:true,readingSelectedUnionFirstTransactions:true,progressingSelectedEvidence:true,
+    coveredNeutralOriginals:true,allowedPhases:['frozen_selected_eligibility_refs_v2','frozen_selected_evidence_refs_v2'] },
   original_selected_first_metric_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
     readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true,
@@ -3610,6 +3615,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             evidence_refs:[...checkpoint.evidence_refs.slice(0,11),receiptReference]});
           const continuation=await createCustomCohortV2ContinuationRepository(client).yieldIssued(claim,jobOptions);
           const result={...subjectHousingResult,status:'original_selected_evidence_traversal_progress_retained',
+              ...(coveredNeutralOriginals?{covered_neutral_originals:true,covered_CAD_originals:true,read_only:false}:{}),
             evidence_reference:receiptReference,progress:evidencePlan.after,
             coverage:'one_native_selected_ordinal_or_fresh_terminal_empty_probe',
             empty_selected_union:unionCounts.selected_count===0,
@@ -4163,6 +4169,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     // selected ordinal reopens all originals; only references are retained.
     progressOriginalFrozenCaptureJobSelectedEvidenceReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_selected_evidence_progress_refs_v2'),
+    progressCoveredOriginalFrozenCaptureJobSelectedEvidenceReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'covered_selected_evidence_progress_refs_v2'),
     // Dormant, read-only first metric-source candidate. No HTTP/worker route,
     // retained metric rows, population statistics or publication authority.
     readOriginalFrozenCaptureJobFirstSelectedMetricReferencesV2: (value, options = {}) =>

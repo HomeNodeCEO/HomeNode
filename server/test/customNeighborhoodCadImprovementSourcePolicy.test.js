@@ -19,11 +19,13 @@ const AUTH={userId:'synthetic-fixture-only'},CONTEXT={scope:{organization_id:ORG
 const NOW='2026-10-08T12:00:00.123456Z',PROFILE={datasetRevision:'fixture-CAD-1',providerRevisions:[{provider_id:'fixture',revision:'terms-1'}]};
 const REQUEST={retention:true,exposure:'none'},INPUT={selection_sha256:'a'.repeat(64),generation_id:GEN},PURPOSE=describe(INPUT);
 const copy=structuredClone;
+/** Create synthetic rights DATA only; this is never an independently approved source grant. */
 function config(){return {policy_version:1,organization_id:ORG,grant_id:'fixture-CAD-owner',purpose_version:1,purpose_scope:copy(SCOPE),
   dataset:{id:DATASET,revision:PROFILE.datasetRevision,coverage:'entire_integrated_source_mix_including_prior_merged_values',provider_revisions:copy(PROFILE.providerRevisions)},
   rights_basis:{owner_id:'fixture',basis_reference:'synthetic-only-NOT-a-production-grant',approved_by:'fixture',approved_at:'2026-10-01T00:00:00.000000Z'},
   valid_from:'2026-10-01T00:00:00.000000Z',expires_at:'2026-11-01T00:00:00.000000Z',revoked_at:null,
   retention:'immutable_originals_without_automated_deletion',exposures:{none:true,report_observation_summary:false,report_observation_members:false,report_observation_catalog:false}};}
+/** Model the fixed namespace read and mutable fault inputs without a database or source authority. */
 function fixture(){const calls=[],metadata={[KEY]:config()},state={organization_id:ORG,active:true,checked_at:NOW};
   const client={async query(sql,params){calls.push({sql,params});return {rows:[{...state,source_rights:metadata[params[1]]??null}]};}};
   const policy=create(copy(PROFILE));return {calls,metadata,state,client,policy,

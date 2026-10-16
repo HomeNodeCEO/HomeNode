@@ -6,6 +6,7 @@ import { createCustomCohortV2ContinuationRepository as continuations } from '../
 import { createCustomCohortBatchSelectedTransactionIndexV3WorkerRepository as claims } from '../../src/services/neighborhoodAssessment/customCohortBatchSelectedTransactionIndexV3WorkerRepository.js';
 import { runCustomCohortBatchSelectedTransactionIndexV3JobOnce as run } from '../../src/services/neighborhoodAssessment/customCohortBatchSelectedTransactionIndexV3JobWorker.js';
 import { runCustomCohortBatchSelectedSemanticV3JobOnce as semantic } from '../../src/services/neighborhoodAssessment/customCohortBatchSelectedSemanticV3JobWorker.js';
+import { createCustomCohortCompletedIndexFirstSourceV3Repository as completedSource } from '../../src/services/neighborhoodAssessment/customCohortCompletedIndexFirstSourceV3Repository.js';
 
 /** Thirty-second independent capture. The actual shared native package is
  * frozen before capture, then reopened for EACH selected account and EMPTY.
@@ -32,6 +33,15 @@ export async function runNeighborhoodBatchSelectedTransactionIndexV3DatabaseChec
     args={pool,cohortService:service,leaseSeconds:900};
   assert.ok(Object.values(before.index).every(rows=>rows.length===0));
   assert.equal((await body(before.parents.selected_semantic_v2_heads[0].receipt_reference)).after.done,true);
+  const beforeAdmission={job:await job(),parent:await parent()},admissionRollback=Error('rollback genuine incomplete-index native source admission');
+  const admissionReads=originalReads();
+  await assert.rejects(tx(pool,async client=>{
+    const [next]=await continuations(client).claimDue({limit:1,leaseSeconds:900});assert.equal(next.claim.operation_id,operation);
+    await assert.rejects(completedSource({client,claim:next.claim,scope,actorUserId:actor}).readFirst(),/claim_or_completed_index_lost/);
+    throw admissionRollback;
+  }),e=>e===admissionRollback);
+  assert.equal(originalReads(),admissionReads);assert.deepEqual(await job(),beforeAdmission.job);assert.deepEqual(await parent(),beforeAdmission.parent);
+  assert.deepEqual(await blobs(),before.blobs);assert.deepEqual(await snapshot(),before.index);await immutable();
   let calls=0,ownerError,owned,ownedParent,firstClaim;
   const unchanged=async()=>{
     const current=await job();assert.equal(current.claim_token,owned.claim_token);
@@ -94,7 +104,20 @@ export async function runNeighborhoodBatchSelectedTransactionIndexV3DatabaseChec
   const rollback=Error('rollback expired cancelled economic-owner token');
   await assert.rejects(tx(pool,async client=>{
     const [next]=await continuations(client).claimDue({limit:1,leaseSeconds:900});assert.equal(next.claim.operation_id,operation);
+    const source=completedSource({client,claim:next.claim,scope,actorUserId:actor}),reads=originalReads(),plan=await source.readFirst();
+    assert.deepEqual(plan.source,{kind:'source_record',native_key:'501',first_selected_ordinal:1});
+    const indexed=terminal.index.selected_transaction_index_v2_rows.find(r=>r.ordinal===1);
+    assert.deepEqual(plan.selected_entry,Object.fromEntries(['account_id','ordinal','partition_ordinal','entry_reference','metric_row_reference','contribution_row_reference'].map(k=>[k,indexed[k]])));
+    assert.equal(plan.index_sequence,3);assert.equal(plan.registered_source_keys,3);assert.equal(plan.registered_legacy_keys,2);
+    assert.deepEqual(plan.index_reference,terminal.index.selected_transaction_index_v2_heads[0].receipt_reference);
+    for(const key of ['originals_reconciled','source_authority','economic_transaction'])assert.equal(plan[key],false);
+    assert.deepEqual(await source.readFirst(),plan);assert.equal(originalReads(),reads);
+    assert.deepEqual((await client.query('SELECT * FROM app.neighborhood_custom_cohort_selected_transaction_index_v2_heads WHERE operation_id=$1',[operation])).rows,terminal.index.selected_transaction_index_v2_heads);
+    console.info('[native-completed-index-first-source-v3]',{actual_complete_index_and_consumed_native_continuation:true,
+      first_registered_shared_source_and_original_first_seen_account:true,readonly_repeat_same_transaction:true,
+      source_authority:false,originals_reconciled:false,economic_transaction:false,production_activation:false});
     await client.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);
+    await assert.rejects(source.readFirst(),/claim_or_completed_index_lost/);assert.equal(originalReads(),reads);
     await jobs(client).cancel(scope,operation);const saved=(await client.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[operation])).rows;
     assert.deepEqual(await claims(client).claimDue({leaseSeconds:900}),[]);
     assert.deepEqual((await client.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[operation])).rows,saved);throw rollback;

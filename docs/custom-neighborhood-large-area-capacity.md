@@ -23,9 +23,11 @@ constraints require the matching issued head AND root checkpoint at commit.
 Completion requires a distinct fresh empty original/cache probe; completed
 reopen repeats that empty probe without new rows, blobs or progress writes.
 
-All nested reads/writes share the existing ONE single-use32MB/128-query/60-second/
-five-second-query owner budget; no dense population or per-account budget loop
-is introduced. Current DB actor/assignment/private draft/retained subject/source
+The original-cell reader enforces ONE single-use32MB/128-query/60-second/
+five-second-query subbudget. Partition persistence and other owner SQL use the
+transaction client directly under the outer operation deadline and SQL timeout;
+this stage does not enforce a shared owner query counter. No dense population
+or per-account budget loop is introduced. Current DB actor/assignment/private draft/retained subject/source
 purpose/live claim/pin/original-stock/issued-head/cache checks remain at BOTH
 ends. Ending failure rolls back every derived blob/row/receipt/head/checkpoint;
 lost commit acknowledgement resumes from the actual committed next ordinal.
@@ -33,8 +35,12 @@ Original payloads and job-typed rows are NOT copied. Old phases/profiles/legacy
 selection/report semantics remain unchanged; this is a distinct internal stage.
 
 207 focused DATA/repository/input/old-profile/whole-original tests PASS0fail0skip,
-1496.8941ms; source/native fixture syntax and diff checks pass. NEW native/full cloud execution for
-this partition is PENDING. Actual native assertions are AUTHORED for two
+1496.8941ms; source/native fixture syntax and diff checks pass. Exact57f5c66b
+foundation38861788737 passed all four jobs. Full native116845494803 (1,814,864
+raw log characters inspected) passed417 migrations, subject1, prepared8, edge1
+and bootstrap2 with zero failures, cancellations or skips. Its actual
+`[native-original-recorded-partition-issued-owner-v2]` marker executed at
+2026-10-16T06:42:59.7490208Z and confirmed the following assertions for two
 accounts (one assigned, one conflicting/unassigned),512-byte authentic labels,
 outside candidates, exact independent original result equality, every current
 and ending authorization/cache/cancel fence, malformed/partial/unissued heads,

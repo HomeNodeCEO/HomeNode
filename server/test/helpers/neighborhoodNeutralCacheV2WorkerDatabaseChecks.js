@@ -286,11 +286,14 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   assert.deepEqual(await job(),waiting);
   assert.deepEqual(await runSelectedInitial(args),{status:'idle'},'only a genuine immutable human command can be adopted');
   assert.deepEqual(await job(),waiting);
-  // Explicit empty inclusion is a deliberate disposable-fixture NEW-study
-  // command, never a default inferred by a worker, catalog, prior choice or UI.
+  // Explicit inclusion of both groups is a deliberate disposable-fixture
+  // NEW-study command, never a default inferred by a worker or production UI.
+  // The independent legacy union-empty scenario retains empty-command proof.
+  const selectedGroupIds=(await catalogGroups()).map(row=>row.group_id);
+  assert.equal(selectedGroupIds.length,2);assert.ok(selectedGroupIds.includes('discovery:unassigned'));
   const intentMethod='resumeCoveredOriginalFrozenCaptureJobSelectionIntentReferencesV2',
     selectionIntent={command_id:randomUUID(),catalog_reference:(await catalogHead()).receipt_reference,
-      workspace_revision:1,included_recorded_group_ids:[]},
+      workspace_revision:1,included_recorded_group_ids:selectedGroupIds},
     intents=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_v2_selection_intents WHERE operation_id=$1',[operation])).rows;
   for(const [probe,reason] of [['intent_workspace',/custom_cohort_group_workspace_study_changed/],['intent_role',/custom_cohort_job_actor_access_revoked/]]){
     fault=probe;await assert.rejects(service[intentMethod](input,{selectionIntent}),reason);assert.equal(fault,null);
@@ -299,11 +302,11 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   }
   fault='intent_ack';await assert.rejects(service[intentMethod](input,{selectionIntent}),error=>error.outcome_unknown===true);assert.equal(fault,null);
   assert.equal((await intents()).length,1);const command=(await intents())[0],resumed=await service[intentMethod](input,{selectionIntent});
-  assert.deepEqual(resumed.included_recorded_group_ids,[]);assert.equal(resumed.command_id,selectionIntent.command_id);
+  assert.deepEqual(resumed.included_recorded_group_ids,selectedGroupIds);assert.equal(resumed.command_id,selectionIntent.command_id);
   assert.equal(resumed.claim.claim_token,command.resume_claim_token);assert.equal(resumed.claim.attempts,5);
   const humanOwnedJob=await job(),humanOwnedIntents=await intents();assert.equal(humanOwnedJob.status,'running');
   const reopened=await service.readCoveredOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2(input,{captureJobClaim:resumed.claim});
-  assert.deepEqual(reopened.included_recorded_group_ids,[]);assert.equal(reopened.command_id,selectionIntent.command_id);
+  assert.deepEqual(reopened.included_recorded_group_ids,selectedGroupIds);assert.equal(reopened.command_id,selectionIntent.command_id);
   assert.equal(reopened.read_only,true);assert.equal(reopened.lease_extended,false);
   assert.deepEqual(await job(),humanOwnedJob);assert.deepEqual(await intents(),humanOwnedIntents);assert.deepEqual(await workspace(),pendingWorkspace);
   for(const worker of [runStock,runPartition,runCatalog,runWait])assert.deepEqual(await worker(args),{status:'idle'});
@@ -368,7 +371,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     enter();await held;
     const progress=await service[unionMethod](value,options);
     assert.equal(progress.covered_neutral_originals,true);assert.equal(progress.complete_catalog_original_replay,i===1);
-    assert.equal(progress.complete_distinct_selected_stock_union,i===1);assert.equal(progress.selected_stock_accounts,0);
+    assert.equal(progress.complete_distinct_selected_stock_union,i===1);assert.equal(progress.selected_stock_accounts,2);
     assert.equal(progress.context_complete,false);assert.equal(progress.pin_transfer,false);
     assert.equal((await job()).last_error_code,'access_revoked');
     return progress;
@@ -383,7 +386,11 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     }finally{release();}
     assert.equal((await running).status,'continuation_pending');
   }
-  assert.equal((await unionHead()).sequence,3);assert.deepEqual(await unionRows(),[],'the explicit empty command remains empty');
+  assert.equal((await unionHead()).sequence,3);
+  const selectedRows=await unionRows(),stockMembers=(await pool.query(
+    'SELECT account_id FROM app.neighborhood_custom_cohort_stock_accounts WHERE operation_id=$1 ORDER BY account_id',[operation])).rows;
+  assert.equal(selectedRows.length,2);assert.deepEqual(selectedRows.map(row=>row.account_id),stockMembers.map(row=>row.account_id));
+  assert.deepEqual(selectedRows.map(row=>row.ordinal),[1,2]);assert.deepEqual(selectedRows.map(row=>row.partition_ordinal),[1,2]);
   assert.deepEqual(await unionGroups(),(await catalogGroups()).map(({group_id,member_count,last_ordinal})=>({group_id,member_count,last_ordinal})));
   const eligibilityMethod='progressCoveredOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2',
     eligibilityHead=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_eligibility_v2_heads WHERE operation_id=$1',[operation])).rows[0];
@@ -407,6 +414,19 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   assert.equal((await runSelectedProgress(eligibilityArgs)).status,'outcome_unknown');assert.equal(eligibilityCalls,1);
   assert.equal(fault,null);assert.equal((await eligibilityHead()).sequence,1);assert.equal((await job()).attempts,5);
   assert.equal((await job()).last_error_code,'access_revoked');assert.deepEqual(await intents(),humanOwnedIntents);
+  // The first real eligibility owner handled selected ordinal one. Fresh
+  // worker claims must read ordinal two and then prove terminal EMPTY. An
+  // account count, cached bit or initial-page callback cannot finish this pass.
+  for(let step=0;step<2;step++){
+    assert.equal((await runSelectedProgress(args)).status,'continuation_pending');
+    assert.equal((await job()).attempts,5);assert.equal((await job()).last_error_code,'access_revoked');
+    assert.deepEqual(await intents(),humanOwnedIntents);
+  }
+  const completedEligibility=await eligibilityHead();assert.equal(completedEligibility.sequence,3);
+  const eligibilityReceipt=JSON.parse((await pool.query(`SELECT canonical_utf8 FROM app.neighborhood_cohort_evidence_blobs
+    WHERE organization_id=$1 AND content_sha256=$2 AND canonical_utf8_bytes<=16000`,
+    [scope.organization_id,completedEligibility.receipt_reference.content_sha256])).rows[0].canonical_utf8);
+  assert.deepEqual(eligibilityReceipt.after,{selected_ordinal:2,done:true});
   const eligibilityDone=await job();assert.deepEqual(await runSelectedProgress(args),{status:'idle'});
   assert.deepEqual(await runSelectedProgress(args),{status:'idle'});assert.deepEqual(await job(),eligibilityDone);
   const [laterOwner]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));
@@ -468,19 +488,27 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   console.info('[native-covered-selection-boundary-v2]',{missing_real_pending_workspace_refused_before_originals:true,
     separate_current_DB_pending_study_command_required:true,fresh_terminal_original_cache_partition_probe:true,
     ending_workspace_and_role_roll_back_wait_and_provisional_command:true,lost_actual_wait_and_command_COMMIT_ACKs:true,
-    actual_wait_releases_only_lease_at_attempt:5,explicit_fixture_empty_command_never_auto_selected:true,
+    actual_wait_releases_only_lease_at_attempt:5,explicit_fixture_nonempty_command_never_auto_selected:true,
     immutable_command_exact_replay_and_readonly_reopen:true,all_completed_workers_leave_human_resume_lease_and_expired_cancelled_job_untouched:true,
     pending_workspace_and_native_parents_preserved:true,global_header_still_building:true,
     default_worker_activation:false,licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
-  console.info('[native-covered-selected-union-v2]',{actual_immutable_explicit_empty_command_remains_empty:true,
+  console.info('[native-covered-selected-union-v2]',{actual_immutable_explicit_nonempty_command_replayed_exactly:true,
     every_two_whole_originals_entire_cache_partition_and_catalog_replayed_plus_fresh_EMPTY:true,
     complete_assigned_unassigned_group_counts_equal_native_catalog:true,ending_workspace_and_role_atomic_rollback:true,
     orphan_union_and_eligibility_yield_actual_COMMIT_refused:true,lost_actual_first_union_and_eligibility_COMMIT_ACKs:true,
     success_at_failure_ceiling:5,error_history_and_parent_roots_preserved:true,fresh_native_claim_each_step:true,
-    subject_housing_and_empty_first_eligibility_readonly_no_lease_extension:true,
+    subject_housing_and_nonempty_first_eligibility_readonly_no_lease_extension:true,
     real_expired_cancelled_human_lease_native_claim_expiry_probe_rolled_back_without_revival:true,
     completed_workers_leave_later_owner_including_expired_cancelled_untouched:true,
     global_header_still_building:true,nonempty_selected_metric_population:false,CAD_companion:false,
+    default_worker_activation:false,licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
+  console.info('[native-covered-nonempty-selection-v2]',{explicit_fixture_assigned_and_unassigned_groups:2,
+    actual_distinct_selected_stock_accounts:2,complete_native_union_rows_match_entire_fixture_stock:true,
+    native_union_entry_and_partition_ordinals_one_and_two:true,complete_catalog_group_counts_replayed_from_every_original:true,
+    actual_worker_eligibility_originals_at_selected_ordinals_one_and_two_plus_fresh_EMPTY:true,
+    native_eligibility_sequence_three_and_terminal_selected_ordinal_two:true,immutable_human_command_and_failure_history_preserved:true,
+    original_native_parents_workspace_reports_and_pins_preserved:true,global_header_still_building:true,
+    nonempty_selected_metric_population:false,CAD_companion:false,complete_semantics:false,
     default_worker_activation:false,licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
   console.info('[native-covered-selected-initial-worker-v2]',{missing_human_command_idle_without_claim:true,
     actual_expired_adoption_real_COMMIT_refused_and_rolled_back:true,concurrent_single_real_human_resume_adoption:true,

@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { prepareCustomCohortGroupWorkspaceSave as prepare } from '../src/services/neighborhoodAssessment/customCohortGroupWorkspaceSave.js';
 import { saveCustomCohortGroupPendingCapture as pending,
-  prepareCustomCohortGroupCaptureCompletion as complete } from '../src/services/neighborhoodAssessment/customCohortGroupWorkspaceSave.js';
+  prepareCustomCohortGroupCaptureCompletion as complete,
+  readCustomCohortFrozenSelectionWorkspaceTarget as frozenTarget } from '../src/services/neighborhoodAssessment/customCohortGroupWorkspaceSave.js';
 import { canonicalAssessmentJson as json } from '../src/services/neighborhoodAssessment/contract.js';
 
 // Strict query recording only. Native fixture checks exercise real rollback,
@@ -119,6 +120,53 @@ const completion = () => ({ ...transition(), contextRef: nextContext,
   expectedWorkspaceCheckpoint: { ...v7(), pending_capture: capture() } });
 const completeOwned = (db, input = completion(), settings = {}) => complete({ client: db.client, input, scopeJson: scope,
   observationPeriod: nextPeriod, discovery: null, privateSalesImport: null, checkBudget() {}, ...settings });
+const frozenInput=()=>({...identity,operationId:nextContext.context_id,observationPeriod:structuredClone(nextPeriod)});
+const frozenOwned=(db,input=frozenInput(),checkBudget=()=>{})=>frozenTarget({client:db.client,input,scopeJson:scope,checkBudget});
+
+test('frozen V2 selection target reads actual pending study and prior current head without carrying old groups or writing',async()=>{
+  const value={...v7(),pending_capture:capture()},db=database({value});let checks=0;
+  const result=await frozenOwned(db,{...frozenInput(),expectedWorkspaceCheckpoint:{forged:true}},()=>checks++);
+  assert.equal(result.authority,'prior_workspace_target_only_not_new_selection');assert.equal(result.workspace_revision,2);
+  assert.deepEqual(result.workspace_checkpoint,value);assert.notEqual(result.workspace_checkpoint,value);
+  assert.ok(Object.isFrozen(result.workspace_checkpoint.pending_capture));assert.ok(checks>=4);
+  const read=db.calls.find(c=>c.sql.startsWith('/* custom-cohort-group-workspace:read */'));
+  assert.deepEqual(read.params,['41','neighborhood_workspace',524288]);assert.match(read.sql,/FOR UPDATE NOWAIT/);
+  assert.equal(db.calls.filter(c=>c.sql.startsWith('/* custom-cohort-group-selection:head */')).length,1);
+  assert.equal(writes(db).length,0);assert.ok(!db.calls.some(c=>/neighborhood-cohort-blob|report_files|ST_DWithin/.test(c.sql)));
+  assert.equal(Object.hasOwn(result,'included_recorded_group_ids'),false);
+  assert.equal(Object.hasOwn(result,'selection_ref'),false);
+  value.pending_capture.operation_id=identity.operationId;assert.equal(result.workspace_checkpoint.pending_capture.operation_id,nextContext.context_id);
+});
+test('frozen V2 target permits a genuinely empty prior active editor but never absent, legacy, stale or different pending study',async()=>{
+  const empty={workspace_version:7,active:null,pending_capture:capture()},db=database({value:empty});
+  assert.deepEqual((await frozenOwned(db)).workspace_checkpoint,empty);assert.equal(writes(db).length,0);
+  assert.ok(!db.calls.some(c=>c.sql.includes('custom-cohort-group-selection:')));
+  for(const options of [{absent:true},{value:legacy()},{value:v7()},
+    {value:{...empty,pending_capture:{...capture(),operation_id:identity.operationId}}},
+    {value:{...empty,pending_capture:{...capture(),observation_period:period}}},
+    {value:{...empty,pending_capture:{...capture(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}}}},
+    {value:{...empty,pending_capture:{...capture(),private_sales_import:{batch_id:identity.operationId,expected_review_revision:1}}}},
+    {value:{...v7(),active:{...v7().active,context_ref:nextContext},pending_capture:capture()}}]){
+    const bad=database(options);await assert.rejects(frozenOwned(bad),/unavailable|study_changed/);assert.equal(writes(bad).length,0);
+  }
+});
+test('frozen target refuses missing or changed prior head and binds exact discovery/private review with no caller authority',async()=>{
+  const value={...v7(),pending_capture:capture()};
+  for(const head of [null,{...ref,selection_revision:2},{...ref,selection_sha256:'e'.repeat(64)}]){
+    const db=database({value,head});await assert.rejects(frozenOwned(db),/selection_changed/);assert.equal(writes(db).length,0);
+  }
+  const discovery={profile_id:'custom-suburban-radius-v2',radius_metres:'16093.44'},privateSalesImport={batch_id:identity.operationId,expected_review_revision:2},
+    withPrivate={...value,pending_capture:{...capture(),discovery,private_sales_import:privateSalesImport}},db=database({value:withPrivate});
+  assert.deepEqual((await frozenOwned(db,{...frozenInput(),discovery,privateSalesImport})).workspace_checkpoint,withPrivate);
+  await assert.rejects(frozenOwned(db,{...frozenInput(),discovery,privateSalesImport:{...privateSalesImport,expected_review_revision:1}}),/study_changed/);
+  assert.equal(writes(db).length,0);
+});
+test('frozen workspace target preserves owner budget interruption before SQL and during prior-head verification',async()=>{
+  for(const at of [1,3]){const db=database({value:{...v7(),pending_capture:capture()}});let checks=0;
+    await assert.rejects(frozenOwned(db,frozenInput(),()=>{if(++checks===at)throw Error('synthetic same owner deadline');}),/same owner deadline/);
+    assert.equal(writes(db).length,0);if(at===1)assert.equal(db.calls.length,0);
+  }
+});
 
 test('only explicit empty V7 intent at revision zero can bootstrap an actually absent workspace', async () => {
   const prior = { workspace_version: 7, active: null, pending_capture: null };

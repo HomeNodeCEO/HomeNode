@@ -109,7 +109,7 @@ export async function runNeighborhoodCadCacheCoverageV2DatabaseChecks({pool,inpu
     await client.query('UPDATE app.neighborhood_custom_cohort_cad_cache_v2_heads SET receipt_reference=$2,sequence=2 WHERE operation_id=$1',[operation,ref]);
   }),e=>e.code==='55000'&&/neighborhood_cad_cache_v2_transition_conflict/.test(e.message));assert.deepEqual(await head(),first);
   await assert.rejects(tx(pool,client=>client.query('DELETE FROM app.neighborhood_custom_cohort_cad_cache_v2_heads WHERE operation_id=$1',[operation])),e=>e.code==='55000');
-  await tx(pool,client=>jobs(client).failClaim(claim,'synthetic_CAD_retry',{retrySeconds:1}));
+  await tx(pool,client=>jobs(client).failClaim(claim,'synthetic_cad_retry',{retrySeconds:1}));
   await pool.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET run_after=clock_timestamp() WHERE operation_id=$1',[operation]);
   const next=await tx(pool,async client=>{const [r]=await jobs(client).claimDue({leaseSeconds:900});assert.equal(r.operation_id,operation);return r;});
   assert.equal(next.attempts,2);assert.notEqual(next.claim_token,claim.claim_token);
@@ -122,7 +122,7 @@ export async function runNeighborhoodCadCacheCoverageV2DatabaseChecks({pool,inpu
   assert.equal(reopened.progress.done,true);assert.deepEqual(await head(),complete);assert.equal(await blobCount(),finalBlobs);
   const after=await parents();assert.deepEqual(after.neutral,before.neutral);assert.deepEqual(after.graph,before.graph);
   assert.deepEqual(after.geography,before.geography);assert.deepEqual(after.identity,before.identity);assert.deepEqual(after.pins,before.pins);
-  assert.deepEqual(after.job.checkpoint,before.job.checkpoint);assert.equal(after.job.attempts,2);assert.equal(after.job.last_error_code,'synthetic_CAD_retry');
+  assert.deepEqual(after.job.checkpoint,before.job.checkpoint);assert.equal(after.job.attempts,2);assert.equal(after.job.last_error_code,'synthetic_cad_retry');
   for(const r of [second,terminal,reopened]){assert.equal(r.automatic_handoff,false);assert.equal(r.context_complete,false);assert.equal(r.pin_transfer,false);}
   const coveredFrom=calls.length,covered=await amenity();assert.equal(covered.account_id,'CLOSURE-A');
   assert.deepEqual(covered.original_counts,{primary:1,secondary:2});assert.equal(covered.coverage,'one_complete_first_stock_account_only');

@@ -2420,7 +2420,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         new URL('../migrations/20261211_custom_cohort_initial_dispatch_v2.sql',import.meta.url),'utf8')));
       await runNeighborhoodInitialV2DispatchDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData:fixturePolicy()});
       await withCustomCohortJobTransaction(pool,async client=>{
-        for(const name of ['20261212_custom_cohort_neutral_cache_v2_heads.sql','20261213_custom_cohort_neutral_cache_success_v2.sql'])
+        for(const name of ['20261212_custom_cohort_neutral_cache_v2_heads.sql','20261213_custom_cohort_neutral_cache_success_v2.sql',
+          '20261214_custom_cohort_cache_stock_bridge_v2.sql'])
           await client.query(readFileSync(new URL(`../migrations/${name}`,import.meta.url),'utf8'));
       });
       await runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData:fixturePolicy()});

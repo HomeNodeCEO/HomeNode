@@ -7707,3 +7707,36 @@ coverage and transaction-change refusal, ending authorization rollback and
 unchanged head/checkpoint/header/blob state. Actual cloud execution is pending.
 No route, worker, publication, Apply or pin transfer is activated; the native
 cache-DONE to first automatic stock-traversal bridge remains separate work.
+
+## Native first-stock adoption after completed cache coverage (2026-10-16)
+
+The dormant cache-stock bridge binds the actual completed native cache success
+head to the unchanged identity/main continuation parent. Its one-use claim is
+fresh and independently stamped in the real claim transaction; it never reuses
+the cache or identity token. Successful adoption preserves attempts and error
+history, while genuine failed or expired recovery spends the existing five-
+failure budget. All main/cache sequence ceilings and deadlines stay unchanged.
+
+`continueCoveredOriginalFrozenCaptureJobStockTraversalReferencesV2` reopens the
+actual native coverage and every whole account/parcel original against the
+entire neutral cache under the original current/ending authorization fences.
+The native bridge permits only the first issued stock head and the exact next
+main continuation. Independent deferred COMMIT guards pair that first head,
+main continuation/lease release and bridge completion in the same transaction.
+Later stock steps retain their normal fresh main-continuation claims and exact
+native next-account/EMPTY checks; they do not re-consume the cache parent.
+
+The dedicated worker adopts only this first stock owner and then becomes idle.
+Later stock/catalog scheduling, CAD companion preparation, publication and
+terminal pins remain unfinished. No migration registration, route, default
+worker, source permission, report Apply or production activation is added.
+
+Seven focused worker/claim checks and90 affected owner/receipt checks passed;
+changed JavaScript syntax and diff checks pass. The existing initial-dispatch
+native fixture now requires actual partial-cache refusal, concurrent single
+adoption, orphan real claim and completion COMMIT refusal, expired-token
+refusal, ending-role rollback, lost actual first-stock COMMIT acknowledgement,
+unchanged cache parent, preserved failure history at attempt five and exact
+first/second/EMPTY stock continuations with the global header still building.
+Actual new-head cloud execution is pending. These small protocol checks do not
+establish licensed large-area acquisition, selected-union statistics or speed.

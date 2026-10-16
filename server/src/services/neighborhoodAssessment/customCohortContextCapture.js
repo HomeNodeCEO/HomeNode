@@ -109,6 +109,7 @@ import { createCustomCohortPreparedSelectionRegistry } from './customCohortPrepa
 import { createCustomCohortGroupSelectionRepository } from './customCohortGroupSelectionRepository.js';
 import { prepareCustomCohortGroupWorkspaceSave,
   prepareCustomCohortGroupCaptureCompletion, readCustomCohortFrozenSelectionWorkspaceTarget } from './customCohortGroupWorkspaceSave.js';
+import { createCustomCohortCacheStockV2BridgeRepository } from './customCohortCacheStockV2BridgeRepository.js';
 import { resumeCustomCohortSubjectCheckpoint } from './customCohortCaptureSubjectCheckpoint.js';
 import { resolveCustomCohortRetainedSubjectHousing } from './customCohortRetainedSubjectHousing.js';
 import { resolveNeighborhoodOriginalAccountEligibilityV2 } from './neighborhoodOriginalAccountEligibilityV2.js';
@@ -253,6 +254,9 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingStockAccountPackages: true, readingRecordedPartition: true, allowedPhases: ['frozen_recorded_partition_refs_v2'] },
   original_stock_traversal_continue_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     traversingStock: true, yieldingV2Progress: true, allowedPhases: ['frozen_identity_refs_v2', 'frozen_stock_traversal_refs_v2'] },
+  covered_stock_traversal_continue_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    traversingStock:true,yieldingV2Progress:true,coveredNeutralOriginals:true,cacheStockHandoff:true,
+    allowedPhases:['frozen_identity_refs_v2','frozen_stock_traversal_refs_v2'] },
   original_recorded_partition_continue_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     partitioningRecordedGroups: true, yieldingV2Progress: true, allowedPhases: ['frozen_stock_traversal_refs_v2', 'frozen_recorded_partition_refs_v2'] },
   original_recorded_catalog_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
@@ -1813,7 +1817,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     const {referencesV2=false,issuingSourcePrefix=false,yieldingSourcePrefix=false,verifying=false,stockVerifying=false,identityVerifying=false,yieldingEarlyProgress=false,
       typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,cachingNeutralOriginals=false,yieldingNeutralProgress=false,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
-      readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,coveredNeutralOriginals=false,
+      readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,coveredNeutralOriginals=false,cacheStockHandoff=false,
       resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,partitioningRecordedGroups=false,
       readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,readingSelectedUnionFirstEligibility=false,readingSelectedUnionFirstAmenities=false,readingSelectedUnionFirstTransactions=false,progressingSelectedEligibility=false,progressingSelectedEvidence=false,readingSelectedMetricSource=false,progressingSelectedMetrics=false,readingSelectedStatisticsSource=false,progressingSelectedStatistics=false,readingSelectedFrequencySource=false,readingSelectedNumericSource=false,progressingSelectedNumeric=false,readingSelectedRankCandidates=false,progressingSelectedSemantic=false,readingSelectedTransactionSource=false,preparingSelectedTransactionFirstCandidate=false,readingSelectedTransactionIndex=false,progressingSelectedTransactionIndex=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     const readingCadSource=readingCadPages||readingSelectedUnionFirstAmenities;
@@ -2339,6 +2343,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       }
       let traversalAnchorStore=null,traversalAnchor=null,traversalResult=null;
       if(traversingStock){
+        if(cacheStockHandoff&&checkpoint.phase==='frozen_identity_refs_v2')
+          await createCustomCohortCacheStockV2BridgeRepository(client).assertClaim(claim,jobOptions);
         const expected={binding,source_reference:reference,root,graph_verification_reference:verificationReference,
           stock_verification_reference:stockVerificationReference,identity_verification_reference:identityVerificationReference,
           stock_reference:stockReference,effective_date:context.effective_date,stock_account_count:stock.population.account_count};
@@ -2362,7 +2368,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         // outside parts, against the ENTIRE neutral cache before progress DML.
         const before=issued?.after??{after_account:'',account_count:0,done:false},
           graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
-        const packet=await createNeighborhoodSharedStockOriginalCellsV2(client,stockOptions,graph,context.effective_date)
+        const createOriginals=coveredNeutralOriginals?createNeighborhoodCoveredStockOriginalCellsV2:createNeighborhoodSharedStockOriginalCellsV2;
+        const packet=await createOriginals(client,stockOptions,graph,context.effective_date)
           .housingAccountPackage({cursor:before.after_account});
         if(packet.recorded_housing!==null&&!same(packet.recorded_housing.retained_housing_interpretation,housingProfile))fail('checkpoint_conflict');
         if(before.done&&!packet.end_of_accounts)fail('checkpoint_conflict');
@@ -3508,7 +3515,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         // same TX. The native continuation guard derives the actual issued
         // head/root, refuses duplicate progress and preserves all attempts.
         const continuation=await createCustomCohortV2ContinuationRepository(client).yieldIssued(claim,jobOptions);
-        budget.check();return freeze({...(catalogingRecordedGroups?catalogResult:partitioningRecordedGroups?partitionResult:traversalResult),continuation});
+        const initialCacheStock=cacheStockHandoff&&checkpoint.phase==='frozen_identity_refs_v2';
+        if(initialCacheStock)await createCustomCohortCacheStockV2BridgeRepository(client).complete(claim,jobOptions);
+        budget.check();return freeze({...(catalogingRecordedGroups?catalogResult:partitioningRecordedGroups?partitionResult:traversalResult),continuation,
+          ...(cacheStockHandoff?{automatic_cache_stock_handoff:initialCacheStock,context_complete:false,pin_transfer:false}:{})});
       }
       // Every unchanged original/current-authority ending fence above must
       // pass first. A DONE replay makes no new head and cannot yield it twice.
@@ -3842,6 +3852,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * No retry-history reset, worker activation, completion or pin transfer. */
     continueOriginalFrozenCaptureJobStockTraversalReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_stock_traversal_continue_refs_v2'),
+    /** Completed native cache coverage, a fresh first-stock claim and all
+     * whole-original/current-ending fences precede the native main handoff. */
+    continueCoveredOriginalFrozenCaptureJobStockTraversalReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'covered_stock_traversal_continue_refs_v2'),
     continueOriginalFrozenCaptureJobRecordedPartitionReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_recorded_partition_continue_refs_v2'),
     continueOriginalFrozenCaptureJobRecordedCatalogReferencesV2: (value, options = {}) =>

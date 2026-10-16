@@ -33,13 +33,14 @@ test('catalog DATA refuses omitted denominators, candidate promotion, group over
     {...raw(),after_counts:{...unassigned,get assigned_accounts(){assert.fail('getter');}}},
     {...raw(),after:{...last,done:true},entry_reference:null}])assert.throws(()=>prepare(r,expected),/invalid_receipt/);
 });
-function setup({auto=false,bad=false}={}){let current=null,tx=12,total={...zero};const calls=[],
+function setup({auto=false,bad=false,group=null}={}){let current=null,tx=12,total={...zero};const calls=[],
   bound={source_reference:ref(1),root_reference:ref(2),graph_reference:ref(3),geographic_reference:ref(4),identity_reference:ref(5),
     stock_reference:ref(6),traversal_reference:ref(7),profile_reference:expected.profile_reference,partition_reference:ref(8)};
   const client={async query(sql,v){calls.push({sql,v});
     if(sql.includes(':transaction'))return {rowCount:1,rows:[{transaction_id:String(auto?++tx:tx)}]};
     if(sql.includes(':anchor-read'))return {rowCount:1,rows:[current??Object.fromEntries([...Object.keys(bound),'receipt_reference','sequence'].map(k=>[k,null]))]};
     if(sql.includes(':counts'))return {rowCount:1,rows:[bad?{...total,assigned_groups:2049}:{...total}]};
+    if(sql.includes(':group-read'))return {rowCount:1,rows:[group??{group_id:null,normalized_county:null,normalized_label:null,member_count:null,last_ordinal:null}]};
     if(sql.includes(':contribute')){if(v[8]==='discovery:unassigned')total.unassigned_accounts++;else{total.assigned_accounts++;total.assigned_groups=1;}
       return {rowCount:1,rows:[{last_ordinal:v[11]}]};}
     if(sql.includes(':anchor-insert')){current={...bound,receipt_reference:JSON.parse(v[17]),sequence:1};return {rowCount:1,rows:[{sequence:1}]};}
@@ -63,6 +64,38 @@ test('catalog repository refuses autocommit before writes, ordinal jumps, hostil
     {...entry,account_id:'\ud800'},{...entry,group_id:'recorded-cad:'+'a'.repeat(64),normalized_county:'dallas',normalized_label:'a'.repeat(513)},
     new Proxy(entry,{}),{...entry,get group_id(){assert.fail('getter');}}])await assert.rejects(owner.contribute(null,e),/invalid_/);
   assert.equal(calls.length,0);await assert.rejects(setup({bad:true}).owner.counts(),/corrupt/);
+});
+test('one catalog storage identity is exact PK-scoped, claim-fenced and detached, never semantic group counts',async()=>{
+  const assigned={group_id:'recorded-cad:'+'a'.repeat(64),normalized_county:'dallas',normalized_label:'é'.repeat(256),member_count:3,last_ordinal:5};
+  for(const group of [assigned,{group_id:'discovery:unassigned',normalized_county:null,normalized_label:null,member_count:2,last_ordinal:5}]){
+    const {owner,calls}=setup({group}),key={group_id:group.group_id},row=await owner.readGroup(key);
+    assert.deepEqual(row,group);assert.ok(Object.isFrozen(row));assert.notEqual(row,group);
+    assert.equal(calls.length,1);const {sql,v}=calls[0];
+    assert.equal(v.length,9);assert.equal(v[8],key.group_id);assert.equal(v[0],id(3));assert.equal(v[7],id(6));
+    for(const s of ['g.operation_id=job.operation_id','g.organization_id=job.organization_id','g.group_id=$9',
+      'job.claim_token=$2::uuid','job.attempts=$3::integer',"job.status='running'",'job.lease_expires_at>clock_timestamp()',
+      'job.cancellation_requested_at IS NULL'])assert.ok(sql.includes(s),s);
+    assert.doesNotMatch(sql,/sum\(|count\(|jsonb_agg|array_agg|payload|ST_DWithin|INSERT|UPDATE|BEGIN|COMMIT/);
+  }
+  const missing=setup();assert.equal(await missing.owner.readGroup({group_id:'discovery:unassigned'}),null);
+  const group={group_id:'discovery:unassigned',normalized_county:null,normalized_label:null,member_count:2,last_ordinal:5};
+  assert.deepEqual(await setup({group}).owner.readGroup({group_id:group.group_id}),group);
+});
+test('catalog identity storage rejects hostile keys and malformed native rows without truncating labels or counts',async()=>{
+  const a=setup();for(const key of [{group_id:'unknown'},{group_id:'discovery:unassigned',account_ids:['A']},
+    {group_id:'discovery:unassigned',counts:final},{group_id:'discovery:unassigned',callback:()=>{}},
+    new Proxy({group_id:'discovery:unassigned'},{}),{get group_id(){assert.fail('getter');}}])
+    await assert.rejects(a.owner.readGroup(key),/invalid_/);
+  assert.equal(a.calls.length,0);
+  const key={group_id:'recorded-cad:'+'a'.repeat(64)},base={...key,normalized_county:'dallas',normalized_label:'one',member_count:1,last_ordinal:2};
+  for(const group of [{...base,group_id:'recorded-cad:'+'b'.repeat(64)},{...base,normalized_county:null},
+    {...base,normalized_label:'é'.repeat(257)},{...base,normalized_label:' One '},{...base,normalized_label:'\ud800'},
+    {...base,normalized_label:'x\u0000y'},{...base,member_count:0},{...base,member_count:'1'},
+    {...base,member_count:3},{...base,last_ordinal:2000001},{...base,last_ordinal:1.5},
+    {...base,member_count:1,extra:true},{...base,get normalized_label(){assert.fail('getter');}},
+    new Proxy(base,{}),{group_id:null,normalized_county:null,normalized_label:null,member_count:null,last_ordinal:1}])
+    await assert.rejects(setup({group}).owner.readGroup(key),/corrupt|invalid_input/);
+  await assert.rejects(setup({group:{...base,group_id:'discovery:unassigned'}}).owner.readGroup({group_id:'discovery:unassigned'}),/corrupt/);
 });
 test('registered native catalog bounds groups and issues exact next ordinals with same-TX head/root constraints',()=>{
   const name='20261121_custom_cohort_recorded_catalog_v2.sql',registry=readFileSync(new URL('../src/database/mobileMigrations.js',import.meta.url),'utf8'),

@@ -116,12 +116,13 @@ test('CI timing families and reported output stay bounded without retaining SQL 
   assert.doesNotMatch(JSON.stringify(times), /secret-|SELECT|family:999/);
 });
 
-test('only disposable CI graph sessions use generic plans without JIT; budgets and source checks stay installed', () => {
-  assert.equal(SESSION_OPTIONS, '-c jit=off -c plan_cache_mode=force_generic_plan');
+test('only disposable CI graphs honor explicit JOIN order with generic plans and no JIT; budgets and source checks stay installed', () => {
+  assert.equal(SESSION_OPTIONS, '-c jit=off -c plan_cache_mode=force_generic_plan -c join_collapse_limit=1');
   assert.doesNotMatch(SESSION_OPTIONS, /timeout|replication|constraint|trigger|role|authorization|row_security/);
   const source = readFileSync(new URL('./neighborhoodGroupIndex.integration.test.js', import.meta.url), 'utf8');
   assert.ok(source.includes('connectionString:target.connectionString,max:2,statement_timeout:120_000,options:NEIGHBORHOOD_CI_PROTOCOL_SESSION_OPTIONS'));
   assert.ok(source.includes("current_setting('jit') AS jit,current_setting('plan_cache_mode') AS plan_cache_mode"));
-  assert.ok(source.includes("assert.deepEqual(protocolQueryOptions,{jit:'off',plan_cache_mode:'force_generic_plan'})"));
+  assert.ok(source.includes("current_setting('join_collapse_limit') AS join_collapse_limit"));
+  assert.ok(source.includes("assert.deepEqual(protocolQueryOptions,{jit:'off',plan_cache_mode:'force_generic_plan',join_collapse_limit:'1'})"));
   assert.ok(source.includes('preparedCiQueries.timings()')); assert.ok(source.includes('production_speed_acceptance:false'));
 });

@@ -66,6 +66,9 @@ test('complete cap and one-over refuse whole packages instead of treating a pref
   const rows = [row('source_records', SOURCE), ...Array.from({ length: 249 }, (_, i) => row('sale_links', String(i + 1)))];
   assert.equal(project(packet(rows)).package.rows.length, 250);
   assert.throws(() => project(packet([...rows, row('sale_links', '250')])), /package_row_limit/);
+  // SQL's cap+1 count is a rejection sentinel, never a complete count receipt.
+  assert.throws(() => project({ package_key: SOURCE, counts: { source_records: '1', sales: '251', sale_links: '251' },
+    row_count: 0, packet_oversize: false, packet_json: '[]' }), /package_row_limit/);
   const prefix = complete(); prefix.row_count--; prefix.packet_json = JSON.stringify(JSON.parse(prefix.packet_json).slice(0, -1));
   assert.throws(() => project(prefix), /invalid_result/);
   const omit = complete(); omit.packet_json = JSON.stringify(JSON.parse(omit.packet_json).slice(0, -1));
@@ -112,6 +115,8 @@ test('fixed package plans use installed exact source/key indexes, independent co
   for (const sql of Object.values(NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL)) {
     assert.match(sql, /sum\(n::bigint\) FROM totals\)<=\$5::integer/);
     assert.match(sql, /jsonb_object_agg\(kind,n\)/); assert.match(sql, /count\(\*\)::text/);
+    assert.equal([...sql.matchAll(/LIMIT \(\$5::integer \+ 1\)\) bounded/g)].length, 3,
+      'each independent count stops at cap+1 before any package payload materialization');
     assert.match(sql, /ORDER BY kind COLLATE "C",row_key COLLATE "C"/);
     assert.doesNotMatch(sql, /FROM core\.|FROM gis\.|neighborhood_frozen_source_rows|payload::text|ST_DWithin|INSERT|UPDATE|DELETE|closing_date|sum\(.*price/i);
   }

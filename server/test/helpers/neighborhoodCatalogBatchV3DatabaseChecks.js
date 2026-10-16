@@ -12,6 +12,7 @@ import { runCustomCohortCatalogBatchV3JobOnce as run } from '../../src/services/
 import { runCustomCohortCoveredCatalogV2JobOnce as legacyRun } from '../../src/services/neighborhoodAssessment/customCohortCoveredCatalogV2JobWorker.js';
 import { runCustomCohortCoveredSelectionWaitV2JobOnce as legacyWait } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectionWaitV2JobWorker.js';
 import { withCustomCohortJobTransaction as tx } from '../../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
+import { runNeighborhoodCatalogBatchOriginalReplayV3DatabaseChecks } from './neighborhoodCatalogBatchOriginalReplayV3DatabaseChecks.js';
 
 /** Runs only in the NEW independently captured graph. Every source/native
  * parent, original/cache/entry read, current authority fence and COMMIT is real.
@@ -19,7 +20,7 @@ import { withCustomCohortJobTransaction as tx } from '../../src/services/neighbo
  * authority, capacity, activation or complete selected-union semantics. */
 export async function runNeighborhoodCatalogBatchV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,
   setFault,readFault,packet,readBody,stockHead,partitionHead,partitionRows,bridgeState,cacheState,head,cadState,cadHead,
-  protectedRows,protectedBefore,pin,batchPendingWorkspace}){
+  protectedRows,protectedBefore,pin,batchPendingWorkspace,catalogBatchReplayFixture=false,originalReads}){
   const operation=input.operationId,method='continueCoveredOriginalFrozenCaptureJobRecordedCatalogBatchReferencesV3',
     catalogHead=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_recorded_catalog_v2_heads WHERE operation_id=$1',[operation])).rows[0],
     groups=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_recorded_catalog_v2_groups WHERE operation_id=$1 ORDER BY group_id',[operation])).rows,
@@ -108,6 +109,8 @@ export async function runNeighborhoodCatalogBatchV3DatabaseChecks({pool,input,sc
   assert.equal((await parent()).sequence,ownedParent.sequence+2);for(const worker of [run,legacyRun,legacyWait])assert.deepEqual(await worker(args),{status:'idle'});
   assert.deepEqual(await job(),terminalJob);await assertParents();
   const [next]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));assert.equal(next.claim.attempts,5);
+  if(catalogBatchReplayFixture)await runNeighborhoodCatalogBatchOriginalReplayV3DatabaseChecks({pool,input,scope,actor,service,
+    claim:next.claim,packet,catalogHead,groups,job,parent,blobs,assertParents,setFault,readFault,originalReads});
   const nextJob=await job(),nextParent=await parent(),rollback=Error('rollback catalog batch next-owner probe');
   await assert.rejects(tx(pool,async client=>{
     await client.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);

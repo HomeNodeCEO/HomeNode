@@ -314,6 +314,9 @@ const FROZEN_SOURCE_STAGES = freeze({
   covered_recorded_catalog_account_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
     readingStockAccountPackages:true,readingRecordedPartition:true,readingRecordedCatalog:true,coveredNeutralOriginals:true,
     allowedPhases:['frozen_recorded_catalog_refs_v2'] },
+  covered_catalog_batch_account_refs_v3: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    readingStockAccountPackages:true,readingRecordedPartition:true,readingRecordedCatalog:true,coveredNeutralOriginals:true,
+    readingSelectionWorkspaceTarget:true,catalogBatchLineage:true,allowedPhases:['frozen_recorded_catalog_refs_v2'] },
   original_selection_workspace_target_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingStockAccountPackages: true, readingRecordedPartition: true, readingRecordedCatalog: true,
     readingSelectionWorkspaceTarget: true, allowedPhases: ['frozen_recorded_catalog_refs_v2'] },
@@ -1937,7 +1940,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,cachingNeutralOriginals=false,yieldingNeutralProgress=false,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,cachingCadOriginals=false,cachingCadCoverage=false,yieldingCadProgress=false,readingCoveredCadAmenities=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,readingStockWholeAccountBatch=false,coveredNeutralOriginals=false,cacheStockHandoff=false,
-      resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,batchingStock=false,batchingPartition=false,batchingCatalog=false,partitioningRecordedGroups=false,
+      resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,batchingStock=false,batchingPartition=false,batchingCatalog=false,catalogBatchLineage=false,partitioningRecordedGroups=false,
       readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,readingSelectedUnionFirstEligibility=false,readingSelectedUnionFirstAmenities=false,readingSelectedUnionFirstTransactions=false,progressingSelectedEligibility=false,progressingSelectedEvidence=false,readingSelectedMetricSource=false,progressingSelectedMetrics=false,readingSelectedStatisticsSource=false,progressingSelectedStatistics=false,readingSelectedFrequencySource=false,readingSelectedNumericSource=false,progressingSelectedNumeric=false,readingSelectedRankCandidates=false,progressingSelectedSemantic=false,readingSelectedTransactionSource=false,preparingSelectedTransactionFirstCandidate=false,readingSelectedTransactionIndex=false,progressingSelectedTransactionIndex=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     const readingCadSource=readingCadPages||readingSelectedUnionFirstAmenities;
     if(referencesV2){
@@ -2630,11 +2633,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const traversalText=await readIssuedCheckpointReceipt(traversalAnchor.receipt_reference);
         if(traversalText===null||Buffer.byteLength(traversalText)>16000)fail('checkpoint_conflict');
         let completed;try{completed=JSON.parse(traversalText);}catch{fail('checkpoint_conflict');}
-        completed=(batchingPartition||batchingCatalog?prepareCohortStockTraversalBatchReceiptV3:prepareCohortStockTraversalReceiptV2)(completed,baseExpected);
+        completed=(batchingPartition||batchingCatalog||catalogBatchLineage?prepareCohortStockTraversalBatchReceiptV3:prepareCohortStockTraversalReceiptV2)(completed,baseExpected);
         if(completed.sequence!==traversalAnchor.sequence||!completed.after.done)fail('unfinished_stock_traversal');
         const profile=getNeighborhoodOriginalRecordedGroupV2Profile(),expected={...baseExpected,
           traversal_reference:traversalAnchor.receipt_reference,profile_reference:profile.definition_blob.ref};
-        partitionStore=(batchingPartition||batchingCatalog?createCustomCohortRecordedPartitionBatchV3Repository:createCustomCohortRecordedPartitionV2Repository)({client,claim,scope,actorUserId:input.auth.userId,
+        partitionStore=(batchingPartition||batchingCatalog||catalogBatchLineage?createCustomCohortRecordedPartitionBatchV3Repository:createCustomCohortRecordedPartitionV2Repository)({client,claim,scope,actorUserId:input.auth.userId,
           source_reference:reference,root_reference:root,graph_reference:verificationReference,geographic_reference:stockVerificationReference,
           identity_reference:identityVerificationReference,stock_reference:stockReference,
           traversal_reference:expected.traversal_reference,profile_reference:expected.profile_reference});
@@ -2645,13 +2648,13 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         if(partitionAnchor){const text=await readIssuedCheckpointReceipt(partitionAnchor.receipt_reference);
           if(text===null||Buffer.byteLength(text)>16000)fail('checkpoint_conflict');
           try{issued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
-          issued=(batchingPartition||batchingCatalog?prepareCohortRecordedGroupPartitionBatchReceiptV3:prepareCohortRecordedGroupPartitionReceiptV2)(issued,expected);
+          issued=(batchingPartition||batchingCatalog||catalogBatchLineage?prepareCohortRecordedGroupPartitionBatchReceiptV3:prepareCohortRecordedGroupPartitionReceiptV2)(issued,expected);
           if(issued.sequence!==partitionAnchor.sequence)fail('checkpoint_conflict');}
         if((readingRecordedPartition||catalogingRecordedGroups)&&issued?.after.done!==true)fail('unfinished_recorded_partition');
         let catalogIssued=null,catalogExpected=null;
         if(catalogingRecordedGroups||readingRecordedCatalog){
           catalogExpected={...expected,partition_reference:partitionAnchor.receipt_reference};
-          catalogStore=(batchingCatalog?createCustomCohortRecordedCatalogBatchV3Repository:createCustomCohortRecordedCatalogV2Repository)({client,claim,scope,actorUserId:input.auth.userId,
+          catalogStore=(batchingCatalog||catalogBatchLineage?createCustomCohortRecordedCatalogBatchV3Repository:createCustomCohortRecordedCatalogV2Repository)({client,claim,scope,actorUserId:input.auth.userId,
             source_reference:reference,root_reference:root,graph_reference:verificationReference,geographic_reference:stockVerificationReference,
             identity_reference:identityVerificationReference,stock_reference:stockReference,traversal_reference:expected.traversal_reference,
             profile_reference:expected.profile_reference,partition_reference:partitionAnchor.receipt_reference});
@@ -2661,7 +2664,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           if(catalogAnchor){const text=await readIssuedCheckpointReceipt(catalogAnchor.receipt_reference);
             if(text===null||Buffer.byteLength(text)>16000)fail('checkpoint_conflict');
             try{catalogIssued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
-            catalogIssued=(batchingCatalog?prepareCohortRecordedCatalogBatchReceiptV3:prepareCohortRecordedCatalogReceiptV2)(catalogIssued,catalogExpected);
+            catalogIssued=(batchingCatalog||catalogBatchLineage?prepareCohortRecordedCatalogBatchReceiptV3:prepareCohortRecordedCatalogReceiptV2)(catalogIssued,catalogExpected);
             if(catalogIssued.sequence!==catalogAnchor.sequence)fail('checkpoint_conflict');}
           if((readingRecordedCatalog||awaitingSelection||selectingCatalogIntent||readingRetainedSelectionIntent)&&catalogIssued?.after.done!==true)fail('unfinished_recorded_catalog');
           catalogCounts=await catalogStore.counts();
@@ -3307,6 +3310,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
               selection_target_reconciliation:'current_exact_pending_job_study_and_prior_V7_head_fenced_both_ends',
               account_fact_reconciliation:'retained_date_metrics_recorded_group_and_housing_from_one_whole_original_packet',
               prior_active_choice:'not_carried_into_new_study',genuine_new_group_choice:'not_established'};
+            if(catalogBatchLineage)partitionResult={...partitionResult,status:'original_reconciled_catalog_batch_account',
+              receipt_format:'cohort_recorded_catalog_batch_receipt_v3',
+              current_authorized_owner:'V3_independently_issued_stock_partition_catalog_and_current_original_source_rights',
+              catalog_reconciliation:'complete_native_batch_head_and_counts_plus_ONE_original_reconciled_account_not_complete_population_replay',
+              complete_catalog_original_replay:false,selection_intent:'not_established',publication:'not_established'};
             if(Buffer.byteLength(JSON.stringify(partitionResult))>NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_LIMITS.output_utf8_bytes)fail('byte_limit');
             budget.check();
           }
@@ -4249,6 +4257,14 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * partition entry; does not infer human selection or complete semantics. */
     readCoveredOriginalFrozenCaptureJobRecordedCatalogAccountReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'covered_recorded_catalog_account_refs_v2'),
+    /** Closed read only after independently issued V3 catalog DONE. Replays ONE
+     * whole account/ENTIRE cache/ENTIRE partition entry and exact native group,
+     * housing and date facts under the current pending workspace at both ends.
+     * No human selection, population completion, publication or pin transfer. */
+    readCoveredOriginalFrozenCaptureJobRecordedCatalogBatchAccountReferencesV3(...args){
+      if(args.length!==2)fail('invalid_options');
+      return frozenCaptureJobSourceStage(args[0],args[1],'covered_catalog_batch_account_refs_v3');
+    },
     // Current editor target only. A worker claim is NOT a genuine new human
     // group command; no selection is inferred from the prior active head.
     readOriginalFrozenCaptureJobSelectionWorkspaceTargetReferencesV2: (value, options = {}) =>

@@ -416,7 +416,7 @@ test(`${method} accepts no caller claim, source adapter, workspace or prior auto
 
 for(const method of ['readCoveredFrozenCaptureJobWholeAccountBatchReferencesV2','readSharedFrozenCaptureJobStockAccountPackagesReferencesV2','readCoveredFrozenCaptureJobStockAccountPackagesReferencesV2','readOriginalFrozenCaptureJobAccountHousingReferencesV2',
   'readOriginalFrozenCaptureJobAccountRecordedGroupReferencesV2','readOriginalFrozenCaptureJobRecordedPartitionAccountReferencesV2','readCoveredOriginalFrozenCaptureJobRecordedPartitionAccountReferencesV2',
-  'readOriginalFrozenCaptureJobRecordedCatalogAccountReferencesV2','readCoveredOriginalFrozenCaptureJobRecordedCatalogAccountReferencesV2',
+  'readOriginalFrozenCaptureJobRecordedCatalogAccountReferencesV2','readCoveredOriginalFrozenCaptureJobRecordedCatalogAccountReferencesV2','readCoveredOriginalFrozenCaptureJobRecordedCatalogBatchAccountReferencesV3',
   'readOriginalFrozenCaptureJobSelectionWorkspaceTargetReferencesV2'])
 test(`${method} admits only a cursor, never caller account/value/date/count/housing authority`,async()=>{
   const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},

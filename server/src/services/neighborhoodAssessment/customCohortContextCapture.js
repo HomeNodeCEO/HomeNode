@@ -54,6 +54,7 @@ import { createCohortOriginalSourceReferencesV2Store } from './cohortOriginalSou
 import { verifyCohortOriginalSourceGraphV2Step } from './cohortOriginalSourceGraphV2.js';
 import { createCustomCohortGraphV2AnchorRepository } from './customCohortGraphV2AnchorRepository.js';
 import { createCustomCohortSourcePrefixV2Repository } from './customCohortSourcePrefixV2Repository.js';
+import { createCustomCohortSourcePrefixV2ContinuationRepository } from './customCohortSourcePrefixV2ContinuationRepository.js';
 import { createCustomCohortGeographicV2AnchorRepository } from './customCohortGeographicV2AnchorRepository.js';
 import { prepareCohortGeographicOriginalReceiptV2 } from './cohortGeographicOriginalReceiptV2.js';
 import { createCustomCohortIdentityV2AnchorRepository } from './customCohortIdentityV2AnchorRepository.js';
@@ -183,6 +184,7 @@ const FROZEN_SOURCE_STAGES = freeze({
   prefix_v1: { allowedPhases: ['frozen_stock_v1', 'frozen_source_v1'] },
   prefix_refs_v2: { referencesV2: true, allowedPhases: ['frozen_stock_v1', 'frozen_source_refs_v2'] },
   issued_prefix_refs_v2: { referencesV2: true, issuingSourcePrefix: true, allowedPhases: ['frozen_stock_v1', 'frozen_source_refs_v2'] },
+  continued_prefix_refs_v2: { referencesV2: true, issuingSourcePrefix: true, yieldingSourcePrefix: true, allowedPhases: ['frozen_stock_v1', 'frozen_source_refs_v2'] },
   verify_refs_v2: { referencesV2: true, verifying: true, allowedPhases: ['frozen_source_refs_v2', 'frozen_verify_refs_v2'] },
   geographic_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true,
     allowedPhases: ['frozen_verify_refs_v2', 'frozen_geo_verify_refs_v2'] },
@@ -1795,7 +1797,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
   async function frozenCaptureJobSourceStage(value, options = {}, stage = 'prefix_v1') {
     if(typeof stage!=='string'||!Object.hasOwn(FROZEN_SOURCE_STAGES,stage))
       fail('frozen_source_representation_unsupported');
-    const {referencesV2=false,issuingSourcePrefix=false,verifying=false,stockVerifying=false,identityVerifying=false,yieldingEarlyProgress=false,
+    const {referencesV2=false,issuingSourcePrefix=false,yieldingSourcePrefix=false,verifying=false,stockVerifying=false,identityVerifying=false,yieldingEarlyProgress=false,
       typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,
@@ -1967,6 +1969,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       };
       const binding={...scope,operation_id:input.operationId,generation_id:stock.generation_id,
         spatial_definition_sha256:stock.definition_sha256,source_original_sha256:stock.source_original_sha256};
+      if(yieldingSourcePrefix)await createCustomCohortSourcePrefixV2ContinuationRepository(client).beginIssued(claim,jobOptions);
       const sourcePrefixStore=issuingSourcePrefix?createCustomCohortSourcePrefixV2Repository({client,claim,scope,actorUserId:input.auth.userId}):null;
       let sourcePrefixHead=sourcePrefixStore?await sourcePrefixStore.read():null;
       if(issuingSourcePrefix&&(checkpoint.phase==='frozen_stock_v1'?sourcePrefixHead!==null
@@ -3437,6 +3440,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         :stockVerifying?stockVerification?.advanced:verification?.advanced;
       const earlyContinuation=yieldingEarlyProgress?{context_complete:false,pin_transfer:false,...(earlyAdvanced
         ?{continuation:await createCustomCohortV2ContinuationRepository(client).yieldIssued(claim,jobOptions)}:{})}:{};
+      const prefixContinuation=yieldingSourcePrefix&&kind!==undefined
+        ?{continuation:await createCustomCohortSourcePrefixV2ContinuationRepository(client).yieldIssued(claim,jobOptions)}:{};
       budget.check();
       if(catalogingRecordedGroups)return freeze(catalogResult);
       if(partitioningRecordedGroups||readingRecordedPartition)return freeze(partitionResult);
@@ -3482,6 +3487,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         geographic_stock_verification:'not_established',typed_identity_closure:'not_established',
         source_acquisition:'not_established',report_update:'none'});
       return freeze({status:referencesV2?'source_reference_prefix_retained':'source_prefix_retained',operation_id:input.operationId,source_reference:reference,
+        ...prefixContinuation,
         ...(issuingSourcePrefix?{native_prefix_sequence:sourcePrefixHead.sequence,context_complete:false,pin_transfer:false}:{}),
         generation_id:stock.generation_id,advanced:kind!==undefined,layers:prefix.layers,
         all_layers_ended:COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.every(key=>prefix.layers[key].ended),
@@ -3620,6 +3626,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * actual two-reference stock checkpoint, never adopts a free prefix. */
     issueFrozenCaptureJobSourceReferencesV2Page: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'issued_prefix_refs_v2'),
+    /** Dormant actual prefix owner with same-TX native success/release. */
+    continueFrozenCaptureJobSourcePrefixReferencesV2Page: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'continued_prefix_refs_v2'),
     /** Explicit V2 original-query/root-edge verifier. Continuation is derived
      * only from a separately fenced owner-issued receipt anchor, never arbitrary
      * checkpoint progress. No legacy cast, source grant, worker dispatch or Apply. */

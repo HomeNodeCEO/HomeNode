@@ -414,7 +414,7 @@ test(`${method} accepts no caller claim, source adapter, workspace or prior auto
   await assert.rejects(service[method](base,{selectionIntent,signal:controller.signal}),/cancelled/);
 });
 
-for(const method of ['readSharedFrozenCaptureJobStockAccountPackagesReferencesV2','readCoveredFrozenCaptureJobStockAccountPackagesReferencesV2','readOriginalFrozenCaptureJobAccountHousingReferencesV2',
+for(const method of ['readCoveredFrozenCaptureJobWholeAccountBatchReferencesV2','readSharedFrozenCaptureJobStockAccountPackagesReferencesV2','readCoveredFrozenCaptureJobStockAccountPackagesReferencesV2','readOriginalFrozenCaptureJobAccountHousingReferencesV2',
   'readOriginalFrozenCaptureJobAccountRecordedGroupReferencesV2','readOriginalFrozenCaptureJobRecordedPartitionAccountReferencesV2','readCoveredOriginalFrozenCaptureJobRecordedPartitionAccountReferencesV2',
   'readOriginalFrozenCaptureJobRecordedCatalogAccountReferencesV2','readCoveredOriginalFrozenCaptureJobRecordedCatalogAccountReferencesV2',
   'readOriginalFrozenCaptureJobSelectionWorkspaceTargetReferencesV2'])

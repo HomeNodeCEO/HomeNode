@@ -261,6 +261,9 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingStockAccountPackages: true, allowedPhases: ['frozen_identity_refs_v2'] },
   covered_stock_account_packages_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
     readingStockAccountPackages:true,coveredNeutralOriginals:true,allowedPhases:['frozen_identity_refs_v2'] },
+  covered_stock_whole_account_batch_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    readingStockAccountPackages:true,readingStockWholeAccountBatch:true,coveredNeutralOriginals:true,
+    allowedPhases:['frozen_identity_refs_v2','frozen_stock_traversal_refs_v2','frozen_recorded_partition_refs_v2','frozen_recorded_catalog_refs_v2'] },
   original_account_housing_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingStockAccountPackages: true, resolvingStockAccountHousing: true, allowedPhases: ['frozen_identity_refs_v2'] },
   original_account_recorded_group_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
@@ -1919,7 +1922,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     const {referencesV2=false,issuingSourcePrefix=false,yieldingSourcePrefix=false,verifying=false,stockVerifying=false,identityVerifying=false,yieldingEarlyProgress=false,
       typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,cachingNeutralOriginals=false,yieldingNeutralProgress=false,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,cachingCadOriginals=false,cachingCadCoverage=false,yieldingCadProgress=false,readingCoveredCadAmenities=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
-      readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,coveredNeutralOriginals=false,cacheStockHandoff=false,
+      readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,readingStockWholeAccountBatch=false,coveredNeutralOriginals=false,cacheStockHandoff=false,
       resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,partitioningRecordedGroups=false,
       readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,readingSelectedUnionFirstEligibility=false,readingSelectedUnionFirstAmenities=false,readingSelectedUnionFirstTransactions=false,progressingSelectedEligibility=false,progressingSelectedEvidence=false,readingSelectedMetricSource=false,progressingSelectedMetrics=false,readingSelectedStatisticsSource=false,progressingSelectedStatistics=false,readingSelectedFrequencySource=false,readingSelectedNumericSource=false,progressingSelectedNumeric=false,readingSelectedRankCandidates=false,progressingSelectedSemantic=false,readingSelectedTransactionSource=false,preparingSelectedTransactionFirstCandidate=false,readingSelectedTransactionIndex=false,progressingSelectedTransactionIndex=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     const readingCadSource=readingCadPages||readingSelectedUnionFirstAmenities;
@@ -2007,7 +2010,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       }};
       await assertManualCadCache();
       if(cadContinuation)await cadContinuation.assertClaim(claim,jobOptions);
-      if(readingSelectionWorkspaceTarget||awaitingSelection||readingRetainedSelectionIntent||replayingSelectedUnion){
+      if(readingStockWholeAccountBatch||readingSelectionWorkspaceTarget||awaitingSelection||readingRetainedSelectionIntent||replayingSelectedUnion){
         if(readingRetainedSelectionIntent||replayingSelectedUnion)authorizePublicCadastralCatalogRead(input.auth,input.accountId,{workflows:['custom_appraisal'],
           permissionChecker:(auth,workflow,permission)=>hasApplicationPermission(auth,workflow,permission,scope.organization_id)});
         selectionWorkspaceTarget=await readCustomCohortFrozenSelectionWorkspaceTarget({
@@ -2519,6 +2522,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const createOriginals=coveredNeutralOriginals?createNeighborhoodCoveredStockOriginalCellsV2:createNeighborhoodSharedStockOriginalCellsV2;
         const originals=createOriginals(client,stockOptions,graph,context.effective_date);
         stockMetricResult=await (readingStockOriginalCells?originals.page(originalCellInput)
+          :readingStockWholeAccountBatch?originals.wholeAccountBatch(stockAccountInput)
           :resolvingStockAccountRecordedGroup?originals.recordedGroupAccountPackage(stockAccountInput)
           :resolvingStockAccountHousing?originals.housingAccountPackage(stockAccountInput):originals.accountPackage(stockAccountInput));
         // resumeCustomCohortSubjectCheckpoint already matched the original
@@ -3341,7 +3345,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(!readingSelectedUnionSubjectHousing&&(readingRecordedPartition||catalogingRecordedGroups)&&!same(await partitionStore.readNextEntry(partitionReadCursor),partitionReadEntry))fail('partition_original_mismatch');
       if(catalogStore&&(!same(await catalogStore.read(),catalogAnchor)||!same(await catalogStore.counts(),catalogCounts)))fail('catalog_original_mismatch');
       if(catalogReadGroupKey&&!same(await catalogStore.readGroup(catalogReadGroupKey),catalogReadGroup))fail('catalog_original_mismatch');
-      if((readingSelectionWorkspaceTarget||awaitingSelection||selectingCatalogIntent||readingRetainedSelectionIntent||replayingSelectedUnion)&&!same(await readCustomCohortFrozenSelectionWorkspaceTarget({
+      if((readingStockWholeAccountBatch||readingSelectionWorkspaceTarget||awaitingSelection||selectingCatalogIntent||readingRetainedSelectionIntent||replayingSelectedUnion)&&!same(await readCustomCohortFrozenSelectionWorkspaceTarget({
         client,input,scopeJson:canonicalAssessmentJson(scope),checkBudget:budget.check}),selectionWorkspaceTarget))fail('workspace_target_changed');
       budget.check();
       if(cachingCadCoverage){
@@ -4081,6 +4085,13 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * cache remains building. No miss preparation or global completion claim. */
     readCoveredFrozenCaptureJobStockAccountPackagesReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'covered_stock_account_packages_refs_v2'),
+    /** Fixed native stock prefix under one shared original budget and all
+     * current/ending source and job fences. Read-only; no batch progress head,
+     * continuation, registry, publication or pin handoff is issued here. */
+    readCoveredFrozenCaptureJobWholeAccountBatchReferencesV2(...args){
+      if(args.length!==2)fail('invalid_options');
+      return frozenCaptureJobSourceStage(args[0],args[1],'covered_stock_whole_account_batch_refs_v2');
+    },
     /** Resolve the retained housing choice only AFTER all account originals
      * are reconciled under issued V2/current rights. Internal, not a selector,
      * report fact, source grant, new phase or large-area acceptance. */

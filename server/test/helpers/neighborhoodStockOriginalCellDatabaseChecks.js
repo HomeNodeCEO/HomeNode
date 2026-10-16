@@ -1,3 +1,4 @@
+import { NEIGHBORHOOD_STOCK_WHOLE_ACCOUNT_BATCH_V2_SQL as BATCH_SQL } from '../../src/services/neighborhoodAssessment/neighborhoodStockWholeAccountBatchV2.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL as SQL, NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL,
@@ -204,5 +205,48 @@ export async function runNeighborhoodStockOriginalCellDatabaseChecks(client){
       all_four_kind_counts_cap_plus_one:251,actual_count_loops:4,missing_subject_zero_payload:true,
       blocked_fallback_does_not_read_subject:true,fresh_empty_next_probe:true,temporary_DATA_only:true,
       issued_owner_authority:false,original_reconciliation:false,eligibility:false,licensed_or_live_acceptance:false});
+
+    // Separate TEMP-only bounded-prefix admission proof. No native authority
+    // or compiler truth is inferred from these deliberately synthetic rows.
+    await client.query('TRUNCATE pg_temp.stock_cell_data_originals,pg_temp.stock_cell_data_typed,pg_temp.stock_cell_data_accounts');
+    await client.query("INSERT INTO pg_temp.stock_cell_data_accounts SELECT $1,'BATCH-'||n,1 FROM generate_series(1,9) n",[operation]);
+    await client.query(`INSERT INTO pg_temp.stock_cell_data_originals SELECT $1,'parcels',n::text,'BATCH-'||n,NULL,
+      jsonb_build_object('DATA_only',true) FROM generate_series(1,9) n`,[generation]);
+    await client.query(`INSERT INTO pg_temp.stock_cell_data_typed SELECT generation_id,$1,kind,row_key,account_id,NULL,$1,
+      '{"DATA_only":true}'::jsonb FROM pg_temp.stock_cell_data_originals`,[profile]);
+    const batchSql=substitute(BATCH_SQL),batch=async(overrides={})=>{
+      const args=[...packetValues];for(const [i,v] of Object.entries(overrides))args[Number(i)]=v;
+      const r=await client.query(batchSql,args);assert.equal(r.rowCount,1);return r.rows[0];};
+    const firstBatch=await batch();assert.equal(firstBatch.accounts.length,8);assert.equal(firstBatch.original_count,8);assert.equal(firstBatch.page_count,8);
+    assert.deepEqual(firstBatch.accounts.map(a=>a.account_id),Array.from({length:8},(_,i)=>'BATCH-'+(i+1)));
+    const lastBatch=await batch({3:'BATCH-8'});assert.equal(lastBatch.accounts.length,1);assert.equal(lastBatch.accounts[0].account_id,'BATCH-9');
+    const emptyBatch=await batch({3:'BATCH-9'});assert.deepEqual(emptyBatch.accounts,[]);assert.equal(emptyBatch.original_count,0);assert.equal(emptyBatch.page_json,'[]');
+    const prefixNodes=await planNodes(batchSql,packetValues);
+    assert.equal(prefixNodes.find(n=>n['Subplan Name']==='CTE candidates')['Actual Rows'],8);
+    // A later byte-excluded account remains NEXT, never an inferred end.
+    await client.query("UPDATE pg_temp.stock_cell_data_typed SET typed=jsonb_build_object('DATA_only',repeat('x',40000))");
+    const byteBatch=await batch({8:100000});assert.equal(byteBatch.accounts.length,1);assert.equal(byteBatch.page_count,1);
+    assert.equal((await batch({3:byteBatch.accounts[0].account_id,8:100000})).accounts[0].account_id,'BATCH-2');
+    await client.query("UPDATE pg_temp.stock_cell_data_typed SET typed='{}'");
+    await client.query("INSERT INTO pg_temp.stock_cell_data_originals SELECT $1,'parcels',(1000+n)::text,'BATCH-1',NULL,'{}'::jsonb FROM generate_series(1,249) n",[generation]);
+    await client.query(`INSERT INTO pg_temp.stock_cell_data_typed SELECT generation_id,$1,kind,row_key,account_id,NULL,$1,'{}'::jsonb
+      FROM pg_temp.stock_cell_data_originals ON CONFLICT DO NOTHING`,[profile]);
+    const exactBatch=await batch();assert.equal(exactBatch.accounts.length,1);assert.equal(exactBatch.original_count,250);assert.equal(exactBatch.page_count,250);
+    assert.equal((await batch({3:'BATCH-1'})).accounts.length,8,'the count-excluded tail remains unskipped');
+    await client.query("INSERT INTO pg_temp.stock_cell_data_originals VALUES($1,'parcels','2000','BATCH-1',NULL,'{}')",[generation]);
+    const overBatch=await batch();assert.equal(overBatch.accounts.length,1);assert.equal(overBatch.original_count,251);assert.equal(overBatch.page_count,0);assert.equal(overBatch.page_json,'[]');
+    const overNodes=await planNodes(batchSql,packetValues);
+    assert.equal(overNodes.find(n=>n['Subplan Name']==='CTE raw_sizes')['Actual Rows'],0);
+    assert.equal(overNodes.find(n=>n['Subplan Name']==='CTE members')['Actual Rows'],0);
+    await client.query("DELETE FROM pg_temp.stock_cell_data_originals WHERE row_key='2000'");
+    await client.query("UPDATE pg_temp.stock_cell_data_originals SET payload=jsonb_build_object('DATA_only',repeat('x',1000000)) WHERE row_key='1'");
+    const hugeBatch=await batch();assert.equal(hugeBatch.accounts.length,1);assert.equal(hugeBatch.packet_oversize,true);assert.equal(hugeBatch.page_count,0);assert.equal(hugeBatch.page_json,'[]');
+    await client.query("UPDATE pg_temp.stock_cell_data_originals SET payload='{}' WHERE row_key='1'");
+    await client.query("DELETE FROM pg_temp.stock_cell_data_typed WHERE row_key='1'");
+    const missingBatch=await batch();assert.equal(missingBatch.invalid_count,1);assert.equal(missingBatch.page_count,250);
+    console.info('[native-whole-account-batch-admission-DATA-v2]',{fixed_account_prefix:8,actual_plan_prefix:8,
+      separate_next_and_fresh_EMPTY:true,count_cap:250,first251_zero_payload:true,actual_zero_raw_and_encoding:true,
+      shared_byte_prefix_keeps_next_account:true,oversized_first_refuses_not_EMPTY:true,missing_cache_not_skipped:true,
+      temporary_DATA_only:true,issued_owner_authority:false,original_reconciliation:false,licensed_or_speed_acceptance:false});
   }finally{await client.query('ROLLBACK');}
 }

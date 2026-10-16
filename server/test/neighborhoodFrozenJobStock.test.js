@@ -1,3 +1,4 @@
+import { NEIGHBORHOOD_STOCK_WHOLE_ACCOUNT_BATCH_V2_SQL as WHOLE_BATCH } from '../src/services/neighborhoodAssessment/neighborhoodStockWholeAccountBatchV2.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
@@ -2333,4 +2334,84 @@ test('combined facts keep the whole packet bounds, ending fences, fresh empty pr
   const empty=await f.pages().recordedGroupAndHousingAccountPackage({cursor:'STOCK-A'});
   assert.equal(empty.end_of_accounts,true);assert.equal(empty.next_cursor,'STOCK-A');assert.deepEqual(empty.rows,[]);
   assert.equal(empty.recorded_group,null);assert.equal(empty.recorded_housing,null);assert.equal(empty.observations,null);
+});
+
+/** DATA envelope only. Native SQL admission and the actual issued owner have
+ * independent cloud tests; this double never claims source/receipt authority. */
+function wholeBatchEnvelope(rows,after=''){
+  const ids=[...new Set(Object.values(rows).flat().map(r=>r.account_id))]
+    .filter(id=>Buffer.compare(Buffer.from(id),Buffer.from(after))>0)
+    .sort((a,b)=>Buffer.compare(Buffer.from(a),Buffer.from(b))).slice(0,8);
+  const packet=Object.values(rows).flat().filter(r=>ids.includes(r.account_id)).sort((a,b)=>{
+    for(const k of ['account_id','kind','row_key']){const c=Buffer.compare(Buffer.from(a[k]),Buffer.from(b[k]));if(c)return c;}return 0;});
+  return {accounts:ids.map(account_id=>({account_id,geographic_parcel_count:'1',
+    original_counts:{parcels:packet.filter(r=>r.account_id===account_id&&r.kind==='parcels').length,
+      accounts:packet.filter(r=>r.account_id===account_id&&r.kind==='accounts').length}})),
+    original_count:packet.length,page_count:packet.length,invalid_count:0,packet_oversize:false,page_json:JSON.stringify(packet)};
+}
+const wholeBatchFixture=hook=>stockOriginalCellFixture(call=>{
+  const override=hook?.(call);return override??(call.text===WHOLE_BATCH?result(wholeBatchEnvelope(call.rows,call.values[3])):null);
+});
+
+test('whole-account batch shares one lifetime across complete native C-text accounts and a distinct EMPTY',async()=>{
+  const f=await wholeBatchFixture();f.rows.parcels.push(stockOriginalCell('parcels','3',{account_id:'STOCK-B',residential_year_built:1960}));
+  const reader=f.pages(),from=f.calls.length,p=await reader.wholeAccountBatch({cursor:''});
+  assert.equal(p.account_count,2);assert.equal(p.original_count,4);assert.equal(p.next_cursor,'STOCK-B');assert.equal(p.end_of_accounts,false);
+  assert.deepEqual(p.accounts.map(a=>a.account_id),['STOCK-A','STOCK-B']);
+  assert.deepEqual(p.accounts.map(a=>a.rows.length),[3,1]);assert.deepEqual(p.accounts.map(a=>a.account_original_state),['present','absent']);
+  assert.equal(p.accounts[0].rows.find(r=>r.row_key==='1').retained_observations.reported_year_built.state,'invalid');
+  assert.equal(p.native_progress,'not_issued');assert.equal(p.context_complete,false);assert.equal(p.pin_transfer,false);
+  const noPayload=v=>{if(v&&typeof v==='object'){assert.equal(Object.hasOwn(v,'original_text'),false);Object.values(v).forEach(noPayload);}};noPayload(p);
+  assert.equal(f.calls.slice(from).filter(c=>c.text===WHOLE_BATCH).length,1);
+  assert.equal(f.calls.slice(from).filter(c=>c.text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.source).length,2);
+  assert.equal(f.calls.slice(from).filter(c=>c.text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read).length,2);
+  assert.ok(f.calls.slice(from).every(c=>c.query_timeout===5000));assert.ok(Object.isFrozen(p.accounts[0].rows));
+  await assert.rejects(reader.accountPackage({cursor:''}),/single_use/);await assert.rejects(reader.wholeAccountBatch({cursor:''}),/single_use/);
+  const empty=await f.pages().wholeAccountBatch({cursor:p.next_cursor});
+  assert.equal(empty.end_of_accounts,true);assert.equal(empty.account_count,0);assert.equal(empty.original_count,0);assert.equal(empty.next_cursor,p.next_cursor);
+  const legacy=f.pages();await legacy.accountPackage({cursor:''});await assert.rejects(legacy.wholeAccountBatch({cursor:''}),/single_use/);
+});
+
+test('whole-account batch uses native C-text components with eight accounts and never infers end from a short batch',async()=>{
+  const f=await wholeBatchFixture(),ids=['A"','A-','A0','A1','A2','A3','A4','A5','Z'];
+  f.rows.accounts=[];f.rows.parcels=ids.map((account_id,i)=>stockOriginalCell('parcels',String(i+1),{account_id}));
+  const first=await f.pages().wholeAccountBatch({cursor:''});assert.deepEqual(first.accounts.map(a=>a.account_id),ids.slice(0,8));
+  assert.equal(first.end_of_accounts,false);
+  const last=await f.pages().wholeAccountBatch({cursor:first.next_cursor});assert.deepEqual(last.accounts.map(a=>a.account_id),['Z']);
+  assert.equal(last.end_of_accounts,false);
+  assert.equal((await f.pages().wholeAccountBatch({cursor:last.next_cursor})).end_of_accounts,true);
+});
+
+test('whole-account batch recompiles every whole original and ENTIRE cache without crossing accounts',async()=>{
+  for(const mutate of [r=>r.typed.observations.reported_site_area.exact_value='999',r=>r.cached_account_id='WRONG',
+    r=>r.original_text=r.original_text.replace('2050','2040'),r=>r.original_payload_sha256='e'.repeat(64)]){
+    const f=await wholeBatchFixture();f.rows.parcels[0]=structuredClone(f.rows.parcels[0]);mutate(f.rows.parcels[0]);
+    await assert.rejects(f.pages().wholeAccountBatch({cursor:''}),/original_mismatch/);
+  }
+  const f=await wholeBatchFixture(({text,rows})=>{
+    if(text!==WHOLE_BATCH)return null;const env=wholeBatchEnvelope(rows),raw=JSON.parse(env.page_json);raw.reverse();env.page_json=JSON.stringify(raw);return result(env);
+  });await assert.rejects(f.pages().wholeAccountBatch({cursor:''}),/invalid_original/);
+  const cross=await wholeBatchFixture(({text,rows})=>{
+    if(text!==WHOLE_BATCH)return null;const env=wholeBatchEnvelope(rows);env.accounts[0].account_id='OTHER';return result(env);
+  });await assert.rejects(cross.pages().wholeAccountBatch({cursor:''}),/invalid_original/);
+});
+
+test('whole-account batch refuses aggregate overflow, missing cache, fabricated metadata and ending changes',async()=>{
+  for(const change of [e=>e.accounts.push(...Array(8).fill(e.accounts[0])),e=>e.original_count++,e=>e.invalid_count++,
+    e=>e.page_count--,e=>e.packet_oversize=true,e=>e.accounts[0].original_counts.parcels--,
+    e=>e.accounts[0].geographic_parcel_count='0',e=>e.accounts[0].account_id='']){
+    const f=await wholeBatchFixture(({text,rows})=>{if(text!==WHOLE_BATCH)return null;const env=wholeBatchEnvelope(rows);change(env);return result(env);});
+    await assert.rejects(f.pages().wholeAccountBatch({cursor:''}),/invalid_result|invalid_original|account_package_byte_limit/);
+  }
+  const cap=await wholeBatchFixture(({text})=>text===WHOLE_BATCH?result({
+    accounts:[{account_id:'STOCK-A',geographic_parcel_count:'1',original_counts:{parcels:250,accounts:1}}],
+    original_count:251,page_count:0,invalid_count:0,packet_oversize:false,page_json:'[]'}):null);
+  await assert.rejects(cap.pages().wholeAccountBatch({cursor:''}),/account_package_row_limit/);
+  let reads=0;const ending=await wholeBatchFixture(({text,sharedHeader})=>text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read&&++reads===2
+    ?result({...sharedHeader,status:'building'}):null);
+  await assert.rejects(ending.pages().wholeAccountBatch({cursor:''}),/cache_unavailable/);
+  const f=await wholeBatchFixture(),from=f.calls.length;
+  for(const p of [{cursor:'',account_ids:['STOCK-A']},{cursor:'',rowLimit:250},new Proxy({cursor:''},{}),{get cursor(){assert.fail('getter');}}])
+    await assert.rejects(f.pages().wholeAccountBatch(p),/invalid_input/);
+  assert.throws(()=>f.pages().wholeAccountBatch({cursor:''},()=>{}),/invalid_input/);assert.equal(f.calls.length,from);
 });

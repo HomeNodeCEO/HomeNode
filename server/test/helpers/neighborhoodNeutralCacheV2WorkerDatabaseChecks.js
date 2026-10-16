@@ -1,3 +1,5 @@
+import { NEIGHBORHOOD_STOCK_WHOLE_ACCOUNT_BATCH_V2_SQL as BATCH_PACKET } from '../../src/services/neighborhoodAssessment/neighborhoodStockWholeAccountBatchV2.js';
+import { CUSTOM_NEIGHBORHOOD_WITNESS2_SOURCE_RIGHTS_KEY as SOURCE_RIGHTS } from '../../src/security/customNeighborhoodWitness2SourcePolicy.js';
 import assert from 'node:assert/strict';
 import { runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks } from './neighborhoodCoveredSelectedEvidenceV2DatabaseChecks.js';
 import { randomUUID } from 'node:crypto';
@@ -44,7 +46,7 @@ import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL as TRAN
 export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData,coveredTransactionIndexFixture=false}){
   const input={...sourceInput,operationId:randomUUID()},operation=input.operationId;let fault=null,stockReads=0;
   const observed={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
-    const text=typeof c==='string'?c:c.text,originalPacket=text===STOCK_PACKET||text===PAIRED_STOCK_PACKET||text===TRANSACTION_PACKET||text===AMENITY_PACKET,
+    const text=typeof c==='string'?c:c.text,originalPacket=text===BATCH_PACKET||text===STOCK_PACKET||text===PAIRED_STOCK_PACKET||text===TRANSACTION_PACKET||text===AMENITY_PACKET,
       orphan=fault==='orphan'&&text.includes('custom-cohort-neutral-success-v2:yield')
       ||fault==='cad_orphan'&&text.includes('custom-cohort-CAD-success-v2:yield')
       ||fault==='bridge_orphan'&&text.includes('custom-cohort-cache-stock-v2:complete')
@@ -68,13 +70,19 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     if((fault==='cad_deny'&&text===CAD_PACKET)||(fault==='selected_CAD_deny'&&text===AMENITY_PACKET)){fault=null;
       await raw.query(`UPDATE app_auth.organizations SET metadata=jsonb_set(metadata,ARRAY[$2::text,'revoked_at'],
         to_jsonb(to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))) WHERE id=$1`,[scope.organization_id,CAD_RIGHTS]);}
+    if(text===BATCH_PACKET&&fault==='batch_rights'){fault=null;
+      await raw.query(`UPDATE app_auth.organizations SET metadata=jsonb_set(metadata,ARRAY[$2::text,'revoked_at'],
+        to_jsonb(to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))) WHERE id=$1`,[scope.organization_id,SOURCE_RIGHTS]);}
+    if(text===BATCH_PACKET&&fault==='batch_cache'){fault=null;
+      const envelope=JSON.parse(result.rows[0].page_json);envelope[0].typed.observations.reported_site_area.exact_value='999';
+      return {...result,rows:[{...result.rows[0],page_json:JSON.stringify(envelope)}]};}
     if(originalPacket)stockReads++;
     if(orphan){fault=null;await raw.query('ROLLBACK TO SAVEPOINT synthetic_neutral_yield');await raw.query('RELEASE SAVEPOINT synthetic_neutral_yield');}
-    if(['wait_workspace','intent_workspace','union_workspace','transaction_workspace','selected_CAD_workspace'].includes(fault)&&originalPacket){fault=null;await raw.query(`UPDATE app.custom_appraisal_workfile_sections
+    if(['batch_workspace','wait_workspace','intent_workspace','union_workspace','transaction_workspace','selected_CAD_workspace'].includes(fault)&&originalPacket){fault=null;await raw.query(`UPDATE app.custom_appraisal_workfile_sections
       SET section_value=jsonb_set(section_value,'{pending_capture,operation_id}',to_jsonb($2::text))
       WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`,[scope.assignment_file_id,randomUUID()]);}
-    if(fault==='role'&&text===SQL.insert||['bridge_role','partition_role','catalog_role','wait_role','intent_role','union_role','transaction_role','selected_CAD_role'].includes(fault)&&originalPacket){fault=null;await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[scope.organization_id,actor]);}
-    if(['ack','cad_ack','bridge_ack','partition_ack','catalog_ack','wait_ack','intent_ack','union_ack','eligibility_ack','transaction_ack','selected_CAD_ack'].includes(fault)&&text==='COMMIT'){fault=null;throw Error('lost actual original owner COMMIT ACK');}
+    if(fault==='role'&&text===SQL.insert||['batch_role','bridge_role','partition_role','catalog_role','wait_role','intent_role','union_role','transaction_role','selected_CAD_role'].includes(fault)&&originalPacket){fault=null;await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[scope.organization_id,actor]);}
+    if(['batch_ack','ack','cad_ack','bridge_ack','partition_ack','catalog_ack','wait_ack','intent_ack','union_ack','eligibility_ack','transaction_ack','selected_CAD_ack'].includes(fault)&&text==='COMMIT'){fault=null;throw Error('lost actual original owner COMMIT ACK');}
     return result;
   }};}},service=createCustomCohortContextCapture({pool:observed,sourceMode:'combined-witness2-v1',authorizeMarketData,authorizeCadImprovementData}),
     args={pool,cohortService:service,leaseSeconds:900},job=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[operation])).rows[0],
@@ -322,6 +330,44 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   const waitArgs={...args,cohortService:{async [waitMethod](value,options){
     ownerCalls++;selectionWaitOwner={claim:options.captureJobClaim};waitOptions={captureJobClaim:selectionWaitOwner.claim};
     assert.equal(selectionWaitOwner.claim.operation_id,operation);assert.equal(selectionWaitOwner.claim.attempts,5);
+
+    if(coveredTransactionIndexFixture){
+      const batchOptions={captureJobClaim:selectionWaitOwner.claim,stockAccountPackagePage:{cursor:''}},
+        batchRead=()=>service.readCoveredFrozenCaptureJobWholeAccountBatchReferencesV2(input,batchOptions),
+        beforeBatch={job:await job(),parent:await parent(),workspace:await workspace(),cache:await cacheState(),head:await head(),protected:await protectedRows(),
+          pins:(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_prepared_generation_pins WHERE operation_id=$1',[operation])).rows,
+          cad:await cadState(),cadHead:await cadHead(),stock:await stockHead(),partition:await partitionHead(),rows:await partitionRows(),catalog:await catalogHead(),
+          blobs:(await pool.query('SELECT count(*)::integer AS n FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1',[scope.organization_id])).rows};
+      const assertUnchanged=async()=>{
+        assert.deepEqual(await protectedRows(),beforeBatch.protected);
+        assert.deepEqual((await pool.query('SELECT * FROM app.neighborhood_custom_cohort_prepared_generation_pins WHERE operation_id=$1',[operation])).rows,beforeBatch.pins);
+        assert.deepEqual(await job(),beforeBatch.job);assert.deepEqual(await parent(),beforeBatch.parent);assert.deepEqual(await workspace(),beforeBatch.workspace);
+        assert.deepEqual(await cacheState(),beforeBatch.cache);assert.deepEqual(await head(),beforeBatch.head);assert.deepEqual(await cadState(),beforeBatch.cad);
+        assert.deepEqual(await cadHead(),beforeBatch.cadHead);assert.deepEqual(await stockHead(),beforeBatch.stock);assert.deepEqual(await partitionHead(),beforeBatch.partition);
+        assert.deepEqual(await partitionRows(),beforeBatch.rows);assert.deepEqual(await catalogHead(),beforeBatch.catalog);
+        assert.deepEqual((await pool.query('SELECT count(*)::integer AS n FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1',[scope.organization_id])).rows,beforeBatch.blobs);
+      };
+      for(const [mode,reason] of [['batch_workspace',/custom_cohort_group_workspace_study_changed/],
+        ['batch_rights',/market_data_access_denied|market_policy_changed/],['batch_role',/custom_cohort_job_actor_access_revoked/],['batch_cache',/original_mismatch/]]){
+        fault=mode;await assert.rejects(batchRead(),reason);assert.equal(fault,null);
+        if(mode==='batch_role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);
+        await assertUnchanged();
+      }
+      fault='batch_ack';await assert.rejects(batchRead(),e=>e.outcome_unknown===true);assert.equal(fault,null);await assertUnchanged();
+      const packet=await batchRead();assert.equal(packet.account_count,2);assert.equal(packet.end_of_accounts,false);assert.equal(packet.native_progress,'not_issued');
+      assert.deepEqual(packet.accounts.map(p=>p.account_id),[input.accountId,'INDEX-B']);
+      assert.equal(packet.original_count,packet.accounts.reduce((n,a)=>n+a.rows.length,0));
+      assert.ok(packet.accounts.every(a=>a.rows.length>=1&&a.original_counts.parcels>=1));
+      assert.equal(packet.accounts[0].original_counts.parcels,2,'the complete outside part is reread in the batch');
+      const empty=await service.readCoveredFrozenCaptureJobWholeAccountBatchReferencesV2(input,
+        {captureJobClaim:selectionWaitOwner.claim,stockAccountPackagePage:{cursor:packet.next_cursor}});
+      assert.equal(empty.end_of_accounts,true);assert.equal(empty.account_count,0);assert.equal(empty.original_count,0);await assertUnchanged();
+      console.info('[native-issued-whole-account-batch-original-replay-v2]',{actual_independent_source_neutral_CAD_and_native_parents:true,
+        whole_accounts:2,every_outside_original_and_ENTIRE_cache_replayed:true,one_shared_original_query_budget:true,
+        ending_actual_source_rights_actor_workspace_and_cache_refusal:true,lost_real_readonly_COMMIT_ACK_replay:true,
+        fresh_EMPTY:true,attempt5_history_preserved:true,all_native_parent_rows_blobs_workspace_reports_assignments_and_pins_unchanged:true,
+        native_batch_progress:false,complete_batched_traversal_partition_catalog:false,licensed_large_or_speed_acceptance:false});
+    }
     const expectedGroups=new Map();let catalogCursor='';
     for(let i=0;i<3;i++){
     const packet=await service.readCoveredOriginalFrozenCaptureJobRecordedCatalogAccountReferencesV2(input,

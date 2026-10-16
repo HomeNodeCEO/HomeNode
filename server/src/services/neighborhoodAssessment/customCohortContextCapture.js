@@ -46,7 +46,7 @@ import { projectNeighborhoodTransactionTemporalV1, prepareNeighborhoodTransactio
   from './neighborhoodTransactionTemporalV1.js';
 import { createNeighborhoodSharedTransactionPackagesV1, prepareNeighborhoodTransactionPackagePageV1 }
   from './neighborhoodSharedTransactionPackagesV1.js';
-import { createNeighborhoodSharedStockOriginalCellsV2, prepareNeighborhoodStockOriginalCellPageV2,
+import { createNeighborhoodSharedStockOriginalCellsV2, createNeighborhoodCoveredStockOriginalCellsV2, prepareNeighborhoodStockOriginalCellPageV2,
   prepareNeighborhoodStockAccountPackagePageV2, NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_LIMITS }
   from './neighborhoodSharedStockOriginalCellsV2.js';
 import { createCohortOriginalSourceChainV1Store, COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS }
@@ -239,6 +239,8 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingStockOriginalCells: true, allowedPhases: ['frozen_identity_refs_v2'] },
   shared_stock_account_packages_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingStockAccountPackages: true, allowedPhases: ['frozen_identity_refs_v2'] },
+  covered_stock_account_packages_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    readingStockAccountPackages:true,coveredNeutralOriginals:true,allowedPhases:['frozen_identity_refs_v2'] },
   original_account_housing_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingStockAccountPackages: true, resolvingStockAccountHousing: true, allowedPhases: ['frozen_identity_refs_v2'] },
   original_account_recorded_group_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
@@ -1811,7 +1813,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     const {referencesV2=false,issuingSourcePrefix=false,yieldingSourcePrefix=false,verifying=false,stockVerifying=false,identityVerifying=false,yieldingEarlyProgress=false,
       typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,cachingNeutralOriginals=false,yieldingNeutralProgress=false,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
-      readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,
+      readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,coveredNeutralOriginals=false,
       resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,partitioningRecordedGroups=false,
       readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,readingSelectedUnionFirstEligibility=false,readingSelectedUnionFirstAmenities=false,readingSelectedUnionFirstTransactions=false,progressingSelectedEligibility=false,progressingSelectedEvidence=false,readingSelectedMetricSource=false,progressingSelectedMetrics=false,readingSelectedStatisticsSource=false,progressingSelectedStatistics=false,readingSelectedFrequencySource=false,readingSelectedNumericSource=false,progressingSelectedNumeric=false,readingSelectedRankCandidates=false,progressingSelectedSemantic=false,readingSelectedTransactionSource=false,preparingSelectedTransactionFirstCandidate=false,readingSelectedTransactionIndex=false,progressingSelectedTransactionIndex=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     const readingCadSource=readingCadPages||readingSelectedUnionFirstAmenities;
@@ -1851,7 +1853,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     if(!reportedProfile) fail('frozen_source_profile_unsupported');
     if(originalInput.privateSalesImport || originalInput.discovery?.profile_id!=='custom-suburban-radius-v2') fail('frozen_discovery_unsupported');
     if(readingCadSource&&typeof authorizeCadImprovementData!=='function')fail('CAD_source_policy_required');
-    const boundedOriginalAccountOwner=cachingNeutralOriginals||traversingStock||partitioningRecordedGroups||readingRecordedPartition||catalogingRecordedGroups;
+    const boundedOriginalAccountOwner=cachingNeutralOriginals||coveredNeutralOriginals||traversingStock||partitioningRecordedGroups||readingRecordedPartition||catalogingRecordedGroups;
     const budget=operationBudget(budgetOptions,boundedOriginalAccountOwner
       ?CUSTOM_COHORT_ORIGINAL_ACCOUNT_OWNER_LIMITS.operation_ms:LIMITS.capture_duration_ms);
     return transaction(pool,'READ COMMITTED',budget,async transactionClient=>{
@@ -2324,7 +2326,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       }
       if((readingStockOriginalCells||readingStockAccountPackages)&&!readingRecordedPartition){
         const graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
-        const originals=createNeighborhoodSharedStockOriginalCellsV2(client,stockOptions,graph,context.effective_date);
+        const createOriginals=coveredNeutralOriginals?createNeighborhoodCoveredStockOriginalCellsV2:createNeighborhoodSharedStockOriginalCellsV2;
+        const originals=createOriginals(client,stockOptions,graph,context.effective_date);
         stockMetricResult=await (readingStockOriginalCells?originals.page(originalCellInput)
           :resolvingStockAccountRecordedGroup?originals.recordedGroupAccountPackage(stockAccountInput)
           :resolvingStockAccountHousing?originals.housingAccountPackage(stockAccountInput):originals.accountPackage(stockAccountInput));
@@ -3807,6 +3810,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * stock account before exact five-state resolution; never a selected union. */
     readSharedFrozenCaptureJobStockAccountPackagesReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'shared_stock_account_packages_refs_v2'),
+    /** Read every original under actual native job coverage while the global
+     * cache remains building. No miss preparation or global completion claim. */
+    readCoveredFrozenCaptureJobStockAccountPackagesReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'covered_stock_account_packages_refs_v2'),
     /** Resolve the retained housing choice only AFTER all account originals
      * are reconciled under issued V2/current rights. Internal, not a selector,
      * report fact, source grant, new phase or large-area acceptance. */

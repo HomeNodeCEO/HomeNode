@@ -135,10 +135,12 @@ test('atomic owner writes blob, native bounded delta/head, exact17 checkpoint an
 });
 
 test('progress stage adds only its fixed write mode to complete read owner and stays outside worker/routes/composition/registered migrations',()=>{
-  const s=service('customCohortContextCapture'),start=s.indexOf('original_selected_transaction_index_source_refs_v2:'),
-    progress=s.indexOf('original_selected_transaction_index_progress_refs_v2:',start),end=s.indexOf('original_selected_semantic_progress_refs_v2:',progress),
-    read=s.slice(start,progress).replace('original_selected_transaction_index_source_refs_v2:',''),
-    write=s.slice(progress,end).replace('original_selected_transaction_index_progress_refs_v2:','').replace('    progressingSelectedTransactionIndex: true,\n','');
+  const s=service('customCohortContextCapture'),stage=key=>{
+    const start=s.indexOf(`  ${key}:`);assert.ok(start>0,key);
+    const body=s.slice(start+key.length+3),end=body.search(/\n {2}[a-z][a-z0-9_]+:/);
+    assert.ok(end>0,key);return body.slice(0,end);
+  },read=stage('original_selected_transaction_index_source_refs_v2'),
+    write=stage('original_selected_transaction_index_progress_refs_v2').replace('    progressingSelectedTransactionIndex: true,\n','');
   assert.equal(write.replace(/\r/g,''),read.replace(/\r/g,''));
   const method='progressOriginalFrozenCaptureJobSelectedTransactionIndexReferencesV2';
   for(const file of ['customCohortCaptureJobWorker','../../application/customNeighborhoodComposition','../../modules/accounts/customNeighborhoodCohortRouter'])assert.ok(!service(file).includes(method),file);

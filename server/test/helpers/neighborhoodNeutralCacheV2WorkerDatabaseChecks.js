@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks } from './neighborhoodCoveredSelectedEvidenceV2DatabaseChecks.js';
 import { randomUUID } from 'node:crypto';
 import { createCustomCohortContextCapture } from '../../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { createCustomCohortCaptureJobRepository as jobs } from '../../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
@@ -775,4 +776,5 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     first_failure_fresh_attempt2_and_real_A_success:true,committed_A_preserved_across_four_failed_B_claims:true,
     unchanged_five_failure_terminal_and_error_history:true,no_CAD_DONE_stock_adoption_context_or_pin_transfer:true,
     original_checkpoint_unchanged:true,licensed_large_area:false,production_speed:false});
+  await runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData});
 }

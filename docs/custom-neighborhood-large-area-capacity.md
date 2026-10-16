@@ -7646,3 +7646,36 @@ source edges, free-DONE rejection and complete-head reopen while global progress
 stays unchanged. Cloud native execution of this new owner is pending. These
 small protocol fixtures do not establish licensed large-area or live speed
 acceptance.
+
+### Native neutral-cache success worker (2026-10-16, not activated)
+
+Unregistered `20261213_custom_cohort_neutral_cache_success_v2.sql` adds an
+independent cache claim/success ledger. Initial admission consumes the actual
+native identity-DONE continuation of an explicit original-mode queue and binds
+the immutable job actor/request/scope and parent reference. Native first claim,
+actual original-cache coverage head, success record and lease release have
+paired transaction and deferred COMMIT guards. An orphan claim or an owner
+whose real yield was rolled back cannot commit.
+
+`runCustomCohortNeutralCacheV2JobOnce` reloads the actual actor/request and invokes
+only `continueFrozenCaptureJobNeutralOriginalsReferencesV2`. That owner replays
+the exact issued original page and entire neutral cache with all unchanged
+current/ending fences before native success. Each page uses a fresh native
+claim; successful pages preserve attempts and failure history. Only genuine
+failed or expired recovery spends an existing failure attempt, capped at five.
+Cache pages have their own 200,000-step ceiling; existing graph/geographic/
+identity and later main-continuation ceilings are unchanged.
+
+Native cache DONE is excluded from claims and recovery. Reader activation and
+the strict completed-cache bridge to the first stock-traversal owner remain
+separate work. This stage supplies no source grant, route, default worker,
+publication, Apply or pin transfer. Its migration remains unregistered.
+
+Eighty-nine focused worker, owner admission and native-head checks pass
+serially. The extended existing initial-dispatch fixture uses a separate real
+queue job, actual stock/prefix/graph/geographic/identity owners, then the cache
+worker. It requires orphan real claim/owner-yield COMMIT refusals, concurrent
+single claim, expired-token refusal, lost real cache COMMIT acknowledgment,
+ending role/cache rollback, preserved history at attempt three, native DONE
+idle behavior and unchanged report/assignment/pin state. Cloud execution is
+pending; this is not licensed large-area or production-speed acceptance.

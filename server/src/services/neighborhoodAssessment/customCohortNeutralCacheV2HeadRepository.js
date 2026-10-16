@@ -37,6 +37,12 @@ function one(r){if(r?.rowCount!==1||r.rows?.length!==1)fail('claim_lost');return
  * Automatic enrolled jobs refuse until a coherent success/lease bridge exists.
  */
 export function createCustomCohortNeutralCacheV2HeadRepository(raw){
+  return repository(raw,false);
+}
+export function createCustomCohortNeutralCacheV2AutomaticHeadRepository(raw){
+  return repository(raw,true);
+}
+function repository(raw,automatic){
   const input=data(raw,['client','claim','scope','actorUserId',...BINDINGS]),{client,actorUserId}=input,
     claim=prepareCustomCohortCaptureJobClaim(input.claim),scope=data(input.scope,['organization_id','report_file_id','assignment_file_id','account_id']);
   if(typeof client?.query!=='function'||![scope.organization_id,scope.report_file_id,actorUserId].every(v=>typeof v==='string'&&UUID.test(v))
@@ -52,8 +58,9 @@ export function createCustomCohortNeutralCacheV2HeadRepository(raw){
       anchor.identity_reference,anchor.stock_reference,anchor.receipt_reference,anchor.sequence
     FROM app.neighborhood_custom_cohort_capture_jobs job
     LEFT JOIN app.neighborhood_custom_cohort_neutral_cache_v2_heads anchor ON anchor.operation_id=job.operation_id
-    WHERE ${FENCE} AND job.request_payload->>'execution_mode' IS NULL
-      AND NOT EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_v2_continuations c WHERE c.operation_id=job.operation_id)`,values));
+    WHERE ${FENCE} AND ${automatic
+      ?'app.neighborhood_neutral_v2_claim_matches(job.operation_id,job.organization_id,job.claim_token,job.attempts)'
+      :"job.request_payload->>'execution_mode' IS NULL AND NOT EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_v2_continuations c WHERE c.operation_id=job.operation_id)"}`,values));
     if([...BINDINGS,'receipt_reference','sequence'].every(k=>row[k]===null))return null;
     const anchor=anchorOf(row);if(!BINDINGS.every(k=>same(anchor[k],frozen[k])))fail('binding_changed');return anchor;};
   /** Detect accidentally autocommitted callers before any independent head DML. */

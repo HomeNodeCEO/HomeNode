@@ -7,6 +7,7 @@ import { prepareNeighborhoodCiDatabase } from './helpers/neighborhoodCiDatabase.
 import { runNeighborhoodInitialV2DispatchDatabaseChecks } from './helpers/neighborhoodInitialV2DispatchDatabaseChecks.js';
 import { runSharedTypedReconciliationDatabaseChecks,runSharedTypedScopedPageDatabaseChecks,
   runSharedTypedScopedPageBootstrapDatabaseChecks } from './helpers/neighborhoodSharedTypedReconciliationDatabaseChecks.js';
+import { runNeighborhoodNeutralCacheV2WorkerDatabaseChecks } from './helpers/neighborhoodNeutralCacheV2WorkerDatabaseChecks.js';
 import { observeNeighborhoodCiPreparedQueries, NEIGHBORHOOD_CI_PROTOCOL_SESSION_OPTIONS } from './helpers/neighborhoodCiPreparedQueries.js';
 import { runNeighborhoodSelectedNumericIndexV2DatabaseChecks } from './helpers/neighborhoodSelectedNumericIndexV2DatabaseChecks.js';
 import { runNeighborhoodSelectedNumericPopulationV2DatabaseChecks } from './helpers/neighborhoodSelectedNumericPopulationV2DatabaseChecks.js';
@@ -2409,6 +2410,11 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       await withCustomCohortJobTransaction(pool,client=>client.query(readFileSync(
         new URL('../migrations/20261211_custom_cohort_initial_dispatch_v2.sql',import.meta.url),'utf8')));
       await runNeighborhoodInitialV2DispatchDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData:fixturePolicy()});
+      await withCustomCohortJobTransaction(pool,async client=>{
+        for(const name of ['20261212_custom_cohort_neutral_cache_v2_heads.sql','20261213_custom_cohort_neutral_cache_success_v2.sql'])
+          await client.query(readFileSync(new URL(`../migrations/${name}`,import.meta.url),'utf8'));
+      });
+      await runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData:fixturePolicy()});
       return;
     }
     const earlyCounts={frozen_verify_refs_v2:0,frozen_geo_verify_refs_v2:0,frozen_identity_refs_v2:0};

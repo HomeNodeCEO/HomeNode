@@ -63,7 +63,8 @@ import { createCustomCohortIdentityV2AnchorRepository } from './customCohortIden
 import { prepareCohortSourceIdentityReceiptV2 } from './cohortSourceIdentityReceiptV2.js';
 import { prepareCohortStockTraversalReceiptV2 } from './cohortStockTraversalReceiptV2.js';
 import { createCustomCohortStockTraversalV2AnchorRepository } from './customCohortStockTraversalV2AnchorRepository.js';
-import { createCustomCohortNeutralCacheV2HeadRepository } from './customCohortNeutralCacheV2HeadRepository.js';
+import { createCustomCohortNeutralCacheV2HeadRepository,createCustomCohortNeutralCacheV2AutomaticHeadRepository } from './customCohortNeutralCacheV2HeadRepository.js';
+import { createCustomCohortNeutralCacheV2ContinuationRepository } from './customCohortNeutralCacheV2ContinuationRepository.js';
 import { prepareCohortRecordedGroupPartitionReceiptV2 } from './cohortRecordedGroupPartitionReceiptV2.js';
 import { createCustomCohortRecordedPartitionV2Repository } from './customCohortRecordedPartitionV2Repository.js';
 import { createCustomCohortRecordedCatalogV2Repository } from './customCohortRecordedCatalogV2Repository.js';
@@ -198,6 +199,8 @@ const FROZEN_SOURCE_STAGES = freeze({
     allowedPhases: ['frozen_geo_verify_refs_v2', 'frozen_identity_refs_v2'] },
   neutral_cache_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,cachingNeutralOriginals:true,
     allowedPhases:['frozen_identity_refs_v2'] },
+  neutral_cache_continue_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    cachingNeutralOriginals:true,yieldingNeutralProgress:true,allowedPhases:['frozen_identity_refs_v2'] },
   verify_continue_refs_v2: { referencesV2: true, verifying: true, yieldingEarlyProgress: true,
     allowedPhases: ['frozen_source_refs_v2', 'frozen_verify_refs_v2'] },
   geographic_continue_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, yieldingEarlyProgress: true,
@@ -1806,7 +1809,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     if(typeof stage!=='string'||!Object.hasOwn(FROZEN_SOURCE_STAGES,stage))
       fail('frozen_source_representation_unsupported');
     const {referencesV2=false,issuingSourcePrefix=false,yieldingSourcePrefix=false,verifying=false,stockVerifying=false,identityVerifying=false,yieldingEarlyProgress=false,
-      typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,cachingNeutralOriginals=false,
+      typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,cachingNeutralOriginals=false,yieldingNeutralProgress=false,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,
       resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,partitioningRecordedGroups=false,
@@ -2213,7 +2216,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const expected={binding,source_reference:reference,root,graph_reference:verificationReference,
           geographic_reference:stockVerificationReference,identity_reference:identityVerificationReference,stock_reference:stockReference,
           profile_reference:getNeighborhoodFrozenTypedOriginalV2Profile().definition_blob.ref};
-        neutralCacheStore=createCustomCohortNeutralCacheV2HeadRepository({client,claim,scope,actorUserId:input.auth.userId,
+        const createNeutralHead=yieldingNeutralProgress?createCustomCohortNeutralCacheV2AutomaticHeadRepository:createCustomCohortNeutralCacheV2HeadRepository;
+        neutralCacheStore=createNeutralHead({client,claim,scope,actorUserId:input.auth.userId,
           source_reference:reference,root_reference:root,graph_reference:verificationReference,
           geographic_reference:stockVerificationReference,identity_reference:identityVerificationReference,stock_reference:stockReference});
         neutralCacheHead=await neutralCacheStore.read();
@@ -3139,9 +3143,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           const retainedReceipt=await blobs.put(canonicalAssessmentJson(neutralCachePlan));
           neutralCacheHead=await neutralCacheStore.advance(neutralCacheHead,retainedReceipt);
         }
+        if(yieldingNeutralProgress&&!neutralCachePlan)fail('checkpoint_conflict');
+        const continuation=yieldingNeutralProgress?await createCustomCohortNeutralCacheV2ContinuationRepository(client).yieldIssued(claim,jobOptions):null;
         budget.check();return freeze({status:'current_authorized_neutral_original_cache_progress_v2',operation_id:input.operationId,
           ...neutralCacheResult,cache_coverage_reference:neutralCacheHead.receipt_reference,
           all_issued_source_pages_reconciled:neutralCacheResult.progress.kind_index===7,
+          automatic_cache_success:yieldingNeutralProgress,...(continuation?{continuation}:{}),
           global_generation_complete:'not_established',automatic_success_handoff:false,context_complete:false,pin_transfer:false,
           source_acquisition:'not_established',publication:'not_established',report_update:'none'});
       }
@@ -3744,6 +3751,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       frozenCaptureJobSourceStage(value, options, 'identity_refs_v2'),
     reconcileFrozenCaptureJobNeutralOriginalsReferencesV2: (value,options={})=>
       frozenCaptureJobSourceStage(value,options,'neutral_cache_refs_v2'),
+    continueFrozenCaptureJobNeutralOriginalsReferencesV2: (value,options={})=>
+      frozenCaptureJobSourceStage(value,options,'neutral_cache_continue_refs_v2'),
     /** Independent current-authorized root-edge/original-representation validation.
      * Not typed identity closure, complete geographic stock, source acquisition,
      * report publication or Apply. Progress is loaded only from this job's fence. */

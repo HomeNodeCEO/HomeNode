@@ -3,6 +3,7 @@ import test from 'node:test';
 import { assertBoundedCohortAuthorityAggregates as check } from './helpers/boundedCohortAuthorityAggregateAssertions.js';
 import { customCohortRepositoryFixture } from './fixtures/customCohortRepositoryFixture.js';
 import { loadCurrentCustomCohortJobActor } from '../src/services/neighborhoodAssessment/customCohortJobActor.js';
+import { NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL } from '../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
 
 async function actualQueries() {
   const { state, repo } = customCohortRepositoryFixture();
@@ -40,4 +41,36 @@ test('catalog aggregate assertion refuses tag spoofing, extra aggregates, widene
   ]) assert.throws(() => check([...baseline, bad], scope), /unexpected catalog aggregate|exact current actor|three fixed material|spatial\/job-typed/);
   assert.throws(() => check([actor, section, section], scope), /both-end current actor/);
   assert.throws(() => check([actor, section, actor], scope), /both-end current bounded subject/);
+});
+
+for (const expression of ['array_agg(account_id)', 'jsonb_agg(account_id)', 'json_agg(account_id)',
+  'jsonb_object_agg(account_id, payload)', 'json_object_agg(account_id, payload)',
+  "string_agg(account_id, ',')", 'xmlagg(payload)', 'ARRAY(SELECT account_id FROM app.accounts)']) {
+  test(`catalog aggregate assertion refuses population construction with ${expression}`, async () => {
+    const { scope, actor, section } = await actualQueries();
+    const text = `/* custom-cohort-subject:sections */ SELECT ${expression} FROM app.accounts`;
+    assert.throws(() => check([actor, section, actor, section, { text, values: [] }], scope), /unexpected catalog aggregate/);
+  });
+}
+
+test('catalog aggregate assertion admits only the unchanged single-account original packet and exact bounded parameters', async () => {
+  const { scope, actor, section } = await actualQueries();
+  scope.originals = { operationId: 'stock-operation', generationId: 'retained-generation', profileSha256: 'retained-profile' };
+  const baseline = [actor, section, actor, section], packet = { text: NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL,
+    values: ['stock-operation', 'retained-generation', 'retained-profile', 'ACCOUNT-A', 250, 8_000_000, 2_100_000, 1_000_000, 2_100_000] };
+  check([...baseline, packet], scope);
+  check([...baseline, { text: 'SELECT count(*), sum(member_count) FROM app.example', values: [] }], scope);
+  for (const index of [0, 1, 2, 4, 5, 6, 7, 8]) {
+    const values = [...packet.values]; values[index] = index < 3 ? 'foreign-scope' : values[index] + 1;
+    assert.throws(() => check([...baseline, { ...packet, values }], scope), /exact original stock/);
+  }
+  for (const cursor of [[], 'ACCOUNT-A\n', 'x'.repeat(65)]) {
+    const values = [...packet.values]; values[3] = cursor;
+    assert.throws(() => check([...baseline, { ...packet, values }], scope), /bounded original account cursor/);
+  }
+  for (const text of [packet.text.replace('LIMIT 1', 'LIMIT 2'), packet.text.replace('AND o.account_id=a.account_id', ''),
+    packet.text + ', json_agg(account_id)']) {
+    assert.throws(() => check([...baseline, { ...packet, text }], scope), /unexpected catalog aggregate/);
+  }
+  assert.throws(() => check([...baseline, packet], { ...scope, originals: undefined }), /exact retained stock scope/);
 });

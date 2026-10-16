@@ -74,7 +74,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
       await raw.query(`UPDATE app_auth.organizations SET metadata=jsonb_set(metadata,ARRAY[$2::text,'revoked_at'],
         to_jsonb(to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))) WHERE id=$1`,[scope.organization_id,SOURCE_RIGHTS]);}
     if(text===BATCH_PACKET&&fault==='batch_cache'){fault=null;
-      const envelope=JSON.parse(result.rows[0].page_json);envelope[0].typed.observations.reported_site_area.exact_value='999';
+      const envelope=JSON.parse(result.rows[0].page_json);envelope[0].typed.original.payload_utf8_bytes++;
       return {...result,rows:[{...result.rows[0],page_json:JSON.stringify(envelope)}]};}
     if(originalPacket)stockReads++;
     if(orphan){fault=null;await raw.query('ROLLBACK TO SAVEPOINT synthetic_neutral_yield');await raw.query('RELEASE SAVEPOINT synthetic_neutral_yield');}

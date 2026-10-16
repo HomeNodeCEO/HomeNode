@@ -1,5 +1,36 @@
 # Complete larger-area Custom neighborhood studies
 
+## Batch catalog waiting boundary (2026-10-16, not activated)
+
+The closed `awaitCoveredOriginalFrozenCaptureJobBatchSelectionReferencesV3`
+owner accepts only a live claim after independently issued V3 stock, partition
+and catalog DONE. The server chooses the DONE cursor, reopens a fresh whole
+original/cache/partition EMPTY packet and the exact pending workspace, then
+completes every current and ending authority fence before releasing only the
+lease. A separate storage primitive rereads the actual scoped waiting row in
+the same transaction; a swallowed or orphaned release refuses. Attempts, errors,
+schedule, exact checkpoint, source parents, catalog, workspace, reports and pins
+remain. The inactive worker locates only matching pending studies and complete
+V3 parents, excluding existing human commands from every routing lane.
+
+The development guard preserves the entire latest V2 intent-through-transaction-
+index guard prefix and adds only a bounded terminal V3 format check, including
+actual completed stock/partition parents and the catalog's distinct fresh EMPTY.
+It remains unregistered. No human selection, source permission, completed
+context, publication or pin transfer is inferred or activated.
+
+A twenty-second independently captured native scenario is authored, preserving
+all twenty-one earlier variants and deadlines. It requires concurrent workers
+to issue one owner, missing-target refusal before original IO, current/ending
+rights/workspace/count and native lease-expiry refusal, real orphan-release
+savepoint rollback, lost actual waiting COMMIT ACK, immutable waiting/cancellation,
+stale-claim refusal, and unchanged evidence/history/pins. Normal heartbeats remain
+enabled during the independent refusal probes. 162 serial focused checks pass,
+zero failures/cancellations/skips (1586.798ms); changed JS syntax and diff checks
+pass. Actual new-head native/full cloud execution remains pending. Coherent
+batch human-intent and selected-union integration, activation and licensed
+large-area capacity/live speed acceptance remain open.
+
 ## Completed batch catalog original replay (2026-10-16, not activated)
 
 The closed `readCoveredOriginalFrozenCaptureJobRecordedCatalogBatchAccountReferencesV3`

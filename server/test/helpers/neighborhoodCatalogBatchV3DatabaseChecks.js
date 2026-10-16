@@ -13,6 +13,7 @@ import { runCustomCohortCoveredCatalogV2JobOnce as legacyRun } from '../../src/s
 import { runCustomCohortCoveredSelectionWaitV2JobOnce as legacyWait } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectionWaitV2JobWorker.js';
 import { withCustomCohortJobTransaction as tx } from '../../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
 import { runNeighborhoodCatalogBatchOriginalReplayV3DatabaseChecks } from './neighborhoodCatalogBatchOriginalReplayV3DatabaseChecks.js';
+import { runNeighborhoodBatchSelectionWaitV3DatabaseChecks } from './neighborhoodBatchSelectionWaitV3DatabaseChecks.js';
 
 /** Runs only in the NEW independently captured graph. Every source/native
  * parent, original/cache/entry read, current authority fence and COMMIT is real.
@@ -20,7 +21,7 @@ import { runNeighborhoodCatalogBatchOriginalReplayV3DatabaseChecks } from './nei
  * authority, capacity, activation or complete selected-union semantics. */
 export async function runNeighborhoodCatalogBatchV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,
   setFault,readFault,packet,readBody,stockHead,partitionHead,partitionRows,bridgeState,cacheState,head,cadState,cadHead,
-  protectedRows,protectedBefore,pin,batchPendingWorkspace,catalogBatchReplayFixture=false,originalReads}){
+  protectedRows,protectedBefore,pin,batchPendingWorkspace,catalogBatchReplayFixture=false,batchSelectionWaitFixture=false,originalReads}){
   const operation=input.operationId,method='continueCoveredOriginalFrozenCaptureJobRecordedCatalogBatchReferencesV3',
     catalogHead=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_recorded_catalog_v2_heads WHERE operation_id=$1',[operation])).rows[0],
     groups=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_recorded_catalog_v2_groups WHERE operation_id=$1 ORDER BY group_id',[operation])).rows,
@@ -108,6 +109,11 @@ export async function runNeighborhoodCatalogBatchV3DatabaseChecks({pool,input,sc
   assert.equal(terminalJob.attempts,5);assert.equal(terminalJob.last_error_code,'access_revoked');assert.equal(terminalJob.context_sha256,null);
   assert.equal((await parent()).sequence,ownedParent.sequence+2);for(const worker of [run,legacyRun,legacyWait])assert.deepEqual(await worker(args),{status:'idle'});
   assert.deepEqual(await job(),terminalJob);await assertParents();
+  if(batchSelectionWaitFixture){
+    await runNeighborhoodBatchSelectionWaitV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,blobs,
+      catalogHead,groups,assertParents,setFault,readFault,originalReads});
+    return;
+  }
   const [next]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));assert.equal(next.claim.attempts,5);
   if(catalogBatchReplayFixture)await runNeighborhoodCatalogBatchOriginalReplayV3DatabaseChecks({pool,input,scope,actor,service,
     claim:next.claim,packet,catalogHead,groups,job,parent,blobs,assertParents,setFault,readFault,originalReads});

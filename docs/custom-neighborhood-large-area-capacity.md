@@ -1,5 +1,42 @@
 # Complete larger-area Custom neighborhood studies
 
+## Covered selected exact-statistics worker (2026-10-16, not activated)
+
+`progressCoveredOriginalFrozenCaptureJobSelectedSemanticReferencesV2` connects
+the existing tenth exact-statistics owner to actual adopted neutral and CAD
+DONE coverage. Native numeric DONE admits the first account. Every next native
+semantic ordinal reopens every stock, CAD, all-date transaction and required
+subject original and ENTIRE caches again, and compares every retained metric,
+contribution, numeric-index and ninth-pass member field. Bounded rank candidates
+initialize only after current original reconciliation; they remain provisional
+until the complete pass reconciles all independent counts, sums and deviations.
+Exact reported medians/quartiles/means/CODs are returned only at fresh EMPTY.
+
+Summary/receipt/reference rows/head/exact sixteen-reference checkpoint and
+single-use continuation share one transaction after all current and ending
+source-purpose/actor/assignment/draft/subject/workspace/native-lineage/claim/pin
+fences. Every claim/recovery/expiry lane stops at semantic DONE. Success at
+attempt5 preserves error/failure history. The five-failure ceiling and aggregate
+32MB/256-query/60s owner, single-use paired250-original/128-query subbudget and
+16KB whole-result cap remain unchanged; no caller population/value/callback.
+
+144 serial focused owner/worker/exact-semantic/native-repository/rank checks
+pass, zero failures/cancellations/skips (1,778.1002ms). New native assertions
+extend the independently issued numeric job through actual ending CAD/role/
+workspace and orphan-COMMIT rollback of summary blobs, rows AND head, lost ACK/
+fresh NEXT, two ordinals plus distinct EMPTY, independent exact two-account
+median/quartile/COD golden arithmetic, unchanged parents/choices/pins and the
+DONE expiry stop at attempt5. These rollback probes use the actual valid fifth
+claim; no sixth recovery or refund is manufactured. NEW cloud/native execution
+is pending; authored checks and synthetic fixtures are not licensed acceptance.
+
+These are current retained reported CAD comparisons, without verified at-sale
+GLA/currency or historical/economic transaction applicability. Calendar-quarter
+transaction completeness, coherent publication, terminal pin handoff, licensed
+large-area/current acquisition and production-speed acceptance remain open.
+No registry/default worker/route/schedule/grant/genuine Hardy choice/accepted
+report/Apply/publication/pin activation is added.
+
 ## Covered selected indexed-population worker (2026-10-16, not activated)
 
 `progressCoveredOriginalFrozenCaptureJobSelectedNumericReferencesV2` composes

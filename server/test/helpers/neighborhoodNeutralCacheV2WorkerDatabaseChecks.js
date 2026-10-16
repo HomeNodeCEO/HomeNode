@@ -63,8 +63,8 @@ import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL as TRAN
 
 /** Independent disposable job; all acquisition owners, authorization, original
  * queries, native issuance, savepoint rollback and COMMITs are real. */
-export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData,coveredTransactionIndexFixture=false,stockBatchFixture=false,partitionBatchFixture=false,catalogBatchFixture=false,catalogBatchReplayFixture=false,batchSelectionWaitFixture=false,batchSelectionIntentFixture=false,batchSelectedUnionFixture=false,batchSelectedWorkersFixture=false,batchRecordedEligibilityFixture=false,batchSelectedEvidenceFixture=false,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false,batchSelectedTransactionIndexFixture=false,batchSelectedRecoveryFixture=false}){
-  const batchFailureAttempt=batchSelectedRecoveryFixture?4:5,batchFailureCode=batchSelectedRecoveryFixture?'capture_failed':'access_revoked';
+export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData,coveredTransactionIndexFixture=false,stockBatchFixture=false,partitionBatchFixture=false,catalogBatchFixture=false,catalogBatchReplayFixture=false,batchSelectionWaitFixture=false,batchSelectionIntentFixture=false,batchSelectedUnionFixture=false,batchSelectedWorkersFixture=false,batchRecordedEligibilityFixture=false,batchSelectedEvidenceFixture=false,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false,batchSelectedTransactionIndexFixture=false,batchSelectedRecoveryFixture=false,batchSelectedProgressRecoveryFixture=false}){
+  const batchFailureAttempt=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture)?4:5,batchFailureCode=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture)?'capture_failed':'access_revoked';
   const input={...sourceInput,operationId:randomUUID()},operation=input.operationId;let fault=null,stockReads=0;
   const observed={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
     const text=typeof c==='string'?c:c.text,originalPacket=text===BATCH_PACKET||text===STOCK_PACKET||text===PAIRED_STOCK_PACKET||text===TRANSACTION_PACKET||text===AMENITY_PACKET||(batchRecordedEligibilityFixture&&text===ELIGIBILITY_PACKET)||(batchSelectedEvidenceFixture&&text===EVIDENCE_PACKET)||(batchSelectedMetricsFixture&&[METRIC_PACKET,FIRST_METRIC_PACKET].includes(text))||(batchSelectedStatisticsFixture&&[STATISTICS_PACKET,FIRST_STATISTICS_PACKET].includes(text))||(batchSelectedNumericFixture&&[NUMERIC_PACKET,FIRST_NUMERIC_PACKET].includes(text))||(batchSelectedSemanticFixture&&text===SEMANTIC_PACKET)||(batchSelectedTransactionIndexFixture&&text===TRANSACTION_INDEX_PACKET),
@@ -310,9 +310,9 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   assert.equal((await parent()).sequence,parentBefore.sequence);assert.deepEqual(await bridgeState(),adoptedState);
   await tx(pool,client=>jobs(client).failClaim(adoptedClaim,'capture_failed',{retrySeconds:1}));
   await pool.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET run_after=clock_timestamp() WHERE operation_id=$1',[operation]);
-  // This NEW independent graph reserves one real failure for the selected
-  // initial worker. Older graphs still execute this bridge role failure.
-  if(!batchSelectedRecoveryFixture){
+  // Only the independent recovery graphs reserve this failure for a selected
+  // initial or progress worker. Older graphs keep the bridge role failure.
+  if(!batchSelectedRecoveryFixture&&!batchSelectedProgressRecoveryFixture){
   fault='bridge_role';assert.equal((await bridgeWorker(args)).reason,'access_revoked');assert.equal(fault,null);
   assert.equal(await stockHead(),undefined);assert.equal((await job()).attempts,4);
   await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);
@@ -424,7 +424,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
         await runNeighborhoodCatalogBatchV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,
           setFault:value=>{fault=value;},readFault:()=>fault,packet,readBody,stockHead,partitionHead,partitionRows,
           bridgeState,cacheState,head,cadState,cadHead,protectedRows,protectedBefore,pin,batchPendingWorkspace,
-          catalogBatchReplayFixture,batchSelectionWaitFixture,batchSelectionIntentFixture,batchSelectedUnionFixture,batchSelectedWorkersFixture,batchRecordedEligibilityFixture,batchSelectedEvidenceFixture,batchSelectedMetricsFixture,batchSelectedStatisticsFixture,batchSelectedNumericFixture,batchSelectedSemanticFixture,batchSelectedTransactionIndexFixture,batchSelectedRecoveryFixture,originalReads:()=>stockReads});
+          catalogBatchReplayFixture,batchSelectionWaitFixture,batchSelectionIntentFixture,batchSelectedUnionFixture,batchSelectedWorkersFixture,batchRecordedEligibilityFixture,batchSelectedEvidenceFixture,batchSelectedMetricsFixture,batchSelectedStatisticsFixture,batchSelectedNumericFixture,batchSelectedSemanticFixture,batchSelectedTransactionIndexFixture,batchSelectedRecoveryFixture,batchSelectedProgressRecoveryFixture,originalReads:()=>stockReads});
         return;
       }
       const [next]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));assert.equal(next.claim.attempts,batchFailureAttempt);

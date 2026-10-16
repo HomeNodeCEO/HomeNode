@@ -37,30 +37,41 @@ export async function runNeighborhoodBatchSelectedWorkersV3DatabaseChecks({pool,
     const [adopted]=await initialClaims(client).claimDue({leaseSeconds:900});assert.deepEqual(adopted.claim,claim);
     await client.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);
   }),e=>e.code==='55000');assert.deepEqual(await dispatches(),[]);assert.deepEqual(await job(),before.job);await immutable();
-  let initialCalls=0,ownerError,ownedJob,ownedDispatch;
+  let initialCalls=0,ownerError,ownedDispatch;
   const unchanged=async()=>{
-    const current=await job();assert.equal(current.claim_token,ownedJob.claim_token);
-    assert.ok(current.lease_expires_at.getTime()>=ownedJob.lease_expires_at.getTime());
-    assert.ok(current.lease_expires_at.getTime()<=Date.now()+901000);
-    assert.deepEqual({...current,lease_expires_at:ownedJob.lease_expires_at,updated_at:ownedJob.updated_at},ownedJob);
-    assert.deepEqual(await dispatches(),ownedDispatch);assert.deepEqual(await parent(),before.parent);
+    assert.deepEqual(await job(),before.job);assert.deepEqual(await dispatches(),[]);assert.deepEqual(await parent(),before.parent);
     assert.deepEqual(await blobs(),before.blobs);assert.deepEqual(await union(),{head:[],groups:[],rows:[]});await immutable();
   };
+  // Exercise the actual heartbeat UPDATE on a separate native transaction.
+  // NOWAIT must refuse before original IO while that row lock is held. Do not
+  // retry the refusal, weaken the owner fence or alter the normal worker timer.
+  const heartbeatRollback=Error('rollback held native heartbeat'),beforeHeartbeatReads=originalReads();
+  await assert.rejects(tx(pool,async client=>{
+    assert.deepEqual(await jobs(client).heartbeat(claim,{leaseSeconds:900}),{cancellation_requested:false});
+    await assert.rejects(service[method](input,{captureJobClaim:claim}),error=>error.code==='55P03'
+      &&error.message==='could not obtain lock on row in relation "neighborhood_custom_cohort_capture_jobs"');
+    assert.equal(originalReads(),beforeHeartbeatReads);assert.equal(readFault(),null);
+    throw heartbeatRollback;
+  }),error=>error===heartbeatRollback);await unchanged();
+  // These are separate, deliberately rolled-back owner operations under the
+  // genuine resumed claim. Run them before the worker starts: placing seven
+  // owner transactions inside one callback artificially raced its 15s timer.
+  for(const [fault,reason] of [['union_workspace',/custom_cohort_group_workspace_study_changed/],
+    ['union_role',/custom_cohort_job_actor_access_revoked/],['catalog_replay_rights',/market_data_access_denied|market_policy_changed/],
+    ['catalog_replay_counts',/catalog_original_mismatch/],['union_cache',/original_mismatch/],
+    ['union_orphan',e=>e.outcome_unknown===true&&e.code==='55000'&&e.message==='neighborhood_selected_union_v2_orphan_progress']]){
+    setFault(fault);const reads=originalReads();await assert.rejects(service[method](input,{captureJobClaim:claim}),reason);assert.equal(readFault(),null);
+    assert.equal(originalReads(),reads+1);
+    if(fault==='union_role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);
+    await unchanged();
+  }
   const firstArgs={...args,cohortService:{async [method](value,options){
     try{
-      initialCalls++;assert.deepEqual(options.captureJobClaim,claim);ownedJob=await job();ownedDispatch=await dispatches();
+      initialCalls++;assert.deepEqual(options.captureJobClaim,claim);ownedDispatch=await dispatches();
       assert.equal(ownedDispatch.length,1);assert.equal(ownedDispatch[0].claim_token,claim.claim_token);
       assert.equal(ownedDispatch[0].attempts,5);assert.equal(ownedDispatch[0].command_id,command.command_id);
-      for(const [fault,reason] of [['union_workspace',/custom_cohort_group_workspace_study_changed/],
-        ['union_role',/custom_cohort_job_actor_access_revoked/],['catalog_replay_rights',/market_data_access_denied|market_policy_changed/],
-        ['catalog_replay_counts',/catalog_original_mismatch/],['union_cache',/original_mismatch/],
-        ['union_orphan',e=>e.outcome_unknown===true&&e.code==='55000'&&e.message==='neighborhood_selected_union_v2_orphan_progress']]){
-        setFault(fault);const reads=originalReads();await assert.rejects(service[method](value,options),reason);assert.equal(readFault(),null);
-        assert.equal(originalReads(),reads+1);
-        if(fault==='union_role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);
-        await unchanged();
-      }
-      setFault('union_ack');return await service[method](value,options);
+      const reads=originalReads();setFault('union_ack');
+      try{return await service[method](value,options);}finally{assert.equal(originalReads(),reads+1);}
     }catch(error){ownerError=error;throw error;}
   }}};
   const first=await Promise.all([initial(firstArgs),initial(firstArgs)]);
@@ -105,6 +116,8 @@ export async function runNeighborhoodBatchSelectedWorkersV3DatabaseChecks({pool,
   assert.deepEqual(await union(),terminal.union);assert.deepEqual(await dispatches(),ownedDispatch);await immutable();
   console.info('[native-batch-selected-workers-v3]',{independent_actual_initial_source_cache_stock_partition_catalog_wait_and_explicit_command:true,
     changed_pending_target_not_claimed_and_real_orphan_initial_adoption_COMMIT_refused:true,
+    actual_heartbeat_row_lock_refused_before_original_IO_and_complete_rollback:true,
+    separate_ending_refusals_before_worker_timer_and_normal_15s_heartbeat_retained:true,
     concurrent_initial_adoption_once_preserves_actual_human_resume_token_and_failure5:true,
     every_original_ENTIRE_cache_partition_and_current_ending_workspace_source_actor_count_fence:true,
     actual_orphan_yield_rollback_and_lost_first_COMMIT_ACK:true,concurrent_B_and_separate_fresh_EMPTY_fresh_native_tokens:true,

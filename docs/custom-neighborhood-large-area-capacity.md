@@ -1,5 +1,37 @@
 # Complete larger-area Custom neighborhood studies
 
+## Native selected-worker heartbeat contention (2026-10-16, not activated)
+
+The independent batch selected-worker fixture previously ran six ending-refusal
+owner transactions before its real owner, all inside one worker callback. A
+normal 15-second heartbeat could therefore overlap a later probe's initial
+`FOR SHARE NOWAIT` job fence. One actual child run refused with PostgreSQL
+`55P03` before original IO; that failed head is not accepted or rerun unchanged.
+
+The fixture now performs those same original-backed ending/COMMIT rollback
+probes under the genuine resumed claim before starting the worker. It also
+holds the actual repository heartbeat UPDATE in a native transaction, requires
+that precise NOWAIT refusal before any original read, then rolls it back and
+compares the entire job, dispatch, union, blobs and immutable native parents.
+The concurrent initial workers still adopt the actual command once and perform
+the real first original owner with lost COMMIT acknowledgment; B/fresh EMPTY,
+terminal lane exclusion and failure-five history remain. No owner or worker
+production behavior, 15-second timer, fence, deadline, budget or failure ceiling
+changes. New exact-head native/full cloud execution is required before this
+correction or any integrated descendant is accepted.
+
+The first fresh correction still refused `55P03` in the independent selected
+worker scenario. The positive concurrent-claim assertion now waits for the
+actual idle contender's claim transaction to finish before invoking its one
+real source owner. Both workers still run concurrently, the real repositories
+still issue/adopt exactly one native claim, and every original query and COMMIT
+is retained. A losing claim can briefly hold the row even while returning no
+claim; its lock is correctly incompatible with the owner's NOWAIT fence.
+The separately held real heartbeat lock must still refuse before original IO.
+This test coordination does not retry a refusal or change production behavior.
+Bounded phase markers distinguish heartbeat/refusal, ending-probe and real
+initial-owner completion in new-head native logs.
+
 ## Explicit batch selection intent (2026-10-16, not activated)
 
 The separate closed V3 resume owner accepts only an explicit NEW-study command:
@@ -8809,7 +8841,33 @@ ending refusals, orphan-yield rollback, a lost actual COMMIT acknowledgment,
 fresh native continuation tokens and unchanged history, reports and source pins
 at attempt five. Cloud/native execution of this new scenario is pending.
 
-This adds no automatic union worker, migration registration, default dispatcher,
-selection choice, metric population, publication or terminal pin transfer.
+That original-owner boundary adds no automatic scheduling, migration
+registration, default dispatcher, selection choice, metric population,
+publication or terminal pin transfer. Separate inactive worker lanes follow.
 Complete V3 downstream composition and licensed large-area/live speed acceptance
 remain open. Small fixture success does not establish those acceptance criteria.
+
+## Batch-catalog selected-union workers (2026-10-16, inactive)
+
+Separate V3 initial and progress worker lanes now compose the actual bounded
+original-union owner. Initial adoption records the authenticated command's real
+resume token once; ordinary failed or expired claims alone increment the existing
+failure attempt below five. Progress consumes an actual native continuation with
+a fresh token without refunding or charging failure history. Every success,
+recovery and expiry path requires the exact V3 stock/partition/catalog parents
+and current matching pending workspace. Progress requires union-incomplete;
+union DONE is excluded from all three lanes and belongs to a separate next owner.
+Neither worker supplies group IDs, source authority, originals or membership.
+The original owner repeats its complete current and ending fences. Both workers
+retain normal heartbeats and require exact V3-parent result metadata.
+
+A twenty-fifth independent native scenario preserves all twenty-four earlier
+scenarios and deadlines. It requires changed-target exclusion, real deferred
+orphan-adoption refusal, concurrent single adoption, original/ENTIRE-cache/entry
+and ending refusals, lost actual first COMMIT acknowledgment, concurrent B and
+fresh EMPTY, terminal claim/recovery/expiry exclusion and immutable history,
+reports and source pins at attempt five. Execution is pending; ordinary native
+recovery below five is not established by this new scenario. No default worker,
+schedule, route, migration registration, grant, appraiser choice, publication,
+Apply or pin transfer is activated. Large-area acquisition, downstream semantics
+and real production speed acceptance remain unfinished.

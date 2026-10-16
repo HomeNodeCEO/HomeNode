@@ -52,7 +52,7 @@ import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL as TRAN
 
 /** Independent disposable job; all acquisition owners, authorization, original
  * queries, native issuance, savepoint rollback and COMMITs are real. */
-export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData,coveredTransactionIndexFixture=false,stockBatchFixture=false,partitionBatchFixture=false,catalogBatchFixture=false,catalogBatchReplayFixture=false,batchSelectionWaitFixture=false,batchSelectionIntentFixture=false,batchSelectedUnionFixture=false}){
+export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData,coveredTransactionIndexFixture=false,stockBatchFixture=false,partitionBatchFixture=false,catalogBatchFixture=false,catalogBatchReplayFixture=false,batchSelectionWaitFixture=false,batchSelectionIntentFixture=false,batchSelectedUnionFixture=false,batchSelectedWorkersFixture=false}){
   const input={...sourceInput,operationId:randomUUID()},operation=input.operationId;let fault=null,stockReads=0;
   const observed={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
     const text=typeof c==='string'?c:c.text,originalPacket=text===BATCH_PACKET||text===STOCK_PACKET||text===PAIRED_STOCK_PACKET||text===TRANSACTION_PACKET||text===AMENITY_PACKET,
@@ -408,7 +408,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
         await runNeighborhoodCatalogBatchV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,
           setFault:value=>{fault=value;},readFault:()=>fault,packet,readBody,stockHead,partitionHead,partitionRows,
           bridgeState,cacheState,head,cadState,cadHead,protectedRows,protectedBefore,pin,batchPendingWorkspace,
-          catalogBatchReplayFixture,batchSelectionWaitFixture,batchSelectionIntentFixture,batchSelectedUnionFixture,originalReads:()=>stockReads});
+          catalogBatchReplayFixture,batchSelectionWaitFixture,batchSelectionIntentFixture,batchSelectedUnionFixture,batchSelectedWorkersFixture,originalReads:()=>stockReads});
         return;
       }
       const [next]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));assert.equal(next.claim.attempts,5);

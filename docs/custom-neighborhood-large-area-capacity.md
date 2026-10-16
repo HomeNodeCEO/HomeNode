@@ -1,5 +1,35 @@
 # Complete larger-area Custom neighborhood studies
 
+## Batch indexed population replay (2026-10-16, not activated)
+
+Two closed V3 entries reopen the first indexed account read-only and advance
+one reference-only numeric population row after actual contribution DONE.
+Each complete original/ENTIRE neutral and CAD cache/partition/catalog packet
+must reconcile every retained metric, contribution and indexed value/null field
+under current and ending source-purpose, actor, assignment, draft, subject,
+workspace, native-parent and lease fences. Numeric index rows grant no source
+authority. Existing fourteen-key numeric receipts, eight-column reference rows,
+restrictive actual-parent FKs and deferred row/head/COMMIT guards are unchanged.
+No frequency/median/COD, economic equivalence or quarter applicability follows.
+
+The separate inactive V3 worker admits only contribution DONE or incomplete
+numeric population, excluding numeric DONE from every claim/recovery/expiry
+lane. It retains normal heartbeats, failure history and the same aggregate
+query/original/byte/runtime bounds. The new thirtieth independently captured
+native case preserves all twenty-nine earlier cases and deadlines. It authors
+the real parent-worker chain, first read-only index reconciliation, complete
+cache refusal, real orphan COMMIT rollback, lost first write acknowledgment,
+concurrent A/B/fresh EMPTY under native claims, unchanged index/parent rows and
+terminal next-owner exclusion. Concurrent claims settle before the positive
+original owner; held-lock refusals remain independently exercised upstream.
+
+207 serial focused checks pass, zero failures/cancellations/skips (1765.8348ms);
+nineteen changed JavaScript syntax and diff checks pass. Exact-head native/full
+cloud verification remains pending. New-stage every-ending-authority fault and
+ordinary V3 recovery below five remain separate unexercised proofs. Nothing
+registers/activates; complete semantic/economic/quarter statistics, publication,
+terminal pins and licensed large-area/live-speed acceptance remain open.
+
 ## Batch selected contribution owner (2026-10-16, not activated)
 
 Two separate closed V3 entries reopen the first read-only contribution and

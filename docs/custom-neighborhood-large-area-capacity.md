@@ -1,5 +1,59 @@
 # Complete larger-area Custom neighborhood studies
 
+## Covered selected indexed-population worker (2026-10-16, not activated)
+
+The first numeric preflight exceeded the unchanged 180-second fixture deadline;
+its later marker is not acceptance. The positive worker job now captures its
+OWN new generation from the live disposable source tables with a compact legal
+description. The earlier large-payload byte-boundary fixture and its complete
+frozen original remain intact and are independently reread for equality.
+Every new job parent is genuinely issued and every worker still reads ALL of
+its new generation's whole originals and ENTIRE caches. No original, head or
+cache is cloned/rebound; no assertion, query, owner budget, failure ceiling or
+180-second deadline is removed or widened. This compact protocol fixture is
+explicitly not large-source byte-capacity, licensed acquisition or speed proof.
+That compact-source correction still reached 180,001ms; its later marker is
+also not acceptance. The disposable CI graph session now honors the SQL's
+explicit JOIN order (`join_collapse_limit=1`) to avoid repeated join-order
+search in the long native-parent chains. Every SQL/predicate/original read,
+constraint, fault probe and deadline remains installed; production planner
+settings are unchanged. 21 focused planner/worker/numeric checks pass, zero
+failures/cancellations/skips (242.0248ms). New exact-head native execution must
+verify this planning-cost correction; it is not production speed proof.
+
+`progressCoveredOriginalFrozenCaptureJobSelectedNumericReferencesV2` composes
+the existing ninth original owner with the actual adopted neutral and CAD DONE
+coverage. Each native next selected ordinal reopens every stock, CAD, all-date
+transaction and required subject original, reconciles ENTIRE caches, and
+compares every retained metric, contribution and numeric-index field against
+that fresh original reconstruction. No caller row/value/ordinal/DONE/callback
+or stored reference/hash/count supplies semantic source authority.
+
+After all unchanged current and ending source-purpose, actor, assignment,
+draft, subject, workspace, native lineage, claim and pin fences pass, reference
+row/receipt/head/exact fifteen-reference checkpoint/fresh continuation share
+one transaction. Only contributions DONE or incomplete numeric progress belong
+to the separate closed worker; numeric DONE excludes ALL claim/recovery/expiry
+lanes. Success preserves attempts and error history, including at attempt5.
+The five-failure ceiling, aggregate 32MB/256-query/60s owner, single-use paired
+250-original/128-query subbudget and 16KB whole-result cap are unchanged.
+
+143 serial focused owner/worker/index/population/source-reopen checks pass,
+zero failures/cancellations/skips (1,871.8732ms); five changed JS syntax and diff
+checks pass. New native assertions extend the independently issued contribution
+job through real failure/recovery to attempt5, ending CAD/role/workspace and
+orphan-COMMIT rollback of rows AND head, lost ACK/fresh NEXT, two ordinals plus
+distinct EMPTY, unchanged indexes/parents/choices/pins and the DONE expiry stop
+at attempt5. NEW cloud/native execution is pending; authored checks are not
+acceptance. No deadline or failure ceiling was increased.
+
+Numeric completion still requires a later semantic owner to reopen originals
+and current authority again. Complete medians/CODs/calendar quarters,
+economic/historical applicability, coherent publication, terminal pin handoff,
+licensed large-area acquisition and production-speed acceptance remain open.
+No registry/default worker/route/schedule/grant/genuine Hardy choice/accepted
+report/Apply/publication/pin activation is added.
+
 ## Covered selected statistics-contribution worker (2026-10-16, not activated)
 
 `progressCoveredOriginalFrozenCaptureJobSelectedStatisticsReferencesV2` connects

@@ -86,8 +86,10 @@ BEGIN
     OR receipt->'after'->>'kind_index' IS DISTINCT FROM '7' OR receipt->'after'->'position' IS DISTINCT FROM 'null'::jsonb
     OR NEW.claim_token=e.initial_claim_token OR NEW.claim_token=e.issued_claim_token THEN
     RAISE EXCEPTION 'neighborhood_cache_stock_v2_binding_conflict' USING ERRCODE='55000'; END IF;
-  IF TG_OP='UPDATE' AND (to_jsonb(NEW)-ARRAY['claim_token','attempts','claim_transaction_id','completed_reference','completed_transaction_id','completed_sha256'])
-    IS DISTINCT FROM (to_jsonb(OLD)-ARRAY['claim_token','attempts','claim_transaction_id','completed_reference','completed_transaction_id','completed_sha256']) THEN
+  -- Generated FK keys are recomputed AFTER this BEFORE trigger. Compare their
+  -- immutable source references, not provisional NEW generated-column values.
+  IF TG_OP='UPDATE' AND (to_jsonb(NEW)-ARRAY['claim_token','attempts','claim_transaction_id','completed_reference','completed_transaction_id','cache_sha256','completed_sha256'])
+    IS DISTINCT FROM (to_jsonb(OLD)-ARRAY['claim_token','attempts','claim_transaction_id','completed_reference','completed_transaction_id','cache_sha256','completed_sha256']) THEN
     RAISE EXCEPTION 'neighborhood_cache_stock_v2_binding_conflict' USING ERRCODE='55000'; END IF;
   IF NEW.completed_reference IS NULL THEN
     IF stock.operation_id IS NOT NULL OR job.checkpoint->>'phase' IS DISTINCT FROM 'frozen_identity_refs_v2'

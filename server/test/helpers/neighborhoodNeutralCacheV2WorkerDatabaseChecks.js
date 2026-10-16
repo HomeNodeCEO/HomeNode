@@ -34,6 +34,7 @@ import { runCustomCohortStockBatchV3JobOnce as runBatchStock } from '../../src/s
 import { createCustomCohortStockBatchV3WorkerRepository as batchStockClaims } from '../../src/services/neighborhoodAssessment/customCohortStockBatchV3WorkerRepository.js';
 import { runCustomCohortPartitionBatchV3JobOnce as runBatchPartition } from '../../src/services/neighborhoodAssessment/customCohortPartitionBatchV3JobWorker.js';
 import { createCustomCohortPartitionBatchV3WorkerRepository as batchPartitionClaims } from '../../src/services/neighborhoodAssessment/customCohortPartitionBatchV3WorkerRepository.js';
+import { runNeighborhoodCatalogBatchV3DatabaseChecks } from './neighborhoodCatalogBatchV3DatabaseChecks.js';
 import { createCustomCohortCoveredStockV2WorkerRepository as stockClaims } from '../../src/services/neighborhoodAssessment/customCohortCoveredStockV2WorkerRepository.js';
 import { runCustomCohortCoveredPartitionV2JobOnce as runPartition } from '../../src/services/neighborhoodAssessment/customCohortCoveredPartitionV2JobWorker.js';
 import { createCustomCohortCoveredPartitionV2WorkerRepository as partitionClaims } from '../../src/services/neighborhoodAssessment/customCohortCoveredPartitionV2WorkerRepository.js';
@@ -51,7 +52,7 @@ import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL as TRAN
 
 /** Independent disposable job; all acquisition owners, authorization, original
  * queries, native issuance, savepoint rollback and COMMITs are real. */
-export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData,coveredTransactionIndexFixture=false,stockBatchFixture=false,partitionBatchFixture=false}){
+export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData,coveredTransactionIndexFixture=false,stockBatchFixture=false,partitionBatchFixture=false,catalogBatchFixture=false}){
   const input={...sourceInput,operationId:randomUUID()},operation=input.operationId;let fault=null,stockReads=0;
   const observed={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
     const text=typeof c==='string'?c:c.text,originalPacket=text===BATCH_PACKET||text===STOCK_PACKET||text===PAIRED_STOCK_PACKET||text===TRANSACTION_PACKET||text===AMENITY_PACKET,
@@ -59,6 +60,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
       ||fault==='cad_orphan'&&text.includes('custom-cohort-CAD-success-v2:yield')
       ||fault==='bridge_orphan'&&text.includes('custom-cohort-cache-stock-v2:complete')
       ||fault==='partition_batch_orphan_row'&&text.includes('custom-cohort-recorded-partition-batch-v3:entry-insert')
+      ||fault==='catalog_batch_orphan_group'&&text.includes('custom-cohort-recorded-catalog-batch-v3:contribute')
       ||['partition_orphan','catalog_orphan','union_orphan','eligibility_orphan'].includes(fault)&&text.includes('custom-cohort-v2-continuation:yield');
     if(orphan)await raw.query('SAVEPOINT synthetic_neutral_yield');
     if(fault==='cad_commit_expiry'&&text.includes('custom-cohort-CAD-success-v2:yield')){
@@ -71,7 +73,19 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     if(fault==='partition_batch_skip'&&text.includes('custom-cohort-recorded-partition-batch-v3:entry-insert')){
       fault=null;return raw.query({...c,values:c.values.map((value,index)=>index===9?value+1:value)});
     }
+    if(fault==='catalog_batch_skip'&&text.includes('custom-cohort-recorded-catalog-batch-v3:contribute')){
+      fault=null;const selected='job.organization_id,$9,$10,$11,1,$12::integer';
+      assert.equal(text.split(selected).length,2);
+      return raw.query({...c,text:text.replace(selected,'job.organization_id,$9,$10,$11,1,($12::integer+1)')});
+    }
     const result=await raw.query(c);
+    if(['catalog_batch_entry','catalog_batch_counts'].includes(fault)&&text.includes('custom-cohort-recorded-catalog-batch-v3:anchor-insert'))fault+='_ending';
+    if(fault==='catalog_batch_entry_ending'&&text.includes('custom-cohort-recorded-partition-batch-v3:entry-read')){
+      fault=null;return {...result,rows:[{...result.rows[0],ordinal:result.rows[0].ordinal+1}]};
+    }
+    if(fault==='catalog_batch_counts_ending'&&text.includes('custom-cohort-recorded-catalog-batch-v3:counts')){
+      fault=null;return {...result,rows:[{...result.rows[0],assigned_accounts:result.rows[0].assigned_accounts+1}]};
+    }
     if(text===AMENITY_PACKET&&['selected_CAD_header','selected_CAD_coverage'].includes(fault))fault+='_ending';
     if(text===CAD_SQL.read&&fault==='selected_CAD_header_ending'){fault=null;
       return {...result,rows:[{...result.rows[0],binding_sha256:'0'.repeat(64)}]};}
@@ -211,6 +225,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     // production registry and all seventeen historical scenarios stay intact.
     await tx(pool,client=>client.query(readFileSync(new URL('../fixtures/neighborhoodStockBatchV3Guard.sql',import.meta.url),'utf8')));
     if(partitionBatchFixture)await tx(pool,client=>client.query(readFileSync(new URL('../fixtures/neighborhoodPartitionBatchV3Guard.sql',import.meta.url),'utf8')));
+    if(catalogBatchFixture)await tx(pool,client=>client.query(readFileSync(new URL('../fixtures/neighborhoodCatalogBatchV3Guard.sql',import.meta.url),'utf8')));
     assert.deepEqual((await pool.query("SELECT revision FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'",[scope.assignment_file_id])).rows,[]);
     const started=await service.startRecordedGroupCapture({auth:input.auth,accountId:input.accountId,assignmentFileId:input.assignmentFileId,
       expectedWorkspaceRevision:0,expectedWorkspaceCheckpoint:{workspace_version:7,active:null,pending_capture:null},
@@ -368,6 +383,12 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
       assert.equal((await parent()).sequence,parentBefore.sequence+4);assert.equal(terminalJob.attempts,5);assert.equal(terminalJob.last_error_code,'access_revoked');
       for(const worker of [runBatchStock,runStock,runBatchPartition,runPartition,runCatalog])assert.deepEqual(await worker(args),{status:'idle'});
       assert.deepEqual(await job(),terminalJob);
+      if(catalogBatchFixture){
+        await runNeighborhoodCatalogBatchV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,
+          setFault:value=>{fault=value;},readFault:()=>fault,packet,readBody,stockHead,partitionHead,partitionRows,
+          bridgeState,cacheState,head,cadState,cadHead,protectedRows,protectedBefore,pin,batchPendingWorkspace});
+        return;
+      }
       const [next]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));assert.equal(next.claim.attempts,5);
       const nextJob=await job(),nextParent=await parent(),rollback=Error('rollback partition batch next-owner probe');
       await assert.rejects(tx(pool,async client=>{

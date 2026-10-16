@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { runNeighborhoodBatchSelectedMetricsV3DatabaseChecks } from './neighborhoodBatchSelectedMetricsV3DatabaseChecks.js';
 import { withCustomCohortJobTransaction as tx } from '../../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
 import { createCustomCohortCaptureJobRepository as jobs } from '../../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
 import { createCustomCohortV2ContinuationRepository as continuations } from '../../src/services/neighborhoodAssessment/customCohortV2ContinuationRepository.js';
@@ -14,7 +15,7 @@ import { NEIGHBORHOOD_SHARED_TYPED_CAD_SQL as CAD_SQL } from '../../src/services
  * recorded-comparison DONE. Real independent neutral/CAD owners precede both.
  * Complete original replay is evidence admission, not economic equivalence. */
 export async function runNeighborhoodBatchSelectedEvidenceV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
-  catalogHead,groups,assertParents,setFault,readFault,originalReads,command}){
+  catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedMetricsFixture=false}){
   const operation=input.operationId,method='progressCoveredOriginalFrozenCaptureJobBatchSelectedEvidenceReferencesV3',
     head=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_evidence_v2_heads WHERE operation_id=$1',[operation])).rows[0],
     parents=async()=>({union:(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_union_v2_heads WHERE operation_id=$1',[operation])).rows,
@@ -99,6 +100,10 @@ export async function runNeighborhoodBatchSelectedEvidenceV3DatabaseChecks({pool
     assert.deepEqual((await client.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[operation])).rows,saved);throw rollback;
   }),e=>e===rollback);
   assert.deepEqual(await job(),terminal.job);assert.deepEqual(await parent(),terminal.parent);assert.deepEqual(await blobs(),terminal.blobs);assert.deepEqual(await head(),terminal.head);await immutable();
+  if(batchSelectedMetricsFixture){
+    await runNeighborhoodBatchSelectedMetricsV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
+      catalogHead,groups,assertParents,setFault,readFault,originalReads,command});return;
+  }
   console.info('[native-batch-selected-evidence-v3]',{independent_actual_V3_workers_union_and_recorded_eligibility_DONE:true,
     actual_independent_CAD_DONE_global_header_still_building:true,first_CAD_amenities_and_all_date_transactions_read_only:true,
     ONE_whole_combined_subject_selected_packet_ENTIRE_neutral_CAD_cache_partition_reconciled:true,

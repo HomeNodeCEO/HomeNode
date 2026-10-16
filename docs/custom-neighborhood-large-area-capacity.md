@@ -8907,3 +8907,41 @@ economic equivalence, numerical/statistical/calendar-quarter semantics,
 coherent publication, terminal pins and licensed large-area/live-speed
 acceptance remain open. No route, default dispatcher, schedule, grant,
 appraiser choice, Apply, publication or pin transfer is activated.
+
+## Batch-catalog original-reconciled reported metric rows (2026-10-16, inactive)
+
+Two closed two-argument V3 entries reopen the first metric candidate read-only
+and advance one next reported metric row after actual evidence DONE. They bind
+the actual completed V3 stock/partition/catalog, immutable command, union,
+recorded eligibility and evidence, plus the independent neutral and CAD owners.
+Every selected and required subject original, outside part, entire cache,
+partition entry and catalog literal is reopened. Both source purposes and all
+current and ending database actor, assignment, draft, subject, pending study,
+native parent, cancellation and lease fences remain required.
+
+The existing twelve-key reported row, fourteen-key metric receipt, native row
+membership and deferred COMMIT guards are unchanged. Exact strings, unsupported
+currency/null values, housing eligibility, original reason states and retained
+effective/observation dates remain distinct. One account produces at most one
+bounded reported row; a fresh EMPTY produces none and must reconcile all three
+recorded-comparison denominators to actual eligibility DONE. The 256-query
+owner, 128-query child, 250-original, 32 MB, 60-second and 16 KB response ceilings
+are unchanged.
+
+The separate inactive worker claims evidence DONE or incomplete metrics. All
+claim, ordinary recovery and expiry lanes bind the same V3 and independent CAD
+parents and complete matching pending-study fence; metric DONE is excluded from
+each lane. Successful continuation keeps failure history and normal heartbeats.
+The twenty-eighth independent native case preserves all earlier scenarios and
+deadlines and authors read-only first-row/lost-read-acknowledgment checks,
+current and ending refusal/rollback probes, actual persisted row reconciliation,
+lost first write acknowledgment, concurrent A/B/fresh EMPTY and terminal
+next-owner exclusion at attempt five. Native/full cloud execution is pending.
+
+Reported rows do not establish economic equivalence, complete statistics,
+medians/CODs, calendar-quarter applicability, coherent publication, terminal pin
+transfer/retirement or licensed large-area/live-speed acceptance. Ordinary V3
+recovery below five still requires a separate independently issued graph with
+reserved failure budget. No migration registration, default dispatcher, route,
+schedule, source grant, appraiser choice, Apply, publication or pin transfer is
+activated.

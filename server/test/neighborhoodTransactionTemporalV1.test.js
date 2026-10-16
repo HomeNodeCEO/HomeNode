@@ -8,6 +8,7 @@ import { projectNeighborhoodTransactionTemporalV1, prepareNeighborhoodTransactio
   from '../src/services/neighborhoodAssessment/neighborhoodTransactionTemporalV1.js';
 
 const effective = '2026-10-07', period = { start_date: '2025-01-01', end_date: effective };
+/** Build bounded synthetic same-payload diagnostics, never a licensed provider witness. */
 function witness(overrides = {}) {
   const values = { MlsStatus: 'closed', CloseDate: '2025-01-01', ClosePrice: '9007199254740993.01',
     ClosePriceCurrency: 'USD', LivingArea: '1000.001', LivingAreaUnits: 'sqft', YearBuilt: '2050', ...overrides };
@@ -24,6 +25,7 @@ function witness(overrides = {}) {
   }));
   return { witness_version: 2, root_state: 'object', root_json_type: 'object', fields };
 }
+/** Compile one synthetic native-kind original with independently reproducible neutral typing. */
 function row(kind = 'source_records', payload = {}, reported = {}) {
   const raw = { id: '10', ...(kind === 'source_records' ? {
     primary_account_id: 'OUTSIDE', year_built: 2050, current_price: '0.01', close_date: '2025-01-01',
@@ -34,6 +36,7 @@ function row(kind = 'source_records', payload = {}, reported = {}) {
   return { kind, row_key: '10', account_id: typed.account_id, source_record_id: typed.source_record_id,
     original_payload_sha256: typed.original.payload_sha256, typed };
 }
+/** Apply fixed fixture dates as DATA only, without claiming current owner authorization. */
 const project = r => projectNeighborhoodTransactionTemporalV1(r, effective, period);
 
 test('retained effective year runs before normalized/reported resolution, with exact prices and neutral originals unchanged', () => {

@@ -1,5 +1,40 @@
 # Complete larger-area Custom neighborhood studies
 
+## Whole-account batch catalog candidate (2026-10-16, not activated)
+
+The separate V3 catalog owner requires independently issued complete V3 stock
+and partition heads. It replays at most eight whole accounts/250 originals,
+ENTIRE neutral caches and ENTIRE native partition entries under one unchanged
+query/byte/runtime budget. Every assigned or unassigned account contributes once
+to its original-derived native group; one bounded counts query follows the whole
+batch. All contributions share one 22-key receipt, native CAS head, nine-reference
+checkpoint and continuation. Receipt sequence remains separate from account
+ordinal, and reaching the population count still requires a fresh EMPTY run.
+
+Native group/head/deferred guards accept only the actual consecutive stock and
+partition prefix. Every group DML event must belong to that receipt, including
+multiple ascending ordinals in a shared group. The 2048-assigned-group limit
+remains. Historical V2 branches and exact source/actor/assignment/draft/subject/
+pending-workspace/parent/cache/count fences remain. These development SQL guards
+are unregistered; the exact-format worker is inactive and excludes catalog DONE
+from every success/recovery/expiry lane. No default dispatcher or pin transfer
+is activated, and counts or hashes confer no semantic membership authority.
+
+A twentieth independently captured native scenario is authored, preserving all
+nineteen earlier scenarios and deadlines. It derives every expected entry and
+normalized group literal from actual whole original packets, then requires
+native skipped-prefix/counts-without-DML refusal, deferred orphan-group COMMIT
+and orphan-yield rollback, ending rights/workspace/cache/entry/count refusals,
+lost nonempty and EMPTY acknowledgments, stale-claim refusal and terminal worker
+exclusion at the genuine five-failure ceiling. Its two-account native case does
+not establish eight-account or shared-group native execution, licensed capacity,
+selected-union semantics, publication, activation or speed acceptance.
+
+175 serial focused tests pass, zero failures/cancellations/skips (2543.9047ms).
+Changed JavaScript syntax and diff checks pass. Actual new-head native/full
+cloud execution remains pending. Complete batch downstream integration, current
+authorized large-area acquisition and live speed acceptance remain open.
+
 ## Whole-account batch partition candidate (2026-10-16, not activated)
 
 The separate V3 partition owner requires the independently issued complete V3

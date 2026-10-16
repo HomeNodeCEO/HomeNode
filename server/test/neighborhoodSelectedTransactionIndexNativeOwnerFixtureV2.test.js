@@ -58,7 +58,7 @@ test('candidate adds only exact17 phase/global ceiling and keeps each old finite
 
 test('tenth fixture independently captures sources, reserves only its own last failure claim, and does not add index calls to tight old graphs',()=>{
   const variants=fixture.match(/for\(const selectionWaitFixture of \[([^\]]+)\]\)/)[1];
-  assert.equal(variants,"false,true,'intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner','union-worker','early-continuations','early-worker','prefix-native','prefix-worker','initial-dispatch','initial-dispatch-transaction-index','initial-dispatch-stock-batch','initial-dispatch-partition-batch'");
+  assert.equal(variants,"false,true,'intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner','union-worker','early-continuations','early-worker','prefix-native','prefix-worker','initial-dispatch','initial-dispatch-transaction-index','initial-dispatch-stock-batch','initial-dispatch-partition-batch','initial-dispatch-catalog-batch'");
   assert.ok(fixture.includes("transactionIndexOwnerFixture=selectionWaitFixture==='union-all-transaction-index-owner'"));
   assert.ok(fixture.includes("sharedTransactionFixture=selectionWaitFixture==='union-all-shared-transaction'||transactionIndexOwnerFixture||coveredTransactionIndexFixture"));
   assert.ok(fixture.includes("positiveIndexedSourceFixture=selectionWaitFixture==='union-all-site-positive'||semanticRecoveryFixture"));

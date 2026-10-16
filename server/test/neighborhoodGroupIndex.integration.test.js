@@ -1885,8 +1885,6 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         assert.equal(inserted.rowCount,1);
       }
       const result=await client.query(config);
-      if(orphanPrefixCheckpoint){await client.query('ROLLBACK TO SAVEPOINT synthetic_prefix_checkpoint');
-        refsFault=null;prefixOrphanCheckpointSeen++;}
       // Mutate actual native authority only AFTER the actual sixth combined
       // original/EMPTY query. Same client/TX: every refusal must roll these
       // changes back together with any progress, never a mocked return row.
@@ -1910,6 +1908,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         if(fault==='metric_draft_ending')await client.query(
           "UPDATE app.custom_appraisal_workfiles SET status='archived' WHERE assignment_file_id=$1",[assignment]);
       }
+      if(orphanPrefixCheckpoint){await client.query('ROLLBACK TO SAVEPOINT synthetic_prefix_checkpoint');
+        refsFault=null;prefixOrphanCheckpointSeen++;}
       if(refsFault==='union_delta_count'&&config.text.includes('custom-cohort-selected-union-v2:member-insert'))
         refsFault='union_delta_after_member';
       if(transactionIndexOwnerFixture&&config.text===NEIGHBORHOOD_NEXT_SELECTED_TRANSACTION_INDEX_ORIGINAL_PACKAGE_V2_SQL){

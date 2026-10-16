@@ -5,6 +5,7 @@ import { saveCustomCohortGroupPendingCapture as pending,
   prepareCustomCohortGroupCaptureCompletion as complete,
   readCustomCohortFrozenSelectionWorkspaceTarget as frozenTarget } from '../src/services/neighborhoodAssessment/customCohortGroupWorkspaceSave.js';
 import { canonicalAssessmentJson as json } from '../src/services/neighborhoodAssessment/contract.js';
+import { createCustomCohortOriginalAccountOwnerBudget as createOwnerBudget } from '../src/services/neighborhoodAssessment/customCohortOriginalAccountOwnerBudget.js';
 
 // Strict query recording only. Native fixture checks exercise real rollback,
 // competing connections, lost COMMIT acknowledgments and current-role reload.
@@ -122,6 +123,22 @@ const completeOwned = (db, input = completion(), settings = {}) => complete({ cl
   observationPeriod: nextPeriod, discovery: null, privateSalesImport: null, checkBudget() {}, ...settings });
 const frozenInput=()=>({...identity,operationId:nextContext.context_id,observationPeriod:structuredClone(nextPeriod)});
 const frozenOwned=(db,input=frozenInput(),checkBudget=()=>{})=>frozenTarget({client:db.client,input,scopeJson:scope,checkBudget});
+
+test('whole-owner executor preserves metadata-only prior-head reads without releasing its actual connection',async()=>{
+  const value={...v7(),pending_capture:capture()},db=database({value}),client=createOwnerBudget(db.client,{checkBudget(){}});
+  const result=await frozenTarget({client,input:frozenInput(),scopeJson:scope,checkBudget(){}});
+  assert.deepEqual(result.workspace_checkpoint,value);
+  assert.equal(db.calls.length,5,'workspace plus both transaction IDs, scoped target and current head share the executor');
+  assert.equal(writes(db).length,0);
+  assert.ok(!db.calls.some(c=>/neighborhood-cohort-blob|INSERT|UPDATE app\.|^(BEGIN|COMMIT|ROLLBACK)$/.test(c.sql)));
+  assert.throws(()=>client.release(),/original_account_owner_transaction_owner_required/);
+  assert.equal(db.calls.length,5);
+  for(const head of [null,{...ref,selection_revision:2}]){
+    const changed=database({value,head}),bounded=createOwnerBudget(changed.client,{checkBudget(){}});
+    await assert.rejects(frozenTarget({client:bounded,input:frozenInput(),scopeJson:scope,checkBudget(){}}),/selection_changed/);
+    assert.equal(writes(changed).length,0);
+  }
+});
 
 test('frozen V2 selection target reads actual pending study and prior current head without carrying old groups or writing',async()=>{
   const value={...v7(),pending_capture:capture()},db=database({value});let checks=0;

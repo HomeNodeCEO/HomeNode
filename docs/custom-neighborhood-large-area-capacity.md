@@ -1,3 +1,40 @@
+## Original-backed first source row candidate (2026-10-16, inactive)
+
+The closed original owner has a separate two-argument candidate read. It obtains
+the actual completed exact17 index FIRST and its whole first-seen account,
+reconciles the whole original stock/CAD/all-date source package, required subject,
+ENTIRE neutral/CAD caches and every prior native member/key set. Inside that same
+bounded transaction it derives the source resolution and binds it to the exact
+native index reference/sequence, command, generation, source namespace/key and
+all first-seen member references. It delivers the candidate only after both
+ending source-purpose/actor/assignment/private-draft/subject/workspace fences
+and the repeated full native FIRST/account plan. No caller plan, source key,
+resolution, cursor, DONE, sequence or callback is admitted by this owner.
+
+The candidate's closed DATA grammar independently reuses the complete original
+resolution kernel; it does not accept a caller-supplied resolved observation.
+Outside canonical sale accounts, unresolved associations, exact decimal strings,
+unsupported units/currency, missing/conflicting dates and separate reported
+calendar placement retain their existing meanings. The candidate cap is12 KB
+inside the unchanged16 KB owner response. No duplicate resolution is emitted.
+All existing original, aggregate query/byte/runtime and failure/deadline limits
+remain. No SQL, schema, installed codec or routing change is included.
+
+Native assertions extend the existing independent32/A-first and35/B-first
+graphs with current actor refusal before original I/O, ending market/CAD/
+workspace/cache refusals, exact native reference comparisons, lost actual
+read-only COMMIT acknowledgment and identical fresh reopen with every retained
+job/lease/checkpoint/head/row/blob/report/choice/pin unchanged. Execution on this
+new head is pending; focused DATA/structure tests are not that native proof.
+
+This is an unissued FIRST row candidate. Durable per-source rows/heads,
+server-owned NEXT, separate fresh EMPTY, dedicated exact17/18 admission and
+atomic checkpoint/yield remain unfinished. No phase18 is projected into17,
+source grant or economic eligibility is inferred, and no stage is registered or
+activated. Complete selected-union/economic/quarter population, coherent
+publication, terminal pins and licensed large-area/live-speed acceptance remain
+open.
+
 ## Completed-index first source plan (2026-10-16, inactive native prerequisite)
 
 An exact-17 completed transaction index has no next selected-account cursor.

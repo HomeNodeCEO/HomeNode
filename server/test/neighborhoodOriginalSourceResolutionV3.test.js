@@ -5,6 +5,7 @@ import { CACHED_SALE_WITNESS_V2_FIELDS } from '../src/services/neighborhoodAsses
 import { compileNeighborhoodFrozenTypedOriginalV2 as compile } from '../src/services/neighborhoodAssessment/neighborhoodFrozenTypedOriginalV1.js';
 import { projectNeighborhoodTransactionPackageV1 as project } from '../src/services/neighborhoodAssessment/neighborhoodSharedTransactionPackagesV1.js';
 import { resolveNeighborhoodOriginalSourceResolutionV3 as resolve } from '../src/services/neighborhoodAssessment/neighborhoodOriginalSourceResolutionV3.js';
+import { prepareNeighborhoodFirstSourceResolutionCandidateV3 as candidate } from '../src/services/neighborhoodAssessment/neighborhoodFirstSourceResolutionCandidateV3.js';
 import { createCustomCohortContextCapture as capture } from '../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 
 const effective='2026-10-07',period={start_date:'2025-01-01',end_date:effective},copy=v=>structuredClone(v),check=()=>{};
@@ -106,6 +107,83 @@ test('getters, proxies, sparse arrays, caller callbacks and over-limit inputs ne
   assert.throws(()=>resolve({...f.packet,rows:Array(2)},f.membership,check));assert.throws(()=>resolve({...f.packet,rows:Array(251).fill(null)},f.membership,check));
   assert.throws(()=>resolve(f.packet,f.membership,check,{}));assert.throws(()=>resolve(f.packet,f.membership,null));
   assert.throws(()=>resolve(f.packet,f.membership,()=>{throw Error('owner budget');}),/owner budget/);
+});
+
+function sourcePlan({legacy=false,later=false}={}){
+  const ref=n=>({content_sha256:String(n).repeat(64),canonical_utf8_bytes:'123'});
+  return {format:'cohort_completed_index_first_source_plan_v3',command_id:'70000000-0000-4000-8000-000000000001',
+    generation_id:'70000000-0000-4000-8000-000000000002',index_reference:ref(1),index_sequence:3,selected_stock_count:2,
+    registered_source_keys:legacy?0:3,registered_legacy_keys:2,
+    source:{kind:legacy?'legacy_sale':'source_record',native_key:legacy?'10':'501',first_selected_ordinal:later?2:1},
+    selected_entry:{account_id:later?'B':'A',ordinal:later?2:1,partition_ordinal:1,entry_reference:ref(2),metric_row_reference:ref(3),contribution_row_reference:ref(4)},
+    read_only:true,originals_reconciled:false,source_authority:false,economic_transaction:false};
+}
+
+test('candidate binds original source resolution to the exact completed native index and later first-seen account without issuing progress',()=>{
+  const f=fixture(),p=sourcePlan({later:true}),before=JSON.stringify({f,p}),r=candidate(p,f.packet,f.membership,check);
+  assert.equal(r.format,'cohort_first_source_resolution_candidate_v3');assert.equal(r.selected_source.first_selected_ordinal,2);
+  assert.equal(r.first_seen_selected_entry.account_id,'B');assert.equal(r.first_seen_selected_entry.ordinal,2);
+  assert.deepEqual(r.transaction_index_reference,p.index_reference);assert.equal(r.transaction_index_sequence,3);
+  assert.deepEqual(r.resolution,resolve(f.packet,f.membership,check));
+  assert.equal(r.resolution.unique_native_sale.account_id,'OUTSIDE');
+  assert.equal(r.resolution.same_payload_reported.observations.reported_close_price.exact_value,'9007199254740993.01');
+  for(const key of ['durable_source_resolution_issued','source_cursor_advanced','complete_selected_union'])assert.equal(r[key],false);
+  for(const key of ['economic_transaction_eligibility','quarter_statistics','authority'])assert.equal(r[key],'not_established');
+  assert.equal(JSON.stringify({f,p}),before);p.selected_entry.entry_reference.content_sha256='f'.repeat(64);
+  assert.equal(r.first_seen_selected_entry.entry_reference.content_sha256,'2'.repeat(64));
+  assert.ok(Object.isFrozen(r)&&Object.isFrozen(r.first_seen_selected_entry)&&Object.isFrozen(r.resolution.membership));
+  assert.ok(Buffer.byteLength(JSON.stringify(r))<=12000);
+});
+
+test('legacy candidate keeps its own zero-price/date identity and cannot replace a registered source-record namespace',()=>{
+  const f=fixture({legacy:true}),p=sourcePlan({legacy:true}),r=candidate(p,f.packet,f.membership,check);
+  assert.equal(r.selected_source.kind,'legacy_sale');assert.equal(r.resolution.native_key,'10');
+  assert.equal(r.resolution.unique_native_sale.recorded_price.exact_value,'0');assert.equal(r.resolution.same_payload_reported,null);
+  assert.throws(()=>candidate({...p,registered_source_keys:1},f.packet,f.membership,check));
+  assert.throws(()=>candidate({...p,source:{...p.source,native_key:'11'}},f.packet,f.membership,check));
+});
+
+test('candidate rejects caller progress, changed source identity, partial membership and fabricated native metadata',()=>{
+  const f=fixture(),p=sourcePlan();
+  for(const key of ['done','cursor','sequence','previous_reference','sourceAuthority','resolution'])
+    assert.throws(()=>candidate({...p,[key]:true},f.packet,f.membership,check));
+  for(const changed of [{...p,index_sequence:2},{...p,selected_stock_count:0},
+    {...p,source:{...p.source,first_selected_ordinal:2}}, {...p,source:{...p.source,native_key:'502'}},
+    {...p,source:{...p.source,native_key:'9223372036854775808'}},{...p,registered_source_keys:501},
+    {...p,read_only:false},{...p,originals_reconciled:true},{...p,source_authority:true},{...p,economic_transaction:true}])
+    assert.throws(()=>candidate(changed,f.packet,f.membership,check));
+  const partial=copy(f);partial.membership.associations.pop();assert.throws(()=>candidate(p,partial.packet,partial.membership,check));
+  assert.throws(()=>candidate(p,resolve(f.packet,f.membership,check),f.membership,check));
+  assert.throws(()=>candidate(p,f.packet,f.membership,check,{}));
+  assert.throws(()=>candidate(p,f.packet,f.membership,null));
+  assert.throws(()=>candidate(p,f.packet,f.membership,()=>{throw Error('owner budget');}),/owner budget/);
+});
+
+test('candidate closes every plan descriptor before canonical output and does not execute hostile getters or proxies',()=>{
+  const f=fixture(),p=sourcePlan();let calls=0;const hostile=()=>{calls++;throw Error('getter');};
+  const getter={...p};Object.defineProperty(getter,'source',{enumerable:true,get:hostile});
+  for(const v of [getter,new Proxy(p,{get:hostile}),{...p,selected_entry:new Proxy(p.selected_entry,{get:hostile})},
+    {...p,index_reference:{get content_sha256(){return hostile();},canonical_utf8_bytes:'123'}},
+    {...p,selected_entry:{...p.selected_entry,entry_reference:{...p.selected_entry.entry_reference,toJSON:hostile}}}])
+    assert.throws(()=>candidate(v,f.packet,f.membership,check));
+  assert.equal(calls,0);
+});
+
+test('actual candidate owner derives inside the original transaction and delivers only after ending authority and repeated native FIRST',async()=>{
+  const text=readFileSync(new URL('../src/services/neighborhoodAssessment/customCohortContextCapture.js',import.meta.url),'utf8'),
+    derive=text.indexOf('selectedTransactionSourceCandidate=prepareNeighborhoodFirstSourceResolutionCandidateV3('),
+    ending=text.indexOf('const ending=await createCustomCohortV2SelectionIntentRepository(client)',derive),
+    repeat=text.indexOf("selectedTransactionIndexStore[readingCompletedIndexFirstSource?'readFirstAccount':'readNext']()",ending),
+    output=text.indexOf('selected_source_resolution_candidate:selectedTransactionSourceCandidate',repeat);
+  assert.ok(derive>0&&ending>derive&&repeat>ending&&output>repeat);
+  let calls=0;const hostile=()=>{calls++;assert.fail('no IO');},service=capture({pool:{connect:hostile},sourceMode:'combined-witness2-v1',authorizeMarketData:hostile,authorizeCadImprovementData:hostile}),
+    method='readCoveredOriginalFrozenCaptureJobCompletedIndexFirstSourceResolutionCandidateReferencesV3',id=n=>`70000000-0000-4000-8000-${String(n).padStart(12,'0')}`,
+    input={auth:{userId:id(1),organizations:[]},accountId:'SUBJECT',assignmentFileId:'7',operationId:id(2),observationPeriod:period,
+      discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},options={captureJobClaim:{operation_id:id(2),claim_token:id(3),attempts:5}};
+  assert.throws(()=>service[method](input,options,undefined),/invalid_options/);
+  for(const key of ['source','native_key','plan','candidate','resolution','ordinal','cursor','done','sourceAuthority'])
+    await assert.rejects(service[method](input,{...options,[key]:hostile}),/invalid_options/);
+  assert.equal(calls,0);
 });
 
 test('actual closed owner exposes compact resolution only after complete original replay and both ending native/authority fences',async()=>{

@@ -9,6 +9,8 @@ const ACCOUNT_CONTROL = /[\u0000-\u001f\u007f]/;
 const PHASES = new Set(['subject', 'spatial', 'source', 'preparation', 'registration', 'frozen_stock_v1', 'frozen_source_v1', 'frozen_source_refs_v2', 'frozen_verify_refs_v2', 'frozen_geo_verify_refs_v2', 'frozen_identity_refs_v2', 'frozen_stock_traversal_refs_v2', 'frozen_recorded_partition_refs_v2', 'frozen_recorded_catalog_refs_v2', 'frozen_selected_union_refs_v2', 'frozen_selected_eligibility_refs_v2', 'frozen_selected_evidence_refs_v2', 'frozen_selected_metrics_refs_v2','frozen_selected_statistics_refs_v2','frozen_selected_numeric_refs_v2','frozen_selected_semantic_refs_v2', 'frozen_verify_v1', 'frozen_geo_verify_v1', 'frozen_identity_v1', 'frozen_typed_v1']);
 const STATUSES = new Set(['queued', 'running', 'retry', 'awaiting_selection', 'succeeded', 'failed', 'cancelled']);
 export const CAPTURE_JOB_LEASE_SECONDS = Object.freeze({ min: 15, max: 900 });
+// Routing DATA only. Native enrollment and the actual owners supply authority.
+export const FROZEN_ORIGINALS_V2_EXECUTION = 'frozen-originals-v2';
 function fail(reason) { throw new TypeError(`custom_cohort_capture_job_${reason}`); }
 function exact(value, keys) {
   if (!value || Object.getPrototypeOf(value) !== Object.prototype
@@ -31,16 +33,21 @@ function scopeOf(value) {
     account_id: value.account_id });
 }
 function requestOf(value) {
+  if (isProxy(value)) fail('invalid_input');
   const discovery = Object.hasOwn(value ?? {}, 'discovery');
   const privateImport = Object.hasOwn(value ?? {}, 'private_sales_import');
+  const nativeExecution = Object.hasOwn(value ?? {}, 'execution_mode');
   exact(value, ['operation_id', 'observation_period',
-    ...(discovery ? ['discovery'] : []), ...(privateImport ? ['private_sales_import'] : [])]);
+    ...(discovery ? ['discovery'] : []), ...(privateImport ? ['private_sales_import'] : []),
+    ...(nativeExecution ? ['execution_mode'] : [])]);
   exact(value.observation_period, ['start_date', 'end_date']);
   const start_date = assessmentDate(value.observation_period.start_date);
   const end_date = assessmentDate(value.observation_period.end_date);
   if (start_date > end_date) fail('invalid_period');
   let preparedDiscovery;
   if (discovery) preparedDiscovery = prepareNeighborhoodDiscoveryChoice(value.discovery);
+  if (nativeExecution && (value.execution_mode !== FROZEN_ORIGINALS_V2_EXECUTION || privateImport
+    || preparedDiscovery?.profile_id !== 'custom-suburban-radius-v2')) fail('invalid_execution');
   let preparedPrivate;
   if (privateImport) {
     const purpose = customNeighborhoodPrivateSalesPurpose(value.private_sales_import);
@@ -50,6 +57,7 @@ function requestOf(value) {
   return Object.freeze({ operation_id: uuid(value.operation_id),
     observation_period: Object.freeze({ start_date, end_date }),
     ...(discovery ? { discovery: preparedDiscovery } : {}),
+    ...(nativeExecution ? { execution_mode: FROZEN_ORIGINALS_V2_EXECUTION } : {}),
     ...(privateImport ? { private_sales_import: Object.freeze(preparedPrivate) } : {}) });
 }
 function claimOf(value) {
@@ -278,6 +286,7 @@ export function createCustomCohortCaptureJobRepository(client) {
       await client.query(`/* custom-cohort-job:expire */ WITH expired AS (
           SELECT operation_id FROM app.neighborhood_custom_cohort_capture_jobs
           WHERE status='running' AND lease_expires_at<=clock_timestamp()
+            AND request_payload->>'execution_mode' IS DISTINCT FROM 'frozen-originals-v2'
             AND (cancellation_requested_at IS NOT NULL OR attempts>=5)
           ORDER BY lease_expires_at,operation_id LIMIT 64 FOR UPDATE SKIP LOCKED
         ) UPDATE app.neighborhood_custom_cohort_capture_jobs job
@@ -290,6 +299,7 @@ export function createCustomCohortCaptureJobRepository(client) {
       const result = await client.query(`/* custom-cohort-job:claim */ WITH due AS (
           SELECT operation_id FROM app.neighborhood_custom_cohort_capture_jobs job
           WHERE attempts<5 AND cancellation_requested_at IS NULL
+            AND request_payload->>'execution_mode' IS DISTINCT FROM 'frozen-originals-v2'
             AND NOT EXISTS (SELECT 1 FROM app.neighborhood_custom_cohort_v2_continuations c
               WHERE c.operation_id=job.operation_id AND c.consumed_claim_token IS NULL) AND
             ((status IN ('queued','retry') AND run_after<=clock_timestamp())

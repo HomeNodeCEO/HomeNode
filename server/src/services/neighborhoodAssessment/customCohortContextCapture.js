@@ -20,7 +20,8 @@ import { createNeighborhoodCohortBlobRepository, prepareNeighborhoodCohortBlob,
   NEIGHBORHOOD_COHORT_BLOB_READ_BATCH_LIMITS } from './cohortEvidenceBlobRepository.js';
 import { createCustomCohortSubjectRepository } from './customCohortSubjectRepository.js';
 import { createCustomCohortContextRepository } from './customCohortContextRepository.js';
-import { createCustomCohortCaptureJobRepository, prepareCustomCohortCaptureJobClaim } from './customCohortCaptureJobRepository.js';
+import { createCustomCohortCaptureJobRepository, prepareCustomCohortCaptureJobClaim, FROZEN_ORIGINALS_V2_EXECUTION } from './customCohortCaptureJobRepository.js';
+import { createCustomCohortInitialV2JobRepository } from './customCohortInitialV2JobRepository.js';
 import { loadCurrentCustomCohortJobActor } from './customCohortJobActor.js';
 import { createNeighborhoodFrozenJobStock } from './neighborhoodFrozenJobStock.js';
 import { createNeighborhoodFrozenJobStockOriginals } from './neighborhoodFrozenJobStockOriginals.js';
@@ -174,6 +175,9 @@ const DEPENDENCIES = ['snapshot_evidence', 'subject_dependencies', 'selection_in
 const LIMITS = Object.freeze({ ...CUSTOM_COHORT_OPERATION_LIMITS, connect_ms: 3000, query_ms: 6000, cleanup_ms: 1000 });
 const OWNER_INTERRUPTION_REASONS = new WeakMap();
 const same = (a, b) => canonicalAssessmentJson(a) === canonicalAssessmentJson(b);
+// The server-owned routing discriminator changes no discovery/source input.
+const sameFrozenRequest = (actual, expected) => same(actual, expected)
+  || same(actual, {...expected, execution_mode: FROZEN_ORIGINALS_V2_EXECUTION});
 const freeze = value => {
   if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); }
   return value;
@@ -1868,7 +1872,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           {...jobOptions,intent:selectionIntent,workspaceTarget:selectionWorkspaceTarget});
         claim=issuedSelectionIntent.claim;
       }
-      if(!same(await jobs.readRequest(claim,jobOptions),requested)) fail('operation_conflict');
+      if(!sameFrozenRequest(await jobs.readRequest(claim,jobOptions),requested)) fail('operation_conflict');
       if(readingSelectionWorkspaceTarget||awaitingSelection||readingRetainedSelectionIntent||replayingSelectedUnion){
         if(readingRetainedSelectionIntent||replayingSelectedUnion)authorizePublicCadastralCatalogRead(input.auth,input.accountId,{workflows:['custom_appraisal'],
           permissionChecker:(auth,workflow,permission)=>hasApplicationPermission(auth,workflow,permission,scope.organization_id)});
@@ -3065,7 +3069,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(selectingCatalogIntent||readingRetainedSelectionIntent||replayingSelectedUnion)await checkSelectionIntentKnownGroups();
       if(readingCadSource&&!same(await boundedPolicy(authorizeCadImprovementData,client,input.auth,context,cadPurpose,budget),cadDecision))
         fail('CAD_source_policy_changed');
-      if(!same(await jobs.readRequest(claim,jobOptions),requested)||!same(await stockStore.read(),stock)) fail('checkpoint_conflict');
+      if(!sameFrozenRequest(await jobs.readRequest(claim,jobOptions),requested)||!same(await stockStore.read(),stock)) fail('checkpoint_conflict');
       if(!same((await chain.describe(root)).layers,prefix.layers)) fail('checkpoint_conflict');
       if(sourcePrefixStore&&!same(await sourcePrefixStore.read(),sourcePrefixHead))fail('checkpoint_conflict');
       if(graphAnchorStore&&!same(await graphAnchorStore.read(),graphAnchor))fail('checkpoint_conflict');
@@ -3518,6 +3522,29 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         });
       });
     },
+    /** Dormant explicit native queue. Enrollment and request commit together;
+     * no HTTP/default scheduler, source grant, pin or partial report follows. */
+    async queueFrozenOriginalCaptureJobV2(value, options = {}) {
+      const originalInput=inputOf(value),budget=operationBudget(options);
+      if(originalInput.privateSalesImport || originalInput.discovery?.profile_id!=='custom-suburban-radius-v2')
+        fail('frozen_discovery_unsupported');
+      return transaction(pool,'READ COMMITTED',budget,async client=>{
+        const locator=one(await client.query(`/* custom-cohort-capture:initial-job-organization */
+          SELECT organization_id FROM app.assignment_files WHERE id=$1::bigint AND account_id=$2`,
+        [originalInput.assignmentFileId,originalInput.accountId]));
+        let input=freeze({...originalInput,auth:await loadCurrentCustomCohortJobActor(client,originalInput.auth.userId,locator.organization_id)});
+        privateDraft(await privateCaptureWorkfile(client,input));
+        const target=await resolveTarget(client,input,true,'write'),scope=Object.fromEntries(TARGET_FIELDS.map(key=>[key,target[key]]));
+        const result=await createCustomCohortCaptureJobRepository(client).enqueue({scope,actorUserId:input.auth.userId,
+          request:{operation_id:input.operationId,observation_period:input.observationPeriod,discovery:input.discovery,
+            execution_mode:FROZEN_ORIGINALS_V2_EXECUTION}});
+        await createCustomCohortInitialV2JobRepository(client).enroll({operationId:input.operationId,scope,actorUserId:input.auth.userId});
+        input=freeze({...input,auth:await loadCurrentCustomCohortJobActor(client,input.auth.userId,scope.organization_id)});
+        assertTarget(await resolveTarget(client,input,true,'write'),target);
+        privateDraft(await privateCaptureWorkfile(client,input));budget.check();
+        return result;
+      });
+    },
     async captureJobStatus(value, options = {}) {
       const input = captureJobInputOf(value), budget = operationBudget(options);
       return transaction(pool, 'READ COMMITTED', budget, async client => {
@@ -3559,7 +3586,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const scope=Object.fromEntries(TARGET_FIELDS.map(key=>[key,target[key]]));
         const jobOptions={scope,actorUserId:input.auth.userId},jobs=createCustomCohortCaptureJobRepository(client);
         const requested={operation_id:input.operationId,observation_period:input.observationPeriod,discovery:input.discovery};
-        if(!same(await jobs.readRequest(claim,jobOptions),requested)) fail('operation_conflict');
+        if(!sameFrozenRequest(await jobs.readRequest(claim,jobOptions),requested)) fail('operation_conflict');
         const checkpoint=await jobs.readCheckpoint(claim,jobOptions);
         if(checkpoint && !['subject','frozen_stock_v1'].includes(checkpoint.phase)) fail('checkpoint_conflict');
         if(checkpoint?.phase==='frozen_stock_v1' && checkpoint.evidence_refs.length!==2) fail('checkpoint_conflict');
@@ -3607,7 +3634,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         if((await subjects.compareCurrent(retained.subjectReference)).status!=='matched') fail('subject_changed');
         authorizePublicCadastralCatalogRead(input.auth,input.accountId,{workflows:['custom_appraisal'],
           permissionChecker:(auth,workflow,permission)=>hasApplicationPermission(auth,workflow,permission,scope.organization_id)});
-        if(!same(await jobs.readRequest(claim,jobOptions),requested) || !same(await stockStore.read(),stock)) fail('checkpoint_conflict');
+        if(!sameFrozenRequest(await jobs.readRequest(claim,jobOptions),requested) || !same(await stockStore.read(),stock)) fail('checkpoint_conflict');
         budget.check();
         return freeze({status:'stock_prepared',operation_id:input.operationId,reused:checkpoint?.phase==='frozen_stock_v1',
           stock_reference:reference,generation_id:stock.generation_id,population:stock.population,

@@ -1,5 +1,51 @@
 # Complete larger-area Custom neighborhood studies
 
+## Completed-catalog original account replay (2026-10-10, not activated)
+
+`readOriginalFrozenCaptureJobRecordedCatalogAccountReferencesV2` extends the
+actual bounded database owner, not a caller-supplied DATA adapter. It admits
+only the live claim, signal/deadline and closed account cursor. The immutable
+original graph, geography, identity, complete traversal, complete partition and
+complete catalog must all have independently issued matching heads. Partial or
+unissued catalog progress refuses before an original account packet is read;
+even every nonempty contribution still needs the distinct empty terminal probe.
+
+One original account packet is read per call under the existing lifetime SQL
+query/byte/deadline checks. Every original, its ENTIRE date-neutral cache row
+and the ENTIRE derived partition entry are replayed together. That same packet
+supplies the retained-date five-state metric cells and every recorded-label
+variant/outside-part conflict; there is no second reader or reset per metric.
+Current database actor/assignment/private draft/subject/source purpose/claim,
+all prerequisite heads, partition entry, catalog head and native counts are
+checked at both ends. The complete returned envelope has the existing
+2,100,000-byte whole-refusal cap. No retained evidence is truncated to fit.
+
+The response is explicitly ONE account only. Catalog counts are not delivered
+as semantic source authority. No complete-original-catalog replay, genuine
+selection intent, selected union, statistics, publication, context completion
+or retention transfer is claimed. A later selected-union owner must still
+reopen all originals for its complete exact authenticated study/selection and
+reconcile native account/metric ordinals; a terminal cursor, hash or counts
+cannot substitute for that work.
+
+Native assertions are authored for both accounts and a fresh empty probe,
+all current-ending/cache/partition/head/count refusals, incomplete prerequisites,
+revoked rights before packet I/O, lost-COMMIT fresh reopen and unchanged
+heads/rows/roots/pins/continuation/attempt history. No source or job-typed copies,
+checkpoint/count/head/release writes or spatial rediscovery are permitted.
+79 focused owner/catalog/partition/continuation/original-cell/label tests passed,
+with zero failures/skips (555.3502ms), including hostile options, pre-abort and
+expired deadlines before connection. Native fixture/source syntax and diff
+checks passed; no heavy local suite or database ran.
+Actual new-head native/full cloud execution remains pending. This builds on
+UNPROTECTED #1250; protected dependency-order integration, main retarget before
+synchronize, fresh required security/native/full suites and actual included
+review remain mandatory. Small synthetic native protocols are not licensed
+large-area acquisition or production-speed acceptance. No route/worker/default,
+source grant, accepted report, genuine Hardy choice or Apply changes; QA
+assignment 7 only for future Apply. The full roadmap and live acceptance remain
+incomplete, with the same heartbeat active.
+
 ## Catalog success continuation (2026-10-10, not activated)
 
 `continueOriginalFrozenCaptureJobRecordedCatalogReferencesV2` runs the SAME

@@ -1,5 +1,53 @@
 # Complete larger-area Custom neighborhood studies
 
+## One original packet for pending-target account facts (2026-10-10, not activated)
+
+The actual completed-catalog pending workspace-target reader now derives the
+retained-date metric cells, full original recorded county/subdivision labels
+and recorded housing interpretation together from ONE server-chosen complete
+account packet. Every original is recompiled and its ENTIRE date-neutral cache
+row compared before either interpretation. The same outside-geometry parcel
+parts and missing account originals participate in both resolutions. An
+assigned recorded group does not make unknown or conflicting housing eligible.
+Reported area remains `reported_sqft`, not verified GLA; the original future
+year is retained in the neutral cache and invalidated for the retained date
+before numeric resolution, without changing current recorded housing labels.
+
+The combined internal consumer uses the existing single-use child reader, the
+same whole-owner executor and the same unchanged SQL. It adds no query, second
+reader, budget reset, array of population IDs, callback, original payload copy,
+job-typed copy or durable write. Original single-purpose consumer shapes and
+all definition/profile bytes remain unchanged. The combined output and actual
+owner envelope retain their whole-refusal byte caps and all current
+actor/assignment/private draft/subject/source/claim/workspace/prior-head and
+issued graph/geography/identity/traversal/partition/catalog/group ending fences.
+
+161 focused tests pass with zero failures/skips (1397.9112ms). New assertions
+compare both interpretations to the unchanged single-purpose outputs, preserve
+512-byte labels and outside housing conflicts, test original/cache forgeries,
+missing county/account reasons, retained dates, all method-to-method single-use
+refusals, whole packet bounds, ending-header refusal and fresh empty probes.
+Native assertions compare actual A/B/empty pending-target results to the
+independently exercised housing originals while requiring exactly ONE original
+packet query per actual owner operation; new-head native/full CI is pending.
+This is one-account original reconciliation, NOT a genuine new human command,
+complete original-reconciled catalog or selected union, eligibility decision,
+statistic, publication, licensed acquisition or production-speed acceptance.
+No route/worker/default activation, source grant, pin, accepted report, genuine
+Hardy choice or Apply mutation. Same heartbeat remains active.
+
+The parent whole-budget/prior-head implementation at exact `e52acb96` passed
+Foundation 38048078840 (all four jobs) and Sales 38048078832. Decoded native job
+114201544941 passed 417 migration / 8 index / 1 subject / 1 edge / 2 bootstrap
+tests, zero failures/skips. Its 11:29:42Z markers verify real empty/nonempty
+prior metadata head reads/refusals, 196/196/193 whole-owner SQL counts, ending
+decoded-byte overflow refusal and real catalog-DML rollback on budget overflow.
+Frontend 114201545049 passed 3959 tests, zero failures/skips, plus type/lint/
+source/build checks; server/redteam succeeded. This small native receipt is
+historical parent evidence, not execution of this combined-facts change or
+licensed/live acceptance. Protected dependency integration, fresh exact-head
+security/native/full suites and actual included reviews remain mandatory.
+
 ## Whole database-owner budget (2026-10-10, not activated)
 
 The fixed original-backed stock traversal, recorded partition and catalog

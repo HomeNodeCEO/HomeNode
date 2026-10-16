@@ -267,8 +267,8 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
       original_payload_sha256:replay.original.payload_sha256,typed:replay,retained_observations:observations,
       ...(recordedGroup?{original_recorded_labels:originalLabels}:{})};
   }
-  /** Same original-count, whole-payload and lifetime SQL budgets for both
-   * consumers. Housing cannot reopen a page under a reset per-method budget. */
+  /** Same original-count, whole-payload and lifetime SQL budgets for all
+   * consumers. Combined facts never reopen under a reset per-method budget. */
   async function accountPackage(rawPage,housing,recordedGroup=false){
       const page=prepareNeighborhoodStockAccountPackagePageV2(rawPage),context=await open(),{stock,source}=context;
       const result=one(await execute(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL,[stock.operation_id,stock.generation_id,
@@ -301,7 +301,8 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
       if(Buffer.byteLength(JSON.stringify({rows,observations,...(housing?{recorded_housing:recordedHousing}:{}),
         ...(recordedGroup?{recorded_group:group}:{})}))>L.output_utf8_bytes)fail('byte_limit');
       await context.finish();
-      return freeze({page_version:2,status:recordedGroup?'reconciled_stock_account_recorded_group'
+      return freeze({page_version:2,status:recordedGroup&&housing?'reconciled_stock_account_recorded_group_and_housing'
+        :recordedGroup?'reconciled_stock_account_recorded_group'
         :housing?'reconciled_stock_account_recorded_housing':'reconciled_stock_account_original_package',authority:'not_established',
         coverage:'one_complete_account_package_only',graph,stock,source_metadata:source,typed_profile:TYPED,
         package_profile:PACKAGE_PROFILE,effective_date:effective,cursor:page.cursor,account_id:result.account_id,
@@ -354,5 +355,9 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
     /** Original512-byte county/labels after whole original/ENTIRE cache replay;
      * distinct dormant consumer, not a complete catalog/selected partition. */
     recordedGroupAccountPackage:rawPage=>accountPackage(rawPage,false,true),
+    /** One original packet supplies housing, full recorded labels and all
+     * retained-date metric cells together; never a second reader/budget. The
+     * original single-purpose consumers above retain their exact shapes. */
+    recordedGroupAndHousingAccountPackage:rawPage=>accountPackage(rawPage,true,true),
   });
 }

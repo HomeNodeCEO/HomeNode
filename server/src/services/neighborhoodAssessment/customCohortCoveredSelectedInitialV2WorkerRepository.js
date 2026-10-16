@@ -43,9 +43,18 @@ const INITIAL_FENCE = `job.context_sha256 IS NULL AND job.cancellation_requested
       AND catalog_blob.canonical_utf8_bytes BETWEEN 1 AND 16000
     CROSS JOIN LATERAL(SELECT CASE WHEN octet_length(catalog_blob.canonical_utf8)<=16000
       THEN catalog_blob.canonical_utf8::jsonb END AS receipt) completed_catalog
+    JOIN app.neighborhood_cohort_evidence_blobs source_blob ON source_blob.organization_id=cache.organization_id
+      AND source_blob.content_sha256=cache.source_reference->>'content_sha256'
+      AND source_blob.canonical_utf8_bytes::text=cache.source_reference->>'canonical_utf8_bytes'
+      AND source_blob.canonical_utf8_bytes BETWEEN 1 AND 16000
+    CROSS JOIN LATERAL(SELECT CASE WHEN octet_length(source_blob.canonical_utf8)<=16000
+      THEN source_blob.canonical_utf8::jsonb END AS receipt) issued_source
     WHERE completed_catalog.receipt->>'format'='cohort_recorded_catalog_receipt_v2'
       AND completed_catalog.receipt->'after'->'done'='true'::jsonb
-      AND cache.root_reference=job.checkpoint->'evidence_refs'->0
+      AND issued_source.receipt->>'source_stage_version'='2'
+      AND issued_source.receipt->>'usage'='frozen_source_reference_prefix_only'
+      AND issued_source.receipt->'root'=cache.root_reference
+      AND issued_source.receipt->'selection'->'subject_intent'=job.checkpoint->'evidence_refs'->0
       AND cache.stock_reference=job.checkpoint->'evidence_refs'->1
       AND cache.source_reference=job.checkpoint->'evidence_refs'->2
       AND cache.graph_reference=job.checkpoint->'evidence_refs'->3

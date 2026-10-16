@@ -1854,7 +1854,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       assert.equal(fresh.operation_id,refsOperation);assert.equal(fresh.attempts,2);assert.notEqual(fresh.claim_token,refsClaim.claim_token);
       Object.assign(refsClaim,{operation_id:fresh.operation_id,claim_token:fresh.claim_token,attempts:fresh.attempts});
     }
-    const refsCalls=[],refsQueryParameters=[],refsBlobPuts=[],sharedSelectedEvidencePackets=new Map(),transactionIndexPackets=[];let refsFault=null,refsAbort=null;
+    const refsCalls=[],refsQueryParameters=[],refsBlobPuts=[],sharedSelectedEvidencePackets=new Map(),transactionIndexPackets=[];let refsFault=null,refsAbort=null,earlyOrphanYieldSeen=0;
     const refsPool={async connect(){const client=await pool.connect();let cadHeaderReads=0,transactionHeaderReads=0,nativeTransactionKeyReads=0,transactionCandidatePlanReads=0;return {release:client.release.bind(client),async query(config){
       refsCalls.push(config.text);
       refsQueryParameters.push(config.values);
@@ -1985,7 +1985,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       if(refsFault==='union_delta_after_member'&&config.text.includes('custom-cohort-selected-union-v2:counts')){
         refsFault=null;return {...result,rows:result.rows.map(r=>({...r,selected_count:r.selected_count+1}))};
       }
-      if(orphanUnionYield){await client.query('ROLLBACK TO SAVEPOINT synthetic_union_yield');refsFault=null;}
+      if(orphanUnionYield){await client.query('ROLLBACK TO SAVEPOINT synthetic_union_yield');
+        if(refsFault==='early_orphan_commit')earlyOrphanYieldSeen++;refsFault=null;}
       // Fault ONLY the actual new bounded receipt-read result. Original pages,
       // source/current authority and native head reads are never substituted.
       if(config.text.includes('neighborhood-cohort-blob:read-batch')&&config.values?.length===3
@@ -2336,7 +2337,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         // native indexed member read actually injects the changed value.
         const fault=refsFault;if(!['commit','cad_header','transaction_header','wait_release_rollback','intent_resume_rollback'].includes(fault)
           &&!fault?.startsWith('partition_')&&!fault?.startsWith('catalog_')&&!fault?.startsWith('union_')&&!fault?.startsWith('eligibility_')
-          &&!fault?.startsWith('evidence_')&&!fault?.startsWith('metric_')&&!fault?.startsWith('metrics_')&&!fault?.startsWith('stats_')&&!fault?.startsWith('freq_')&&!fault?.startsWith('indexed_')&&!fault?.startsWith('numeric_')&&!fault?.startsWith('semantic_'))refsFault=null;
+          &&!fault?.startsWith('evidence_')&&!fault?.startsWith('metric_')&&!fault?.startsWith('metrics_')&&!fault?.startsWith('stats_')&&!fault?.startsWith('freq_')&&!fault?.startsWith('indexed_')&&!fault?.startsWith('numeric_')&&!fault?.startsWith('semantic_')&&!fault?.startsWith('early_'))refsFault=null;
         if(fault==='license')await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
         if(fault==='role')await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);
         if(fault==='subject')await client.query("UPDATE app.appraisal_subject_snapshots SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2000') WHERE id=$1",[sourceSnapshot]);
@@ -2375,6 +2376,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       // its actual single-use native success with an independently committed
       // fresh token. No owner result, source read or checkpoint is fabricated.
       return {...service,...Object.fromEntries(names.map(([oldName,name])=>[oldName,async(...args)=>{
+        const ownerAttempts=refsClaim.attempts;
         let result,failure;
         try{result=await service[name](...args);}catch(error){failure=error;}
         const pending=(await pool.query(`SELECT c.*,job.status,job.claim_token,job.attempts
@@ -2413,7 +2415,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         }
         if(failure)throw failure;
         if(result.advanced){assert.equal(result.continuation.status,'continuation_pending');
-          assert.equal(result.continuation.attempts,refsClaim.attempts);}
+          assert.equal(result.continuation.attempts,ownerAttempts);}
         else assert.equal(result.continuation,undefined);
         return result;
       }]))};
@@ -2602,9 +2604,11 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
     const graphBeforeBlobs=await refsBlobCount();
     if(earlyContinuationFixture){
+      const seenBefore=earlyOrphanYieldSeen;
       refsFault='early_orphan_commit';
       await assert.rejects(refsOwner[graphMethod](refsInput,refsOptions),
         error=>error.code==='55000'&&/early_v2_commit_conflict/.test(error.message));
+      assert.equal(earlyOrphanYieldSeen,seenBefore+1,'actual yield executed and ONLY its savepoint was rolled back');
       assert.equal(refsFault,null);assert.equal(await readRefsAnchor(),null);
       assert.deepEqual(await readRefsCheckpoint(),refsGraphCheckpoint);assert.equal(await refsBlobCount(),graphBeforeBlobs);
       assert.equal((await pool.query('SELECT 1 FROM app.neighborhood_custom_cohort_early_v2_jobs WHERE operation_id=$1',[refsOperation])).rowCount,0);

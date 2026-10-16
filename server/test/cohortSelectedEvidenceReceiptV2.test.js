@@ -142,6 +142,7 @@ test('native sixth fault injection stays armed until actual source-ending, DML o
       fixture.indexOf('if(config.text===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read'));
   assert.ok(block.includes('config.text===NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL'));
   assert.ok(block.includes("!fault?.startsWith('evidence_')"));
+  assert.ok(block.includes("!fault?.startsWith('early_')"));
   for(const tag of ['evidence_insert_rollback','evidence_advance_rollback','evidence_checkpoint_rollback','evidence_yield_rollback',
     'evidence_orphan_commit','evidence_head_ending'])assert.ok(fixture.includes(tag),tag);
   assert.ok(fixture.includes("'evidence_orphan_commit','metrics_orphan_commit','stats_orphan_commit','numeric_orphan_commit','semantic_orphan_commit','early_orphan_commit'].includes(refsFault)"));

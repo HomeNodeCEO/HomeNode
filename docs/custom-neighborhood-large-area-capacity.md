@@ -7800,3 +7800,43 @@ publication, report Apply or terminal pin transfer is activated. Covered catalog
 handoff, the separate authorized CAD companion, complete semantics/publication,
 licensed large-area acquisition and saved Hardy live-speed acceptance remain
 open. This protocol work is not licensed or production-speed proof.
+
+## Covered-cache original catalog worker (2026-10-16, not activated)
+
+The explicit covered catalog continuation and account reader use the actual
+native cache DONE lineage while the generation-wide header remains building.
+Every contribution replays all whole account originals and the entire neutral
+cache, then compares the entire original-backed partition entry. Current and
+ending actor, assignment, private draft, subject, source-purpose, live claim,
+independent parents and the aggregate byte/query/runtime budgets are unchanged.
+Legacy complete-cache readers retain their admission.
+
+Fixed native bridge/cache/stock/partition/catalog joins admit only partition
+DONE or an unfinished catalog, with exact job/actor/request scope and bounded
+routing receipts. Successful fresh-token claims preserve failure history and
+attempts, including success at five; ordinary recovery retains the five-failure
+ceiling. Catalog DONE is excluded from every claim and expiry path so a later
+selection-wait owner keeps its lease even when expired or cancelled. No recorded
+group, conflicting candidate or previous appraiser choice becomes human intent.
+
+Unregistered additive `20261216_custom_cohort_covered_catalog_success_v2.sql`
+requires each enrolled native-cache catalog head/checkpoint to commit with its
+matching continuation and lease release. The unchanged catalog guard still
+enforces the next original partition ordinal, assigned/unassigned denominators,
+the2048-group ceiling and a fresh empty terminal probe. Manual unenrolled jobs
+remain unchanged; no dense population or count/hash substitute is introduced.
+
+213 serial focused worker/current-owner/catalog/original-reader checks passed
+with zero failures, cancellations or skips in2,535.7785ms. Existing isolated
+native assertions now author unfinished-parent refusal, concurrent single DONE
+adoption, two actual original contributions and fresh EMPTY, ending-role atomic
+rollback, orphan-yield real COMMIT refusal, lost actual first-owner COMMIT ACK,
+success at attempt five, complete catalog groups compared with newly replayed
+originals and expired/cancelled next-owner exclusion. Actual cloud execution of
+this new head is pending. No matrix or deadline increase was introduced.
+
+No registry, route, default worker, source grant, scheduler, human selection,
+publication, report Apply or terminal pin transfer is activated. Covered
+selection-wait/human-command handoff, the separate authorized CAD companion,
+complete semantics/publication, licensed large-area acquisition and saved Hardy
+live-speed acceptance remain open.

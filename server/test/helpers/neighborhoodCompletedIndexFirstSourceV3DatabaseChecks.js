@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { withCustomCohortJobTransaction as tx } from '../../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
 import { createCustomCohortV2ContinuationRepository as continuations } from '../../src/services/neighborhoodAssessment/customCohortV2ContinuationRepository.js';
+import { runNeighborhoodSourceResolutionParentV3DatabaseChecks } from './neighborhoodSourceResolutionParentV3DatabaseChecks.js';
 
 // Continue ONLY the already complete independent graph32 or later-account35.
 // Claiming is a real
@@ -124,6 +125,7 @@ export async function runNeighborhoodCompletedIndexFirstSourceV3DatabaseChecks({
   reads=originalReads();setFault('completed_source_ack');await assert.rejects(prepare(),e=>e.outcome_unknown===true);
   assert.equal(readFault(),null);assert.equal(originalReads(),reads+1);await unchanged();
   reads=originalReads();assert.deepEqual(await prepare(),proposed);assert.equal(originalReads(),reads+1);await unchanged();
+  await runNeighborhoodSourceResolutionParentV3DatabaseChecks({pool,scope,claim:next.claim,owned,unchanged,laterFirstSource});
   console.info('[native-completed-index-first-source-candidate-v3]',{
     actual_native_FIRST_whole_original_package_and_independent_native_membership:true,
     first_seen_selected_account:laterFirstSource?'B_ordinal2_after_empty_A':'A_ordinal1',

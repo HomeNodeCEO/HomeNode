@@ -8870,3 +8870,40 @@ Native/cloud execution is pending. Recorded comparison is not economic-unit or
 complete semantic eligibility. No migration registration, default worker,
 schedule, source grant, appraiser choice, publication, Apply or pin transfer is
 activated; licensed large-area acquisition and live speed remain open.
+
+## Batch-catalog selected CAD and evidence handoff (2026-10-16, inactive)
+
+Three closed two-argument V3 entries reopen first selected amenities, first
+all-date transaction originals, and the next combined evidence account. They
+require the actual completed V3 stock, partition and catalog, immutable command,
+native selected union and, for progress, completed recorded eligibility. Legacy
+V2 parent grammars stay exact. The existing ten-key evidence receipt, head and
+deferred COMMIT guards bind those actual native union/eligibility parents;
+neither receipt shape nor migration registration changes.
+
+Each operation replays one whole subject/selected account packet, every outside
+part, entire neutral and independently issued CAD cache, partition entries and
+catalog literals. Both separate source-purpose decisions and current database
+actor, assignment, draft, subject, pending study and parent fences run at both
+ends. The shared 256-query owner, 128-query child, 250-original, 32 MB and
+60-second limits and 16 KB response ceiling remain unchanged. The first reads
+retain no progress or lease; only a successful combined replay issues evidence.
+
+The separate inactive V3 worker claims eligibility DONE or incomplete evidence.
+All success, ordinary recovery and expiry lanes require the same three V3
+parents, independent CAD success and current matching pending study. Evidence
+DONE belongs to the subsequent metric owner and is excluded from every lane.
+Successful continuations preserve failure history; ordinary failed/expired
+recovery alone consumes the existing five-attempt ceiling.
+
+A new twenty-seventh independent capture retains every older native scenario
+and deadline. It authors first read-only CAD/transaction admission; current and
+ending dual-purpose, actor, workspace, header, coverage, cache and count
+refusals; real deferred orphan rollback and lost first COMMIT acknowledgment;
+concurrent A/B/fresh EMPTY and terminal next-owner exclusion at attempt five.
+Full native/cloud execution is pending. Ordinary V3 recovery below five still
+needs a fresh graph reserving its failure budget before waiting. Complete
+economic equivalence, numerical/statistical/calendar-quarter semantics,
+coherent publication, terminal pins and licensed large-area/live-speed
+acceptance remain open. No route, default dispatcher, schedule, grant,
+appraiser choice, Apply, publication or pin transfer is activated.

@@ -14,7 +14,7 @@ import { runCustomCohortCoveredSelectedProgressV2JobOnce as legacyProgress } fro
 /** Twenty-fifth independent real capture. Workers supply no group IDs, source
  * adapter, progress, counts or membership. The real original owner does all IO. */
 export async function runNeighborhoodBatchSelectedWorkersV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
-  catalogHead,groups,assertParents,setFault,readFault,originalReads,claim,command,batchRecordedEligibilityFixture=false}){
+  catalogHead,groups,assertParents,setFault,readFault,originalReads,claim,command,batchRecordedEligibilityFixture=false,batchSelectedEvidenceFixture=false}){
   const operation=input.operationId,method='continueCoveredOriginalFrozenCaptureJobBatchSelectedStockUnionReferencesV3',
     before={job:await job(),parent:await parent(),catalog:await catalogHead(),groups:await groups(),blobs:await blobs()},
     dispatches=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_initial_dispatch_v2 WHERE operation_id=$1',[operation])).rows,
@@ -106,7 +106,7 @@ export async function runNeighborhoodBatchSelectedWorkersV3DatabaseChecks({pool,
   assert.deepEqual(await union(),terminal.union);assert.deepEqual(await dispatches(),ownedDispatch);await immutable();
   if(batchRecordedEligibilityFixture){
     await runNeighborhoodBatchRecordedEligibilityV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
-      catalogHead,groups,assertParents,setFault,readFault,originalReads,command});return;
+      catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedEvidenceFixture});return;
   }
   console.info('[native-batch-selected-workers-v3]',{independent_actual_initial_source_cache_stock_partition_catalog_wait_and_explicit_command:true,
     changed_pending_target_not_claimed_and_real_orphan_initial_adoption_COMMIT_refused:true,

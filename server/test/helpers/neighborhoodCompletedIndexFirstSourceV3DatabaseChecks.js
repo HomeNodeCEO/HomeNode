@@ -2,11 +2,12 @@ import assert from 'node:assert/strict';
 import { withCustomCohortJobTransaction as tx } from '../../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
 import { createCustomCohortV2ContinuationRepository as continuations } from '../../src/services/neighborhoodAssessment/customCohortV2ContinuationRepository.js';
 
-// Continue ONLY the already complete independent graph32. Claiming is a real
+// Continue ONLY the already complete independent graph32 or later-account35.
+// Claiming is a real
 // native transition committed before opening the real read-only source owner;
 // no uncommitted lease, fixture callback or substituted original packet.
 export async function runNeighborhoodCompletedIndexFirstSourceV3DatabaseChecks({pool,input,scope,actor,service,
-  job,parent,blobs,snapshot,immutable,setFault,readFault,originalReads}){
+  job,parent,blobs,snapshot,immutable,setFault,readFault,originalReads,laterFirstSource=false}){
   const method='readCoveredOriginalFrozenCaptureJobCompletedIndexFirstSourceReferencesV3',before=await job();
   const [next]=await tx(pool,client=>continuations(client).claimDue({limit:1,leaseSeconds:900}));
   assert.equal(next.claim.operation_id,input.operationId);assert.equal(next.claim.attempts,before.attempts);
@@ -33,14 +34,20 @@ export async function runNeighborhoodCompletedIndexFirstSourceV3DatabaseChecks({
   }
   reads=originalReads();const result=await reopen();assert.equal(originalReads(),reads+1);await unchanged();
   assert.equal(result.status,'current_authorized_first_completed_index_source_originals_reconciled');
-  assert.deepEqual(result.selected_source,{kind:'source_record',native_key:'501',first_selected_ordinal:1});
-  assert.equal(result.selected_entry.account_id,'CLOSURE-A');assert.equal(result.selected_entry.ordinal,1);
+  assert.deepEqual(result.selected_source,{kind:'source_record',native_key:'501',first_selected_ordinal:laterFirstSource?2:1});
+  assert.equal(result.selected_entry.account_id,laterFirstSource?'CLOSURE-B':'CLOSURE-A');assert.equal(result.selected_entry.ordinal,laterFirstSource?2:1);
   assert.equal(result.transaction_index_sequence,3);
   assert.deepEqual(result.transaction_index_reference,owned.index.selected_transaction_index_v2_heads[0].receipt_reference);
-  assert.deepEqual(result.native_packages,[{kind:'source_record',native_key:'501'}]);
+  assert.deepEqual(result.native_packages,laterFirstSource?
+    [{kind:'legacy_sale',native_key:'10'},{kind:'legacy_sale',native_key:'3'},{kind:'source_record',native_key:'501'},
+      {kind:'source_record',native_key:'503'},{kind:'source_record',native_key:'504'}]:[{kind:'source_record',native_key:'501'}]);
   assert.ok(result.transaction_original_count>0);assert.ok(result.distinct_original_count>result.transaction_original_count);
   assert.equal(result.native_key_set_reconciled,true);assert.equal(result.complete_original_reconciled_source,true);
-  assert.ok(result.membership.associations.some(row=>row.account_id==='CLOSURE-A'&&row.selected_union_member===true));
+  if(!laterFirstSource)assert.ok(result.membership.associations.some(row=>row.account_id==='CLOSURE-A'&&row.selected_union_member===true));
+  else{
+    assert.ok(!result.membership.associations.some(row=>row.account_id==='CLOSURE-A'));
+    assert.ok(result.membership.associations.some(row=>row.account_id===null),'B entire account package retains unresolved503 originals');
+  }
   assert.ok(result.membership.associations.some(row=>row.account_id==='CLOSURE-B'&&row.selected_union_member===true),
     'the selected shared-source association is still reopened as part of the WHOLE package');
   assert.equal(result.read_only,true);assert.equal(result.lease_extended,false);assert.equal(result.context_complete,false);
@@ -61,7 +68,7 @@ export async function runNeighborhoodCompletedIndexFirstSourceV3DatabaseChecks({
   reads=originalReads();const resolved=await resolve();assert.equal(originalReads(),reads+1);await unchanged();
   assert.equal(resolved.status,'current_authorized_first_completed_index_source_observations_resolved');
   const observation=resolved.selected_source_resolution;
-  assert.deepEqual(observation.membership,{native_account_count:3,selected_account_count:2,unselected_stock_account_count:0,
+  assert.deepEqual(observation.membership,{native_account_count:laterFirstSource?2:3,selected_account_count:laterFirstSource?1:2,unselected_stock_account_count:0,
     outside_stock_account_count:1,unresolved_account_row_count:0,reported_resolved_link_count:2,unresolved_link_count:0,native_account_state:'multiple_native_accounts',
     provider_parcel_membership:'not_established',economic_property_membership:'not_established'});
   assert.equal(observation.unique_native_sale.account_id,'CLOSURE-OUTSIDE');assert.equal(observation.unique_native_sale.membership,'outside_stock');
@@ -81,7 +88,9 @@ export async function runNeighborhoodCompletedIndexFirstSourceV3DatabaseChecks({
   assert.equal(readFault(),null);assert.equal(originalReads(),reads+1);await unchanged();
   reads=originalReads();assert.deepEqual(await resolve(),resolved);assert.equal(originalReads(),reads+1);await unchanged();
   console.info('[native-completed-index-first-source-resolution-v3]',{
-    actual_whole_source501_and_selected_A_B_outside_canonical_sale_account_reopened:true,
+    actual_whole_source501_and_selected_A_B_outside_canonical_sale_account_reopened:!laterFirstSource,
+    actual_whole_source501_selected_B_and_outside_account_after_empty_A:laterFirstSource,
+    later_first_seen_selected_ordinal_two_and_whole_B_native_key_set:laterFirstSource,
     outside_sale_price_not_allocated_to_selected_source_or_link_accounts:true,
     exact_unsafe_integer_retained_without_currency_or_CurrentPrice_fallback:true,
     native_2010_Q1_outside_period_separate_from_missing_reported_date_and_unknown_status:true,
@@ -92,6 +101,7 @@ export async function runNeighborhoodCompletedIndexFirstSourceV3DatabaseChecks({
   console.info('[native-completed-index-first-source-original-owner-v3]',{
     actual_complete_exact17_index_and_committed_consumed_native_continuation_claim:true,
     server_owned_first_registered_package_and_whole_first_seen_account:true,
+    later_first_seen_selected_ordinal_two_and_whole_B_native_key_set:laterFirstSource,
     whole_stock_CAD_all_date_source_subject_ENTIRE_caches_every_prior_native_member_and_bidirectional_account_keys:true,
     current_actor_refusal_before_IO_ending_market_CAD_actor_workspace_header_coverage_and_actual_cache_refusals:true,
     lost_actual_readonly_COMMIT_ACK_identical_fresh_reopen_same_live_claim:true,

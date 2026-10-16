@@ -9296,3 +9296,28 @@ identical fresh reopen with retained state unchanged. This new resolution's
 native/cloud execution is pending. Complete source traversal, economic
 population/quarter statistics, publication, terminal pins and licensed large-area
 or live-speed acceptance remain open; no production activation is introduced.
+
+## Native FIRST source first seen at a later selected ordinal (2026-10-16)
+
+A thirty-fifth independent capture retains A's selected stock/CAD, while only
+its live source501 primary association and first link point to the outside
+account before genuine capture. B's real link still captures the complete
+source501 package. All previous thirty-four source scenarios, original reads,
+failure history, timers and deadlines are unchanged; retained evidence is never
+edited or copied. Production code and grants are unchanged.
+
+The actual workers must index A's empty transaction package, then B's complete
+five-key native package set and a separate fresh EMPTY. The completed index's
+native FIRST must choose source501 first seen at selected ordinal two. The
+current-authorized original owner must reopen B's whole stock/CAD/all-date
+package, required subject and entire caches, reconcile every native member and
+the complete per-account key set, and repeat the plan after all ending fences.
+The source resolution keeps one selected B account and an outside canonical
+sale separate, while B's other packages retain unresolved503 and legacy10/3.
+Real current/ending refusals, lost read-only COMMIT ACK and identical reopen
+must leave all job, lease, parent, evidence, report, choice and pin state intact.
+
+Focused structural checks pass; this new PostgreSQL graph's cloud execution is
+pending. It establishes no source NEXT/EMPTY economic progress, eligible
+transaction/quarter population, publication, terminal pin transfer, licensed
+large-area capacity or production-speed proof.

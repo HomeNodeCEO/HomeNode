@@ -1,5 +1,70 @@
 # Complete larger-area Custom neighborhood studies
 
+## Original recorded-group account resolution (2026-10-10, not activated)
+
+`readOriginalFrozenCaptureJobAccountRecordedGroupReferencesV2` is a distinct
+internal consumer of the ACTUAL current-authorized V2 issued original graph,
+geography, identity and stock owner. Its only page input is a closed cursor;
+the native stock index chooses one next complete account. Before deriving any
+group, the unchanged whole250 reader recompiles EVERY original account/parcel
+part, including outside-geometry parts, and compares each ENTIRE date-neutral
+cache row. All nested reads share ONE single-use32MB/128-query/60-second/
+five-second-query budget; no per-part callback or reset loop is accepted.
+
+The old neutral marker contract preserves at most128 bytes of literal text,
+whereas recorded-label grouping permits512 bytes. The new fixed original
+projection therefore reads ONLY original county/subdivision/subdivision_name
+after exact original/cache replay, with the existing duplicate-key/Unicode/
+native-identity parser checks. It preserves original labels through512 UTF8
+bytes and refuses a whole account for oversize, rather than turning an oversize
+hash into a missing label or an invented group. Neutral profile bytes and old
+plain/housing/page responses remain unchanged. No original payload text is
+delivered or copied; bounded fixed label literals and diagnostics are explicit.
+
+The versioned producer preserves exact trim/whitespace-collapse/lowercase and
+legacy `recorded-cad:sha256(JSON.stringify({county,label}))` encoding. It requires
+one known county, never defaults missing county to Dallas, and retains every
+distinct name, placeholder, invalid label, raw variant and partial observation.
+Conflicts/invalid evidence stay unassigned with ALL candidate groups/reasons;
+there is no first/majority/substring/HOA/builder/legal-boundary or historical
+inference. Both-end CURRENT DB actor/assignment/private draft/retained subject/
+original source-purpose/live claim/pin/stock/issued-head/cache fences remain.
+Reading cannot issue a head/checkpoint, prepare a cache miss or repair originals.
+
+177 focused original-reader/group/catalog/neutral-profile/traversal/current-owner
+tests passed,0fail0skip,1422.8168ms. Tests cover512-byte multibyte literals beyond
+128-byte markers, exact old IDs, missing county/parts/placeholders/invalid values,
+outside conflicts, malformed originals, hostile DATA, whole bounds, unchanged
+hash-count/cache forgeries, fresh empty probes and single-use/ending fences.
+Actual native owner tests passed for two accounts/three parcel/two account
+originals,512-byte original labels with oversize neutral markers, outside-part
+conflict, all original/cache replay, both-end rights/role/claim/subject/cache/
+cancel, partial/unissued/corrupt heads, lost-COMMIT reopen and zero payload/job
+copies/checkpoint/head writes. On integrated implementation head
+`481f48875b90225a5a496b6f596dfce3e4410c56`, foundation run38856066266 and actual
+native job116827693945 passed:417 migration checks,1 subject-persistence,8
+prepared-index,1 edge-neighbor and2 bootstrap tests, with zero failures,
+cancellations or skips. The actual recorded-group owner marker at
+2026-10-16T05:37:17.8380868Z confirms every original/entire-cache replay,
+512-byte original labels, outside conflicts, no fabricated county, both-end
+authority/forgery refusal, lost-ACK reopen, fresh empty and zero copies/writes.
+This small native fixture does not establish licensed large-area acquisition
+or production speed. SQL doubles and pure DATA helpers do not establish current
+source authority.
+
+This is ONE original-reconciled account's recorded-label resolution, NOT a
+complete catalog partition, durable group index, server-owned selected union,
+statistic, source grant, licensed acquisition, eligibility or report readiness.
+The next actual bounded partition/ordinal owner still must derive and reconcile
+EVERY member in one issued lineage. The legacy dense50k selector is not widened
+or bypassed. Fixed finite workers require separate successful-continuation and
+failure accounting; five claim attempts are not a large-area page scheduler.
+No route/default/scheduler/pin handoff/delete/selection/report/Hardy/Apply or
+production activation. Protected-parent integration/main retarget BEFORE push,
+fresh required security/native/full suites and ACTUAL included exact-head review
+remain mandatory. Licensed >50k/5-mile/10-mile/city/retrospective/live Hardy
+acceptance remains open; QA7 only for future Apply.
+
 ## Durable original-backed stock traversal (2026-10-10, not activated)
 
 `advanceOriginalFrozenCaptureJobStockTraversalReferencesV2` accepts ONLY the live
@@ -33,6 +98,16 @@ two accounts/three parcel/two account originals, independent next-key/free-DONE
 refusal, original/full-cache forgeries, current and ending rights/claim/subject/
 cache/cancellation, partial/unissued/corrupt prerequisites, same-TX rollback,
 lost-COMMIT continuation, terminal/reopen probes and zero original copies.
+Initial stacked exact678b57032869b726d122212439a06fb2dba6c08e (#1244)
+Foundation38035046379/Sales38035046391 passed. Native114163627930 independently
+decoded417migration/8index/1subject/1edge/2bootstrapPASS0fail0skip,
+index415978.946969ms. NEW native-original-stock-traversal-issued-owner-v2 marker
+executed07:46:39Z, including three issued metadata-only steps, all these refusal/
+recovery assertions and zero original/job-typed copies. Frontend114163627915
+passed3959,0fail0skip,58279.919174ms plus checks; server114163627959 and
+redteam114163627803SUCCESS. Initial stacked evidence is NOT future protected
+integrated exact-head security/review or licensed/live acceptance.
+
 Reviewed implementation head `37ea19fe0b59d3068cbe77dab9fccc14dcacd5c2`
 passed all 16 checks, including foundation run `38848464040` and complete native
 job `116804176291`. Its actual

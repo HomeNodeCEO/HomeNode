@@ -1,5 +1,39 @@
 # Complete larger-area Custom neighborhood studies
 
+## Original-reconciled batch transaction index (2026-10-16, inactive)
+
+The V3 batch lineage now has a closed two-argument transaction-index progress
+owner and a dormant worker. Only independently issued semantic DONE or an
+incomplete index admits work; DONE is excluded from success, recovery and
+expiry lanes. The owner uses the existing exact native index, reopening each
+selected whole original packet, ENTIRE neutral/CAD caches, partition/catalog,
+metric/contribution/numeric/semantic members and both ending source-purpose,
+actor, assignment, private-draft, subject and pending-workspace fences.
+Namespaced first-seen source/legacy keys and per-account edges are issued
+atomically with the native head, exact17 checkpoint and dedicated continuation.
+No callback, count, hash, sampled original or full-population array supplies
+source authority. Whole-owner budgets, deadlines, normal heartbeat, existing
+five-failure ceiling, error history and generation pins remain unchanged.
+
+The thirty-second independent native fixture freezes a genuine shared source
+before capture. It runs the real source-prefix/neutral/CAD/batch/native worker
+chain through semantic fresh EMPTY, then index A/B/fresh EMPTY. It requires
+shared501 on both selected edges, exact source501/503/504 and legacy10/3 first
+seen registries, no outside second-hop502, cache-forgery refusal, real orphan
+COMMIT rollback, lost first acknowledgment and native concurrent claims. Native
+parents and terminal next-owner exclusions remain unchanged. All31 earlier
+fixtures and their existing deadlines remain. These are authored assertions,
+not execution evidence. Fresh249 focused tests pass with zero failures,
+cancellations or skips (3599.2407ms);21 changed JS syntax checks and diff checks
+pass. No heavy suite or database ran locally. Fresh cloud/native results remain
+required. Ordinary V3 recovery below attempt5 needs its own fresh reserved
+failure graph; this fixture does not refund attempts or establish that proof.
+
+This remains inactive and unregistered: no route/default worker, migration,
+source grant, report, Hardy choice or Apply change. Registry identity is not
+economic transaction equivalence, currency, at-sale facts, calendar quarters,
+coherent publication, terminal pin transfer/retirement, licensed large-area
+acquisition or production-speed acceptance.
 ## Batch original-backed recorded statistics (2026-10-16, not activated)
 
 A closed V3 semantic progress entry and separate inactive worker continue from

@@ -559,6 +559,14 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingSelectedStatisticsSource:true,readingSelectedFrequencySource:true,readingSelectedNumericSource:true,
     progressingSelectedSemantic:true,coveredNeutralOriginals:true,
     allowedPhases:['frozen_selected_numeric_refs_v2','frozen_selected_semantic_refs_v2'] },
+  covered_batch_selected_transaction_index_progress_refs_v3: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,
+    readingSelectedUnionSubjectHousing:true,readingSelectedUnionFirstEligibility:true,
+    readingSelectedUnionFirstAmenities:true,readingSelectedUnionFirstTransactions:true,readingSelectedMetricSource:true,
+    readingSelectedStatisticsSource:true,readingSelectedFrequencySource:true,readingSelectedNumericSource:true,
+    progressingSelectedSemantic:true,readingSelectedTransactionSource:true,readingSelectedTransactionIndex:true,
+    progressingSelectedTransactionIndex:true,coveredNeutralOriginals:true,catalogBatchLineage:true,
+    allowedPhases:['frozen_selected_semantic_refs_v2','frozen_selected_transaction_index_refs_v2'] },
   covered_selected_transaction_index_progress_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
     catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,
     readingSelectedUnionSubjectHousing:true,readingSelectedUnionFirstEligibility:true,
@@ -3605,6 +3613,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             evidence_refs:[...checkpoint.evidence_refs.slice(0,16),receiptReference]});
           const continuation=await createCustomCohortV2ContinuationRepository(client).yieldTransactionIndexIssued(claim,jobOptions);
           const result={status:'original_selected_transaction_index_progress_retained',operation_id:input.operationId,
+            ...(catalogBatchLineage?{catalog_receipt_format:'cohort_recorded_catalog_batch_receipt_v3'}:{}),
             command_id:issuedSelectionIntent.command_id,transaction_index_reference:head.receipt_reference,
             semantic_reference:semanticAnchor.receipt_reference,progress:plan.after,selected_entry:plan.selected_entry,
             source_package_count:plan.source_package_count,legacy_package_count:plan.legacy_package_count,
@@ -4546,6 +4555,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     async progressOriginalFrozenCaptureJobSelectedTransactionIndexReferencesV2(...args){
       if(args.length!==2)fail('invalid_options');
       return frozenCaptureJobSourceStage(args[0],args[1], 'original_selected_transaction_index_progress_refs_v2');
+    },
+    progressCoveredOriginalFrozenCaptureJobBatchSelectedTransactionIndexReferencesV3(...args){
+      if(args.length!==2)fail('invalid_options');
+      return frozenCaptureJobSourceStage(args[0],args[1],'covered_batch_selected_transaction_index_progress_refs_v3');
     },
     async progressCoveredOriginalFrozenCaptureJobSelectedTransactionIndexReferencesV2(...args){
       if(args.length!==2)fail('invalid_options');

@@ -328,6 +328,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
 
   let selectionWaitOwner,waitOptions,beforeWait,beforeWaitParent,ownerCalls=0;
   const waitArgs={...args,cohortService:{async [waitMethod](value,options){
+    try{
     ownerCalls++;selectionWaitOwner={claim:options.captureJobClaim};waitOptions={captureJobClaim:selectionWaitOwner.claim};
     assert.equal(selectionWaitOwner.claim.operation_id,operation);assert.equal(selectionWaitOwner.claim.attempts,5);
 
@@ -356,7 +357,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
       }
       fault='batch_ack';await assert.rejects(batchRead(),e=>e.outcome_unknown===true);assert.equal(fault,null);await assertUnchanged();
       const packet=await batchRead();assert.equal(packet.account_count,2);assert.equal(packet.end_of_accounts,false);assert.equal(packet.native_progress,'not_issued');
-      assert.deepEqual(packet.accounts.map(p=>p.account_id),[input.accountId,'INDEX-B']);
+      assert.deepEqual(packet.accounts.map(p=>p.account_id),[input.accountId,'CLOSURE-B']);
       assert.equal(packet.original_count,packet.accounts.reduce((n,a)=>n+a.rows.length,0));
       assert.ok(packet.accounts.every(a=>a.rows.length>=1&&a.original_counts.parcels>=1));
       assert.equal(packet.accounts[0].original_counts.parcels,2,'the complete outside part is reread in the batch');
@@ -404,7 +405,17 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     if(probe==='wait_role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);
   }
 
-    fault='wait_ack';return service[waitMethod](value,options);
+    fault='wait_ack';return await service[waitMethod](value,options);
+    }catch(error){
+      // The real worker intentionally maps assertion/owner failures to a finite
+      // failure code. Keep the original cause visible in this disposable native
+      // fixture without dumping original observations, SQL values or payloads.
+      console.info('[native-selection-wait-probe-failure]',{fixture:coveredTransactionIndexFixture?'transaction-index':'initial-dispatch',
+        fault,code:error?.code??null,type:error?.name??null,
+        message:String(error?.message??'').split('\n')[0].slice(0,240),
+        at:String(error?.stack??'').split('\n').filter(line=>line.includes('neighborhoodNeutralCacheV2WorkerDatabaseChecks.js')).slice(0,2)});
+      throw error;
+    }
   }}};
   const waitResults=await Promise.all([runWait(waitArgs),runWait(waitArgs)]);
   assert.deepEqual(waitResults.map(r=>r.status).sort(),['idle','outcome_unknown']);

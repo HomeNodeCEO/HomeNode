@@ -7582,3 +7582,32 @@ cache coverage/continuation, all current/ending actor/subject/source fences,
 completed reader handoff and lease ownership still need implementation. No
 global header is declared complete from a job count, no new source grant is
 created, and no route, scheduler, worker, publication or pin transfer activates.
+
+### Bounded scoped neutral syntax writer (2026-10-16)
+
+`createNeighborhoodSharedTypedOriginalPageV2` accepts one bounded seven-layer
+page of already-read original text. It compiles every original with the fixed
+date-neutral V2 profile and uses full-original/full-cache reconciliation. It can
+initialize a shared generation/profile header, insert missing rows into a
+building cache, or reconcile immutable existing rows. It never queries the
+whole-generation page plan, advances global builder progress or declares a job
+or generation complete. A job count cannot substitute for global completeness.
+
+The scoped writer requires one shared neutral-cache owner executor. Source,
+prerequisite, cache and ending results plus serialized compiled SQL inputs
+consume the same 32MB lifetime ceiling and 256-query/60-second owner ceilings.
+Fresh page helpers cannot reset that executor. The page itself also retains
+the fixed 250-row, original-byte, 16-query and 60-second limits. Actual native
+transaction identity and UTC/writable mode are checked before writes and at
+the end; READ COMMITTED snapshot changes do not imply a different transaction.
+
+Seven focused page checks and 31 affected existing checks pass. Added native
+probes require actual header/row/totals bootstrap rollback, mixed coexistence
+with the full-generation builder, replay under building and complete headers,
+and original/ending refusals. Their cloud execution at this head is pending.
+
+This is the storage component for the authorized owner, not that complete
+handoff. Native per-job source-root coverage and lease/success issuance, both-end
+current authorization, the CAD companion owner and reader activation remain
+open. No route, dispatcher activation, source grant, publication, Apply or pin
+transfer is introduced.

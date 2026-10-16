@@ -5,7 +5,8 @@ import { readFileSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
 import { prepareNeighborhoodCiDatabase } from './helpers/neighborhoodCiDatabase.js';
 import { runNeighborhoodInitialV2DispatchDatabaseChecks } from './helpers/neighborhoodInitialV2DispatchDatabaseChecks.js';
-import { runSharedTypedReconciliationDatabaseChecks } from './helpers/neighborhoodSharedTypedReconciliationDatabaseChecks.js';
+import { runSharedTypedReconciliationDatabaseChecks,runSharedTypedScopedPageDatabaseChecks,
+  runSharedTypedScopedPageBootstrapDatabaseChecks } from './helpers/neighborhoodSharedTypedReconciliationDatabaseChecks.js';
 import { observeNeighborhoodCiPreparedQueries, NEIGHBORHOOD_CI_PROTOCOL_SESSION_OPTIONS } from './helpers/neighborhoodCiPreparedQueries.js';
 import { runNeighborhoodSelectedNumericIndexV2DatabaseChecks } from './helpers/neighborhoodSelectedNumericIndexV2DatabaseChecks.js';
 import { runNeighborhoodSelectedNumericPopulationV2DatabaseChecks } from './helpers/neighborhoodSelectedNumericPopulationV2DatabaseChecks.js';
@@ -508,6 +509,7 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     assert.equal(originalCached,'2000');
     // Real separate generation/profile-only V2 storage. A failed ending probe
     // rolls back the header, row inserts and independently derived totals.
+    await runSharedTypedScopedPageBootstrapDatabaseChecks(pool,first.generationId);
     await assert.rejects(createNeighborhoodSharedTypedGenerationV2(pool,{generationId:first.generationId}).step(),
       /caller_transaction_required/);
     let neutralSources=0;
@@ -532,6 +534,7 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     assert.equal(Object.hasOwn(neutralOpened,'effective_date'),false);
     assert.equal((await pool.query("SELECT row_count::text AS n FROM app.neighborhood_frozen_typed_v2_totals WHERE generation_id=$1 AND kind='parcels'",[first.generationId])).rows[0].n,'5');
     await runSharedTypedReconciliationDatabaseChecks(pool,NEIGHBORHOOD_SHARED_TYPED_V2_SQL.insert,neutralWrittenValues);
+    await runSharedTypedScopedPageDatabaseChecks(pool,first.generationId);
     // Independently rendered originals must match exact text/hash/identity;
     // changing a page's payload cannot leave rows or advance the cache header.
     const changedNeutralOriginal={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
@@ -545,6 +548,7 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     await assert.rejects(pool.query("UPDATE app.neighborhood_frozen_typed_v2_generations SET status='complete',completed_at=now() WHERE generation_id=$1",[first.generationId]),
       error=>error.code==='55000'&&/population_incomplete/.test(error.message));
     const neutralComplete=await sharedTypedV2Complete(pool,first.generationId,neutralOpened.progress);
+    await runSharedTypedScopedPageDatabaseChecks(pool,first.generationId,true);
     assert.equal(neutralComplete.progress.typed_rows,frozen.row_count);
     const actualNeutral=(await pool.query(`SELECT count(*)::text AS n,
       count(*) FILTER(WHERE typed.typed ? 'effective_date' OR typed.typed->>'typed_original_version'<>'2'

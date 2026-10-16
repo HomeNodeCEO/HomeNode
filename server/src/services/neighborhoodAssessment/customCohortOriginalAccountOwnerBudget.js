@@ -13,6 +13,20 @@ const fail = reason => { throw new TypeError(`custom_cohort_original_account_own
  * real transaction owner still owns connection deadlines, COMMIT and cleanup.
  */
 export function createCustomCohortOriginalAccountOwnerBudget(client, options) {
+  return ownerBudget(client,options,false);
+}
+
+const neutralCacheOwners=new WeakSet();
+/** The future scoped-cache owner must pass this SAME executor to its source,
+ * cache, prerequisite and ending reads. Compiled SQL inputs and decoded SQL
+ * results share one 32MB lifetime ceiling; constructing a page writer cannot
+ * reset it. This executor supplies no current actor or source authorization. */
+export function createCustomCohortNeutralCacheOwnerBudget(client,options){
+  const owner=ownerBudget(client,options,true);neutralCacheOwners.add(owner);return owner;
+}
+export const isCustomCohortNeutralCacheOwnerBudget=client=>neutralCacheOwners.has(client);
+
+function ownerBudget(client, options, chargeParameters) {
   if (typeof client?.query !== 'function' || !options || isProxy(options)
     || Object.getPrototypeOf(options) !== Object.prototype) fail('owner_required');
   const descriptors = Object.getOwnPropertyDescriptors(options), keys = Reflect.ownKeys(descriptors);
@@ -33,6 +47,15 @@ export function createCustomCohortOriginalAccountOwnerBudget(client, options) {
     try {
       check();
       if (++queries > L.sql_queries) fail('query_limit');
+      if(chargeParameters){
+        const values=typeof args[0]==='string'?args[1]:args[0]?.values;
+        if(values!==undefined){
+          let encoded;try{encoded=JSON.stringify(values);}catch{fail('invalid_input');}
+          if(typeof encoded!=='string')fail('invalid_input');
+          bytes+=Buffer.byteLength(encoded);
+          if(bytes>L.decoded_rows_utf8_bytes)fail('byte_limit');
+        }
+      }
       const result = await client.query(...args);
       check();
       if (!Array.isArray(result?.rows)) fail('invalid_result');

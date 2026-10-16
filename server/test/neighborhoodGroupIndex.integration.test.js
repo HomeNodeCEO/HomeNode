@@ -2406,7 +2406,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         // Likewise an indexed ending fault is armed on the initial member
         // read and MUST survive every full-original page until the ending
         // native indexed member read actually injects the changed value.
-        const fault=refsFault;if(!['commit','cad_header','cad_cache_bytes','transaction_header','wait_release_rollback','intent_resume_rollback'].includes(fault)
+        const fault=refsFault;if(!['commit','cad_header','transaction_header','wait_release_rollback','intent_resume_rollback'].includes(fault)
+          &&fault!=='cad_cache_bytes'
           &&!fault?.startsWith('partition_')&&!fault?.startsWith('catalog_')&&!fault?.startsWith('union_')&&!fault?.startsWith('eligibility_')
           &&!fault?.startsWith('coverage_')&&!fault?.startsWith('evidence_')&&!fault?.startsWith('metric_')&&!fault?.startsWith('metrics_')&&!fault?.startsWith('stats_')&&!fault?.startsWith('freq_')&&!fault?.startsWith('indexed_')&&!fault?.startsWith('numeric_')&&!fault?.startsWith('semantic_')&&!fault?.startsWith('early_')&&!fault?.startsWith('prefix_'))refsFault=null;
         if(fault==='license')await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});

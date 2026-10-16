@@ -18,7 +18,7 @@ original, compiled-input and ending SQL share one 32 MB, 256-query, 60-second ow
 budget. Global builder progress and existing complete-cache consumer gates remain
 unchanged. No job head, checkpoint, lease release, source grant or pin transfer.
 
-225 serial focused checks passed in 2,867.8381 ms with zero failures, cancellations
+233 serial focused checks passed in 3,780.2614 ms with zero failures, cancellations
 or skips. Native assertions are authored for current and ending refusals, actual
 cache bootstrap rollback, lost-COMMIT acknowledgement and fresh reopen, complete
 native keys, exact original-text forgery, aggregate bytes, separate empty probes

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { runNeighborhoodNativeClaimPair as pair } from './neighborhoodNativeClaimPair.js';
 import { runNeighborhoodBatchSelectedStatisticsV3DatabaseChecks } from './neighborhoodBatchSelectedStatisticsV3DatabaseChecks.js';
 import { withCustomCohortJobTransaction as tx } from '../../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
 import { createCustomCohortCaptureJobRepository as jobs } from '../../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
@@ -11,7 +12,7 @@ import { runCustomCohortBatchSelectedEligibilityV3JobOnce as eligibility } from 
 /** Twenty-eighth independent graph. The real V3 evidence worker has issued its
  * own fresh terminal EMPTY; this call never copies or rebinds a native parent. */
 export async function runNeighborhoodBatchSelectedMetricsV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
-  catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false}){
+  catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false}){
   const operation=input.operationId,method='progressCoveredOriginalFrozenCaptureJobBatchSelectedMetricReferencesV3',
     readMethod='readCoveredOriginalFrozenCaptureJobBatchFirstSelectedMetricReferencesV3',
     head=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_metrics_v2_heads WHERE operation_id=$1',[operation])).rows[0],
@@ -67,7 +68,7 @@ export async function runNeighborhoodBatchSelectedMetricsV3DatabaseChecks({pool,
       setFault('metrics_ack');return await service[method](value,options);
     }catch(error){ownerError=error;throw error;}
   }}};
-  const first=await Promise.all([run(firstArgs),run(firstArgs)]);if(ownerError&&!ownerError.outcome_unknown)throw ownerError;
+  const first=await pair(run,firstArgs,method);if(ownerError&&!ownerError.outcome_unknown)throw ownerError;
   assert.deepEqual(first.map(r=>r.status).sort(),['idle','outcome_unknown']);assert.equal(calls,1);assert.equal(readFault(),null);
   assert.equal((await head()).sequence,1);let receipt=await body((await head()).receipt_reference),nativeRows=await rows();
   assert.equal(receipt.format,'cohort_selected_metrics_receipt_v2');assert.equal(Object.keys(receipt).length,14);
@@ -83,7 +84,7 @@ export async function runNeighborhoodBatchSelectedMetricsV3DatabaseChecks({pool,
         const reads=originalReads();result=await service[method](value,options);assert.equal(originalReads(),reads+1);return result;
       }catch(error){nextError=error;throw error;}
     }}};
-    const steps=await Promise.all([run(stepArgs),run(stepArgs)]);if(nextError)throw nextError;
+    const steps=await pair(run,stepArgs,method);if(nextError)throw nextError;
     assert.deepEqual(steps.map(r=>r.status).sort(),['continuation_pending','idle']);assert.equal(count,1);firstClaim=nextClaim;
     assert.equal(result.catalog_receipt_format,'cohort_recorded_catalog_batch_receipt_v3');assert.equal(result.covered_neutral_originals,true);assert.equal(result.covered_CAD_originals,true);
     assert.equal(result.original_reconciled_reported_metric_rows_complete,sequence===3);assert.equal(result.metric_row_retained,sequence===2);
@@ -111,7 +112,7 @@ export async function runNeighborhoodBatchSelectedMetricsV3DatabaseChecks({pool,
   assert.deepEqual(await job(),terminal.job);assert.deepEqual(await parent(),terminal.parent);assert.deepEqual(await blobs(),terminal.blobs);assert.deepEqual(await head(),terminal.head);assert.deepEqual(await rows(),terminal.rows);await immutable();
   if(batchSelectedStatisticsFixture){
     await runNeighborhoodBatchSelectedStatisticsV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
-      catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedNumericFixture});return;
+      catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedNumericFixture,batchSelectedSemanticFixture});return;
   }
   console.info('[native-batch-selected-metrics-v3]',{independent_actual_V3_evidence_worker_fresh_EMPTY:true,
     read_only_first_original_candidate_and_lost_read_ACK_no_progress_or_lease_extension:true,

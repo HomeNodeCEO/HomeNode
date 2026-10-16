@@ -1,5 +1,54 @@
 # Complete larger-area Custom neighborhood studies
 
+## Native positive-claim fixture separation (2026-10-16)
+
+Actual semantic-head native CI reached an older evidence-worker assertion
+while an idle concurrent claim transaction still held the job row. PostgreSQL
+correctly refused NOWAIT with55P03 before original reconciliation, so the
+fixture could not treat that overlap as a successful source-read assertion.
+The five batch waiting/eligibility/evidence/metric/contribution positive
+fixtures now use the same real-claim barrier as union/numeric/semantic owners:
+two actual native worker claims run concurrently, and the one original owner
+waits for its idle contender's transaction to finish. A caught claim failure,
+two owners or zero owners fails closed instead of inventing positive proof.
+The independent actual-held heartbeat and native-claim55P03 refusal proofs
+remain unchanged. No lock refusal is retried or accepted as source success.
+Production owners, claims, NOWAIT locks, normal15s heartbeat, all originals,
+ending fences, failure ceilings, budgets and deadlines remain unchanged.
+49 focused tests pass (902.7532ms; zero failures/cancellations/skips), seven
+changed JS syntax checks and diff checks pass. Fresh exact-head native/full
+checks are required; this fixture correction is not new native execution,
+large-area acquisition, publication or production-speed evidence.
+## Batch original-backed recorded statistics (2026-10-16, not activated)
+
+A closed V3 semantic progress entry and separate inactive worker continue from
+actual numeric DONE. Bounded provisional ranks initialize only the retained
+summary. Every selected account is then reopened from its complete originals,
+ENTIRE neutral/CAD caches, partition/catalog and all metric/contribution/index/
+numeric fields under current and ending source-purpose/actor/assignment/draft/
+subject/workspace/parent/lease fences. Only the separate fresh terminal EMPTY,
+after all original-backed contributions and state/reason/part/eligible counts
+reconcile, returns exact reported quartiles, medians, means and rational CODs.
+Recorded sqft and reported years retain their existing interpretation; currency,
+economic transactions and calendar-quarter applicability remain unestablished.
+
+The existing seventeen-key semantic receipt, bounded summary, native row/head/
+deferred COMMIT guards and exact arithmetic are unchanged. Only numeric DONE or
+incomplete semantics enter every V3 claim/recovery/expiry lane; semantic DONE
+remains for transaction work. Normal heartbeats, failure history and aggregate
+query/original/byte/runtime limits remain. The thirty-first independently
+captured native case preserves every older case and deadline and authors the
+actual parent-worker chain, cache refusal, real orphan COMMIT rollback, lost
+first acknowledgment, concurrent A/B/fresh EMPTY, positive independent golden
+quartile/median/mean/COD arithmetic and terminal next-owner exclusion.
+
+220 serial focused checks pass, zero failures/cancellations/skips (1826.7866ms);
+twenty changed JavaScript syntax and diff checks pass. New exact-head cloud
+native/full execution remains pending. New-stage every-ending-authority fault
+and ordinary V3 recovery below five remain separate unexercised proofs. Nothing
+registers/activates or establishes licensed acquisition, large-area/live speed,
+economic/quarter completion, coherent publication or terminal pin transfer.
+
 ## Batch indexed population replay (2026-10-16, not activated)
 
 Two closed V3 entries reopen the first indexed account read-only and advance

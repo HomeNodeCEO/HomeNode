@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { runNeighborhoodNativeClaimPair as pair } from './neighborhoodNativeClaimPair.js';
 import { withCustomCohortJobTransaction as tx } from '../../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
 import { createCustomCohortCaptureJobRepository as jobs } from '../../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
 import { runCustomCohortBatchSelectionWaitV3JobOnce as run } from '../../src/services/neighborhoodAssessment/customCohortBatchSelectionWaitV3JobWorker.js';
@@ -12,7 +13,7 @@ import { runNeighborhoodBatchSelectionIntentV3DatabaseChecks } from './neighborh
 /** Twenty-second independent real capture. Source/current/ending/COMMIT work
  * stays real; a missing appraiser command is never supplied by this worker. */
 export async function runNeighborhoodBatchSelectionWaitV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,blobs,
-  catalogHead,groups,assertParents,setFault,readFault,originalReads,batchSelectionIntentFixture=false,batchSelectedUnionFixture=false,batchSelectedWorkersFixture=false,batchRecordedEligibilityFixture=false,batchSelectedEvidenceFixture=false,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false}){
+  catalogHead,groups,assertParents,setFault,readFault,originalReads,batchSelectionIntentFixture=false,batchSelectedUnionFixture=false,batchSelectedWorkersFixture=false,batchRecordedEligibilityFixture=false,batchSelectedEvidenceFixture=false,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false}){
   const operation=input.operationId,method='awaitCoveredOriginalFrozenCaptureJobBatchSelectionReferencesV3',
     before={catalog:await catalogHead(),groups:await groups(),blobs:await blobs()},
     intents=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_v2_selection_intents WHERE operation_id=$1',[operation])).rows;
@@ -47,7 +48,7 @@ export async function runNeighborhoodBatchSelectionWaitV3DatabaseChecks({pool,in
       setFault('wait_ack');return await service[method](value,options);
     }catch(error){ownerError=error;throw error;}
   }}};
-  const results=await Promise.all([run(workerArgs),run(workerArgs)]);
+  const results=await pair(run,workerArgs,method);
   if(ownerError&&!ownerError.outcome_unknown)throw ownerError;
   assert.deepEqual(results.map(r=>r.status).sort(),['idle','outcome_unknown']);assert.equal(ownerCalls,1);assert.equal(readFault(),null);
   const waiting=await job();assert.equal(waiting.status,'awaiting_selection');assert.equal(waiting.claim_token,null);assert.equal(waiting.lease_expires_at,null);
@@ -64,7 +65,7 @@ export async function runNeighborhoodBatchSelectionWaitV3DatabaseChecks({pool,in
   }
   if(batchSelectionIntentFixture){
     await runNeighborhoodBatchSelectionIntentV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,blobs,
-      catalogHead,groups,assertParents,setFault,readFault,originalReads,batchSelectedUnionFixture,batchSelectedWorkersFixture,batchRecordedEligibilityFixture,batchSelectedEvidenceFixture,batchSelectedMetricsFixture,batchSelectedStatisticsFixture,batchSelectedNumericFixture});
+      catalogHead,groups,assertParents,setFault,readFault,originalReads,batchSelectedUnionFixture,batchSelectedWorkersFixture,batchRecordedEligibilityFixture,batchSelectedEvidenceFixture,batchSelectedMetricsFixture,batchSelectedStatisticsFixture,batchSelectedNumericFixture,batchSelectedSemanticFixture});
     return;
   }
   await tx(pool,c=>jobs(c).cancel(scope,operation));const cancelled=await job();assert.equal(cancelled.status,'cancelled');

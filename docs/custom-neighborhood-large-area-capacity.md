@@ -20,6 +20,18 @@ production behavior, 15-second timer, fence, deadline, budget or failure ceiling
 changes. New exact-head native/full cloud execution is required before this
 correction or any integrated descendant is accepted.
 
+The first fresh correction still refused `55P03` in the independent selected
+worker scenario. The positive concurrent-claim assertion now waits for the
+actual idle contender's claim transaction to finish before invoking its one
+real source owner. Both workers still run concurrently, the real repositories
+still issue/adopt exactly one native claim, and every original query and COMMIT
+is retained. A losing claim can briefly hold the row even while returning no
+claim; its lock is correctly incompatible with the owner's NOWAIT fence.
+The separately held real heartbeat lock must still refuse before original IO.
+This test coordination does not retry a refusal or change production behavior.
+Bounded phase markers distinguish heartbeat/refusal, ending-probe and real
+initial-owner completion in new-head native logs.
+
 ## Explicit batch selection intent (2026-10-16, not activated)
 
 The separate closed V3 resume owner accepts only an explicit NEW-study command:

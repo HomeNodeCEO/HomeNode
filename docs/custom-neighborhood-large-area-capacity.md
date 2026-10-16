@@ -7494,3 +7494,28 @@ by a real orphan COMMIT, lost real COMMIT acknowledgment, all seven original
 layers, current/ending refusals, substitutions and first independent original
 graph step. Initial dispatch, successful prefix lease handoff, complete neutral
 cache preparation and licensed large-area/live speed acceptance remain open.
+
+## Dormant successful-prefix worker candidate
+
+The successor candidate enrolls the real actor/request only after the current
+stock, subject, assignment and source-purpose checks. Every actual prefix page
+issues a separate native success and releases its lease in the same transaction
+as the original node/root, independent prefix head and checkpoint. Deferred
+checks reject orphan enrollment, head, checkpoint, success or claim. Successful
+claims preserve failure attempts and error history; only ordinary recovery
+spends one of the existing five attempts. Prefix sequence remains bounded by
+200,000 without spending or widening the independent graph/geo/identity limits.
+
+`runCustomCohortSourcePrefixV2JobOnce` routes only native prefix successes to
+their existing original owner, or an actual completed prefix to the existing
+first graph owner. Its bounded metadata is routing DATA only. A native claim
+guard prevents a generic failure claimer from stealing or spending a pending
+prefix success. The worker excludes later phases from claiming and expiry.
+The separate cloud fixture retains real source/current-ending refusals, an
+actual orphan-yield COMMIT refusal, two lost real owner acknowledgments, one
+concurrent recovery token and the graph handoff without report or pin changes.
+
+Migration `20261210_custom_cohort_source_prefix_success_v2.sql` is unregistered.
+Initial queue/stock dispatch, generic-worker routing coordination and complete
+neutral-cache preparation remain activation prerequisites. No route, schedule,
+source grant, publication, Apply or pin transfer is enabled by this candidate.

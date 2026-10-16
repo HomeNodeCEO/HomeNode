@@ -104,8 +104,8 @@ jobs:
         run: node --test test/uadSubjectPrefill.integration.test.js
       - name: Verify early original-owner handoffs and worker before full native suite
         run: node --test --test-name-pattern="with early original-owner" test/neighborhoodGroupIndex.integration.test.js
-      - name: Verify native source-prefix issuance before full native suite
-        run: node --test --test-name-pattern="with native source-prefix issuance" test/neighborhoodGroupIndex.integration.test.js
+      - name: Verify native source-prefix issuance and success worker before full native suite
+        run: node --test --test-name-pattern="with native source-prefix" test/neighborhoodGroupIndex.integration.test.js
       - name: Verify prepared city and subdivision index on isolated PostgreSQL
         run: node --test test/neighborhoodGroupIndex.integration.test.js
       - name: Verify selected-map edge-neighbor land use on isolated PostgreSQL

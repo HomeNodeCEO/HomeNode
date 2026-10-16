@@ -42,6 +42,10 @@ export function createCustomCohortNeutralCacheV2HeadRepository(raw){
 export function createCustomCohortNeutralCacheV2AutomaticHeadRepository(raw){
   return repository(raw,true);
 }
+/** Read-only E parent under the separately issued CAD claim. No E issuance. */
+export function createCustomCohortNeutralCacheV2CadParentHeadRepository(raw){
+  return Object.freeze({read:repository(raw,'CAD_parent').read});
+}
 function repository(raw,automatic){
   const input=data(raw,['client','claim','scope','actorUserId',...BINDINGS]),{client,actorUserId}=input,
     claim=prepareCustomCohortCaptureJobClaim(input.claim),scope=data(input.scope,['organization_id','report_file_id','assignment_file_id','account_id']);
@@ -59,7 +63,8 @@ function repository(raw,automatic){
     FROM app.neighborhood_custom_cohort_capture_jobs job
     LEFT JOIN app.neighborhood_custom_cohort_neutral_cache_v2_heads anchor ON anchor.operation_id=job.operation_id
     WHERE ${FENCE} AND ${automatic
-      ?'app.neighborhood_neutral_v2_claim_matches(job.operation_id,job.organization_id,job.claim_token,job.attempts)'
+      ?automatic==='CAD_parent'?'app.neighborhood_cad_success_v2_matches(job.operation_id,job.organization_id,job.claim_token,job.attempts)'
+        :'app.neighborhood_neutral_v2_claim_matches(job.operation_id,job.organization_id,job.claim_token,job.attempts)'
       :"job.request_payload->>'execution_mode' IS NULL AND NOT EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_v2_continuations c WHERE c.operation_id=job.operation_id)"}`,values));
     if([...BINDINGS,'receipt_reference','sequence'].every(k=>row[k]===null))return null;
     const anchor=anchorOf(row);if(!BINDINGS.every(k=>same(anchor[k],frozen[k])))fail('binding_changed');return anchor;};

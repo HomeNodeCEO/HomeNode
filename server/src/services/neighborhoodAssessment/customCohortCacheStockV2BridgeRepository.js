@@ -28,13 +28,19 @@ const EXISTING=`/* custom-cohort-cache-stock-v2:claim-existing */ WITH due AS MA
   FROM due WHERE b.operation_id=due.operation_id RETURNING b.operation_id,b.claim_token,b.attempts
 ) ${CLAIM_JOB}`;
 const INITIAL=`/* custom-cohort-cache-stock-v2:claim-initial */ WITH due AS MATERIALIZED (
-  SELECT job.*,e.parent_sequence,e.identity_reference,e.sequence AS cache_sequence,e.receipt_reference AS cache_reference
+  SELECT job.*,e.parent_sequence,e.identity_reference,e.sequence AS cache_sequence,e.receipt_reference AS cache_reference,d.receipt_reference AS cad_reference
   FROM app.neighborhood_custom_cohort_capture_jobs job
   JOIN app.neighborhood_custom_cohort_neutral_success_v2_jobs e USING(operation_id,organization_id,report_file_id,assignment_file_id,account_id,actor_user_id,request_sha256)
   JOIN app.neighborhood_custom_cohort_v2_continuations c ON c.operation_id=job.operation_id AND c.organization_id=job.organization_id
   JOIN app.neighborhood_custom_cohort_neutral_cache_v2_heads h ON h.operation_id=e.operation_id AND h.organization_id=e.organization_id
   JOIN app.neighborhood_cohort_evidence_blobs r ON r.organization_id=e.organization_id AND r.content_sha256=e.receipt_reference->>'content_sha256'
     AND r.canonical_utf8_bytes::text=e.receipt_reference->>'canonical_utf8_bytes' AND r.canonical_utf8_bytes<=16000
+  JOIN app.neighborhood_custom_cohort_cad_success_v2_jobs d ON d.operation_id=job.operation_id AND d.organization_id=job.organization_id
+    AND d.report_file_id=job.report_file_id AND d.assignment_file_id=job.assignment_file_id AND d.account_id=job.account_id
+    AND d.actor_user_id=job.actor_user_id AND d.request_sha256=job.request_sha256
+  JOIN app.neighborhood_custom_cohort_cad_cache_v2_heads cad ON cad.operation_id=d.operation_id AND cad.organization_id=d.organization_id
+  JOIN app.neighborhood_cohort_evidence_blobs cb ON cb.organization_id=d.organization_id AND cb.content_sha256=d.receipt_reference->>'content_sha256'
+    AND cb.canonical_utf8_bytes::text=d.receipt_reference->>'canonical_utf8_bytes' AND cb.canonical_utf8_bytes<=16000
   WHERE job.request_payload->>'execution_mode'='frozen-originals-v2' AND job.context_sha256 IS NULL AND job.cancellation_requested_at IS NULL
     AND job.checkpoint->>'phase'='frozen_identity_refs_v2' AND jsonb_array_length(job.checkpoint->'evidence_refs')=6
     AND c.phase='frozen_identity_refs_v2' AND c.sequence=e.parent_sequence AND c.progress_reference=e.identity_reference
@@ -42,15 +48,18 @@ const INITIAL=`/* custom-cohort-cache-stock-v2:claim-initial */ WITH due AS MATE
     AND h.sequence=e.sequence AND h.receipt_reference=e.receipt_reference AND h.identity_reference=e.identity_reference
     AND r.canonical_utf8::jsonb->>'format'='cohort_neutral_cache_receipt_v2' AND r.canonical_utf8::jsonb->'after'->>'kind_index'='7'
     AND job.status='retry' AND job.claim_token IS NULL AND job.lease_expires_at IS NULL AND job.run_after<=clock_timestamp()
-    AND job.attempts=e.issued_attempts AND job.attempts BETWEEN 1 AND 5
+    AND d.cache_sequence=e.sequence AND d.cache_reference=e.receipt_reference AND d.sequence>0 AND d.consumed_claim_token IS NULL
+    AND cad.sequence=d.sequence AND cad.receipt_reference=d.receipt_reference AND cad.neutral_reference=e.receipt_reference
+    AND cb.canonical_utf8::jsonb->>'format'='cohort_CAD_cache_coverage_receipt_v2' AND cb.canonical_utf8::jsonb->'after'->>'done'='true'
+    AND job.attempts=d.issued_attempts AND job.attempts BETWEEN 1 AND 5
     AND NOT EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_cache_stock_v2_bridges b WHERE b.operation_id=job.operation_id)
     AND NOT EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_stock_traversal_v2_anchors a WHERE a.operation_id=job.operation_id)
   ORDER BY job.run_after,job.operation_id LIMIT 1 FOR UPDATE OF job SKIP LOCKED
 ), claimed AS (
   INSERT INTO app.neighborhood_custom_cohort_cache_stock_v2_bridges(operation_id,organization_id,report_file_id,assignment_file_id,
-    account_id,actor_user_id,request_sha256,parent_sequence,identity_reference,cache_sequence,cache_reference,claim_token,attempts)
+    account_id,actor_user_id,request_sha256,parent_sequence,identity_reference,cache_sequence,cache_reference,cad_reference,claim_token,attempts)
   SELECT operation_id,organization_id,report_file_id,assignment_file_id,account_id,actor_user_id,request_sha256,
-    parent_sequence,identity_reference,cache_sequence,cache_reference,gen_random_uuid(),attempts FROM due
+    parent_sequence,identity_reference,cache_sequence,cache_reference,cad_reference,gen_random_uuid(),attempts FROM due
   RETURNING operation_id,claim_token,attempts
 ) ${CLAIM_JOB}`;
 const FENCE=`job.operation_id=$1::uuid AND job.organization_id=$4::uuid AND job.report_file_id=$5::uuid AND job.assignment_file_id=$6::bigint

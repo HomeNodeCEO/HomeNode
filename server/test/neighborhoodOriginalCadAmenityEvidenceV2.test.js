@@ -56,6 +56,9 @@ test('all native secondary IDs and duplicate numbers survive; no label, primary 
 test('complete 250 originals remain bounded, no native-ID deduplication; hostile input and cancellation refuse',()=>{
   const a=account([row('primary','A'),...Array.from({length:249},(_,i)=>row('secondary',String(i+1)))]);
   assert.equal(resolve(a,()=>{}).secondary_inventory.rows.length,249);
+  const oneOver=structuredClone(a);oneOver.secondary_original_count='250';
+  oneOver.secondary_originals.push(account([row('secondary','250')]).secondary_originals[0]);
+  assert.throws(()=>resolve(oneOver,()=>{}),/invalid_account/,'250 secondary originals plus one primary exceed the combined bound');
   for(const mutate of [a=>a.secondary_original_count='251',a=>a.secondary_original_count='0',a=>a.primary_original_count='0',
     a=>a.secondary_originals[1]=a.secondary_originals[0],a=>a.secondary_originals[0].account_id='B',
     a=>a.observations.reported_pool_flag.exact_value='false',a=>a.observations.reported_pool_flag.state='invented',

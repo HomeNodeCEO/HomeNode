@@ -17,6 +17,7 @@ const FinalReconciliation = lazy(() => import('./pages/FinalReconciliation'));
 const SignUpForm = lazy(() => import('./pages/SignUpForm'));
 const PropertyTaxProtest = lazy(() => import('./pages/PropertyTaxProtest'));
 const UadWorkspaceEntry = lazy(() => import('./features/uad/pages/UadWorkspaceEntry'));
+const CommercialAcademy = lazy(() => import('./features/academy/CommercialAcademy'));
 
 function LegacyDetailRedirect() {
   const { accountId } = useParams();
@@ -32,6 +33,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Suspense fallback={<div className="route-loading" role="status">Loading…</div>}>
               <Routes>
                 <Route path="/" element={<PropertySearch />} />
+                <Route path="/academy/commercial" element={<CommercialAcademy />} />
                 <Route path="/property/:countyId/:accountId" element={<PropertyDetailsBase44 />} />
                 <Route path="/property/:accountId" element={<LegacyDetailRedirect />} />
                 <Route path="/report/:accountId" element={<PropertyReport />} />

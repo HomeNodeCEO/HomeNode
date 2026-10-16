@@ -20,15 +20,19 @@ test('exact decimal quartiles retain >2^53 prices and 14-place interpolation, wh
   const tiny = await summarize(input(['0', '0.000000000001']));
   assert.equal(tiny.low, '0'); assert.equal(tiny.high, '0.000000000001');
   assert.equal(tiny.q1, '0.00000000000025'); assert.equal(tiny.median, '0.0000000000005'); assert.equal(tiny.q3, '0.00000000000075');
-  rational(tiny.mean, '1', '2000000000000'); rational(tiny.mean_absolute_deviation, '1', '2000000000000');
+  rational(tiny.mean, '1', '2000000000000'); rational(tiny.mean_absolute_deviation_from_median, '1', '2000000000000');
   rational(tiny.cod_percent, '100', '1');
   const huge = await summarize(input(['9007199254740993.01', '9007199254740993.02']));
   assert.equal(huge.q1, '9007199254740993.0125'); assert.equal(huge.median, '9007199254740993.015');
   assert.equal(huge.q3, '9007199254740993.0175'); rational(huge.mean, '1801439850948198603', '200');
-  rational(huge.mean_absolute_deviation, '1', '200'); rational(huge.cod_percent, '100', '1801439850948198603');
+  rational(huge.mean_absolute_deviation_from_median, '1', '200'); rational(huge.cod_percent, '100', '1801439850948198603');
   const repeating = await summarize(input(['1', '2', '4']));
-  rational(repeating.mean, '7', '3'); rational(repeating.mean_absolute_deviation, '1', '1'); rational(repeating.cod_percent, '50', '1');
+  rational(repeating.mean, '7', '3'); rational(repeating.mean_absolute_deviation_from_median, '1', '1'); rational(repeating.cod_percent, '50', '1');
   assert.equal(repeating.median, '2'); assert.equal(repeating.q1, '1.5'); assert.equal(repeating.q3, '3');
+  // The mean is 7/3, not 2: deviation about that mean would be 10/9, not 1.
+  assert.equal(Object.hasOwn(repeating, 'mean_absolute_deviation'), false);
+  assert.equal(JSON.parse(getExactDecimalPagedDistributionV1Profile().definition_blob.canonical_json).mean_and_dispersion,
+    'reduced_exact_nonnegative_rationals_no_display_rounding_absolute_deviation_about_exact_median');
 });
 
 test('every observation state remains in the denominator; zero medians, empty observations and explicit empty populations stay distinct', async () => {
@@ -38,7 +42,7 @@ test('every observation state remains in the denominator; zero medians, empty ob
   let calls = 0;
   const none = await summarize(input([], { missing_count: 2 }, { pages() { calls++; return []; } }));
   assert.equal(calls, 2); assert.equal(none.reason, 'no_observations'); assert.equal(none.median, null); assert.equal(none.mean, null);
-  assert.equal(none.mean_absolute_deviation, null); assert.equal(none.cod_percent, null); rational(none.coverage_percent, '0', '1');
+  assert.equal(none.mean_absolute_deviation_from_median, null); assert.equal(none.cod_percent, null); rational(none.coverage_percent, '0', '1');
   const empty = await summarize(input([])); assert.equal(empty.coverage_percent, null); assert.equal(empty.counts.member_count, 0);
   assert.equal((await summarize(input(['1'], {}, { minimum_count: 2 }))).reason, 'below_minimum_count');
   assert.equal(empty.authority, 'not_established'); assert.equal(empty.population_verification, 'not_established'); assert.equal(empty.report_update, 'none');
@@ -69,6 +73,8 @@ test('deterministic dense integer oracle reconciles every quartile and exact mea
     assert.equal(BigInt(r.mean.numerator) * BigInt(n), sum * BigInt(r.mean.denominator));
     const mid = n % 2 ? native[(n - 1) / 2] * 2n : native[n / 2 - 1] + native[n / 2];
     const deviationTwice = native.reduce((total, value) => { const d = value * 2n - mid; return total + (d < 0n ? -d : d); }, 0n);
+    assert.equal(BigInt(r.mean_absolute_deviation_from_median.numerator) * BigInt(n) * 2n,
+      deviationTwice * BigInt(r.mean_absolute_deviation_from_median.denominator));
     if (mid === 0n) assert.equal(r.cod_percent, null);
     else assert.equal(BigInt(r.cod_percent.numerator) * BigInt(n) * mid,
       deviationTwice * 100n * BigInt(r.cod_percent.denominator));

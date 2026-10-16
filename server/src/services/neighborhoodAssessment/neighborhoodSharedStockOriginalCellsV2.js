@@ -10,6 +10,8 @@ import { NEIGHBORHOOD_SHARED_TYPED_V2_SQL, prepareNeighborhoodSharedTypedSource,
 import { getNeighborhoodFrozenTypedCadImprovementV1Profile } from './neighborhoodFrozenTypedCadImprovementV1.js';
 import { reconcileNeighborhoodOriginalCadAccountPackageV2 } from './neighborhoodOriginalCadAccountPackagesV2.js';
 import { resolveNeighborhoodOriginalCadAmenityEvidenceV2 } from './neighborhoodOriginalCadAmenityEvidenceV2.js';
+import { prepareNeighborhoodCoveredCadCacheHeaderV2 } from './neighborhoodCoveredCadCacheHeaderV2.js';
+import { readNeighborhoodCoveredCadCacheCoverageV2 } from './neighborhoodCoveredCadCacheCoverageV2.js';
 import { NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL } from './neighborhoodSelectedAmenityOriginalPackageV2.js';
 import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL,
   NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL,
@@ -438,7 +440,12 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
 export function createNeighborhoodCoveredStockOriginalCellsV2(client,rawOptions,rawGraph,effectiveDate){
   return stockOriginalCells(client,rawOptions,rawGraph,effectiveDate,true);
 }
-function stockOriginalCells(client,rawOptions,rawGraph,effectiveDate,covered){
+/** Separate internal selected-CAD consumer. The actual owner supplies its
+ * current policy DATA; this never calls a policy callback or grants rights. */
+export function createNeighborhoodCoveredCadStockOriginalCellsV2(client,rawOptions,rawGraph,effectiveDate,cadAuthorization){
+  return stockOriginalCells(client,rawOptions,rawGraph,effectiveDate,true,data(cadAuthorization,['purpose','decision']));
+}
+function stockOriginalCells(client,rawOptions,rawGraph,effectiveDate,covered,cadAuthorization=null){
   const options=data(rawOptions,['claim','scope','actorUserId','geometryInput','discovery','subjectIntent','checkBudget']);
   if(typeof client?.query!=='function'||typeof options.checkBudget!=='function')fail('invalid_input');
   const g=data(rawGraph,['root','layer_counts']),r=data(g.root,['content_sha256','canonical_utf8_bytes']);
@@ -516,7 +523,7 @@ function stockOriginalCells(client,rawOptions,rawGraph,effectiveDate,covered){
         return result;
       };
       const coverage=covered?await readCoverage():null;
-      return {stock,source,async finish(){
+      return {stock,source,coverage,async finish(){
         if(!same(await stocks.read(),stock)||!same(prepareNeighborhoodSharedTypedSource(
           await execute(NEIGHBORHOOD_SHARED_TYPED_V2_SQL.source,[stock.generation_id]),stock.generation_id),source))fail('source_changed');
         const ending=one(await execute(NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read,headerValues));validateHeader(ending);
@@ -527,7 +534,7 @@ function stockOriginalCells(client,rawOptions,rawGraph,effectiveDate,covered){
   /** Distinct CAD cache prerequisite inside this SAME single-use executor.
    * The actual owner has already authorized the separate CAD purpose; neither
    * metadata nor this helper grants rights or prepares a cache on miss. */
-  async function openCad(stock){
+  async function openCad(stock,neutralCoverage){
     const readSource=async()=>prepareNeighborhoodSharedTypedCadSource(
       await execute(NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.source,[stock.generation_id]),stock.generation_id);
     const source=await readSource();
@@ -535,6 +542,7 @@ function stockOriginalCells(client,rawOptions,rawGraph,effectiveDate,covered){
       ||source.started_at!==stock.original.source_transaction_started_at)fail('CAD_source_mismatch');
     const binding=assessmentEvidenceDigest({source,profile:CAD_TYPED}),values=[stock.generation_id,CAD_TYPED.profile_ref.content_sha256];
     const validate=value=>{
+      if(cadAuthorization){prepareNeighborhoodCoveredCadCacheHeaderV2(value,source);return;}
       const h=data(value,['binding_sha256','source_metadata','definition_json','progress','status','completed_at']),
         p=data(h.progress,['format','binding_sha256','kind_index','after','layer_rows','typed_rows','typed_utf8_bytes']);
       if(h.binding_sha256!==binding||!same(h.source_metadata,source)||h.definition_json!==CAD_TYPED.definition_blob.canonical_json
@@ -543,10 +551,14 @@ function stockOriginalCells(client,rawOptions,rawGraph,effectiveDate,covered){
         ||p.typed_rows!==source.row_count||!count(p.typed_utf8_bytes,8000000000)||BigInt(p.typed_utf8_bytes)<BigInt(p.typed_rows))fail('CAD_cache_unavailable');
     };
     const header=one(await execute(NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read,values));validate(header);
-    return {source,async finish(){
+    const readCoverage=()=>readNeighborhoodCoveredCadCacheCoverageV2({query:execute},{claim:coverageClaim,
+      scope:options.scope,actorUserId:options.actorUserId,stock,neutralCoverage,source,...cadAuthorization});
+    const coverage=cadAuthorization?await readCoverage():null;
+    return {source,coverage,async finish(){
       if(!same(await readSource(),source))fail('CAD_source_changed');
       const ending=one(await execute(NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read,values));validate(ending);
-      if(!same(ending,header))fail('CAD_source_changed');check();
+      if(!same(ending,header))fail('CAD_source_changed');
+      if(cadAuthorization&&!same(await readCoverage(),coverage))fail('CAD_cache_coverage_changed');check();
     }};
   }
   /** Recompile a complete original; never accept the stored cell as authority. */
@@ -630,7 +642,7 @@ function stockOriginalCells(client,rawOptions,rawGraph,effectiveDate,covered){
   async function subjectAndNextPackage(rawPage,rawSubject,firstSelected=false,nextEligibility=false,amenities=false,transactionPeriod=null,nextEvidence=false,completedEvidence=false,nextMetrics=false,completedMetrics=false,nextStatistics=false,completedStatistics=false,nextNumeric=false,completedNumeric=false,nextSemantic=false,completedSemantic=false,nextTransactionIndex=false){
     const page=prepareNeighborhoodStockAccountPackagePageV2(rawPage),{includeSubject}=data(rawSubject,['includeSubject']);
     if(typeof includeSubject!=='boolean')fail('invalid_input');
-    const context=await open(),{stock,source}=context,cadContext=amenities?await openCad(stock):null,
+    const context=await open(),{stock,source}=context,cadContext=amenities?await openCad(stock,context.coverage):null,
       values=[stock.operation_id,stock.generation_id,TYPED.profile_ref.content_sha256,page.cursor,L.rows,L.page_utf8_bytes,
         L.row_utf8_bytes,L.original_utf8_bytes,L.output_utf8_bytes,includeSubject],
       result=one(await execute(nextTransactionIndex?NEIGHBORHOOD_NEXT_SELECTED_TRANSACTION_INDEX_ORIGINAL_PACKAGE_V2_SQL:completedSemantic?NEIGHBORHOOD_FIRST_COMPLETED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL:nextSemantic?NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL:completedNumeric?NEIGHBORHOOD_FIRST_COMPLETED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL:nextNumeric?NEIGHBORHOOD_NEXT_SELECTED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL:completedStatistics?NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL:nextStatistics?NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL:completedMetrics?NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL:nextMetrics?NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL:completedEvidence?NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL
@@ -686,7 +698,8 @@ function stockOriginalCells(client,rawOptions,rawGraph,effectiveDate,covered){
         geographic_parcel_count:result.geographic_parcel_count,counts:{primary:String(result.cad_primary),secondary:String(result.cad_secondary)},
         row_count:cadRows.length,invalid_count:0,packet_oversize:false,packet_json:JSON.stringify(cadRows)},page,effective,check);
       const account=cadPacket.rows[0]??null;
-      cadEvidence={original_counts:{primary:result.cad_primary,secondary:result.cad_secondary},source_metadata:cadContext.source,
+      cadEvidence={...(cadAuthorization?{cache_coverage_reference:cadContext.coverage.receipt_reference}:{}),
+        original_counts:{primary:result.cad_primary,secondary:result.cad_secondary},source_metadata:cadContext.source,
         typed_profile:CAD_TYPED,account_id:account?.account_id??null,observations:account?.observations??null,
         amenity_evidence:account===null?null:resolveNeighborhoodOriginalCadAmenityEvidenceV2(account,check)};
       encoded=encoded.filter(r=>r?.kind!=='primary'&&r?.kind!=='secondary');

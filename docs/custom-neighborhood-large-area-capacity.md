@@ -1,5 +1,42 @@
 # Complete larger-area Custom neighborhood studies
 
+## Covered first selected CAD amenity owner (2026-10-16, not activated)
+
+`readCoveredOriginalFrozenCaptureJobFirstSelectedAmenitiesReferencesV2` is a
+separate read-only internal owner for ordinal 1 of the actual completed native
+selected union. It reopens the original graph/geography/identity, catalog,
+partition, immutable appraiser selection and current workspace. The actual
+database actor, assignment, private draft, subject, market and separate CAD
+source-purpose decisions remain fenced at both transaction ends.
+
+The existing stock handoff must retain the independent automatic CAD DONE
+receipt from the unregistered CAD-success composition. Fixed indexed metadata
+joins bind its actual ledger/head, neutral DONE, original parents, stock,
+request, scope and live claim. The whole receipt is checked against the retained
+parents, exact current source/purpose/decision and complete stock denominator.
+Metadata never replaces original replay. A coherent global CAD header may still
+be building; the legacy complete-global-cache consumers keep their exact gates.
+
+ONE existing selected/subject/CAD original packet recompiles every required
+whole original and compares its entire cached JSON under the same 250-original
+admission and single-use 128-query child ceiling, inside the actual owner's
+32 MB, 256-query, 60-second budget. All ending source/header/native-head reads
+use that same executor. The entire returned envelope, including coverage
+markers and the retained CAD receipt reference, must fit the unchanged 16 KB
+cap. The reader issues no progress, changes no lease and writes no cache/job,
+selection, publication, report or pin.
+
+121 serial focused checks pass with zero failures/cancellations/skips in
+1,704.9501 ms. Native assertions are authored in the existing automatic graph
+case for the actual selected packet, both independent DONE parents, a still
+building global CAD header, ending role/workspace/CAD-right/header/head refusal,
+lost real read-only COMMIT acknowledgement and identical fresh reopen. These
+new exact-head native checks are pending; DATA tests and small native fixtures
+do not establish full selected-union amenity completeness, verified dictionaries,
+historical semantics, licensed large-area acquisition or production speed.
+No route, worker registry/default, scheduler, grant, genuine appraiser choice,
+Apply, publication or terminal pin transfer is activated.
+
 ## Manual current-authorized CAD account cache (2026-10-16, not activated)
 
 `cacheOriginalFrozenCaptureJobCadAccountReferencesV2` is an explicit internal

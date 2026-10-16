@@ -9,7 +9,13 @@ import { runCustomCohortSourcePrefixV2JobOnce as runPrefix } from '../../src/ser
 import { runCustomCohortV2EarlyJobOnce as runEarly } from '../../src/services/neighborhoodAssessment/customCohortV2EarlyJobWorker.js';
 import { runCustomCohortNeutralCacheV2JobOnce as runCache } from '../../src/services/neighborhoodAssessment/customCohortNeutralCacheV2JobWorker.js';
 import { withCustomCohortJobTransaction as tx } from '../../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
-import { NEIGHBORHOOD_SHARED_TYPED_V2_SQL as SQL } from '../../src/services/neighborhoodAssessment/neighborhoodSharedTypedGeneration.js';
+import { NEIGHBORHOOD_SHARED_TYPED_V2_SQL as SQL, NEIGHBORHOOD_SHARED_TYPED_CAD_SQL as CAD_SQL } from '../../src/services/neighborhoodAssessment/neighborhoodSharedTypedGeneration.js';
+import { NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL as AMENITY_PACKET }
+  from '../../src/services/neighborhoodAssessment/neighborhoodSelectedAmenityOriginalPackageV2.js';
+import { NEIGHBORHOOD_NATIVE_CAD_CACHE_COVERAGE_V2_SQL as CAD_COVERAGE }
+  from '../../src/services/neighborhoodAssessment/neighborhoodCoveredCadCacheCoverageV2.js';
+import { getNeighborhoodFrozenTypedCadImprovementV1Profile }
+  from '../../src/services/neighborhoodAssessment/neighborhoodFrozenTypedCadImprovementV1.js';
 import { createCustomCohortCacheStockV2BridgeRepository as bridgeClaims } from '../../src/services/neighborhoodAssessment/customCohortCacheStockV2BridgeRepository.js';
 import { createCustomCohortCadCacheV2ContinuationRepository as cadClaims } from '../../src/services/neighborhoodAssessment/customCohortCadCacheV2ContinuationRepository.js';
 import { runCustomCohortCadCacheV2JobOnce as runCad } from '../../src/services/neighborhoodAssessment/customCohortCadCacheV2JobWorker.js';
@@ -37,7 +43,7 @@ import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL as TRAN
 export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData}){
   const input={...sourceInput,operationId:randomUUID()},operation=input.operationId;let fault=null,stockReads=0;
   const observed={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
-    const text=typeof c==='string'?c:c.text,originalPacket=text===STOCK_PACKET||text===PAIRED_STOCK_PACKET||text===TRANSACTION_PACKET,
+    const text=typeof c==='string'?c:c.text,originalPacket=text===STOCK_PACKET||text===PAIRED_STOCK_PACKET||text===TRANSACTION_PACKET||text===AMENITY_PACKET,
       orphan=fault==='orphan'&&text.includes('custom-cohort-neutral-success-v2:yield')
       ||fault==='cad_orphan'&&text.includes('custom-cohort-CAD-success-v2:yield')
       ||fault==='bridge_orphan'&&text.includes('custom-cohort-cache-stock-v2:complete')
@@ -51,18 +57,23 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     if(fault==='wait_missing'&&text.includes('custom-cohort-group-workspace:read')){fault=null;
       await raw.query("DELETE FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'",[scope.assignment_file_id]);}
     const result=await raw.query(c);
+    if(text===AMENITY_PACKET&&['selected_CAD_header','selected_CAD_coverage'].includes(fault))fault+='_ending';
+    if(text===CAD_SQL.read&&fault==='selected_CAD_header_ending'){fault=null;
+      return {...result,rows:[{...result.rows[0],binding_sha256:'0'.repeat(64)}]};}
+    if(text===CAD_COVERAGE&&fault==='selected_CAD_coverage_ending'){fault=null;
+      return {...result,rows:[{...result.rows[0],sequence:result.rows[0].sequence+1}]};}
     if(fault==='cad_role'&&text===CAD_PACKET){fault=null;
       await raw.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[scope.organization_id,actor]);}
-    if(fault==='cad_deny'&&text===CAD_PACKET){fault=null;
+    if((fault==='cad_deny'&&text===CAD_PACKET)||(fault==='selected_CAD_deny'&&text===AMENITY_PACKET)){fault=null;
       await raw.query(`UPDATE app_auth.organizations SET metadata=jsonb_set(metadata,ARRAY[$2::text,'revoked_at'],
         to_jsonb(to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))) WHERE id=$1`,[scope.organization_id,CAD_RIGHTS]);}
     if(originalPacket)stockReads++;
     if(orphan){fault=null;await raw.query('ROLLBACK TO SAVEPOINT synthetic_neutral_yield');await raw.query('RELEASE SAVEPOINT synthetic_neutral_yield');}
-    if(['wait_workspace','intent_workspace','union_workspace','transaction_workspace'].includes(fault)&&originalPacket){fault=null;await raw.query(`UPDATE app.custom_appraisal_workfile_sections
+    if(['wait_workspace','intent_workspace','union_workspace','transaction_workspace','selected_CAD_workspace'].includes(fault)&&originalPacket){fault=null;await raw.query(`UPDATE app.custom_appraisal_workfile_sections
       SET section_value=jsonb_set(section_value,'{pending_capture,operation_id}',to_jsonb($2::text))
       WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`,[scope.assignment_file_id,randomUUID()]);}
-    if(fault==='role'&&text===SQL.insert||['bridge_role','partition_role','catalog_role','wait_role','intent_role','union_role','transaction_role'].includes(fault)&&originalPacket){fault=null;await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[scope.organization_id,actor]);}
-    if(['ack','cad_ack','bridge_ack','partition_ack','catalog_ack','wait_ack','intent_ack','union_ack','eligibility_ack','transaction_ack'].includes(fault)&&text==='COMMIT'){fault=null;throw Error('lost actual original owner COMMIT ACK');}
+    if(fault==='role'&&text===SQL.insert||['bridge_role','partition_role','catalog_role','wait_role','intent_role','union_role','transaction_role','selected_CAD_role'].includes(fault)&&originalPacket){fault=null;await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[scope.organization_id,actor]);}
+    if(['ack','cad_ack','bridge_ack','partition_ack','catalog_ack','wait_ack','intent_ack','union_ack','eligibility_ack','transaction_ack','selected_CAD_ack'].includes(fault)&&text==='COMMIT'){fault=null;throw Error('lost actual original owner COMMIT ACK');}
     return result;
   }};}},service=createCustomCohortContextCapture({pool:observed,sourceMode:'combined-witness2-v1',authorizeMarketData,authorizeCadImprovementData}),
     args={pool,cohortService:service,leaseSeconds:900},job=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[operation])).rows[0],
@@ -465,6 +476,44 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   eligibilityCalls++;assert.equal(options.captureJobClaim.attempts,5);
   const eligibilityBefore=await job(),unionBefore=await unionHead(),nativeGroupsBefore=await unionGroups(),
     eligibilityOwner={claim:options.captureJobClaim};
+  if(eligibilityCalls===1){
+    const amenityMethod='readCoveredOriginalFrozenCaptureJobFirstSelectedAmenitiesReferencesV2',
+      generation=(await pool.query('SELECT generation_id FROM app.neighborhood_custom_cohort_job_stocks WHERE operation_id=$1',[operation])).rows[0].generation_id,
+      cadHeader=async()=>(await pool.query(CAD_SQL.read,[generation,getNeighborhoodFrozenTypedCadImprovementV1Profile().profile_ref.content_sha256])).rows[0],
+      cadBefore=await cadHead(),cadLedgerBefore=await cadState(),neutralBefore=await head(),cadHeaderBefore=await cadHeader();
+    assert.equal(cadHeaderBefore.status,'building');assert.equal(cadHeaderBefore.completed_at,null);
+    for(const [probe,reason] of [['selected_CAD_workspace',/custom_cohort_group_workspace_study_changed/],
+      ['selected_CAD_role',/custom_cohort_job_actor_access_revoked/],['selected_CAD_deny',/market_data_access_denied/],
+      ['selected_CAD_header',/cache_unavailable/],['selected_CAD_coverage',/coverage_unavailable/]]){
+      fault=probe;const reads=stockReads;await assert.rejects(service[amenityMethod](value,options),reason);
+      assert.equal(fault,null);assert.equal(stockReads,reads+1,'ending refusal follows the actual selected whole-original packet');
+      if(probe==='selected_CAD_role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);
+      assert.deepEqual(await job(),eligibilityBefore);assert.deepEqual(await unionHead(),unionBefore);
+      assert.deepEqual(await cadHead(),cadBefore);assert.deepEqual(await cadState(),cadLedgerBefore);assert.deepEqual(await head(),neutralBefore);
+      assert.deepEqual(await cadHeader(),cadHeaderBefore);assert.deepEqual(await intents(),humanOwnedIntents);assert.deepEqual(await workspace(),pendingWorkspace);
+    }
+    await assert.rejects(service.readOriginalFrozenCaptureJobFirstSelectedAmenitiesReferencesV2(value,options),/cache_unavailable/,
+      'legacy global-complete CAD/neutral gates remain unchanged');
+    const amenities=await service[amenityMethod](value,options);
+    assert.equal(amenities.covered_neutral_originals,true);assert.equal(amenities.covered_CAD_originals,true);
+    assert.equal(amenities.selected_entry.ordinal,1);assert.equal(amenities.selected_entry.account_id,selectedRows[0].account_id);
+    assert.equal(amenities.selected_CAD.account_id,selectedRows[0].account_id);
+    assert.deepEqual(amenities.selected_CAD.cache_coverage_reference,cadBefore.receipt_reference);
+    assert.equal(amenities.read_only,true);assert.equal(amenities.lease_extended,false);
+    assert.equal(amenities.complete_selected_union_amenities,false);assert.equal(amenities.context_complete,false);
+    assert.equal(amenities.pin_transfer,false);assert.equal(amenities.report_update,'none');assert.ok(Buffer.byteLength(JSON.stringify(amenities))<=16000);
+    fault='selected_CAD_ack';await assert.rejects(service[amenityMethod](value,options),e=>e.outcome_unknown===true);assert.equal(fault,null);
+    assert.deepEqual(await service[amenityMethod](value,options),amenities);
+    assert.deepEqual(await job(),eligibilityBefore);assert.deepEqual(await unionHead(),unionBefore);assert.deepEqual(await unionGroups(),nativeGroupsBefore);
+    assert.deepEqual(await cadHead(),cadBefore);assert.deepEqual(await cadState(),cadLedgerBefore);assert.deepEqual(await head(),neutralBefore);
+    assert.deepEqual(await cadHeader(),cadHeaderBefore);assert.deepEqual(await intents(),humanOwnedIntents);assert.deepEqual(await workspace(),pendingWorkspace);
+    console.info('[native-covered-first-selected-CAD-amenities-v2]',{server_owned_selected_ordinal_one:true,
+      actual_adopted_independent_CAD_and_neutral_DONE:true,global_CAD_still_building:true,
+      every_selected_and_required_subject_original_entire_cache_replayed:true,current_ending_CAD_role_workspace_header_native_head_refusal:true,
+      lost_readonly_COMMIT_ACK_fresh_identical_reopen:true,job_lease_heads_intent_choices_cache_unchanged:true,
+      aggregate_original_byte_query_deadline_output_caps_unchanged:true,complete_selected_union_amenities:false,
+      context_complete:false,publication:false,pin_transfer:false,licensed_large_area:false,production_speed:false});
+  }
   const transactionMethod='readCoveredOriginalFrozenCaptureJobFirstSelectedTransactionsReferencesV2';
   for(const [probe,reason] of [['transaction_workspace',/custom_cohort_group_workspace_study_changed/],
     ['transaction_role',/custom_cohort_job_actor_access_revoked/]]){

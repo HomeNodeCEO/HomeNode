@@ -24,15 +24,17 @@ cancellation also freezes the terminal job tuple so cancellation cannot become
 a two-step escape back to retry/running. Cancellation retains the evidence and
 pins, and is not terminal pin retirement.
 
-123 focused tests pass, zero failures/skips (574.8153ms); actual source and
-native-fixture syntax checks pass. Cloud-native assertions are authored, not
-yet execution evidence: an independently built second actual graph preserves
-a real prior failure/attempt2 through waiting, current-ending refusals, actual
-release rollback, lost real COMMIT acknowledgment, stale-claim exclusion,
-native mutation refusal and scoped cancellation. The original independent
-five-failure terminal fixture is retained unchanged. New-head native/full CI
-remains pending; no heavy local suite was run.
-
+Current-main integration uses the actual protected combined-account-facts
+parent merged as `c777de99`. The waiting stage remains unreachable from any
+route, default worker or dispatcher. Its additive guard completes only this
+dormant boundary; it does not activate an unfinished selection workflow.
+Fresh integrated focused validation passes 166 tests with zero failures,
+cancellations or skips (3162.9347ms). Cloud-native and full-suite checks on the
+integrated head remain required. The independent prior failure/attempt2,
+current-ending refusals, actual release rollback, lost real COMMIT
+acknowledgment, stale-claim exclusion, native mutation refusal and scoped
+cancellation fixture is preserved alongside the original five-failure fixture.
+No local database or heavy local suite was run.
 This is a dormant lease boundary, NOT genuine selection intent/resumption,
 complete original-reconciled catalog semantics, a selected union, statistic,
 coherent publication, full V2 dispatcher, terminal pin transfer/retirement,

@@ -21,10 +21,12 @@ import { runCustomCohortCoveredSelectedEvidenceV2JobOnce as runEvidence } from '
 import { runCustomCohortCoveredSelectedMetricsV2JobOnce as runMetrics } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectedMetricsV2JobWorker.js';
 import { runCustomCohortCoveredSelectedStatisticsV2JobOnce as runStatistics } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectedStatisticsV2JobWorker.js';
 import { runCustomCohortCoveredSelectedNumericV2JobOnce as runNumeric } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectedNumericV2JobWorker.js';
+import { runCustomCohortCoveredSelectedSemanticV2JobOnce as runSemantic } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectedSemanticV2JobWorker.js';
 import { NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL as PACKET,
   NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL as METRIC_PACKET,
   NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL as STATISTICS_PACKET,
-  NEIGHBORHOOD_NEXT_SELECTED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL as NUMERIC_PACKET }
+  NEIGHBORHOOD_NEXT_SELECTED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL as NUMERIC_PACKET,
+  NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL as SEMANTIC_PACKET }
   from '../../src/services/neighborhoodAssessment/neighborhoodSelectedTransactionOriginalPackageV2.js';
 import { CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_RIGHTS_KEY as CAD_RIGHTS }
   from '../../src/security/customNeighborhoodCadImprovementSourcePolicy.js';
@@ -59,7 +61,7 @@ export async function runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks({ p
     if (orphan) await raw.query('SAVEPOINT synthetic_evidence_orphan');
     const result = await raw.query(c);
     if (orphan) { fault = null; await raw.query('ROLLBACK TO SAVEPOINT synthetic_evidence_orphan'); await raw.query('RELEASE SAVEPOINT synthetic_evidence_orphan'); }
-    if (text === PACKET || text === METRIC_PACKET || text === STATISTICS_PACKET || text === NUMERIC_PACKET) {
+    if ([PACKET, METRIC_PACKET, STATISTICS_PACKET, NUMERIC_PACKET, SEMANTIC_PACKET].includes(text)) {
       originalReads++;
       if (fault === 'role') { fault = null; await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2', [scope.organization_id, actor]); }
       if (fault === 'workspace') { fault = null; await raw.query(`UPDATE app.custom_appraisal_workfile_sections
@@ -294,6 +296,71 @@ export async function runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks({ p
   assert.deepEqual(await evidence(), evidenceDone); assert.deepEqual(await nativeParents(), parents); assert.deepEqual(await workspace(), pendingWorkspace);
   assert.deepEqual(await runNumeric(args), { status: 'idle' }); assert.deepEqual(await runNumeric(args), { status: 'idle' });
   assert.deepEqual(await runStatistics(args), { status: 'idle' }); assert.deepEqual(await runMetrics(args), { status: 'idle' }); assert.deepEqual(await job(), numericDoneJob);
+  const numericHeadDone = await numeric(), semanticMethod = 'progressCoveredOriginalFrozenCaptureJobSelectedSemanticReferencesV2',
+    semantic = async () => (await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_semantic_v2_heads WHERE operation_id=$1', [operation])).rows[0],
+    semanticRows = async () => (await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_semantic_v2_rows WHERE operation_id=$1 ORDER BY ordinal', [operation])).rows,
+    blobCount = async () => (await pool.query('SELECT count(*)::integer AS n FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1', [scope.organization_id])).rows[0].n;
+  let semanticClaim;
+  assert.equal((await runSemantic({ ...args, cohortService: { async [semanticMethod](value, options) {
+    semanticClaim = options.captureJobClaim; assert.equal(semanticClaim.attempts, 5); const claimed = await job(), beforeBlobs = await blobCount();
+    // The real failure ceiling is already5. Probe the actual owner's rollback
+    // inside THIS valid claim; never manufacture a sixth recovery or refund.
+    for (const [probe, reason] of [['workspace', /custom_cohort_group_workspace_study_changed/], ['role', /job_actor_access_revoked/],
+      ['cad', /market_data_access_denied/], ['orphan', e => e.outcome_unknown === true && e.code === '55000']]) {
+      fault = probe; const reads = originalReads; await assert.rejects(service[semanticMethod](value, options), reason);
+      assert.equal(fault, null); assert.equal(originalReads, reads + 1);
+      if (probe === 'role') await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')", [scope.organization_id, actor]);
+      assert.deepEqual(await job(), claimed); assert.equal(await semantic(), undefined); assert.deepEqual(await semanticRows(), []); assert.equal(await blobCount(), beforeBlobs);
+      assert.deepEqual(await numeric(), numericHeadDone); assert.deepEqual(await numericRows(), numericCompletedRows);
+      assert.deepEqual(await statistics(), statisticsHeadDone); assert.deepEqual(await contributionRows(), contributions); assert.deepEqual(await numericIndex(), indexBefore);
+      assert.deepEqual(await metrics(), metricHeadDone); assert.deepEqual(await metricRows(), rows);
+      assert.deepEqual(await evidence(), evidenceDone); assert.deepEqual(await nativeParents(), parents); assert.deepEqual(await workspace(), pendingWorkspace);
+    }
+    fault = 'ack'; return service[semanticMethod](value, options);
+  } } })).status, 'outcome_unknown');
+  assert.equal(fault, null); assert.equal((await semantic()).sequence, 1); assert.equal((await semanticRows()).length, 1);
+  await assert.rejects(service[semanticMethod](input, { captureJobClaim: semanticClaim }), /claim_lost/);
+  let exactStatistics;
+  for (const done of [false, true]) {
+    assert.equal((await runSemantic({ ...args, cohortService: { async [semanticMethod](value, options) {
+      assert.equal(options.captureJobClaim.attempts, 5); assert.notEqual(options.captureJobClaim.claim_token, semanticClaim.claim_token);
+      const reads = originalReads, step = await service[semanticMethod](value, options); assert.equal(originalReads, reads + 1);
+      assert.equal(step.covered_CAD_originals, true); assert.equal(step.covered_neutral_originals, true); assert.equal(step.read_only, false);
+      assert.equal(step.progress.done, done); assert.equal(step.complete_original_reconciled_selected_union, done);
+      if (done) { assert.ok(step.exact_statistics); exactStatistics = step.exact_statistics; } else assert.equal(step.exact_statistics, null);
+      assert.equal(step.calendar_quarters, 'not_established'); assert.equal(step.economic_transactions, 'not_established'); assert.equal(step.publication, 'not_established');
+      assert.equal(step.context_complete, false); assert.equal(step.pin_transfer, false); assert.equal(step.report_update, 'none');
+      assert.ok(Buffer.byteLength(JSON.stringify(step)) <= 16000); return step;
+    } } })).status, 'continuation_pending');
+    assert.equal((await job()).attempts, 5); assert.equal((await job()).last_error_code, 'capture_failed');
+  }
+  // Independent exact two-account golden arithmetic, after the actual owner
+  // reconciled EVERY indexed field to the whole originals again. Fixture DATA
+  // supplies expected math only, never production source/population authority.
+  const scaled = text => { const [whole, fraction = ''] = String(text).split('.'); return BigInt(whole + fraction.padEnd(14, '0')); },
+    finite = n => { const v=n.toString().padStart(15,'0'),fraction=v.slice(-14).replace(/0+$/,''); return v.slice(0,-14)+(fraction?'.'+fraction:''); },
+    ratio = (a,b) => { let x=a,y=b; while(y){const t=x%y;x=y;y=t;} return {numerator:(a/x).toString(),denominator:(b/x).toString()}; };
+  for (const key of ['reported_year_built','reported_residential_area','reported_site_area']) {
+    const values=indexBefore.map(r=>r[key]).filter(v=>v!==null).map(scaled).sort((a,b)=>a<b?-1:a>b?1:0),n=values.length,actual=exactStatistics[key];
+    assert.equal(n,key==='reported_site_area'?2:1,'the independently captured fixture has genuine eligible observations');
+    assert.equal(actual.selected_count,2); assert.equal(actual.observed_count,n);
+    const median=n===0?null:n===1?values[0]:(values[0]+values[1])/2n;
+    assert.equal(actual.median,median===null?null:finite(median));
+    assert.equal(actual.q1,n===0?null:finite(n===1?values[0]:(3n*values[0]+values[1])/4n));
+    assert.equal(actual.q3,n===0?null:finite(n===1?values[0]:(values[0]+3n*values[1])/4n));
+    assert.deepEqual(actual.cod_percent,n===0||median===0n?null:ratio(100n*values.reduce((sum,v)=>sum+(v>median?v-median:median-v),0n),BigInt(n)*median));
+    assert.equal(actual.cod_reason,!n?'no_eligible_observations':median===0n?'zero_median':null);
+  }
+  assert.equal(exactStatistics.reported_year_built.median,'1960');
+  assert.equal(exactStatistics.reported_residential_area.median,'1000.01');
+  assert.equal(exactStatistics.reported_site_area.q1,'2000'); assert.equal(exactStatistics.reported_site_area.median,'4000');
+  assert.equal(exactStatistics.reported_site_area.q3,'6000');
+  assert.deepEqual(exactStatistics.reported_site_area.cod_percent,{numerator:'100',denominator:'1'});
+  const semanticCompletedRows=await semanticRows(); assert.deepEqual(semanticCompletedRows.map(r=>r.ordinal),[1,2]);
+  assert.equal((await semantic()).sequence,3); const semanticDoneJob=await job();
+  assert.equal(semanticDoneJob.checkpoint.phase,'frozen_selected_semantic_refs_v2'); assert.equal(semanticDoneJob.checkpoint.evidence_refs.length,16);
+  assert.deepEqual(await runSemantic(args),{status:'idle'}); assert.deepEqual(await runSemantic(args),{status:'idle'}); assert.deepEqual(await runNumeric(args),{status:'idle'});
+  assert.deepEqual(await job(),semanticDoneJob); assert.deepEqual(await numeric(),numericHeadDone); assert.deepEqual(await numericIndex(),indexBefore);
   const [nextOwner] = await tx(pool, client => mainClaims(client).claimDue({ limit: 1, leaseSeconds: 900 }));
   assert.equal(nextOwner.claim.operation_id, operation); assert.equal(nextOwner.claim.attempts, 5);
   await pool.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1", [operation]);
@@ -306,10 +373,20 @@ export async function runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks({ p
     'all contribution claim AND expiry lanes leave the expired/cancelled statistics-DONE numeric owner untouched');
   assert.deepEqual(await runNumeric(args), { status: 'idle' }); assert.deepEqual(await job(), nextPending,
     'all numeric claim AND expiry lanes leave the expired/cancelled numeric-DONE semantic owner untouched even at attempt5');
+  assert.deepEqual(await runSemantic(args),{status:'idle'}); assert.deepEqual(await job(),nextPending,
+    'all semantic claim AND expiry lanes leave the expired/cancelled semantic-DONE transaction owner untouched at attempt5');
   assert.deepEqual(await nativeParents(), parents); assert.deepEqual(await workspace(), pendingWorkspace);
   assert.deepEqual(await evidence(), evidenceDone); assert.deepEqual(await metricRows(), rows);
   assert.deepEqual(await metrics(), metricHeadDone); assert.deepEqual(await contributionRows(), contributions);
   assert.deepEqual(await statistics(), statisticsHeadDone); assert.deepEqual(await numericRows(), numericCompletedRows); assert.deepEqual(await numericIndex(), indexBefore);
+  assert.deepEqual(await numeric(),numericHeadDone); assert.deepEqual(await semanticRows(),semanticCompletedRows);
+  console.info('[native-covered-selected-original-exact-statistics-population-v2]', { actual_numeric_DONE_parent_and_independent_job:true,
+    every_selected_whole_original_entire_cache_metric_contribution_index_and_ninth_field_reconciled_again:true,
+    two_selected_semantic_rows_then_fresh_EMPTY_before_exact_statistics:true, independent_exact_fixture_median_quartile_COD_checks:true,
+    ending_CAD_role_workspace_orphan_COMMIT_roll_back_summary_blobs_rows_head_and_release:true,
+    lost_ACK_fresh_NEXT_stale_claim_refusal_and_success_at_attempt5_preserve_history:true, semantic_DONE_all_claim_expiry_lanes_excluded_at_attempt5:true,
+    all_originals_indexes_prior_heads_rows_choices_workspace_pins_unchanged:true, all_aggregate_budgets_deadlines_failure_ceiling_unchanged:true,
+    calendar_quarters:false,economic_historical_transaction_completeness:false,publication:false,pin_transfer:false,licensed_large_area:false,production_speed:false });
   console.info('[native-covered-selected-original-indexed-population-v2]', { actual_statistics_DONE_parent_and_independent_job: true,
     independent_actual_compact_source_capture_and_prior_large_original_preserved: true,
     whole_stock_CAD_transaction_subject_originals_entire_caches_every_metric_contribution_and_index_field_reconciled: true,

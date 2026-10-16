@@ -1,6 +1,9 @@
 import { NEIGHBORHOOD_STOCK_WHOLE_ACCOUNT_BATCH_V2_SQL as BATCH_PACKET } from '../../src/services/neighborhoodAssessment/neighborhoodStockWholeAccountBatchV2.js';
 import { CUSTOM_NEIGHBORHOOD_WITNESS2_SOURCE_RIGHTS_KEY as SOURCE_RIGHTS } from '../../src/security/customNeighborhoodWitness2SourcePolicy.js';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { canonicalAssessmentJson } from '../../src/services/neighborhoodAssessment/contract.js';
+import { createNeighborhoodCohortBlobRepository } from '../../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
 import { runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks } from './neighborhoodCoveredSelectedEvidenceV2DatabaseChecks.js';
 import { randomUUID } from 'node:crypto';
 import { createCustomCohortContextCapture } from '../../src/services/neighborhoodAssessment/customCohortContextCapture.js';
@@ -26,6 +29,9 @@ import { NEIGHBORHOOD_SCOPED_CAD_ORIGINAL_ACCOUNT_V2_SQL as CAD_PACKET } from '.
 import { CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_RIGHTS_KEY as CAD_RIGHTS } from '../../src/security/customNeighborhoodCadImprovementSourcePolicy.js';
 import { runCustomCohortCacheStockV2JobOnce as runBridge } from '../../src/services/neighborhoodAssessment/customCohortCacheStockV2JobWorker.js';
 import { runCustomCohortCoveredStockV2JobOnce as runStock } from '../../src/services/neighborhoodAssessment/customCohortCoveredStockV2JobWorker.js';
+import { runCustomCohortCacheStockBatchV3JobOnce as runBatchBridge } from '../../src/services/neighborhoodAssessment/customCohortCacheStockBatchV3JobWorker.js';
+import { runCustomCohortStockBatchV3JobOnce as runBatchStock } from '../../src/services/neighborhoodAssessment/customCohortStockBatchV3JobWorker.js';
+import { createCustomCohortStockBatchV3WorkerRepository as batchStockClaims } from '../../src/services/neighborhoodAssessment/customCohortStockBatchV3WorkerRepository.js';
 import { createCustomCohortCoveredStockV2WorkerRepository as stockClaims } from '../../src/services/neighborhoodAssessment/customCohortCoveredStockV2WorkerRepository.js';
 import { runCustomCohortCoveredPartitionV2JobOnce as runPartition } from '../../src/services/neighborhoodAssessment/customCohortCoveredPartitionV2JobWorker.js';
 import { createCustomCohortCoveredPartitionV2WorkerRepository as partitionClaims } from '../../src/services/neighborhoodAssessment/customCohortCoveredPartitionV2WorkerRepository.js';
@@ -43,7 +49,7 @@ import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL as TRAN
 
 /** Independent disposable job; all acquisition owners, authorization, original
  * queries, native issuance, savepoint rollback and COMMITs are real. */
-export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData,coveredTransactionIndexFixture=false}){
+export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData,coveredTransactionIndexFixture=false,stockBatchFixture=false}){
   const input={...sourceInput,operationId:randomUUID()},operation=input.operationId;let fault=null,stockReads=0;
   const observed={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
     const text=typeof c==='string'?c:c.text,originalPacket=text===BATCH_PACKET||text===STOCK_PACKET||text===PAIRED_STOCK_PACKET||text===TRANSACTION_PACKET||text===AMENITY_PACKET,
@@ -193,6 +199,26 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     actual_COMMIT_after_saved_lease_deadline_refused:true,lost_real_COMMIT_ACK_fresh_next_account:true,
     separate_terminal_EMPTY_and_DONE_idle:true,success_preserves_failure_attempt:3,neutral_and_main_parent_unchanged:true,
     automatic_schedule:false,licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
+  let batchPendingWorkspace=null;
+  if(stockBatchFixture){
+    // This NEW disposable graph installs its candidate guard only here. The
+    // production registry and all seventeen historical scenarios stay intact.
+    await tx(pool,client=>client.query(readFileSync(new URL('../fixtures/neighborhoodStockBatchV3Guard.sql',import.meta.url),'utf8')));
+    assert.deepEqual((await pool.query("SELECT revision FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'",[scope.assignment_file_id])).rows,[]);
+    const started=await service.startRecordedGroupCapture({auth:input.auth,accountId:input.accountId,assignmentFileId:input.assignmentFileId,
+      expectedWorkspaceRevision:0,expectedWorkspaceCheckpoint:{workspace_version:7,active:null,pending_capture:null},
+      pendingCapture:{operation_id:operation,observation_period:input.observationPeriod,discovery:input.discovery}});
+    assert.equal(started.status,'stored');
+    batchPendingWorkspace=(await pool.query("SELECT revision,section_value FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'",[scope.assignment_file_id])).rows;
+    assert.equal(batchPendingWorkspace[0].revision,1);
+    const afterExplicitPending=await protectedRows(),assignmentBeforeStamp=structuredClone(afterExplicitPending.assignment);
+    assert.deepEqual(afterExplicitPending.report,protectedBefore.report);
+    assignmentBeforeStamp[0].body.updated_at=protectedBefore.assignment[0].body.updated_at;
+    assert.deepEqual(assignmentBeforeStamp,protectedBefore.assignment,'only the explicit pending command timestamp may change');
+    protectedBefore=afterExplicitPending;
+  }
+  const stockContinuation=stockBatchFixture?'continueCoveredOriginalFrozenCaptureJobStockBatchReferencesV3':'continueCoveredOriginalFrozenCaptureJobStockTraversalReferencesV2',
+    bridgeWorker=stockBatchFixture?runBatchBridge:runBridge;
   const adopted=(await Promise.all([1,2].map(()=>tx(pool,client=>bridgeClaims(client).claimDue({leaseSeconds:900}))))).flat();
   assert.equal(adopted.length,1);const adoptedClaim=adopted[0].claim;
   assert.equal(adoptedClaim.attempts,3);assert.notEqual(adoptedClaim.claim_token,complete.issued_claim_token);
@@ -209,23 +235,115 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     await client.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()+interval '900 seconds' WHERE operation_id=$1",[operation]);
   }),error=>error.code==='55000'&&/neutral_success_v2_claim_conflict/.test(error.message));
   assert.deepEqual(await job(),adoptedJob);
-  fault='bridge_orphan';await assert.rejects(service.continueCoveredOriginalFrozenCaptureJobStockTraversalReferencesV2(input,{captureJobClaim:adoptedClaim}),
+  if(stockBatchFixture){
+    const beforeBlobs=(await pool.query('SELECT count(*)::integer AS n FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1',[scope.organization_id])).rows;
+    for(const [mode,reason] of [['wait_missing',/custom_cohort_group_workspace_unavailable/],
+      ['batch_workspace',/custom_cohort_group_workspace_study_changed/],['batch_rights',/market_data_access_denied|market_policy_changed/],
+      ['batch_role',/custom_cohort_job_actor_access_revoked/],['batch_cache',/original_mismatch/]]){
+      fault=mode;await assert.rejects(service[stockContinuation](input,{captureJobClaim:adoptedClaim}),reason);assert.equal(fault,null);
+      if(mode==='batch_role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);
+      assert.equal(await stockHead(),undefined);assert.deepEqual(await job(),adoptedJob);assert.deepEqual(await parent(),adoptedParent);
+      assert.deepEqual(await bridgeState(),adoptedState);assert.deepEqual(await cacheState(),complete);assert.deepEqual(await head(),nativeHead);
+      assert.deepEqual(await cadState(),completedCad);assert.deepEqual(await cadHead(),completedCadHead);
+      assert.deepEqual((await pool.query("SELECT revision,section_value FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'",[scope.assignment_file_id])).rows,batchPendingWorkspace);
+      assert.deepEqual((await pool.query('SELECT count(*)::integer AS n FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1',[scope.organization_id])).rows,beforeBlobs);
+    }
+  }
+  fault='bridge_orphan';await assert.rejects(service[stockContinuation](input,{captureJobClaim:adoptedClaim}),
     error=>error.outcome_unknown===true&&error.code==='55000');
   assert.equal(fault,null);assert.equal(await stockHead(),undefined);assert.deepEqual(await parent(),adoptedParent);
   assert.equal((await parent()).sequence,parentBefore.sequence);assert.deepEqual(await bridgeState(),adoptedState);
   await tx(pool,client=>jobs(client).failClaim(adoptedClaim,'capture_failed',{retrySeconds:1}));
   await pool.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET run_after=clock_timestamp() WHERE operation_id=$1',[operation]);
-  fault='bridge_role';assert.equal((await runBridge(args)).reason,'access_revoked');assert.equal(fault,null);
+  fault='bridge_role';assert.equal((await bridgeWorker(args)).reason,'access_revoked');assert.equal(fault,null);
   assert.equal(await stockHead(),undefined);assert.equal((await job()).attempts,4);
   await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);
   await pool.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET run_after=clock_timestamp() WHERE operation_id=$1',[operation]);
-  fault='bridge_ack';assert.equal((await runBridge(args)).status,'outcome_unknown');assert.equal(fault,null);
+  fault='bridge_ack';assert.equal((await bridgeWorker(args)).status,'outcome_unknown');assert.equal(fault,null);
   const firstStock=await stockHead(),issuedBridge=await bridgeState();
   assert.equal(firstStock.sequence,1);assert.deepEqual(issuedBridge.completed_reference,firstStock.receipt_reference);
   assert.equal((await parent()).sequence,parentBefore.sequence+1);assert.equal((await parent()).phase,'frozen_stock_traversal_refs_v2');
   assert.equal((await job()).attempts,5);assert.equal((await job()).last_error_code,'access_revoked');
   assert.deepEqual(await cacheState(),complete);assert.deepEqual(await head(),nativeHead);
   assert.deepEqual(await runBridge(args),{status:'idle'});assert.deepEqual(await runCache(args),{status:'idle'});
+  if(stockBatchFixture){
+    const readBody=async reference=>JSON.parse((await pool.query('SELECT canonical_utf8 FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1 AND content_sha256=$2',
+      [scope.organization_id,reference.content_sha256])).rows[0].canonical_utf8),firstBody=await readBody(firstStock.receipt_reference),firstBatchJob=await job();
+    assert.equal(firstBody.format,'cohort_stock_traversal_batch_receipt_v3');assert.equal(firstBody.sequence,1);
+    assert.deepEqual(firstBody.accounts.map(a=>a.account_id),['CLOSURE-A','CLOSURE-B']);
+    assert.equal(firstBody.accounts[0].original_counts.parcels,2,'whole outside part is included');
+    assert.equal(firstBody.original_count,5);assert.deepEqual(firstBody.after,{after_account:'CLOSURE-B',account_count:2,done:false});
+    assert.deepEqual(firstStock.issued_transaction_id,issuedBridge.completed_transaction_id);
+    assert.equal(firstBatchJob.checkpoint.evidence_refs.length,7);assert.deepEqual(firstBatchJob.checkpoint.evidence_refs[6],firstStock.receipt_reference);
+    assert.deepEqual(await runStock(args),{status:'idle'},'legacy V2 worker must not reinterpret V3 or convert a full count to DONE');
+    assert.deepEqual(await job(),firstBatchJob);
+    let batchOwnerCalls=0,batchOwnerError;
+    const emptyArgs={...args,cohortService:{async [stockContinuation](value,options){
+      try{
+      batchOwnerCalls++;assert.equal(options.captureJobClaim.attempts,5);
+      const beforeEmpty=await job(),beforeContinuation=await parent();
+      // Deliberately forged metadata probes use this real live native claim.
+      // Every rejected transaction rolls back its forged blob and head DML.
+      const empty={...firstBody,sequence:2,previous:firstStock.receipt_reference,before:firstBody.after,
+        after:{...firstBody.after,done:true},accounts:[],original_count:0};
+      const wrongKey={...empty,accounts:[firstBody.accounts[1]],original_count:2,
+        after:{after_account:'CLOSURE-B',account_count:3,done:false}},
+        falseEmpty={...empty,after:{...empty.after,done:false}},
+        wrongBefore={...empty,before:{...empty.before,account_count:1}},
+        legacy={...empty,format:'cohort_stock_traversal_receipt_v2'};
+      delete legacy.accounts;delete legacy.original_count;
+      for(const [body,reason] of [[wrongKey,/stock_batch_v3_prefix_conflict/],[falseEmpty,/stock_batch_v3_prefix_conflict/],
+        [wrongBefore,/stock_traversal_v2_anchor_transition_conflict/],[legacy,/stock_batch_v3_format_conflict/]]){
+        await assert.rejects(tx(pool,async client=>{
+          const reference=await createNeighborhoodCohortBlobRepository(client,scope.organization_id).put(canonicalAssessmentJson(body));
+          await client.query(`UPDATE app.neighborhood_custom_cohort_stock_traversal_v2_anchors SET receipt_reference=$2::jsonb,sequence=2
+            WHERE operation_id=$1 AND receipt_reference=$3::jsonb`,[operation,canonicalAssessmentJson(reference),canonicalAssessmentJson(firstStock.receipt_reference)]);
+        }),error=>error.code==='55000'&&reason.test(error.message));
+        assert.deepEqual(await stockHead(),firstStock);assert.deepEqual(await job(),beforeEmpty);assert.deepEqual(await parent(),beforeContinuation);
+      }
+      return await service[stockContinuation](value,options);
+      }catch(error){batchOwnerError=error;throw error;}
+    }}};
+    const emptyResult=await runBatchStock(emptyArgs);if(batchOwnerError)throw batchOwnerError;
+    assert.equal(emptyResult.status,'continuation_pending');assert.equal(batchOwnerCalls,1);
+    const finalHead=await stockHead(),finalBody=await readBody(finalHead.receipt_reference),finalJob=await job(),finalParent=await parent();
+    assert.equal(finalHead.sequence,2);assert.equal(finalBody.sequence,2);assert.deepEqual(finalBody.before,firstBody.after);
+    assert.deepEqual(finalBody.accounts,[]);assert.equal(finalBody.original_count,0);assert.equal(finalBody.after.done,true);assert.equal(finalBody.after.account_count,2);
+    assert.deepEqual(finalBody.previous,firstStock.receipt_reference);assert.equal(finalParent.sequence,parentBefore.sequence+2);
+    assert.equal(finalJob.attempts,5);assert.equal(finalJob.last_error_code,'access_revoked');assert.equal(finalJob.context_sha256,null);
+    for(const worker of [runBatchStock,runStock,runBatchBridge,runBridge,runCache,runCad])assert.deepEqual(await worker(args),{status:'idle'});
+    assert.deepEqual(await job(),finalJob);
+    // Generic explicit next-owner adoption is a disposable probe only. Both
+    // stock formats must leave DONE untouched in success/recovery/expiry lanes.
+    const [nextOwner]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));
+    assert.equal(nextOwner.claim.attempts,5);const nextOwnedJob=await job(),nextOwnedParent=await parent();
+    const rollback=Error('rollback batch native next-owner probe');
+    await assert.rejects(tx(pool,async client=>{
+      await client.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);
+      await jobs(client).cancel(scope,operation);
+      const snapshot=(await client.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[operation])).rows;
+      for(const repository of [batchStockClaims,stockClaims])assert.deepEqual(await repository(client).claimDue({leaseSeconds:900}),[]);
+      assert.deepEqual((await client.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[operation])).rows,snapshot);
+      throw rollback;
+    }),error=>error===rollback);
+    assert.deepEqual(await job(),nextOwnedJob);assert.deepEqual(await parent(),nextOwnedParent);
+    await tx(pool,client=>jobs(client).cancel(scope,operation));const cancelled=await job();
+    assert.deepEqual(await runBatchStock(args),{status:'idle'});assert.deepEqual(await job(),cancelled);
+    assert.deepEqual(await stockHead(),finalHead);assert.deepEqual(await bridgeState(),issuedBridge);
+    assert.deepEqual(await cacheState(),complete);assert.deepEqual(await head(),nativeHead);assert.deepEqual(await cadState(),completedCad);assert.deepEqual(await cadHead(),completedCadHead);
+    assert.deepEqual((await pool.query('SELECT * FROM app.neighborhood_custom_cohort_prepared_generation_pins WHERE operation_id=$1',[operation])).rows,pin);
+    assert.deepEqual((await pool.query("SELECT revision,section_value FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'",[scope.assignment_file_id])).rows,batchPendingWorkspace);
+    assert.deepEqual(await protectedRows(),protectedBefore);
+    console.info('[native-whole-account-batch-stock-v3]',{independent_initial_prefix_graph_geo_identity_neutral_and_CAD_parents:true,
+      actual_whole_outside_originals_and_ENTIRE_cache_replayed:true,one_shared_original_budget:true,
+      current_and_ending_actor_source_workspace_cache_refusal:true,orphan_real_COMMIT_refused:true,lost_real_first_batch_COMMIT_ACK:true,
+      actual_batch_accounts:2,actual_batch_originals:5,first_receipt_sequence:1,terminal_EMPTY_receipt_sequence:2,
+      native_wrong_prefix_before_false_EMPTY_and_format_switch_refused:true,legacy_worker_cannot_steal_or_complete_V3:true,
+      separate_fresh_EMPTY_at_failure_ceiling5:true,unchanged_error_history_native_parents_workspace_reports_and_pins:true,
+      DONE_success_recovery_expiry_and_cancelled_next_owner_excluded:true,
+      batched_partition_catalog:false,production_activation:false,licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
+    return;
+  }
   for(let i=0;i<2;i++){
     const result=await runStock(args);assert.equal(result.status,'continuation_pending');assert.equal(result.operation_id,operation);
     assert.equal((await job()).attempts,5);assert.equal((await job()).last_error_code,'access_revoked');

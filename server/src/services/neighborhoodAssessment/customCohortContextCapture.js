@@ -53,6 +53,7 @@ import { verifyCohortOriginalSourceGraphStep } from './cohortOriginalSourceGraph
 import { createCohortOriginalSourceReferencesV2Store } from './cohortOriginalSourceReferencesV2.js';
 import { verifyCohortOriginalSourceGraphV2Step } from './cohortOriginalSourceGraphV2.js';
 import { createCustomCohortGraphV2AnchorRepository } from './customCohortGraphV2AnchorRepository.js';
+import { createCustomCohortSourcePrefixV2Repository } from './customCohortSourcePrefixV2Repository.js';
 import { createCustomCohortGeographicV2AnchorRepository } from './customCohortGeographicV2AnchorRepository.js';
 import { prepareCohortGeographicOriginalReceiptV2 } from './cohortGeographicOriginalReceiptV2.js';
 import { createCustomCohortIdentityV2AnchorRepository } from './customCohortIdentityV2AnchorRepository.js';
@@ -181,6 +182,7 @@ const freeze = value => {
 const FROZEN_SOURCE_STAGES = freeze({
   prefix_v1: { allowedPhases: ['frozen_stock_v1', 'frozen_source_v1'] },
   prefix_refs_v2: { referencesV2: true, allowedPhases: ['frozen_stock_v1', 'frozen_source_refs_v2'] },
+  issued_prefix_refs_v2: { referencesV2: true, issuingSourcePrefix: true, allowedPhases: ['frozen_stock_v1', 'frozen_source_refs_v2'] },
   verify_refs_v2: { referencesV2: true, verifying: true, allowedPhases: ['frozen_source_refs_v2', 'frozen_verify_refs_v2'] },
   geographic_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true,
     allowedPhases: ['frozen_verify_refs_v2', 'frozen_geo_verify_refs_v2'] },
@@ -1793,7 +1795,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
   async function frozenCaptureJobSourceStage(value, options = {}, stage = 'prefix_v1') {
     if(typeof stage!=='string'||!Object.hasOwn(FROZEN_SOURCE_STAGES,stage))
       fail('frozen_source_representation_unsupported');
-    const {referencesV2=false,verifying=false,stockVerifying=false,identityVerifying=false,yieldingEarlyProgress=false,
+    const {referencesV2=false,issuingSourcePrefix=false,verifying=false,stockVerifying=false,identityVerifying=false,yieldingEarlyProgress=false,
       typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,
@@ -1965,6 +1967,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       };
       const binding={...scope,operation_id:input.operationId,generation_id:stock.generation_id,
         spatial_definition_sha256:stock.definition_sha256,source_original_sha256:stock.source_original_sha256};
+      const sourcePrefixStore=issuingSourcePrefix?createCustomCohortSourcePrefixV2Repository({client,claim,scope,actorUserId:input.auth.userId}):null;
+      let sourcePrefixHead=sourcePrefixStore?await sourcePrefixStore.read():null;
+      if(issuingSourcePrefix&&(checkpoint.phase==='frozen_stock_v1'?sourcePrefixHead!==null
+        :sourcePrefixHead===null||!same(sourcePrefixHead.source_reference,checkpoint.evidence_refs[2])))fail('checkpoint_conflict');
       const sourceVersion=referencesV2?2:1,sourceUsage=referencesV2?'frozen_source_reference_prefix_only':'frozen_source_prefix_only';
       const sourcePhase=referencesV2?'frozen_source_refs_v2':'frozen_source_v1';
       const chain=referencesV2?createCohortOriginalSourceReferencesV2Store(
@@ -1991,6 +1997,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           ||!same(previous.selection,selection)||!same(previous.purpose,purpose)||!same(previous.market_decision,decision)) fail('market_policy_changed');
         root=previous.root;
       }else root=(await chain.create()).root;
+      if(sourcePrefixHead&&!same(sourcePrefixHead.root_reference,root))fail('checkpoint_conflict');
       let prefix=await chain.describe(root);
       const kind=COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.find(key=>!prefix.layers[key].ended);
       let verification=null,verificationReference=checkpoint.evidence_refs[3]??null,
@@ -2009,6 +2016,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         prefix=await chain.describe(root);
         const body={source_stage_version:sourceVersion,usage:sourceUsage,selection,purpose,market_decision:decision,root};
         reference=await blobs.put(canonicalAssessmentJson(body));
+        if(sourcePrefixStore)sourcePrefixHead=await sourcePrefixStore.advance(sourcePrefixHead,{source_reference:reference,root_reference:root});
         await jobs.saveCheckpoint(claim,jobOptions,{phase:sourcePhase,evidence_refs:[retained.intent.reference,stockReference,reference]});
       }
       let graphAnchorStore=null,graphAnchor=null;
@@ -3056,6 +3064,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         fail('CAD_source_policy_changed');
       if(!same(await jobs.readRequest(claim,jobOptions),requested)||!same(await stockStore.read(),stock)) fail('checkpoint_conflict');
       if(!same((await chain.describe(root)).layers,prefix.layers)) fail('checkpoint_conflict');
+      if(sourcePrefixStore&&!same(await sourcePrefixStore.read(),sourcePrefixHead))fail('checkpoint_conflict');
       if(graphAnchorStore&&!same(await graphAnchorStore.read(),graphAnchor))fail('checkpoint_conflict');
       if(geographicAnchorStore&&!same(await geographicAnchorStore.read(),geographicAnchor))fail('checkpoint_conflict');
       if(identityAnchorStore&&!same(await identityAnchorStore.read(),identityAnchor))fail('checkpoint_conflict');
@@ -3473,6 +3482,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         geographic_stock_verification:'not_established',typed_identity_closure:'not_established',
         source_acquisition:'not_established',report_update:'none'});
       return freeze({status:referencesV2?'source_reference_prefix_retained':'source_prefix_retained',operation_id:input.operationId,source_reference:reference,
+        ...(issuingSourcePrefix?{native_prefix_sequence:sourcePrefixHead.sequence,context_complete:false,pin_transfer:false}:{}),
         generation_id:stock.generation_id,advanced:kind!==undefined,layers:prefix.layers,
         all_layers_ended:COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.every(key=>prefix.layers[key].ended),
         original_graph_verification:'not_established',source_acquisition:'not_established',report_update:'none'});
@@ -3606,6 +3616,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * grant, verification receipt, HTTP/worker activation or Apply is implied. */
     prepareFrozenCaptureJobSourceReferencesV2Page: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'prefix_refs_v2'),
+    /** Dormant independent native source-prefix issuance; starts only at the
+     * actual two-reference stock checkpoint, never adopts a free prefix. */
+    issueFrozenCaptureJobSourceReferencesV2Page: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'issued_prefix_refs_v2'),
     /** Explicit V2 original-query/root-edge verifier. Continuation is derived
      * only from a separately fenced owner-issued receipt anchor, never arbitrary
      * checkpoint progress. No legacy cast, source grant, worker dispatch or Apply. */

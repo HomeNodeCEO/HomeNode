@@ -102,8 +102,8 @@ jobs:
       - run: npm run test:uad-migration
       - name: Verify subject prefill persistence and concurrent appraiser ownership
         run: node --test test/uadSubjectPrefill.integration.test.js
-      - name: Verify early original-owner handoffs and worker before full native suite
-        run: node --test --test-name-pattern="with early original-owner" test/neighborhoodGroupIndex.integration.test.js
+      - name: Verify early original-owner and source-prefix issuance before full native suite
+        run: node --test --test-name-pattern="with early original-owner|with native source-prefix issuance" test/neighborhoodGroupIndex.integration.test.js
       - name: Verify prepared city and subdivision index on isolated PostgreSQL
         run: node --test test/neighborhoodGroupIndex.integration.test.js
       - name: Verify selected-map edge-neighbor land use on isolated PostgreSQL

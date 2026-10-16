@@ -1417,8 +1417,8 @@ test('isolated PostgreSQL: freezes a complete 60001-account original source popu
 // Independent real-native captures: preserve the original five-failure terminal
 // test, and build an entirely new issued graph for the waiting boundary. Never
 // clone/rebind job roots, summaries, original payloads or caller DONE metadata.
-for(const selectionWaitFixture of [false,true,'intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner','union-worker','early-continuations','early-worker']) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
-  +(['early-continuations','early-worker'].includes(selectionWaitFixture)?` with early original-owner ${selectionWaitFixture}`:['intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner','union-worker'].includes(selectionWaitFixture)?` with explicit new-study selection ${selectionWaitFixture}`:selectionWaitFixture?' with issued selection waiting':''),{
+for(const selectionWaitFixture of [false,true,'intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner','union-worker','early-continuations','early-worker','prefix-native']) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
+  +(selectionWaitFixture==='prefix-native'?' with native source-prefix issuance':['early-continuations','early-worker'].includes(selectionWaitFixture)?` with early original-owner ${selectionWaitFixture}`:['intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner','union-worker'].includes(selectionWaitFixture)?` with explicit new-study selection ${selectionWaitFixture}`:selectionWaitFixture?' with issued selection waiting':''),{
   // The tenth graph replays every real parent before its own A/B/EMPTY owner
   // proof. Keep all nine pre-existing paths at their original 180-second
   // deadline; reserve extra fixture time only for that new graph. This does
@@ -1426,6 +1426,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
   skip:!process.env.DATABASE_URL,timeout:selectionWaitFixture==='union-all-transaction-index-owner'?240_000:180_000,
 },async()=>{
   const transactionIndexOwnerFixture=selectionWaitFixture==='union-all-transaction-index-owner',
+    prefixNativeFixture=selectionWaitFixture==='prefix-native',
     earlyContinuationFixture=selectionWaitFixture==='early-continuations',
     earlyWorkerFixture=selectionWaitFixture==='early-worker',
     sharedTransactionFixture=selectionWaitFixture==='union-all-shared-transaction'||transactionIndexOwnerFixture,
@@ -1859,7 +1860,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       assert.equal(fresh.operation_id,refsOperation);assert.equal(fresh.attempts,2);assert.notEqual(fresh.claim_token,refsClaim.claim_token);
       Object.assign(refsClaim,{operation_id:fresh.operation_id,claim_token:fresh.claim_token,attempts:fresh.attempts});
     }
-    const refsCalls=[],refsQueryParameters=[],refsBlobPuts=[],sharedSelectedEvidencePackets=new Map(),transactionIndexPackets=[];let refsFault=null,refsAbort=null,earlyOrphanYieldSeen=0;
+    const refsCalls=[],refsQueryParameters=[],refsBlobPuts=[],sharedSelectedEvidencePackets=new Map(),transactionIndexPackets=[];let refsFault=null,refsAbort=null,earlyOrphanYieldSeen=0,prefixOrphanCheckpointSeen=0;
     const refsPool={async connect(){const client=await pool.connect();let cadHeaderReads=0,transactionHeaderReads=0,nativeTransactionKeyReads=0,transactionCandidatePlanReads=0;return {release:client.release.bind(client),async query(config){
       refsCalls.push(config.text);
       refsQueryParameters.push(config.values);
@@ -1870,6 +1871,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       // that statement. The earlier real group/head/root writes remain pending;
       // REAL COMMIT must reject orphan progress. No fabricated SQL result.
       if(orphanUnionYield)await client.query('SAVEPOINT synthetic_union_yield');
+      const orphanPrefixCheckpoint=prefixNativeFixture&&refsFault==='prefix_orphan_commit'&&config.text.includes('custom-cohort-job:checkpoint-save');
+      if(orphanPrefixCheckpoint)await client.query('SAVEPOINT synthetic_prefix_checkpoint');
       if(refsFault==='transaction_index_candidate_provisional'&&config.text.includes('custom-cohort-selected-transaction-first-candidate-v2:native-plan')){
         refsFault=null;
         // REAL native-bound provisional member in the same TX, not a mocked
@@ -1882,6 +1885,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         assert.equal(inserted.rowCount,1);
       }
       const result=await client.query(config);
+      if(orphanPrefixCheckpoint){await client.query('ROLLBACK TO SAVEPOINT synthetic_prefix_checkpoint');
+        refsFault=null;prefixOrphanCheckpointSeen++;}
       // Mutate actual native authority only AFTER the actual sixth combined
       // original/EMPTY query. Same client/TX: every refusal must roll these
       // changes back together with any progress, never a mocked return row.
@@ -2342,7 +2347,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         // native indexed member read actually injects the changed value.
         const fault=refsFault;if(!['commit','cad_header','transaction_header','wait_release_rollback','intent_resume_rollback'].includes(fault)
           &&!fault?.startsWith('partition_')&&!fault?.startsWith('catalog_')&&!fault?.startsWith('union_')&&!fault?.startsWith('eligibility_')
-          &&!fault?.startsWith('evidence_')&&!fault?.startsWith('metric_')&&!fault?.startsWith('metrics_')&&!fault?.startsWith('stats_')&&!fault?.startsWith('freq_')&&!fault?.startsWith('indexed_')&&!fault?.startsWith('numeric_')&&!fault?.startsWith('semantic_')&&!fault?.startsWith('early_'))refsFault=null;
+          &&!fault?.startsWith('evidence_')&&!fault?.startsWith('metric_')&&!fault?.startsWith('metrics_')&&!fault?.startsWith('stats_')&&!fault?.startsWith('freq_')&&!fault?.startsWith('indexed_')&&!fault?.startsWith('numeric_')&&!fault?.startsWith('semantic_')&&!fault?.startsWith('early_')&&!fault?.startsWith('prefix_'))refsFault=null;
         if(fault==='license')await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
         if(fault==='role')await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);
         if(fault==='subject')await client.query("UPDATE app.appraisal_subject_snapshots SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2000') WHERE id=$1",[sourceSnapshot]);
@@ -2363,15 +2368,19 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     const readEarlyProtected=async()=>({
       report:(await pool.query('SELECT to_jsonb(r) AS body FROM app.report_files r WHERE id=$1',[scope.report_file_id])).rows,
       assignment:(await pool.query('SELECT to_jsonb(a) AS body FROM app.assignment_files a WHERE id=$1',[assignment])).rows});
-    const earlyProtected=earlyContinuationFixture||earlyWorkerFixture?await readEarlyProtected():null;
+    const earlyProtected=earlyContinuationFixture||earlyWorkerFixture||prefixNativeFixture?await readEarlyProtected():null;
     if(earlyContinuationFixture||earlyWorkerFixture)await withCustomCohortJobTransaction(pool,async client=>{
       for(const name of ['20261206_custom_cohort_selected_transaction_index_owner_v2.sql',
         '20261208_custom_cohort_early_continuations_v2.sql'])
         await client.query(readFileSync(new URL(`../migrations/${name}`,import.meta.url),'utf8'));
     });
+    if(prefixNativeFixture)await withCustomCohortJobTransaction(pool,client=>client.query(readFileSync(
+      new URL('../migrations/20261209_custom_cohort_source_prefix_v2.sql',import.meta.url),'utf8')));
     const earlyCounts={frozen_verify_refs_v2:0,frozen_geo_verify_refs_v2:0,frozen_identity_refs_v2:0};
     const createRefsOwner=()=>{
       const service=createCustomCohortContextCapture({pool:refsPool,sourceMode:'combined-witness2-v1',authorizeMarketData:fixturePolicy()});
+      if(prefixNativeFixture)return Object.freeze({...service,
+        prepareFrozenCaptureJobSourceReferencesV2Page:service.issueFrozenCaptureJobSourceReferencesV2Page});
       if(!earlyContinuationFixture)return service;
       const names=[
         ['verifyFrozenCaptureJobSourceReferencesV2Page','continueFrozenCaptureJobSourceReferencesV2Page'],
@@ -2464,6 +2473,17 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     const refsBlobCount=async()=>(await pool.query('SELECT count(*)::integer AS n FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1',[organization])).rows[0].n;
     const refsSeedsCount=async()=>(await pool.query('SELECT count(*)::integer AS n FROM app.neighborhood_custom_cohort_seed_indexes WHERE operation_id=$1',[refsOperation])).rows[0].n;
     const beforeRefsBlobs=await refsBlobCount();
+    if(prefixNativeFixture){
+      // Execute a REAL checkpoint write and roll back only that statement.
+      // Keep the actual original/node/root/native head pending through COMMIT.
+      refsFault='prefix_orphan_commit';
+      await assert.rejects(refsOwner.issueFrozenCaptureJobSourceReferencesV2Page(refsInput,refsOptions),
+        error=>error.code==='55000'&&/source_prefix_v2_commit_conflict/.test(error.message));
+      assert.equal(prefixOrphanCheckpointSeen,1);assert.equal(refsFault,null);
+      assert.deepEqual(await readRefsCheckpoint(),refsStockCheckpoint);
+      assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.neighborhood_custom_cohort_source_prefix_v2_heads WHERE operation_id=$1',[refsOperation])).rows[0].n,0);
+      assert.equal(await refsSeedsCount(),0);assert.equal(await refsBlobCount(),beforeRefsBlobs);
+    }
     const refsDeniedFrom=refsCalls.length;
     await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
     await assert.rejects(refsOwner.prepareFrozenCaptureJobSourceReferencesV2Page(refsInput,refsOptions),/market_data_access_denied/);
@@ -2515,6 +2535,39 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     assert.deepEqual(await readRefsCheckpoint(),refsEndedCheckpoint);assert.equal(await refsBlobCount(),endedBlobs);
     assert.ok(!refsCalls.slice(endedFrom).some(sql=>/neighborhood-frozen-job-closure:|neighborhood-frozen-job-seeds:/.test(sql)),
       'ended prefix replay reads no source page and prepares no seed set');
+    if(prefixNativeFixture){
+      const readHead=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_source_prefix_v2_heads WHERE operation_id=$1',[refsOperation])).rows[0];
+      const issued=await readHead();assert.equal(issued.sequence,7);assert.equal(refsPrefix.native_prefix_sequence,7);
+      assert.deepEqual(issued.source_reference,refsEndedCheckpoint.evidence_refs[2]);
+      assert.equal(issued.actor_user_id,actor);assert.equal(issued.issued_attempts,2);
+      const beforeJob=(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[refsOperation])).rows[0];
+      for(const sql of [
+        'UPDATE app.neighborhood_custom_cohort_source_prefix_v2_heads SET sequence=sequence+1 WHERE operation_id=$1',
+        'UPDATE app.neighborhood_custom_cohort_source_prefix_v2_heads SET root_reference=stock_reference WHERE operation_id=$1',
+        'UPDATE app.neighborhood_custom_cohort_source_prefix_v2_heads SET issued_transaction_id=txid_current() WHERE operation_id=$1',
+        'DELETE FROM app.neighborhood_custom_cohort_source_prefix_v2_heads WHERE operation_id=$1',
+        "UPDATE app.neighborhood_custom_cohort_capture_jobs SET checkpoint=jsonb_set(checkpoint,'{evidence_refs,2}',checkpoint->'evidence_refs'->1) WHERE operation_id=$1",
+      ]){await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql,[refsOperation])),error=>error.code==='55000');
+        assert.deepEqual(await readHead(),issued);assert.deepEqual(await readRefsCheckpoint(),refsEndedCheckpoint);}
+      const optionsBefore={...refsOptions};
+      for(const extra of [{root:issued.root_reference},{cursor:''},{done:true},{source:()=>{} }])
+        await assert.rejects(refsOwner.issueFrozenCaptureJobSourceReferencesV2Page(refsInput,{...optionsBefore,...extra}),/invalid_options/);
+      // Reopen the actual completed issued prefix through the independent
+      // original graph owner; this does not skip its page reconciliation.
+      const graph=await refsOwner.verifyFrozenCaptureJobSourceReferencesV2Page(refsInput,refsOptions);
+      assert.equal(graph.advanced,true);assert.equal(graph.all_layers_verified,false);
+      assert.deepEqual(await readHead(),issued);assert.deepEqual(await readEarlyProtected(),earlyProtected);
+      const afterJob=(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[refsOperation])).rows[0];
+      assert.equal(afterJob.attempts,beforeJob.attempts);assert.equal(afterJob.last_error_code,beforeJob.last_error_code);
+      assert.equal(afterJob.context_sha256,null);
+      console.info('[native-source-prefix-issuance-v2]',{pages:7,original_queries_and_immutable_seed_reuse:true,
+        orphan_real_checkpoint_savepoint_rollback_and_COMMIT_refusal:true,lost_real_COMMIT_ACK_resumed_next_layer:true,
+        native_head_and_checkpoint_substitution_refused:true,all_current_and_ending_source_actor_subject_fences:true,
+        original_graph_started_from_actual_issued_prefix:true,attempts_and_failure_history_preserved:true,
+        reports_and_assignment_unchanged:true,initial_dispatcher:false,neutral_cache_handoff:false,
+        licensed_large_area_acceptance:false,production_speed:false,pin_transfer:false});
+      return;
+    }
     for(const method of ['prepareFrozenCaptureJobSourcePage','verifyFrozenCaptureJobSourcePage',
       'verifyFrozenCaptureJobStockOriginals','verifyFrozenCaptureJobSourceIdentityClosure','prepareFrozenCaptureJobTypedOriginals']){
       const from=refsCalls.length;

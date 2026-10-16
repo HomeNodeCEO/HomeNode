@@ -1,3 +1,38 @@
+## Completed-index first source plan (2026-10-16, inactive native prerequisite)
+
+An exact-17 completed transaction index has no next selected-account cursor.
+A new zero-argument native FIRST reader instead chooses one registered source
+key in native BIGINT order, or the first C-text legacy key only when no source
+key exists. Existing operation/key indexes bound each namespace lookup to one
+candidate; no population array, aggregate identity or whole-registry sort is
+used. The reader derives the immutable command, completed receipt and original
+first-seen selected account from native rows. Its native edge and union,
+metric, contribution and semantic member references must match. The actual
+live claim, consumed continuation, full exact-17 parent graph, pinned complete
+generation and non-retirement fence are required in the same transaction.
+Repeated native reads refuse a changed plan or transaction. Output stays below
+4096 bytes, including explicit false source-authority, original-reconciliation
+and economic-transaction fields.
+
+This is an inactive native metadata prerequisite, not the economic source
+owner. That owner still must reopen the chosen whole package, required subject
+and selected originals, ENTIRE caches and every native member under aggregate
+budgets, check both source purposes and actor/assignment/draft/subject/workspace
+at both ends, then repeat the native plan before any issuance. No production
+caller, source callback, caller cursor, new phase, receipt, migration, registry,
+worker, publication, Apply or pin transfer is added here.
+
+The existing independently acquired graph 32 now includes actual native refusal
+before index issuance and a read-only FIRST probe after its fresh EMPTY, using
+a real consumed continuation. It expects the actual shared source 501 and its
+first-seen CLOSURE-A member, repeats the same transaction read, then requires
+lease-expiry refusal without original IO. All probes roll back; earlier source
+inputs, original reconciliation, histories, guards and deadlines are unchanged.
+The 36 focused tests and three JavaScript syntax checks passed with no test
+failures, cancellations or skips; native cloud execution remains pending.
+Complete economic/currency/at-sale/equivalence/quarter semantics, coherent
+publication, terminal pins and licensed large-area/live-speed proof remain open.
+
 ## Native selected progress recovery (2026-10-16, authored, inactive)
 
 Actual native run 38968850062 (job 117201958477) passed 417 migrations,

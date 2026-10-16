@@ -18,7 +18,10 @@ its ID/count/hash. Missing, swapped, corrupt, forged-state/ordinal and changed
 ending rows refuse the whole result. A separate native partition empty probe
 must agree with the fresh original/cache empty probe. Current DB actor/assignment/
 private draft/subject/source-purpose/claim/pin/heads/cache fences and an exact
-ending row reread share ONE aggregate32MB/128-query/60s/5s-query budget.
+ending row reread remain mandatory. The original-cell reader has ONE single-use
+32MB/128-query/60s/5s-query subbudget. Other owner/repository SQL uses the
+transaction client under the outer deadline and SQL timeout; this stage has no
+shared owner query counter.
 
 No head/row/checkpoint/blob/cache is written or repaired. The output is only
 ONE original-reconciled partition account (or explicit empty probe), preserving
@@ -34,9 +37,14 @@ assigned/one conflicting,512-byte labels and entire derived/original equality,
 native metadata/ending row/blob/original-cache forgeries, all current/ending
 authority/cache/cancel fences, partial/unissued/corrupt heads, fresh dual empty
 probe, lost-ACK reopen and zero row/head/checkpoint/payload copies. New native/
-full cloud execution is PENDING. The parent durable partition #1246 exact47f6b1b5
-also awaits its initial native/full cloud result; no parent receipt is reused
-as this new head's acceptance. No heavy local suite or Indexer operation.
+full cloud execution for the newly integrated head is PENDING. The actual
+protected parent #1246 merged as1b35afac after all16 exact817e checks passed,
+actual included review and its confirmed documentation fix. Native116867488884
+passed417 migrations/subject1/prepared8/edge1/bootstrap2, zero failures/skips/
+cancellations, with the actual partition marker at2026-10-16T07:47:32.2133205Z.
+That is parent evidence, not this new consumer head's acceptance. This branch
+was retargeted to main before integrating that actual merge. No heavy local
+suite or Indexer operation.
 
 Bounded complete catalog grouping, server-owned exact distinct selected union/
 metric ordinals, original-reconciled medians/COD/calendar quarters, economic/

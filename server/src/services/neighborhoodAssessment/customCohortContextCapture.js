@@ -397,6 +397,12 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingSelectedUnionFirstAmenities: true, readingSelectedUnionFirstTransactions: true, readingSelectedMetricSource: true,
     readingSelectedStatisticsSource: true, progressingSelectedStatistics: true,
     allowedPhases: ['frozen_selected_metrics_refs_v2','frozen_selected_statistics_refs_v2'] },
+  covered_selected_statistics_progress_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,
+    readingSelectedUnionSubjectHousing:true,readingSelectedUnionFirstEligibility:true,
+    readingSelectedUnionFirstAmenities:true,readingSelectedUnionFirstTransactions:true,readingSelectedMetricSource:true,
+    readingSelectedStatisticsSource:true,progressingSelectedStatistics:true,coveredNeutralOriginals:true,
+    allowedPhases:['frozen_selected_metrics_refs_v2','frozen_selected_statistics_refs_v2'] },
   original_selected_first_frequency_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
     readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true,
@@ -3578,6 +3584,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           const continuation=await createCustomCohortV2ContinuationRepository(client).yieldIssued(claim,jobOptions);
           const {statistics_contribution_candidate,metric_row_candidate,reported_comparison,...presentation}=subjectHousingResult;
           const result={...presentation,status:'original_selected_statistics_contribution_progress_retained',
+            ...(coveredNeutralOriginals?{covered_neutral_originals:true,covered_CAD_originals:true}:{}),
             statistics_contribution_reference:receiptReference,statistics_contribution_row_reference:rowReference,
             statistics_contribution_retained:rowReference!==null,progress:plan.after,contribution_counts:afterCounts,read_only:false,
             coverage:'one_native_selected_ordinal_or_fresh_terminal_empty_probe',empty_selected_union:unionCounts.selected_count===0,
@@ -4194,6 +4201,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       frozenCaptureJobSourceStage(value, options, 'original_selected_first_statistics_refs_v2'),
     progressOriginalFrozenCaptureJobSelectedStatisticsReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_selected_statistics_progress_refs_v2'),
+    progressCoveredOriginalFrozenCaptureJobSelectedStatisticsReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'covered_selected_statistics_progress_refs_v2'),
     // Inactive read-only fixed-first source reconciliation after DONE eighth.
     // NOT a frequency index, complete semantic pass, statistic or publication.
     readOriginalFrozenCaptureJobFirstSelectedFrequencyReferencesV2: (value, options = {}) =>

@@ -32,7 +32,8 @@ import { createNeighborhoodSharedJobCadImprovementPages,prepareNeighborhoodShare
 import { prepareNeighborhoodOriginalCadAccountPackagePageV2 } from './neighborhoodOriginalCadAccountPackagesV2.js';
 import { describeNeighborhoodCadImprovementPurpose } from '../../security/customNeighborhoodCadImprovementSourcePolicy.js';
 import { createNeighborhoodFrozenJobTypedOriginals } from './neighborhoodFrozenJobTypedOriginals.js';
-import { getNeighborhoodFrozenTypedOriginalV1Profile } from './neighborhoodFrozenTypedOriginalV1.js';
+import { getNeighborhoodFrozenTypedOriginalV1Profile,getNeighborhoodFrozenTypedOriginalV2Profile } from './neighborhoodFrozenTypedOriginalV1.js';
+import { createNeighborhoodSharedTypedOriginalPageV2 } from './neighborhoodSharedTypedGeneration.js';
 import { createNeighborhoodFrozenJobStockMetricPages, createNeighborhoodSharedJobStockMetricPages,
   createNeighborhoodSharedJobStockMetricPagesV2, prepareNeighborhoodFrozenStockMetricPage }
   from './neighborhoodFrozenJobStockMetricPages.js';
@@ -62,6 +63,7 @@ import { createCustomCohortIdentityV2AnchorRepository } from './customCohortIden
 import { prepareCohortSourceIdentityReceiptV2 } from './cohortSourceIdentityReceiptV2.js';
 import { prepareCohortStockTraversalReceiptV2 } from './cohortStockTraversalReceiptV2.js';
 import { createCustomCohortStockTraversalV2AnchorRepository } from './customCohortStockTraversalV2AnchorRepository.js';
+import { createCustomCohortNeutralCacheV2HeadRepository } from './customCohortNeutralCacheV2HeadRepository.js';
 import { prepareCohortRecordedGroupPartitionReceiptV2 } from './cohortRecordedGroupPartitionReceiptV2.js';
 import { createCustomCohortRecordedPartitionV2Repository } from './customCohortRecordedPartitionV2Repository.js';
 import { createCustomCohortRecordedCatalogV2Repository } from './customCohortRecordedCatalogV2Repository.js';
@@ -96,7 +98,7 @@ import { encodeCohortDiagnosticCompressedJsonV1 } from './cohortDiagnosticCompre
 import { createCustomCohortV2ContinuationRepository } from './customCohortV2ContinuationRepository.js';
 import { createCustomCohortV2SelectionWaitRepository } from './customCohortV2SelectionWaitRepository.js';
 import { createCustomCohortV2SelectionIntentRepository, prepareCustomCohortV2SelectionIntent } from './customCohortV2SelectionIntentRepository.js';
-import { createCustomCohortOriginalAccountOwnerBudget,
+import { createCustomCohortOriginalAccountOwnerBudget,createCustomCohortNeutralCacheOwnerBudget,
   CUSTOM_COHORT_ORIGINAL_ACCOUNT_OWNER_LIMITS } from './customCohortOriginalAccountOwnerBudget.js';
 import { getNeighborhoodOriginalRecordedGroupV2Profile } from './neighborhoodOriginalRecordedGroupV2.js';
 import { createCustomCohortRecordedGroupSelectionOwner,
@@ -194,6 +196,8 @@ const FROZEN_SOURCE_STAGES = freeze({
     allowedPhases: ['frozen_verify_refs_v2', 'frozen_geo_verify_refs_v2'] },
   identity_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     allowedPhases: ['frozen_geo_verify_refs_v2', 'frozen_identity_refs_v2'] },
+  neutral_cache_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,cachingNeutralOriginals:true,
+    allowedPhases:['frozen_identity_refs_v2'] },
   verify_continue_refs_v2: { referencesV2: true, verifying: true, yieldingEarlyProgress: true,
     allowedPhases: ['frozen_source_refs_v2', 'frozen_verify_refs_v2'] },
   geographic_continue_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, yieldingEarlyProgress: true,
@@ -1802,7 +1806,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     if(typeof stage!=='string'||!Object.hasOwn(FROZEN_SOURCE_STAGES,stage))
       fail('frozen_source_representation_unsupported');
     const {referencesV2=false,issuingSourcePrefix=false,yieldingSourcePrefix=false,verifying=false,stockVerifying=false,identityVerifying=false,yieldingEarlyProgress=false,
-      typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,
+      typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,cachingNeutralOriginals=false,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,
       resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,partitioningRecordedGroups=false,
@@ -1844,11 +1848,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     if(!reportedProfile) fail('frozen_source_profile_unsupported');
     if(originalInput.privateSalesImport || originalInput.discovery?.profile_id!=='custom-suburban-radius-v2') fail('frozen_discovery_unsupported');
     if(readingCadSource&&typeof authorizeCadImprovementData!=='function')fail('CAD_source_policy_required');
-    const boundedOriginalAccountOwner=traversingStock||partitioningRecordedGroups||readingRecordedPartition||catalogingRecordedGroups;
+    const boundedOriginalAccountOwner=cachingNeutralOriginals||traversingStock||partitioningRecordedGroups||readingRecordedPartition||catalogingRecordedGroups;
     const budget=operationBudget(budgetOptions,boundedOriginalAccountOwner
       ?CUSTOM_COHORT_ORIGINAL_ACCOUNT_OWNER_LIMITS.operation_ms:LIMITS.capture_duration_ms);
     return transaction(pool,'READ COMMITTED',budget,async transactionClient=>{
-      const client=boundedOriginalAccountOwner?createCustomCohortOriginalAccountOwnerBudget(transactionClient,{checkBudget:budget.check}):transactionClient;
+      const client=cachingNeutralOriginals?createCustomCohortNeutralCacheOwnerBudget(transactionClient,{checkBudget:budget.check})
+        :boundedOriginalAccountOwner?createCustomCohortOriginalAccountOwnerBudget(transactionClient,{checkBudget:budget.check}):transactionClient;
       const locator=one(await client.query(`/* custom-cohort-capture:job-organization */
         SELECT organization_id FROM app.assignment_files WHERE id=$1::bigint AND account_id=$2`,
       [originalInput.assignmentFileId,originalInput.accountId]));
@@ -2159,7 +2164,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           issued=prepareCohortSourceIdentityReceiptV2(issued,expected);
           if(issued.sequence!==identityAnchor.sequence)fail('checkpoint_conflict');
         }
-        if((readingSharedStockMetrics||readingCadPages||readingTransactionPages||readingTransactionPackages||readingStockOriginalCells||readingStockAccountPackages||traversingStock||partitioningRecordedGroups||catalogingRecordedGroups)
+        if((cachingNeutralOriginals||readingSharedStockMetrics||readingCadPages||readingTransactionPages||readingTransactionPackages||readingStockOriginalCells||readingStockAccountPackages||traversingStock||partitioningRecordedGroups||catalogingRecordedGroups)
           &&issued?.after.kind_index!==COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.length)
           fail('unfinished_identity_verification');
         // Keep the original exact all-date one-hop identity SQL unchanged.
@@ -2202,6 +2207,48 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           await jobs.saveCheckpoint(claim,jobOptions,{phase:'frozen_identity_v1',
             evidence_refs:[retained.intent.reference,stockReference,reference,verificationReference,stockVerificationReference,identityVerificationReference]});
         }
+      }
+      let neutralCacheStore=null,neutralCacheHead=null,neutralCachePlan=null,neutralCacheResult=null;
+      if(cachingNeutralOriginals){
+        const expected={binding,source_reference:reference,root,graph_reference:verificationReference,
+          geographic_reference:stockVerificationReference,identity_reference:identityVerificationReference,stock_reference:stockReference,
+          profile_reference:getNeighborhoodFrozenTypedOriginalV2Profile().definition_blob.ref};
+        neutralCacheStore=createCustomCohortNeutralCacheV2HeadRepository({client,claim,scope,actorUserId:input.auth.userId,
+          source_reference:reference,root_reference:root,graph_reference:verificationReference,
+          geographic_reference:stockVerificationReference,identity_reference:identityVerificationReference,stock_reference:stockReference});
+        neutralCacheHead=await neutralCacheStore.read();
+        let issued=null;
+        if(neutralCacheHead){
+          const text=await blobs.get(neutralCacheHead.receipt_reference.content_sha256,neutralCacheHead.receipt_reference.canonical_utf8_bytes);
+          if(text===null||Buffer.byteLength(text)>16000)fail('checkpoint_conflict');
+          try{issued=JSON.parse(text);}catch{fail('checkpoint_conflict');}
+          exactKeys(issued,['format',...Object.keys(expected),'sequence','previous','before','after']);
+          if(issued.format!=='cohort_neutral_cache_receipt_v2'||issued.sequence!==neutralCacheHead.sequence
+            ||assessmentEvidenceDigest(issued)!==neutralCacheHead.receipt_reference.content_sha256
+            ||!Object.keys(expected).every(k=>same(issued[k],expected[k])))fail('checkpoint_conflict');
+        }
+        const before=issued?.after??{kind_index:0,position:null,page_count:0,row_count:0,original_utf8_bytes:0,typed_utf8_bytes:'0'};
+        exactKeys(before,['kind_index','position','page_count','row_count','original_utf8_bytes','typed_utf8_bytes']);
+        if(!Number.isInteger(before.kind_index)||before.kind_index<0||before.kind_index>7
+          ||before.page_count!==(neutralCacheHead?.sequence??0))fail('checkpoint_conflict');
+        if(before.kind_index<7){
+          // The only original adapter is the fixed closure SQL above. Reopen
+          // the exact issued root edge; never invoke the global cache builder.
+          const kind=COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS[before.kind_index],
+            original=await chain.read({root,kind,position:before.position});
+          const body=JSON.parse(original.original_text);
+          const reconciled=await createNeighborhoodSharedTypedOriginalPageV2(client,{generationId:stock.generation_id,
+            signal:budget.signal,checkBudget:budget.check}).reconcile({kind,rows:body.page.rows});
+          neutralCachePlan={format:'cohort_neutral_cache_receipt_v2',...expected,sequence:before.page_count+1,
+            previous:neutralCacheHead?.receipt_reference??null,before,after:{
+              kind_index:before.kind_index+Number(original.next_position===null),position:original.next_position,
+              page_count:before.page_count+1,row_count:before.row_count+body.page.rows.length,
+              original_utf8_bytes:before.original_utf8_bytes+Buffer.byteLength(original.original_text),
+              typed_utf8_bytes:String(BigInt(before.typed_utf8_bytes)+BigInt(reconciled.typed_utf8_bytes))}};
+          if(Buffer.byteLength(canonicalAssessmentJson(neutralCachePlan))>16000)fail('byte_limit');
+          neutralCacheResult={advanced:true,progress:neutralCachePlan.after,reconciled_rows:reconciled.reconciled_rows,
+            inserted_rows:reconciled.inserted_rows};
+        }else neutralCacheResult={advanced:false,progress:before,reconciled_rows:0,inserted_rows:0};
       }
       if(typing) {
         const profile=getNeighborhoodFrozenTypedOriginalV1Profile();let progress=null;
@@ -3075,6 +3122,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(graphAnchorStore&&!same(await graphAnchorStore.read(),graphAnchor))fail('checkpoint_conflict');
       if(geographicAnchorStore&&!same(await geographicAnchorStore.read(),geographicAnchor))fail('checkpoint_conflict');
       if(identityAnchorStore&&!same(await identityAnchorStore.read(),identityAnchor))fail('checkpoint_conflict');
+      if(neutralCacheStore&&!same(await neutralCacheStore.read(),neutralCacheHead))fail('checkpoint_conflict');
       if(traversalAnchorStore&&!same(await traversalAnchorStore.read(),traversalAnchor))fail('checkpoint_conflict');
       if(partitionStore&&!same(await partitionStore.read(),partitionAnchor))fail('checkpoint_conflict');
       if(!readingSelectedUnionSubjectHousing&&(readingRecordedPartition||catalogingRecordedGroups)&&!same(await partitionStore.readNextEntry(partitionReadCursor),partitionReadEntry))fail('partition_original_mismatch');
@@ -3083,6 +3131,20 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if((readingSelectionWorkspaceTarget||awaitingSelection||selectingCatalogIntent||readingRetainedSelectionIntent||replayingSelectedUnion)&&!same(await readCustomCohortFrozenSelectionWorkspaceTarget({
         client,input,scopeJson:canonicalAssessmentJson(scope),checkBudget:budget.check}),selectionWorkspaceTarget))fail('workspace_target_changed');
       budget.check();
+      if(cachingNeutralOriginals){
+        // Every actual actor/assignment/draft/subject/source/claim/stock/root
+        // and independent-parent ending fence above precedes head retention.
+        // Any refusal rolls cache inserts, totals and this head back together.
+        if(neutralCachePlan){
+          const retainedReceipt=await blobs.put(canonicalAssessmentJson(neutralCachePlan));
+          neutralCacheHead=await neutralCacheStore.advance(neutralCacheHead,retainedReceipt);
+        }
+        budget.check();return freeze({status:'current_authorized_neutral_original_cache_progress_v2',operation_id:input.operationId,
+          ...neutralCacheResult,cache_coverage_reference:neutralCacheHead.receipt_reference,
+          all_issued_source_pages_reconciled:neutralCacheResult.progress.kind_index===7,
+          global_generation_complete:'not_established',automatic_success_handoff:false,context_complete:false,pin_transfer:false,
+          source_acquisition:'not_established',publication:'not_established',report_update:'none'});
+      }
       if(replayingSelectedUnion){
         const ending=await createCustomCohortV2SelectionIntentRepository(client)[readingSelectedTransactionIndex?'readForTransactionIndex':readingSelectedTransactionSource?'readForTransactionSource':progressingSelectedSemantic?'readForSemanticStatistics':progressingSelectedNumeric||readingSelectedRankCandidates?'readForNumericPopulation':readingSelectedFrequencySource?'readForFrequencies':progressingSelectedStatistics?'readForStatisticsContributions':readingSelectedStatisticsSource?'readForStatistics':progressingSelectedMetrics?'readForMetrics':progressingSelectedEvidence||readingSelectedMetricSource?'readForEvidence':progressingSelectedEligibility?'readForEligibility':'readForReplay'](claim,
           {...jobOptions,workspaceTarget:selectionWorkspaceTarget});
@@ -3680,6 +3742,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * No typed observations, source acquisition, publication, Apply or pin release. */
     verifyFrozenCaptureJobSourceIdentityReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'identity_refs_v2'),
+    reconcileFrozenCaptureJobNeutralOriginalsReferencesV2: (value,options={})=>
+      frozenCaptureJobSourceStage(value,options,'neutral_cache_refs_v2'),
     /** Independent current-authorized root-edge/original-representation validation.
      * Not typed identity closure, complete geographic stock, source acquisition,
      * report publication or Apply. Progress is loaded only from this job's fence. */

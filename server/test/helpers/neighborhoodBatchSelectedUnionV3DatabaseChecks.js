@@ -23,7 +23,8 @@ export async function runNeighborhoodBatchSelectedUnionV3DatabaseChecks({pool,in
   for(const [fault,reason] of [['union_workspace',/custom_cohort_group_workspace_study_changed/],
     ['union_role',/custom_cohort_job_actor_access_revoked/],['catalog_replay_rights',/market_data_access_denied|market_policy_changed/],
     ['catalog_replay_counts',/catalog_original_mismatch/],['union_cache',/original_mismatch/],
-    ['union_orphan',/55000|continuation|checkpoint|claim|conflict/]]){
+    ['union_orphan',error=>error.outcome_unknown===true&&error.code==='55000'
+      &&error.message==='neighborhood_selected_union_v2_orphan_progress']]){
     setFault(fault);const reads=originalReads();await assert.rejects(invoke(),reason);assert.equal(readFault(),null);
     assert.equal(originalReads(),reads+1,'subject and next whole account share ONE real original packet, including ending refusals');
     if(fault==='union_role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);

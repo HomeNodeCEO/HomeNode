@@ -13,7 +13,7 @@ import { runNeighborhoodCompletedIndexFirstSourceV3DatabaseChecks } from './neig
  * frozen before capture, then reopened for EACH selected account and EMPTY.
  * Registry keys and edges never establish economic identity or source rights. */
 export async function runNeighborhoodBatchSelectedTransactionIndexV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
-  catalogHead,groups,assertParents,setFault,readFault,originalReads,command}){
+  catalogHead,groups,assertParents,setFault,readFault,originalReads,command,laterFirstSource=false}){
   const operation=input.operationId,method='progressCoveredOriginalFrozenCaptureJobBatchSelectedTransactionIndexReferencesV3',
     tables=['selected_transaction_index_v2_heads','selected_transaction_index_v2_rows',
       'selected_transaction_source_v2_keys','selected_transaction_legacy_v2_keys','selected_transaction_index_v2_edges'],
@@ -94,10 +94,11 @@ export async function runNeighborhoodBatchSelectedTransactionIndexV3DatabaseChec
     assert.equal((await job()).attempts,5);assert.equal((await job()).last_error_code,'access_revoked');assert.equal((await job()).checkpoint.evidence_refs.length,17);await immutable();
   }
   const sources=current.selected_transaction_source_v2_keys,legacies=current.selected_transaction_legacy_v2_keys,edges=current.selected_transaction_index_v2_edges;
-  assert.deepEqual(sources.map(r=>r.source_record_id).sort(),['501','503','504']);assert.deepEqual(legacies.map(r=>r.legacy_sale_key).sort(),['10','3']);assert.equal(edges.length,6);
-  assert.equal(sources.find(r=>r.source_record_id==='501').first_selected_ordinal,1);
+  assert.deepEqual(sources.map(r=>r.source_record_id).sort(),['501','503','504']);assert.deepEqual(legacies.map(r=>r.legacy_sale_key).sort(),['10','3']);assert.equal(edges.length,laterFirstSource?5:6);
+  assert.equal(sources.find(r=>r.source_record_id==='501').first_selected_ordinal,laterFirstSource?2:1);
   assert.ok(sources.filter(r=>r.source_record_id!=='501').every(r=>r.first_selected_ordinal===2));assert.ok(legacies.every(r=>r.first_selected_ordinal===2));
-  for(const ordinal of [1,2])assert.ok(edges.some(r=>r.ordinal===ordinal&&r.source_record_id==='501'));
+  for(const ordinal of (laterFirstSource?[2]:[1,2]))assert.ok(edges.some(r=>r.ordinal===ordinal&&r.source_record_id==='501'));
+  if(laterFirstSource)assert.equal(edges.filter(r=>r.ordinal===1).length,0,'selected A was indexed after its actual EMPTY transaction package');
   assert.ok(!sources.some(r=>r.source_record_id==='502'),'outside second-hop package is never expanded');
   assert.equal(receipt.after.source_record_keys,3);assert.equal(receipt.after.legacy_sale_keys,2);
   for(const row of current.selected_transaction_index_v2_rows){const member=before.parents.selected_semantic_v2_rows.find(r=>r.ordinal===row.ordinal);
@@ -109,8 +110,8 @@ export async function runNeighborhoodBatchSelectedTransactionIndexV3DatabaseChec
   await assert.rejects(tx(pool,async client=>{
     const [next]=await continuations(client).claimDue({limit:1,leaseSeconds:900});assert.equal(next.claim.operation_id,operation);
     const source=completedSource({client,claim:next.claim,scope,actorUserId:actor}),reads=originalReads(),plan=await source.readFirst();
-    assert.deepEqual(plan.source,{kind:'source_record',native_key:'501',first_selected_ordinal:1});
-    const indexed=terminal.index.selected_transaction_index_v2_rows.find(r=>r.ordinal===1);
+    assert.deepEqual(plan.source,{kind:'source_record',native_key:'501',first_selected_ordinal:laterFirstSource?2:1});
+    const indexed=terminal.index.selected_transaction_index_v2_rows.find(r=>r.ordinal===(laterFirstSource?2:1));
     assert.deepEqual(plan.selected_entry,Object.fromEntries(['account_id','ordinal','partition_ordinal','entry_reference','metric_row_reference','contribution_row_reference'].map(k=>[k,indexed[k]])));
     assert.equal(plan.index_sequence,3);assert.equal(plan.registered_source_keys,3);assert.equal(plan.registered_legacy_keys,2);
     assert.deepEqual(plan.index_reference,terminal.index.selected_transaction_index_v2_heads[0].receipt_reference);
@@ -119,6 +120,7 @@ export async function runNeighborhoodBatchSelectedTransactionIndexV3DatabaseChec
     assert.deepEqual((await client.query('SELECT * FROM app.neighborhood_custom_cohort_selected_transaction_index_v2_heads WHERE operation_id=$1',[operation])).rows,terminal.index.selected_transaction_index_v2_heads);
     console.info('[native-completed-index-first-source-v3]',{actual_complete_index_and_consumed_native_continuation:true,
       first_registered_shared_source_and_original_first_seen_account:true,readonly_repeat_same_transaction:true,
+      later_first_seen_selected_ordinal_two:laterFirstSource,
       source_authority:false,originals_reconciled:false,economic_transaction:false,production_activation:false});
     await client.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);
     await assert.rejects(source.readFirst(),/claim_or_completed_index_lost/);assert.equal(originalReads(),reads);
@@ -128,10 +130,11 @@ export async function runNeighborhoodBatchSelectedTransactionIndexV3DatabaseChec
   }),e=>e===rollback);
   assert.deepEqual(await job(),terminal.job);assert.deepEqual(await parent(),terminal.parent);assert.deepEqual(await blobs(),terminal.blobs);assert.deepEqual(await snapshot(),terminal.index);await immutable();
   await runNeighborhoodCompletedIndexFirstSourceV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
-    snapshot,immutable,setFault,readFault,originalReads});
+    snapshot,immutable,setFault,readFault,originalReads,laterFirstSource});
   console.info('[native-batch-selected-transaction-index-v3]',{independent_actual_V3_semantic_worker_fresh_EMPTY:true,
     every_selected_complete_original_ENTIRE_cache_and_every_prior_native_member_reconciled_again:true,
-    real_shared_source_replayed_per_selected_account_exact_namespaced_keys_edges_and_first_seen:true,
+    real_shared_source_replayed_per_selected_account_exact_namespaced_keys_edges_and_first_seen:!laterFirstSource,
+    first_registered_source_belongs_to_selected_ordinal_two_after_empty_A:laterFirstSource,
     cache_refusal_real_orphan_COMMIT_rollback_lost_first_ACK_concurrent_A_B_fresh_EMPTY_native_claims5:true,
     DONE_all_claim_recovery_expiry_cancelled_next_owner_excluded_native_parents_history_pins_preserved:true,
     ordinary_worker_recovery_below5:'not_exercised_requires_new_reserved_failure_graph',

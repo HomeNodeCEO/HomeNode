@@ -118,7 +118,7 @@ export async function runNeighborhoodBatchSelectedSemanticV3DatabaseChecks({pool
   assert.deepEqual(await job(),terminal.job);assert.deepEqual(await parent(),terminal.parent);assert.deepEqual(await blobs(),terminal.blobs);assert.deepEqual(await head(),terminal.head);assert.deepEqual(await rows(),terminal.rows);await immutable();
   if(batchSelectedTransactionIndexFixture){
     await runNeighborhoodBatchSelectedTransactionIndexV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
-      catalogHead,groups,assertParents,setFault,readFault,originalReads,command});return;
+      catalogHead,groups,assertParents,setFault,readFault,originalReads,command,laterFirstSource:batchSelectedTransactionIndexFixture==='later-first-source'});return;
   }
   console.info('[native-batch-selected-semantic-v3]',{independent_actual_V3_numeric_worker_fresh_EMPTY:true,
     every_selected_complete_original_ENTIRE_cache_metric_contribution_index_and_numeric_member_reconciled_again:true,

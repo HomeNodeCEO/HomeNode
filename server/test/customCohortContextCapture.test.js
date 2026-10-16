@@ -69,7 +69,7 @@ test('actual capture entry points refuse executable claim Proxies before connect
     'verifyFrozenCaptureJobStockOriginalReferencesV2','verifyFrozenCaptureJobSourceIdentityReferencesV2',
     'advanceOriginalFrozenCaptureJobStockTraversalReferencesV2','continueOriginalFrozenCaptureJobStockTraversalReferencesV2','continueCoveredOriginalFrozenCaptureJobStockTraversalReferencesV2','continueCoveredOriginalFrozenCaptureJobStockBatchReferencesV3',
     'continueOriginalFrozenCaptureJobRecordedPartitionReferencesV2','continueCoveredOriginalFrozenCaptureJobRecordedPartitionReferencesV2','continueCoveredOriginalFrozenCaptureJobRecordedPartitionBatchReferencesV3','continueOriginalFrozenCaptureJobRecordedCatalogReferencesV2','continueCoveredOriginalFrozenCaptureJobRecordedCatalogReferencesV2','continueCoveredOriginalFrozenCaptureJobRecordedCatalogBatchReferencesV3',
-    'awaitOriginalFrozenCaptureJobSelectionReferencesV2','awaitCoveredOriginalFrozenCaptureJobSelectionReferencesV2','awaitCoveredOriginalFrozenCaptureJobBatchSelectionReferencesV3','readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','readCoveredOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2',
+    'awaitOriginalFrozenCaptureJobSelectionReferencesV2','awaitCoveredOriginalFrozenCaptureJobSelectionReferencesV2','awaitCoveredOriginalFrozenCaptureJobBatchSelectionReferencesV3','readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','readCoveredOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','readCoveredOriginalFrozenCaptureJobRetainedBatchSelectionIntentReferencesV3',
     'continueOriginalFrozenCaptureJobSelectedStockUnionReferencesV2','readOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2',
     'readOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2','readOriginalFrozenCaptureJobFirstSelectedAmenitiesReferencesV2',
     'readOriginalFrozenCaptureJobFirstSelectedTransactionsReferencesV2',
@@ -352,7 +352,7 @@ for(const method of ['advanceOriginalFrozenCaptureJobStockTraversalReferencesV2'
   'advanceOriginalFrozenCaptureJobRecordedCatalogReferencesV2',
   'continueOriginalFrozenCaptureJobStockTraversalReferencesV2','continueCoveredOriginalFrozenCaptureJobStockTraversalReferencesV2','continueCoveredOriginalFrozenCaptureJobStockBatchReferencesV3','continueOriginalFrozenCaptureJobRecordedPartitionReferencesV2','continueCoveredOriginalFrozenCaptureJobRecordedPartitionReferencesV2','continueCoveredOriginalFrozenCaptureJobRecordedPartitionBatchReferencesV3',
   'continueOriginalFrozenCaptureJobRecordedCatalogReferencesV2','continueCoveredOriginalFrozenCaptureJobRecordedCatalogReferencesV2','continueCoveredOriginalFrozenCaptureJobRecordedCatalogBatchReferencesV3','awaitOriginalFrozenCaptureJobSelectionReferencesV2','awaitCoveredOriginalFrozenCaptureJobSelectionReferencesV2','awaitCoveredOriginalFrozenCaptureJobBatchSelectionReferencesV3',
-  'readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','readCoveredOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','continueOriginalFrozenCaptureJobSelectedStockUnionReferencesV2',
+  'readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','readCoveredOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','readCoveredOriginalFrozenCaptureJobRetainedBatchSelectionIntentReferencesV3','continueOriginalFrozenCaptureJobSelectedStockUnionReferencesV2',
   'continueCoveredOriginalFrozenCaptureJobSelectedStockUnionReferencesV2','readCoveredOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2',
   'readCoveredOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2','progressCoveredOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2',
   'readOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2','readOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2',
@@ -386,7 +386,7 @@ test(`${method} admits only the live claim and bounded operation, not caller con
   await assert.rejects(service[method](base,{captureJobClaim:claim,signal:controller.signal}),/cancelled/);
 });
 
-for(const method of ['readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','readCoveredOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2',
+for(const method of ['readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','readCoveredOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','readCoveredOriginalFrozenCaptureJobRetainedBatchSelectionIntentReferencesV3',
   'continueCoveredOriginalFrozenCaptureJobSelectedStockUnionReferencesV2','readCoveredOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2',
   'readCoveredOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2','progressCoveredOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2'])
 test(`${method} refuses Proxy claims without executing traps or checking out a connection`,async()=>{
@@ -397,7 +397,7 @@ test(`${method} refuses Proxy claims without executing traps or checking out a c
     {captureJobClaim:new Proxy({},{getPrototypeOf(){assert.fail('claim proxy trap');}})}),/invalid_options/);
 });
 
-for(const method of ['resumeOriginalFrozenCaptureJobSelectionIntentReferencesV2','resumeCoveredOriginalFrozenCaptureJobSelectionIntentReferencesV2'])
+for(const method of ['resumeOriginalFrozenCaptureJobSelectionIntentReferencesV2','resumeCoveredOriginalFrozenCaptureJobSelectionIntentReferencesV2','resumeCoveredOriginalFrozenCaptureJobBatchSelectionIntentReferencesV3'])
 test(`${method} accepts no caller claim, source adapter, workspace or prior automatic choice`,async()=>{
   const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
     selectionIntent={command_id:'70000000-0000-4000-8000-000000000002',catalog_reference:{content_sha256:'a'.repeat(64),canonical_utf8_bytes:'123'},

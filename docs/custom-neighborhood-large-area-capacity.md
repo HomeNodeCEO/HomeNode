@@ -1,5 +1,37 @@
 # Complete larger-area Custom neighborhood studies
 
+## Explicit batch selection intent (2026-10-16, not activated)
+
+The separate closed V3 resume owner accepts only an explicit NEW-study command:
+an immutable command ID, exact issued catalog reference, current workspace
+revision and bounded recorded-group IDs. It reuses the native immutable command
+and 120-second resume lease protocol. Current source permission precedes known-ID
+lookup, and original/cache/partition EMPTY plus actor/assignment/draft/subject/
+workspace/native-parent/count fences run before COMMIT. Every refusal rolls back
+BOTH provisional command and lease. Replaying the same command returns the same
+native token without extending the lease; a separate read owner reopens the
+retained command without minting a choice, claim or lease.
+
+The unregistered development guard adds exact terminal V3 stock/partition/catalog
+lineage while retaining the full existing ID grammar, delayed known-ID lookup,
+exact pending workspace and deferred command/resume COMMIT safeguard. No worker
+selects groups. No HTTP route, registry, source grant, selected membership,
+statistics, publication or pin transfer is activated.
+
+A twenty-third independently captured native scenario is authored, preserving
+all twenty-two earlier variants and deadlines. Its explicit disposable-fixture
+choice includes the actual assigned and unassigned catalog groups. It requires
+revoked-source refusal of an unknown well-shaped ID before group lookup/original
+IO; ending source/role/workspace/count and orphan-resume rollback; unknown/stale/
+conflicting-command refusal; lost real COMMIT ACK and same-token replay without
+lease extension; retained-command current/ending original replay; and exclusion
+of an expired/cancelled human resume from every prior worker lane. All evidence,
+failure5 history, workspace, reports and pins remain. 161 serial focused checks
+pass, zero failures/cancellations/skips (1557.3533ms); changed JS syntax and diff
+checks pass. Actual new-head native/full cloud verification remains pending.
+Complete selected-union semantic replay, coherent activation and licensed
+large-area capacity/live speed acceptance remain open.
+
 ## Batch catalog waiting boundary (2026-10-16, not activated)
 
 The closed `awaitCoveredOriginalFrozenCaptureJobBatchSelectionReferencesV3`

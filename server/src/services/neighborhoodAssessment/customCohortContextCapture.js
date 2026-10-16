@@ -332,10 +332,16 @@ const FROZEN_SOURCE_STAGES = freeze({
     catalogingRecordedGroups: true, selectingCatalogIntent: true, allowedPhases: ['frozen_recorded_catalog_refs_v2'] },
   covered_catalog_selection_intent_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
     catalogingRecordedGroups:true,selectingCatalogIntent:true,coveredNeutralOriginals:true,allowedPhases:['frozen_recorded_catalog_refs_v2'] },
+  covered_batch_selection_intent_refs_v3: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,selectingCatalogIntent:true,coveredNeutralOriginals:true,catalogBatchLineage:true,
+    allowedPhases:['frozen_recorded_catalog_refs_v2'] },
   original_retained_selection_intent_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, readingRetainedSelectionIntent: true, allowedPhases: ['frozen_recorded_catalog_refs_v2'] },
   covered_retained_selection_intent_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
     catalogingRecordedGroups:true,readingRetainedSelectionIntent:true,coveredNeutralOriginals:true,allowedPhases:['frozen_recorded_catalog_refs_v2'] },
+  covered_retained_batch_selection_intent_refs_v3: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,readingRetainedSelectionIntent:true,coveredNeutralOriginals:true,catalogBatchLineage:true,
+    allowedPhases:['frozen_recorded_catalog_refs_v2'] },
   original_selected_union_replay_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
     allowedPhases: ['frozen_recorded_catalog_refs_v2','frozen_selected_union_refs_v2'] },
@@ -3816,6 +3822,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           {...jobOptions,workspaceTarget:selectionWorkspaceTarget});
         if(!same(ending,issuedSelectionIntent)||!same(ending.catalog_reference,catalogAnchor.receipt_reference))fail('selection_intent_changed');
         budget.check();return freeze({...issuedSelectionIntent,status:'retained_new_study_selection_intent_reopened',operation_id:input.operationId,
+          ...(catalogBatchLineage?{receipt_format:'cohort_recorded_catalog_batch_receipt_v3'}:{}),
           selection_workspace_target:selectionWorkspaceTarget,genuine_new_group_choice:'unchanged_immutable_authenticated_command_only',
           original_reconciliation:'fresh_terminal_original_cache_and_partition_empty_probe_after_issued_catalog_DONE',
           read_only:true,lease_extended:false,complete_catalog_semantic_replay:'not_established',selected_union:'not_established',
@@ -3828,6 +3835,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         if(!same(ending.claim,issuedSelectionIntent.claim)||!same(ending.included_recorded_group_ids,issuedSelectionIntent.included_recorded_group_ids)
           ||!same(ending.catalog_reference,catalogAnchor.receipt_reference))fail('selection_intent_changed');
         budget.check();return freeze({...issuedSelectionIntent,status:'new_study_selection_intent_retained',operation_id:input.operationId,
+          ...(catalogBatchLineage?{receipt_format:'cohort_recorded_catalog_batch_receipt_v3'}:{}),
           selection_workspace_target:selectionWorkspaceTarget,genuine_new_group_choice:'explicit_authenticated_new_study_command_only',
           original_reconciliation:'fresh_terminal_original_cache_and_partition_empty_probe_after_issued_catalog_DONE',
           complete_catalog_semantic_replay:'not_established',selected_union:'not_established',statistics:'not_established',
@@ -4297,6 +4305,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * selects groups or carries a prior appraiser choice into this study. */
     resumeCoveredOriginalFrozenCaptureJobSelectionIntentReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'covered_catalog_selection_intent_refs_v2'),
+    /** Inactive V3 explicit NEW-study command; IDs remain intent only. Current
+     * actor/source/workspace and terminal original fences precede COMMIT. */
+    resumeCoveredOriginalFrozenCaptureJobBatchSelectionIntentReferencesV3(...args){
+      if(args.length!==2)fail('invalid_options');
+      return frozenCaptureJobSourceStage(args[0],args[1],'covered_batch_selection_intent_refs_v3');
+    },
     // Read-only current-worker reopen, not a second human command or lease.
     // Current actor/source/subject/target and entire original graph are checked
     // again. Retained IDs do NOT establish complete catalog or selected union.
@@ -4306,6 +4320,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * pending-workspace fence; no new selection, lease or publication. */
     readCoveredOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'covered_retained_selection_intent_refs_v2'),
+    /** Read-only reopen of the immutable V3 command; no lease extension or
+     * worker-chosen groups, membership, statistics or publication authority. */
+    readCoveredOriginalFrozenCaptureJobRetainedBatchSelectionIntentReferencesV3(...args){
+      if(args.length!==2)fail('invalid_options');
+      return frozenCaptureJobSourceStage(args[0],args[1],'covered_retained_batch_selection_intent_refs_v3');
+    },
     // Internal fourth pass only. No free IDs/cursor/roster/adapter/DONE/reset.
     // No HTTP/default worker dispatch, eligibility, publication or pin transfer.
     continueOriginalFrozenCaptureJobSelectedStockUnionReferencesV2: (value, options = {}) =>

@@ -13,7 +13,7 @@ import { createCustomCohortCatalogBatchV3WorkerRepository as catalogClaims } fro
 /** Explicit disposable-fixture choice ONLY, after an independently captured
  * actual batch waiting boundary. No production/appraiser choice is inferred. */
 export async function runNeighborhoodBatchSelectionIntentV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,blobs,
-  catalogHead,groups,assertParents,setFault,readFault,originalReads,batchSelectedUnionFixture=false,batchSelectedWorkersFixture=false,batchRecordedEligibilityFixture=false}){
+  catalogHead,groups,assertParents,setFault,readFault,originalReads,batchSelectedUnionFixture=false,batchSelectedWorkersFixture=false,batchRecordedEligibilityFixture=false,batchSelectedEvidenceFixture=false}){
   const operation=input.operationId,method='resumeCoveredOriginalFrozenCaptureJobBatchSelectionIntentReferencesV3',
     readMethod='readCoveredOriginalFrozenCaptureJobRetainedBatchSelectionIntentReferencesV3',
     intents=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_v2_selection_intents WHERE operation_id=$1',[operation])).rows,
@@ -78,7 +78,7 @@ export async function runNeighborhoodBatchSelectionIntentV3DatabaseChecks({pool,
   }),e=>e===rollback);await assertResumed();
   if(batchSelectedUnionFixture){
     await (batchSelectedWorkersFixture?runNeighborhoodBatchSelectedWorkersV3DatabaseChecks:runNeighborhoodBatchSelectedUnionV3DatabaseChecks)({pool,input,scope,actor,service,job,parent,blobs,
-      catalogHead,groups,assertParents,setFault,readFault,originalReads,claim:resumed.claim,command,batchRecordedEligibilityFixture});return;
+      catalogHead,groups,assertParents,setFault,readFault,originalReads,claim:resumed.claim,command,batchRecordedEligibilityFixture,batchSelectedEvidenceFixture});return;
   }
   console.info('[native-batch-selection-intent-v3]',{independent_actual_initial_source_cache_stock_partition_catalog_and_waiting:true,
     explicit_fixture_new_study_command_only_no_worker_choice_or_prior_carryover:true,

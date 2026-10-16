@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { runNeighborhoodBatchSelectedEvidenceV3DatabaseChecks } from './neighborhoodBatchSelectedEvidenceV3DatabaseChecks.js';
 import { withCustomCohortJobTransaction as tx } from '../../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
 import { createCustomCohortCaptureJobRepository as jobs } from '../../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
 import { createCustomCohortV2ContinuationRepository as continuations } from '../../src/services/neighborhoodAssessment/customCohortV2ContinuationRepository.js';
@@ -10,7 +11,7 @@ import { runCustomCohortBatchSelectedProgressV3JobOnce as unionProgress } from '
 /** Twenty-sixth independently captured graph, after actual worker-issued union
  * DONE. This is the recorded-comparison pass, not full semantic eligibility. */
 export async function runNeighborhoodBatchRecordedEligibilityV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
-  catalogHead,groups,assertParents,setFault,readFault,originalReads,command}){
+  catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedEvidenceFixture=false}){
   const operation=input.operationId,method='progressCoveredOriginalFrozenCaptureJobBatchSelectedRecordedEligibilityReferencesV3',
     subjectMethod='readCoveredOriginalFrozenCaptureJobBatchSelectedUnionSubjectHousingReferencesV3',
     head=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_eligibility_v2_heads WHERE operation_id=$1',[operation])).rows[0],
@@ -38,6 +39,19 @@ export async function runNeighborhoodBatchRecordedEligibilityV3DatabaseChecks({p
       calls++;firstClaim=options.captureJobClaim;assert.equal(firstClaim.attempts,5);owned=await job();ownedParent=await parent();
       await assert.rejects(service.progressCoveredOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2(value,options),/invalid_receipt/);await unchanged();
       await assert.rejects(service.readCoveredOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2(value,options),/invalid_receipt/);await unchanged();
+      if(batchSelectedEvidenceFixture){
+        for(const name of ['readCoveredOriginalFrozenCaptureJobBatchFirstSelectedAmenitiesReferencesV3',
+          'readCoveredOriginalFrozenCaptureJobBatchFirstSelectedTransactionsReferencesV3']){
+          const reads=originalReads(),read=await service[name](value,options);assert.equal(originalReads(),reads+1);
+          assert.equal(read.catalog_receipt_format,'cohort_recorded_catalog_batch_receipt_v3');assert.equal(read.read_only,true);
+          assert.equal(read.lease_extended,false);assert.equal(read.selected_entry.ordinal,1);assert.equal(read.context_complete,false);
+          assert.equal(read.pin_transfer,false);assert.equal(read.report_update,'none');assert.ok(Buffer.byteLength(JSON.stringify(read))<=16000);
+          if(name.includes('Amenities')){assert.equal(read.covered_CAD_originals,true);assert.equal(read.selected_CAD.account_id,read.selected_entry.account_id);}
+          else{assert.equal(read.complete_selected_union_transactions,false);assert.equal(Object.hasOwn(read,'selected_CAD'),false);
+            assert.deepEqual(read.selected_transactions.retained_observation_period,input.observationPeriod);}
+          await unchanged();
+        }
+      }
       subject=await service[subjectMethod](value,options);assert.equal(subject.status,'current_authorized_selected_union_subject_housing_reopened');
       assert.equal(subject.catalog_receipt_format,'cohort_recorded_catalog_batch_receipt_v3');assert.equal(subject.read_only,true);
       assert.equal(subject.lease_extended,false);assert.equal(subject.issued_eligibility_progress,false);
@@ -90,6 +104,10 @@ export async function runNeighborhoodBatchRecordedEligibilityV3DatabaseChecks({p
     assert.deepEqual((await client.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[operation])).rows,saved);throw rollback;
   }),e=>e===rollback);
   assert.deepEqual(await job(),terminal.job);assert.deepEqual(await parent(),terminal.parent);assert.deepEqual(await blobs(),terminal.blobs);assert.deepEqual(await head(),terminal.head);await immutable();
+  if(batchSelectedEvidenceFixture){
+    await runNeighborhoodBatchSelectedEvidenceV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
+      catalogHead,groups,assertParents,setFault,readFault,originalReads,command});return;
+  }
   console.info('[native-batch-recorded-eligibility-v3]',{independent_actual_worker_issued_V3_catalog_command_union_DONE:true,
     read_only_subject_precedence_and_original_CAD_fallback_preserved:true,subject_fallback:subject.fallback.status,
     one_whole_subject_selected_packet_ENTIRE_cache_partition_and_current_ending_authority:true,

@@ -358,6 +358,18 @@ const FROZEN_SOURCE_STAGES = freeze({
     catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,readingSelectedUnionSubjectHousing:true,
     readingSelectedUnionFirstEligibility:true,progressingSelectedEligibility:true,coveredNeutralOriginals:true,catalogBatchLineage:true,
     allowedPhases:['frozen_selected_union_refs_v2','frozen_selected_eligibility_refs_v2'] },
+  covered_batch_selected_first_amenities_refs_v3: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,readingSelectedUnionSubjectHousing:true,
+    readingSelectedUnionFirstEligibility:true,readingSelectedUnionFirstAmenities:true,coveredNeutralOriginals:true,catalogBatchLineage:true,
+    allowedPhases:['frozen_selected_union_refs_v2'] },
+  covered_batch_selected_first_transactions_refs_v3: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,readingSelectedUnionSubjectHousing:true,
+    readingSelectedUnionFirstEligibility:true,readingSelectedUnionFirstTransactions:true,coveredNeutralOriginals:true,catalogBatchLineage:true,
+    allowedPhases:['frozen_selected_union_refs_v2'] },
+  covered_batch_selected_evidence_progress_refs_v3: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,readingSelectedUnionSubjectHousing:true,
+    readingSelectedUnionFirstEligibility:true,readingSelectedUnionFirstAmenities:true,readingSelectedUnionFirstTransactions:true,progressingSelectedEvidence:true,coveredNeutralOriginals:true,catalogBatchLineage:true,
+    allowedPhases:['frozen_selected_eligibility_refs_v2','frozen_selected_evidence_refs_v2'] },
   original_selected_union_subject_housing_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true, readingSelectedUnionSubjectHousing: true,
     allowedPhases: ['frozen_selected_union_refs_v2'] },
@@ -3766,6 +3778,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             evidence_refs:[...checkpoint.evidence_refs.slice(0,11),receiptReference]});
           const continuation=await createCustomCohortV2ContinuationRepository(client).yieldIssued(claim,jobOptions);
           const result={...subjectHousingResult,status:'original_selected_evidence_traversal_progress_retained',
+            ...(catalogBatchLineage?{catalog_receipt_format:'cohort_recorded_catalog_batch_receipt_v3'}:{}),
               ...(coveredNeutralOriginals?{covered_neutral_originals:true,covered_CAD_originals:true,read_only:false}:{}),
             evidence_reference:receiptReference,progress:evidencePlan.after,
             coverage:'one_native_selected_ordinal_or_fresh_terminal_empty_probe',
@@ -4366,6 +4379,18 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     progressCoveredOriginalFrozenCaptureJobBatchSelectedRecordedEligibilityReferencesV3(...args){
       if(args.length!==2)fail('invalid_options');
       return frozenCaptureJobSourceStage(args[0],args[1],'covered_batch_selected_eligibility_progress_refs_v3');
+    },
+    readCoveredOriginalFrozenCaptureJobBatchFirstSelectedAmenitiesReferencesV3(...args){
+      if(args.length!==2)fail('invalid_options');
+      return frozenCaptureJobSourceStage(args[0],args[1],'covered_batch_selected_first_amenities_refs_v3');
+    },
+    readCoveredOriginalFrozenCaptureJobBatchFirstSelectedTransactionsReferencesV3(...args){
+      if(args.length!==2)fail('invalid_options');
+      return frozenCaptureJobSourceStage(args[0],args[1],'covered_batch_selected_first_transactions_refs_v3');
+    },
+    progressCoveredOriginalFrozenCaptureJobBatchSelectedEvidenceReferencesV3(...args){
+      if(args.length!==2)fail('invalid_options');
+      return frozenCaptureJobSourceStage(args[0],args[1],'covered_batch_selected_evidence_progress_refs_v3');
     },
     // Inactive read-only ordinal1 original admission, NOT the fifth issued pass.
     // No caller account/ordinal/cursor/decision, lease, new head or continuation.

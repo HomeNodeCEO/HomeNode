@@ -220,10 +220,10 @@ review remain gates before any normal expected-head protected merge.
 actual database-owner stage, not a caller callback or a loop over per-account
 public helpers. It requires the independently issued DONE graph, geography,
 identity, traversal and recorded partition. Its own native head chooses ONE
-next account. The single-use original-cell reader has its existing32MB,
-128-query,60s and5s-query subbudget. Other owner and persistence SQL uses the
-transaction client under the existing150s outer capture deadline and SQL
-timeout; this stage has no shared owner byte/query counter.
+next account. Authority, workspace, original, ending and persistence SQL share
+one 256-query counter, 32MB decoded-row byte ceiling and 60s whole-owner deadline.
+The single-use original-cell reader retains its stricter 128-query, 32MB, 60s
+and 5s-query subbudget within that same operation; no child resets the owner.
 Every complete original account (including outside parts), ENTIRE neutral cache
 and ENTIRE immutable partition entry is reconciled again before any catalog DML.
 

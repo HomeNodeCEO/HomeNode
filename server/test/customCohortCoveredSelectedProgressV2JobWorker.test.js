@@ -72,8 +72,11 @@ test('all native claim and expiry lanes require covered lineage, immutable comma
       'neighborhood_custom_cohort_neutral_cache_v2_heads','neighborhood_custom_cohort_recorded_partition_v2_heads',
       'neighborhood_custom_cohort_recorded_catalog_v2_heads','first.actor_user_id=job.actor_user_id','first.request_sha256=job.request_sha256',
       'job.request_sha256=intent.request_sha256','app.neighborhood_selected_union_v2_checkpoint_matches',
-      'app.neighborhood_selected_eligibility_v2_checkpoint_matches',"c.phase<>'frozen_selected_eligibility_refs_v2' OR routing.receipt->'after'->>'done'='false'"])
+      'app.neighborhood_selected_eligibility_v2_checkpoint_matches',"c.phase<>'frozen_selected_eligibility_refs_v2' OR routing.receipt->'after'->>'done'='false'",
+      "issued_source.receipt->'root'=cache.root_reference",
+      "issued_source.receipt->'selection'->'subject_intent'=job.checkpoint->'evidence_refs'->0"])
       assert.ok(sql.includes(guard),tag+' '+guard);
+    assert.doesNotMatch(sql,/cache.root_reference=job.checkpoint->'evidence_refs'->0/);
   }
   const success=calls.find(c=>c.sql.includes(':claim-success'));assert.deepEqual(success.values[1],phases);
   assert.doesNotMatch(success.sql,/attempts=attempts\+1|attempts=0|DELETE|ST_DWithin/);

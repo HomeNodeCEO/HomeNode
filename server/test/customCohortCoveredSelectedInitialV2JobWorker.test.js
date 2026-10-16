@@ -151,7 +151,11 @@ test('all initial claim and expiry lanes require the same completed native cover
       'neighborhood_custom_cohort_recorded_partition_v2_heads','neighborhood_custom_cohort_recorded_catalog_v2_heads',
       'first.report_file_id=job.report_file_id','first.assignment_file_id=job.assignment_file_id','first.actor_user_id=job.actor_user_id',
       'first.request_sha256=job.request_sha256',"job.request_payload->>'execution_mode'='frozen-originals-v2'",
-      "completed_catalog.receipt->'after'->'done'='true'::jsonb",'job.checkpoint=intent.checkpoint'])assert.ok(sql.includes(guard),tag+' '+guard);
+      "completed_catalog.receipt->'after'->'done'='true'::jsonb",'job.checkpoint=intent.checkpoint',
+      "issued_source.receipt->'root'=cache.root_reference",
+      "issued_source.receipt->'selection'->'subject_intent'=job.checkpoint->'evidence_refs'->0"])
+      assert.ok(sql.includes(guard),tag+' '+guard);
+    assert.doesNotMatch(sql,/cache.root_reference=job.checkpoint->'evidence_refs'->0/);
   }
 });
 test('a legacy request and an uncovered owner result cannot be adopted as covered progress',async()=>{

@@ -348,6 +348,9 @@ const FROZEN_SOURCE_STAGES = freeze({
   covered_selected_union_replay_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
     catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,coveredNeutralOriginals:true,
     allowedPhases:['frozen_recorded_catalog_refs_v2','frozen_selected_union_refs_v2'] },
+  covered_batch_selected_union_refs_v3: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,coveredNeutralOriginals:true,catalogBatchLineage:true,
+    allowedPhases:['frozen_recorded_catalog_refs_v2','frozen_selected_union_refs_v2'] },
   original_selected_union_subject_housing_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true, readingSelectedUnionSubjectHousing: true,
     allowedPhases: ['frozen_selected_union_refs_v2'] },
@@ -3803,6 +3806,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           evidence_refs:[...checkpoint.evidence_refs.slice(0,9),receiptReference]});
         const continuation=await createCustomCohortV2ContinuationRepository(client).yieldIssued(claim,jobOptions);
         budget.check();return freeze({status:'original_selected_stock_union_replay_progress_retained',operation_id:input.operationId,
+          ...(catalogBatchLineage?{catalog_receipt_format:'cohort_recorded_catalog_batch_receipt_v3'}:{}),
           ...(coveredNeutralOriginals?{covered_neutral_originals:true}:{}),
           command_id:issuedSelectionIntent.command_id,union_reference:receiptReference,catalog_reference:catalogAnchor.receipt_reference,
           progress:receipt.after,selected_stock_accounts:afterSelected,
@@ -4332,6 +4336,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       frozenCaptureJobSourceStage(value, options, 'original_selected_union_replay_refs_v2'),
     continueCoveredOriginalFrozenCaptureJobSelectedStockUnionReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'covered_selected_union_replay_refs_v2'),
+    // Separate closed batch-catalog lineage. The union still replays ONE whole
+    // account and subject together; no caller IDs, cursor or membership source.
+    continueCoveredOriginalFrozenCaptureJobBatchSelectedStockUnionReferencesV3: (...args) => {
+      if(args.length!==2)fail('invalid_options');
+      return frozenCaptureJobSourceStage(args[0],args[1],'covered_batch_selected_union_refs_v3');
+    },
     readOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_selected_union_subject_housing_refs_v2'),
     readCoveredOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2: (value, options = {}) =>

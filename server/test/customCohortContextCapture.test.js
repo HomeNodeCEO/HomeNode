@@ -353,7 +353,7 @@ for(const method of ['advanceOriginalFrozenCaptureJobStockTraversalReferencesV2'
   'continueOriginalFrozenCaptureJobStockTraversalReferencesV2','continueCoveredOriginalFrozenCaptureJobStockTraversalReferencesV2','continueCoveredOriginalFrozenCaptureJobStockBatchReferencesV3','continueOriginalFrozenCaptureJobRecordedPartitionReferencesV2','continueCoveredOriginalFrozenCaptureJobRecordedPartitionReferencesV2','continueCoveredOriginalFrozenCaptureJobRecordedPartitionBatchReferencesV3',
   'continueOriginalFrozenCaptureJobRecordedCatalogReferencesV2','continueCoveredOriginalFrozenCaptureJobRecordedCatalogReferencesV2','continueCoveredOriginalFrozenCaptureJobRecordedCatalogBatchReferencesV3','awaitOriginalFrozenCaptureJobSelectionReferencesV2','awaitCoveredOriginalFrozenCaptureJobSelectionReferencesV2','awaitCoveredOriginalFrozenCaptureJobBatchSelectionReferencesV3',
   'readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','readCoveredOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','readCoveredOriginalFrozenCaptureJobRetainedBatchSelectionIntentReferencesV3','continueOriginalFrozenCaptureJobSelectedStockUnionReferencesV2',
-  'continueCoveredOriginalFrozenCaptureJobSelectedStockUnionReferencesV2','readCoveredOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2',
+  'continueCoveredOriginalFrozenCaptureJobSelectedStockUnionReferencesV2','continueCoveredOriginalFrozenCaptureJobBatchSelectedStockUnionReferencesV3','readCoveredOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2',
   'readCoveredOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2','progressCoveredOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2',
   'readOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2','readOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2',
   'readOriginalFrozenCaptureJobFirstSelectedAmenitiesReferencesV2',
@@ -387,7 +387,7 @@ test(`${method} admits only the live claim and bounded operation, not caller con
 });
 
 for(const method of ['readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','readCoveredOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','readCoveredOriginalFrozenCaptureJobRetainedBatchSelectionIntentReferencesV3',
-  'continueCoveredOriginalFrozenCaptureJobSelectedStockUnionReferencesV2','readCoveredOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2',
+  'continueCoveredOriginalFrozenCaptureJobSelectedStockUnionReferencesV2','continueCoveredOriginalFrozenCaptureJobBatchSelectedStockUnionReferencesV3','readCoveredOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2',
   'readCoveredOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2','progressCoveredOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2'])
 test(`${method} refuses Proxy claims without executing traps or checking out a connection`,async()=>{
   const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
@@ -395,6 +395,12 @@ test(`${method} refuses Proxy claims without executing traps or checking out a c
       authorizeMarketData:()=>assert.fail('must not authorize')});
   await assert.rejects(service[method](base,
     {captureJobClaim:new Proxy({},{getPrototypeOf(){assert.fail('claim proxy trap');}})}),/invalid_options/);
+});
+
+test('batch catalog union boundary rejects missing or surplus arguments before any source or database use',()=>{
+  const service=createCustomCohortContextCapture({pool:{connect(){assert.fail('must not connect');}},sourceMode:'combined-witness2-v1',
+    authorizeMarketData:()=>assert.fail('must not authorize')}),method=service.continueCoveredOriginalFrozenCaptureJobBatchSelectedStockUnionReferencesV3;
+  for(const args of [[],[input()],[input(),{},{}]])assert.throws(()=>method(...args),/invalid_options/);
 });
 
 for(const method of ['resumeOriginalFrozenCaptureJobSelectionIntentReferencesV2','resumeCoveredOriginalFrozenCaptureJobSelectionIntentReferencesV2','resumeCoveredOriginalFrozenCaptureJobBatchSelectionIntentReferencesV3'])

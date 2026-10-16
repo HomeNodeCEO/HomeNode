@@ -78,6 +78,10 @@ import { createCustomCohortV2SelectedWorkerRepository }
   from '../src/services/neighborhoodAssessment/customCohortV2SelectedWorkerRepository.js';
 import { runCustomCohortV2SelectedJobOnce }
   from '../src/services/neighborhoodAssessment/customCohortV2SelectedJobWorker.js';
+import { createCustomCohortV2EarlyWorkerRepository }
+  from '../src/services/neighborhoodAssessment/customCohortV2EarlyWorkerRepository.js';
+import { runCustomCohortV2EarlyJobOnce }
+  from '../src/services/neighborhoodAssessment/customCohortV2EarlyJobWorker.js';
 import { createCustomCohortV2SelectionWaitRepository }
   from '../src/services/neighborhoodAssessment/customCohortV2SelectionWaitRepository.js';
 import { CUSTOM_COHORT_ORIGINAL_ACCOUNT_OWNER_LIMITS as ORIGINAL_OWNER_LIMITS }
@@ -1413,8 +1417,8 @@ test('isolated PostgreSQL: freezes a complete 60001-account original source popu
 // Independent real-native captures: preserve the original five-failure terminal
 // test, and build an entirely new issued graph for the waiting boundary. Never
 // clone/rebind job roots, summaries, original payloads or caller DONE metadata.
-for(const selectionWaitFixture of [false,true,'intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner','union-worker','early-continuations']) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
-  +(selectionWaitFixture==='early-continuations'?' with early original-owner continuations':['intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner','union-worker'].includes(selectionWaitFixture)?` with explicit new-study selection ${selectionWaitFixture}`:selectionWaitFixture?' with issued selection waiting':''),{
+for(const selectionWaitFixture of [false,true,'intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner','union-worker','early-continuations','early-worker']) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
+  +(['early-continuations','early-worker'].includes(selectionWaitFixture)?` with early original-owner ${selectionWaitFixture}`:['intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner','union-worker'].includes(selectionWaitFixture)?` with explicit new-study selection ${selectionWaitFixture}`:selectionWaitFixture?' with issued selection waiting':''),{
   // The tenth graph replays every real parent before its own A/B/EMPTY owner
   // proof. Keep all nine pre-existing paths at their original 180-second
   // deadline; reserve extra fixture time only for that new graph. This does
@@ -1423,6 +1427,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
 },async()=>{
   const transactionIndexOwnerFixture=selectionWaitFixture==='union-all-transaction-index-owner',
     earlyContinuationFixture=selectionWaitFixture==='early-continuations',
+    earlyWorkerFixture=selectionWaitFixture==='early-worker',
     sharedTransactionFixture=selectionWaitFixture==='union-all-shared-transaction'||transactionIndexOwnerFixture,
     semanticRecoveryFixture=selectionWaitFixture==='union-all-semantic-recovery',
     positiveIndexedSourceFixture=selectionWaitFixture==='union-all-site-positive'||semanticRecoveryFixture,
@@ -2358,8 +2363,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     const readEarlyProtected=async()=>({
       report:(await pool.query('SELECT to_jsonb(r) AS body FROM app.report_files r WHERE id=$1',[scope.report_file_id])).rows,
       assignment:(await pool.query('SELECT to_jsonb(a) AS body FROM app.assignment_files a WHERE id=$1',[assignment])).rows});
-    const earlyProtected=earlyContinuationFixture?await readEarlyProtected():null;
-    if(earlyContinuationFixture)await withCustomCohortJobTransaction(pool,async client=>{
+    const earlyProtected=earlyContinuationFixture||earlyWorkerFixture?await readEarlyProtected():null;
+    if(earlyContinuationFixture||earlyWorkerFixture)await withCustomCohortJobTransaction(pool,async client=>{
       for(const name of ['20261206_custom_cohort_selected_transaction_index_owner_v2.sql',
         '20261208_custom_cohort_early_continuations_v2.sql'])
         await client.query(readFileSync(new URL(`../migrations/${name}`,import.meta.url),'utf8'));
@@ -2591,6 +2596,78 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       const rows=(await pool.query('SELECT source_reference,root_reference,receipt_reference,sequence FROM app.neighborhood_custom_cohort_graph_v2_anchors WHERE operation_id=$1',[refsOperation])).rows;
       return rows[0]??null;};
     const graphMethod='verifyFrozenCaptureJobSourceReferencesV2Page';
+    if(earlyWorkerFixture){
+      const readJob=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[refsOperation])).rows[0];
+      const readContinuation=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_v2_continuations WHERE operation_id=$1',[refsOperation])).rows[0];
+      const readPins=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_prepared_generation_pins WHERE operation_id=$1',[refsOperation])).rows;
+      const pins=await readPins();assert.equal(pins.length,1);
+      const service=freshRefsOwner(),run=()=>runCustomCohortV2EarlyJobOnce({pool,cohortService:service,leaseSeconds:900});
+      const initial=await service.continueFrozenCaptureJobSourceReferencesV2Page(refsInput,refsOptions);
+      assert.equal(initial.continuation.status,'continuation_pending');assert.equal(initial.continuation.attempts,2);
+      assert.equal((await readRefsAnchor()).sequence,1);
+      // Current source denial is observed AFTER a real single-use native claim
+      // but BEFORE any original read; the competing actual worker stays idle.
+      await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+      const deniedFrom=refsCalls.length,denied=await Promise.all([run(),run()]);
+      assert.deepEqual(denied.map(r=>r.status).sort(),['idle','retry']);
+      assert.equal((await readJob()).attempts,2);
+      assert.ok(!refsCalls.slice(deniedFrom).some(sql=>/neighborhood-frozen-job-closure:|stock-originals:|neighborhood-frozen-job-identity:/.test(sql)));
+      const dueNow=()=>pool.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET run_after=clock_timestamp() WHERE operation_id=$1',[refsOperation]);
+      await setFixtureGrant(pool,organization,fixtureGrant(organization));await dueNow();
+      // The real next original owner commits progress, then loses its ACK.
+      // Ledger calls use the ordinary pool; only original-owner COMMIT is lost.
+      refsFault='commit';
+      assert.deepEqual(await run(),{status:'outcome_unknown',operation_id:refsOperation});
+      assert.equal(refsFault,null);assert.equal((await readRefsAnchor()).sequence,2);
+      assert.equal((await readJob()).attempts,3);assert.equal((await readJob()).status,'retry');
+      await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);
+      const actorFrom=refsCalls.length,actorDenied=await run();
+      assert.equal(actorDenied.status,'retry');assert.equal(actorDenied.reason,'access_revoked');
+      assert.equal((await readJob()).attempts,3);assert.equal(refsCalls.length,actorFrom,'actor denied before original owner');
+      await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+      await dueNow();
+      const phases=new Set(['frozen_verify_refs_v2']);let successful=0;
+      for(let step=0;step<50;step++){
+        const result=await run();assert.equal(result.status,'continuation_pending');
+        assert.equal(result.context_complete,false);assert.equal(result.pin_transfer,false);assert.equal(result.report_update,'none');
+        const job=await readJob(),c=await readContinuation();
+        assert.equal(job.attempts,4);assert.equal(job.last_error_code,'access_revoked');
+        assert.equal(job.status,'retry');assert.equal(c.consumed_claim_token,null);
+        assert.equal(job.checkpoint.phase,c.phase);assert.deepEqual(job.checkpoint.evidence_refs.at(-1),c.progress_reference);
+        phases.add(c.phase);successful++;
+        if(c.phase==='frozen_identity_refs_v2'){
+          const receipt=JSON.parse((await pool.query('SELECT canonical_utf8 FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1 AND content_sha256=$2',
+            [organization,c.progress_reference.content_sha256])).rows[0].canonical_utf8);
+          if(receipt.after.kind_index===7)break;
+        }
+        assert.ok(step<49,'bounded native fixture must reach actual identity DONE');
+      }
+      assert.deepEqual([...phases],['frozen_verify_refs_v2','frozen_geo_verify_refs_v2','frozen_identity_refs_v2']);
+      const stopped={job:await readJob(),continuation:await readContinuation(),blobs:await refsBlobCount()};
+      assert.equal(stopped.job.checkpoint.phase,'frozen_identity_refs_v2');
+      assert.deepEqual(await run(),{status:'idle'});assert.deepEqual(await run(),{status:'idle'});
+      assert.deepEqual({job:await readJob(),continuation:await readContinuation(),blobs:await refsBlobCount()},stopped);
+      await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
+        const [next]=await createCustomCohortV2ContinuationRepository(client).claimDue({limit:1,leaseSeconds:900});
+        assert.ok(next);assert.equal(next.claim.attempts,4);await client.query('SET CONSTRAINTS ALL IMMEDIATE');
+        assert.deepEqual(await createCustomCohortCaptureJobRepository(client).cancel(scope,refsOperation),{status:'running'});
+        await client.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[refsOperation]);
+        const read=async()=>(await client.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[refsOperation])).rows;
+        const expired=await read();assert.ok(expired[0].cancellation_requested_at);
+        assert.deepEqual(await createCustomCohortV2EarlyWorkerRepository(client).claimDue(),[]);
+        assert.deepEqual(await read(),expired,'identity DONE expiry belongs to the next owner');
+        throw new Error('synthetic early next-owner cancellation rollback');
+      }),/synthetic early next-owner cancellation rollback/);
+      assert.deepEqual({job:await readJob(),continuation:await readContinuation(),blobs:await refsBlobCount()},stopped);
+      assert.deepEqual(await readEarlyProtected(),earlyProtected);assert.deepEqual(await readPins(),pins);
+      console.info('[native-early-original-worker-v2]',{independent_complete_original_graph:true,
+        actual_concurrent_single_token_claim:true,current_source_and_actor_revocation_before_originals:true,
+        ordinary_failure_recovery_and_lost_real_owner_COMMIT_ACK:true,successful_steps:successful,
+        three_actual_original_owners:true,failure_attempts_preserved:4,identity_DONE_unconsumed_after_repeated_idle:true,
+        expired_cancelled_next_owner_claim_untouched_and_rolled_back:true,original_reports_assignment_and_pin_unchanged:true,
+        source_prefix_initial_dispatch:false,shared_cache_preparation:false,licensed_live_or_speed_acceptance:false});
+      return;
+    }
     const graphDeniedFrom=refsCalls.length;
     await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
     await assert.rejects(refsOwner[graphMethod](refsInput,refsOptions),/market_data_access_denied/);

@@ -1,5 +1,54 @@
 # Complete larger-area Custom neighborhood studies
 
+## Early original-owner continuation worker (2026-10-15, inactive)
+
+`runCustomCohortV2EarlyJobOnce` connects an already-issued graph,
+geographic or identity success to its fixed actual original-data owner. One
+bounded immutable receipt is routing metadata only. Each invocation reloads
+the saved request and current database actor; the actual owner independently
+checks original/source data, native prerequisites, current assignment/draft/
+subject and source rights at both ends. Success preserves the failure count
+and error history; ordinary recovery alone spends the existing five-attempt
+budget. Lost claim or original-owner COMMIT acknowledgments cannot overwrite
+committed progress or a successor token.
+
+Identity DONE is excluded from successful claims, failure recovery and expiry
+cleanup, including expired cancelled next-owner claims. Its native token stays
+unconsumed for the still-unfinished neutral-cache owner. The worker never
+adopts initial source-prefix work or enters stock traversal/selection,
+publication, accepted reports or pin transfer. No default composition, CLI,
+route or schedule activates it.
+
+A thirteenth independent cloud graph invokes the real worker and the real
+original owners, including concurrent single-token claiming, current source
+and actor revocation before originals, ordinary recovery, lost real owner
+COMMIT ACK, all three stages and repeated idle at identity DONE. An actual
+next-owner native claim is cancelled/expired in a rolled-back QA transaction;
+the early worker must leave it completely unchanged. The twelve previous
+graphs remain intact. A bounded early-native cloud step now runs these new
+handoff/worker graphs first; the full native suite still runs afterward.
+No deadline, source/refusal probe, original reconciliation or budget is waived.
+All 34 affected focused checks pass serially (15 worker/workflow checks,
+including the one-second lease-loss probe, plus 19 updated fixture contracts).
+Native/full cloud execution for this new implementation remains pending.
+
+Parent handoff head `469d343b` full server CI exposed one stale exact-string
+fixture contract (11,057 pass / one failure / 73 expected skips). The normal
+`beb2b368` correction includes the new early orphan-COMMIT tag in that exact
+assertion; all nine affected focused tests passed. It removes no assertion.
+Its native/full checks and this worker's fresh exact-head cloud proof remain
+pending. Small protocol coverage is not licensed/current large-area authority
+or live-speed acceptance. Source-prefix initial dispatch, shared neutral-cache
+work, coherent publication and terminal pin transfer/retirement remain open.
+
+The earlier selected-worker head `178450d0` is now fully cloud verified:
+foundation `38778424142` and sales-rich `38778424141` passed. Its actual native
+log records 417 migrations, one subject test, 18 prepared-index tests, one
+selected-map edge test and two staging-bootstrap tests, all passing with zero
+failures/cancellations/skips. The 14-step seven-owner worker and expired
+cancelled next-owner rollback markers executed. This does not validate the
+new early handoff/worker changes or establish licensed/live speed acceptance.
+
 ## Early original-owner success continuations (2026-10-15, inactive)
 
 Three new named internal entry points run the existing graph, geographic and

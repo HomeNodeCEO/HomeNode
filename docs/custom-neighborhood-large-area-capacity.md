@@ -7870,6 +7870,18 @@ and cancellation. Its explicit empty choice is disposable fixture DATA, never
 an appraiser choice inferred or applied in production. Actual cloud execution of
 this new head is pending. No matrix or deadline increase was introduced.
 
+The initial02b46279 cloud head stopped at the real pending-study owner because
+that owner authorized its first assignment read from empty request-time roles
+before reloading the actor. The fixture actor already had current DB appraiser
+membership and assignment ownership. The correction reads only the scoped DB
+organization locator, reloads the current actor, then performs assignment write
+authorization, private-draft/lock checks and all ending fences. No role, grant,
+permission rule, failure assertion or deadline is widened. The regression checks
+empty request roles and revoked/read-only current DB roles.133 serial affected
+current-owner/pending/wait/intent checks pass in5,611.1914ms with zero failures,
+cancellations or skips. Fresh corrected-head native/full execution is pending;
+the unchanged failed head is not rerun.
+
 The actual pending save may update the assignment timestamp; the fixture checks
 that no other assignment fact or accepted report changes, then checks all later
 acquisition/handoff operations against that explicit-command baseline. Pending

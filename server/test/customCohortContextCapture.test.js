@@ -430,10 +430,12 @@ test('recorded-group selection refreshes current roles before retained facts or 
       : ['previewRecordedGroupSelection', 'openRecordedGroupSelectionMap'].includes(method) ? { ...read, selectionRef: { selection_version: 1,
         selection_revision: 1, selection_sha256: 'a'.repeat(64),
         manifest_ref: { content_sha256: 'b'.repeat(64), canonical_utf8_bytes: '100' } } } : read;
+    if(transition)value.auth={userId:read.auth.userId,organizations:[]};
     for (const currentRoles of [null, ...(writing ? [['read_only']] : [])]) {
       const queries = [];
       const service = setup(async () => ({ release() {}, async query({ text }) {
         queries.push(text);
+        if (text.includes('custom-cohort-capture:workspace-organization')) return { rowCount: 1, rows: [{ organization_id: organization }] };
         if (text.includes('custom-cohort-capture:assignment')) return { rowCount: 1, rows: [{
           assignment_file_id: base.assignmentFileId, account_id: base.accountId, organization_id: organization,
           assigned_appraiser_user_id: base.auth.userId, supervisory_appraiser_user_id: null }] };
@@ -446,6 +448,12 @@ test('recorded-group selection refreshes current roles before retained facts or 
       await assert.rejects(service[method](value), currentRoles === null ? /job_actor_access_revoked/ : /assignment_access_denied/);
       assert.ok(queries.includes('ROLLBACK')); assert.ok(!queries.includes('COMMIT'));
       assert.ok(!queries.some(sql => sql.includes('blob:') || sql.includes('group-selection:') || sql.includes('private-workfile')));
+      if(transition){
+        const actorIndex=queries.findIndex(sql=>sql.includes('custom-cohort-job:current-actor')),
+          assignmentIndex=queries.findIndex(sql=>sql.includes('custom-cohort-capture:assignment'));
+        assert.ok(actorIndex>queries.findIndex(sql=>sql.includes('custom-cohort-capture:workspace-organization')));
+        assert.ok(assignmentIndex<0||actorIndex<assignmentIndex,'current DB roles precede assignment authorization even with empty request roles');
+      }
     }
   }
 });

@@ -1075,10 +1075,15 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     executeWorkspaceTransition: async (originalInput, options, work) => {
       const budget = operationBudget(options);
       return transaction(pool, 'READ COMMITTED', budget, async client => {
-        const initial = await resolveTarget(client, originalInput, false, 'write');
-        const auth = await loadCurrentCustomCohortJobActor(client, originalInput.auth.userId, initial.organization_id);
+        // The assignment locator supplies only the DB organization. Request-
+        // time role claims cannot reject or authorize a pending-study write
+        // before the current actor/organization membership has been reloaded.
+        const locator=one(await client.query(`/* custom-cohort-capture:workspace-organization */
+          SELECT organization_id FROM app.assignment_files WHERE id=$1::bigint AND account_id=$2`,
+        [originalInput.assignmentFileId,originalInput.accountId]));
+        const auth = await loadCurrentCustomCohortJobActor(client, originalInput.auth.userId, locator.organization_id);
         const input = { ...originalInput, auth };
-        assertTarget(await resolveTarget(client, input, false, 'write'), initial);
+        const initial = await resolveTarget(client, input, false, 'write');
         privateDraft(await privateCaptureWorkfile(client, input));
         const target = await resolveTarget(client, input, true, 'write');
         assertTarget(target, initial);

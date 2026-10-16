@@ -4110,7 +4110,9 @@ for(const selectionWaitFixture of [false,true]) test('isolated PostgreSQL: froze
       assert.equal((await continuationJob()).attempts,beforeWaitJob.attempts);assert.equal(await pinCount(),pinsBeforeContinuation);
       await removeSyntheticTargetWorkspace();
       assertBoundedCohortAuthorityAggregates(refsCalls.slice(waitFrom).map((text,index)=>({text,values:refsQueryParameters[waitFrom+index]})),
-        {actorUserId:actor,organizationId:organization,assignmentFileId:assignment});
+        {actorUserId:actor,organizationId:organization,assignmentFileId:assignment,
+          originals:{operationId:refsOperation,generationId:refsBinding.generation_id,
+            profileSha256:getNeighborhoodFrozenTypedOriginalV2Profile().profile_ref.content_sha256}});
       console.info('[native-issued-catalog-selection-wait-v2]',{independently_built_native_graph:true,
         fresh_terminal_whole_original_cache_and_partition_empty_probe:true,current_authority_and_workspace_prior_head_fenced_both_ends:true,
         same_whole_owner_budget_including_native_release:true,all_ending_refusals_rollback_before_release:true,

@@ -7473,3 +7473,24 @@ indexed roster, retain all original identities/geometry, independently verify
 whole graphs, and transfer/release the pin only after complete verified originals
 exist. Terminal retirement, exact statistics, coherent publication and full
 5/10-mile/retrospective/live QA acceptance remain outstanding.
+# Dormant native source-prefix issuance candidate (2026-10-16)
+
+`issueFrozenCaptureJobSourceReferencesV2Page` starts only at an actual retained
+two-reference stock checkpoint. It reads the existing current-authorized,
+fixed prepared 250-row source page and retains the same small reference node
+and root. The new independent native head derives a single ordered-layer edge
+from its own preceding head, binds the real actor/request/subject/stock, checks
+the existing aggregate page/row/byte ceilings, and commits with the matching
+checkpoint. It cannot adopt a previously assembled free prefix, reset a head,
+swap the checkpoint or present an old root as new issuance. A separate native
+graph guard binds subsequent original verification to that issued prefix.
+
+Unregistered migration `20261209_custom_cohort_source_prefix_v2.sql` and the
+entry point remain dormant. Current and ending source-purpose decisions,
+database actor/assignment/draft/subject checks, original SQL, one-hop seed
+preparation, budget and lease/failure ceilings remain in their existing owners.
+The cloud fixture exercises an actual checkpoint savepoint rollback followed
+by a real orphan COMMIT, lost real COMMIT acknowledgment, all seven original
+layers, current/ending refusals, substitutions and first independent original
+graph step. Initial dispatch, successful prefix lease handoff, complete neutral
+cache preparation and licensed large-area/live speed acceptance remain open.

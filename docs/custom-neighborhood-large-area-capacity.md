@@ -7840,3 +7840,43 @@ publication, report Apply or terminal pin transfer is activated. Covered
 selection-wait/human-command handoff, the separate authorized CAD companion,
 complete semantics/publication, licensed large-area acquisition and saved Hardy
 live-speed acceptance remain open.
+
+## Covered-cache selection boundary (2026-10-16, not activated)
+
+Three explicit owners admit actual job-cache coverage for selection waiting,
+an authenticated NEW-study command and read-only reopening of that same command.
+Each requires independently issued catalog DONE, a fresh terminal whole-original/
+entire-cache/partition empty probe, the exact current pending V7 workspace and
+its prior active head, and every current/ending actor, assignment, private draft,
+subject, source-purpose, live claim and native-parent fence. Existing aggregate
+byte/query/runtime budgets, five-failure history and legacy readers are unchanged.
+
+Queueing and cache coverage do not create pending workspace intent. A separate
+explicit pending-study command through the current-DB workspace owner is still
+required. Waiting releases only the lease. A NEW-study command accepts explicit
+recorded IDs, including an explicitly empty choice; workers never infer a choice
+from catalog counts, prior intent, defaults or a callback. Lost command-COMMIT
+replay reopens the same immutable command and fresh native resume claim. The
+read-only owner cannot extend that lease or rewrite the command/workspace.
+
+112 serial focused current-owner/wait/intent checks passed with zero failures,
+cancellations or skips in821.5123ms; source/native-fixture syntax and diff checks
+pass. The existing isolated fixture authors real missing-pending refusal before
+original transport; an explicit pending-study save through the actual server
+owner; ending pending-workspace/role rollback of wait and provisional command;
+lost actual wait/command COMMIT ACKs; exact immutable replay and read-only reopen;
+and completed-worker refusal to steal the human resume lease, even after expiry
+and cancellation. Its explicit empty choice is disposable fixture DATA, never
+an appraiser choice inferred or applied in production. Actual cloud execution of
+this new head is pending. No matrix or deadline increase was introduced.
+
+The actual pending save may update the assignment timestamp; the fixture checks
+that no other assignment fact or accepted report changes, then checks all later
+acquisition/handoff operations against that explicit-command baseline. Pending
+workspace, immutable command, original parents and generation pin are retained.
+
+No new migration, registry, HTTP route, default worker, schedule, source grant,
+report Apply, publication or terminal pin transfer is activated. Automatic
+covered selection-wait dispatch, complete current-authorized selected-union
+consumers/CAD companion, semantics/publication and licensed large-area/live-speed
+acceptance remain open.

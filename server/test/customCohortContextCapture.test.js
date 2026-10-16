@@ -69,7 +69,7 @@ test('actual capture entry points refuse executable claim Proxies before connect
     'verifyFrozenCaptureJobStockOriginalReferencesV2','verifyFrozenCaptureJobSourceIdentityReferencesV2',
     'advanceOriginalFrozenCaptureJobStockTraversalReferencesV2','continueOriginalFrozenCaptureJobStockTraversalReferencesV2','continueCoveredOriginalFrozenCaptureJobStockTraversalReferencesV2',
     'continueOriginalFrozenCaptureJobRecordedPartitionReferencesV2','continueCoveredOriginalFrozenCaptureJobRecordedPartitionReferencesV2','continueOriginalFrozenCaptureJobRecordedCatalogReferencesV2','continueCoveredOriginalFrozenCaptureJobRecordedCatalogReferencesV2',
-    'awaitOriginalFrozenCaptureJobSelectionReferencesV2','readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2',
+    'awaitOriginalFrozenCaptureJobSelectionReferencesV2','awaitCoveredOriginalFrozenCaptureJobSelectionReferencesV2','readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','readCoveredOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2',
     'continueOriginalFrozenCaptureJobSelectedStockUnionReferencesV2','readOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2',
     'readOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2','readOriginalFrozenCaptureJobFirstSelectedAmenitiesReferencesV2',
     'readOriginalFrozenCaptureJobFirstSelectedTransactionsReferencesV2',
@@ -330,8 +330,8 @@ test('stock original cells owner accepts no caller originals, dates, selection, 
 for(const method of ['advanceOriginalFrozenCaptureJobStockTraversalReferencesV2','advanceOriginalFrozenCaptureJobRecordedPartitionReferencesV2',
   'advanceOriginalFrozenCaptureJobRecordedCatalogReferencesV2',
   'continueOriginalFrozenCaptureJobStockTraversalReferencesV2','continueCoveredOriginalFrozenCaptureJobStockTraversalReferencesV2','continueOriginalFrozenCaptureJobRecordedPartitionReferencesV2','continueCoveredOriginalFrozenCaptureJobRecordedPartitionReferencesV2',
-  'continueOriginalFrozenCaptureJobRecordedCatalogReferencesV2','continueCoveredOriginalFrozenCaptureJobRecordedCatalogReferencesV2','awaitOriginalFrozenCaptureJobSelectionReferencesV2',
-  'readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','continueOriginalFrozenCaptureJobSelectedStockUnionReferencesV2',
+  'continueOriginalFrozenCaptureJobRecordedCatalogReferencesV2','continueCoveredOriginalFrozenCaptureJobRecordedCatalogReferencesV2','awaitOriginalFrozenCaptureJobSelectionReferencesV2','awaitCoveredOriginalFrozenCaptureJobSelectionReferencesV2',
+  'readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','readCoveredOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','continueOriginalFrozenCaptureJobSelectedStockUnionReferencesV2',
   'readOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2','readOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2',
   'readOriginalFrozenCaptureJobFirstSelectedAmenitiesReferencesV2',
   'readOriginalFrozenCaptureJobFirstSelectedTransactionsReferencesV2',
@@ -357,17 +357,18 @@ test(`${method} admits only the live claim and bounded operation, not caller con
   await assert.rejects(service[method](base,{captureJobClaim:claim,signal:controller.signal}),/cancelled/);
 });
 
-test('retained intent worker refuses Proxy claims without executing traps or checking out a connection',async()=>{
+for(const method of ['readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','readCoveredOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2'])
+test(`${method} refuses Proxy claims without executing traps or checking out a connection`,async()=>{
   const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
     service=createCustomCohortContextCapture({pool:{connect(){assert.fail('must not connect');}},sourceMode:'combined-witness2-v1',
       authorizeMarketData:()=>assert.fail('must not authorize')});
-  await assert.rejects(service.readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2(base,
+  await assert.rejects(service[method](base,
     {captureJobClaim:new Proxy({},{getPrototypeOf(){assert.fail('claim proxy trap');}})}),/invalid_options/);
 });
 
-test('new-study selection intent owner accepts no caller claim, source adapter, workspace or prior automatic choice',async()=>{
-  const method='resumeOriginalFrozenCaptureJobSelectionIntentReferencesV2',
-    base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
+for(const method of ['resumeOriginalFrozenCaptureJobSelectionIntentReferencesV2','resumeCoveredOriginalFrozenCaptureJobSelectionIntentReferencesV2'])
+test(`${method} accepts no caller claim, source adapter, workspace or prior automatic choice`,async()=>{
+  const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
     selectionIntent={command_id:'70000000-0000-4000-8000-000000000002',catalog_reference:{content_sha256:'a'.repeat(64),canonical_utf8_bytes:'123'},
       workspace_revision:1,included_recorded_group_ids:[]},
     service=createCustomCohortContextCapture({pool:{connect(){assert.fail('must not connect');}},sourceMode:'combined-witness2-v1',

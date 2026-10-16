@@ -283,10 +283,16 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingSelectionWorkspaceTarget: true, allowedPhases: ['frozen_recorded_catalog_refs_v2'] },
   original_catalog_selection_wait_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, awaitingSelection: true, allowedPhases: ['frozen_recorded_catalog_refs_v2'] },
+  covered_catalog_selection_wait_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,awaitingSelection:true,coveredNeutralOriginals:true,allowedPhases:['frozen_recorded_catalog_refs_v2'] },
   original_catalog_selection_intent_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, selectingCatalogIntent: true, allowedPhases: ['frozen_recorded_catalog_refs_v2'] },
+  covered_catalog_selection_intent_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,selectingCatalogIntent:true,coveredNeutralOriginals:true,allowedPhases:['frozen_recorded_catalog_refs_v2'] },
   original_retained_selection_intent_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, readingRetainedSelectionIntent: true, allowedPhases: ['frozen_recorded_catalog_refs_v2'] },
+  covered_retained_selection_intent_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,readingRetainedSelectionIntent:true,coveredNeutralOriginals:true,allowedPhases:['frozen_recorded_catalog_refs_v2'] },
   original_selected_union_replay_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
     allowedPhases: ['frozen_recorded_catalog_refs_v2','frozen_selected_union_refs_v2'] },
@@ -3908,15 +3914,27 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     // command. Only a later authenticated NEW-study command may enable resume.
     awaitOriginalFrozenCaptureJobSelectionReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_catalog_selection_wait_refs_v2'),
+    /** Fresh terminal original/cache/partition probe plus the exact current
+     * pending workspace and prior active head. Releases only the live lease. */
+    awaitCoveredOriginalFrozenCaptureJobSelectionReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'covered_catalog_selection_wait_refs_v2'),
     // Inactive internal owner: explicit IDs are intent ONLY. No HTTP exposure,
     // browser claim, prior-choice carryover, membership, statistics or Apply.
     resumeOriginalFrozenCaptureJobSelectionIntentReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_catalog_selection_intent_refs_v2'),
+    /** Explicit authenticated NEW-study command only; job-cache coverage never
+     * selects groups or carries a prior appraiser choice into this study. */
+    resumeCoveredOriginalFrozenCaptureJobSelectionIntentReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'covered_catalog_selection_intent_refs_v2'),
     // Read-only current-worker reopen, not a second human command or lease.
     // Current actor/source/subject/target and entire original graph are checked
     // again. Retained IDs do NOT establish complete catalog or selected union.
     readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_retained_selection_intent_refs_v2'),
+    /** Reopen the same immutable command with every current/ending source and
+     * pending-workspace fence; no new selection, lease or publication. */
+    readCoveredOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'covered_retained_selection_intent_refs_v2'),
     // Internal fourth pass only. No free IDs/cursor/roster/adapter/DONE/reset.
     // No HTTP/default worker dispatch, eligibility, publication or pin transfer.
     continueOriginalFrozenCaptureJobSelectedStockUnionReferencesV2: (value, options = {}) =>

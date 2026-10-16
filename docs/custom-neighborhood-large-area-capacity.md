@@ -8086,3 +8086,31 @@ case does not establish a nonempty metric population, the separate CAD
 companion, complete amenities/economic/transaction semantics, medians/CODs,
 calendar quarters, coherent publication, terminal pins, licensed large-area or
 saved Hardy production-speed acceptance. Those remain required.
+
+## Covered first selected transaction original owner (2026-10-16, inactive)
+
+A closed named read-only boundary uses actual completed job-cache coverage to
+reopen the first native selected account's complete retained all-date transaction
+packages and required subject/stock originals. The server selects ordinal one;
+no account ID, ordinal, cursor, source adapter or free transaction payload is
+accepted. Every original is recompiled against its entire neutral cache, and the
+full partition entry, catalog, immutable human command and current/ending actor,
+assignment, private draft, subject, source-purpose, workspace/prior-head and
+live-claim checks remain. One child retains the existing aggregate original,
+transport/output, SQL and runtime budget. The final covered read-only result,
+including its coverage marker, is checked against the existing16KB owner cap.
+
+This transaction-only boundary does not read extra CAD fields or substitute for
+the separate CAD purpose/cache companion. Its native associations, literal
+observations and retained-date projections establish neither economic property
+equivalence/allocation nor complete selected-union transactions, historical
+stock, statistics or calendar quarters. The legacy complete-cache method keeps
+its admission and result contract.
+
+The existing nonempty selected fixture now authors actual first-ordinal original
+reopening under the real worker claim, native package/original counts, real
+ending workspace and database-role refusal, lost actual read-only COMMIT ACK
+and identical fresh reopen, output bounds and unchanged job/heads/groups/intent/
+workspace/lease. New-head native/cloud execution is pending. No matrix, deadline,
+budget or failure ceiling is increased. No migration, route, default worker,
+schedule, grant, appraiser choice, Apply, publication or pin transfer is activated.

@@ -244,7 +244,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     'the explicit pending-study save may update only the assignment timestamp, never its facts or accepted report');
   protectedBefore=afterExplicitPending;
   const beforeWait=await job(),beforeWaitParent=await parent();
-  for(const [probe,reason] of [['wait_workspace',/workspace_target_changed/],['wait_role',/custom_cohort_job_actor_access_revoked/]]){
+  for(const [probe,reason] of [['wait_workspace',/custom_cohort_group_workspace_study_changed/],['wait_role',/custom_cohort_job_actor_access_revoked/]]){
     fault=probe;const beforeReads=stockReads;await assert.rejects(service[waitMethod](input,waitOptions),reason);
     assert.equal(fault,null);assert.equal(stockReads,beforeReads+1);
     assert.deepEqual(await job(),beforeWait);assert.deepEqual(await parent(),beforeWaitParent);assert.deepEqual(await workspace(),pendingWorkspace);
@@ -263,7 +263,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     selectionIntent={command_id:randomUUID(),catalog_reference:(await catalogHead()).receipt_reference,
       workspace_revision:1,included_recorded_group_ids:[]},
     intents=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_v2_selection_intents WHERE operation_id=$1',[operation])).rows;
-  for(const [probe,reason] of [['intent_workspace',/workspace_target_changed/],['intent_role',/custom_cohort_job_actor_access_revoked/]]){
+  for(const [probe,reason] of [['intent_workspace',/custom_cohort_group_workspace_study_changed/],['intent_role',/custom_cohort_job_actor_access_revoked/]]){
     fault=probe;await assert.rejects(service[intentMethod](input,{selectionIntent}),reason);assert.equal(fault,null);
     assert.deepEqual(await intents(),[]);assert.deepEqual(await job(),waiting);assert.deepEqual(await workspace(),pendingWorkspace);
     if(probe==='intent_role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);

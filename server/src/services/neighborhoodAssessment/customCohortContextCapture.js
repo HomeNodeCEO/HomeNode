@@ -462,6 +462,14 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingSelectedStatisticsSource:true,readingSelectedFrequencySource:true,readingSelectedNumericSource:true,
     progressingSelectedSemantic:true,coveredNeutralOriginals:true,
     allowedPhases:['frozen_selected_numeric_refs_v2','frozen_selected_semantic_refs_v2'] },
+  covered_selected_transaction_index_progress_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,
+    readingSelectedUnionSubjectHousing:true,readingSelectedUnionFirstEligibility:true,
+    readingSelectedUnionFirstAmenities:true,readingSelectedUnionFirstTransactions:true,readingSelectedMetricSource:true,
+    readingSelectedStatisticsSource:true,readingSelectedFrequencySource:true,readingSelectedNumericSource:true,
+    progressingSelectedSemantic:true,readingSelectedTransactionSource:true,readingSelectedTransactionIndex:true,
+    progressingSelectedTransactionIndex:true,coveredNeutralOriginals:true,
+    allowedPhases:['frozen_selected_semantic_refs_v2','frozen_selected_transaction_index_refs_v2'] },
   original_selected_first_indexed_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
     readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true,
@@ -3436,6 +3444,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             global_economic_transaction_deduplication:false,economic_transactions:'not_established',at_sale_facts:'not_established',
             calendar_quarters:'not_established',source_acquisition:'not_established',publication:'not_established',
             production_speed:'not_established',context_complete:false,pin_transfer:false,report_update:'none',continuation};
+          if(coveredNeutralOriginals){result.covered_neutral_originals=true;result.covered_CAD_originals=true;result.read_only=false;}
           if(Buffer.byteLength(JSON.stringify(result))>16000)fail('byte_limit');budget.check();return freeze(result);
         }
         if(readingSelectedTransactionSource){
@@ -4255,6 +4264,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     async progressOriginalFrozenCaptureJobSelectedTransactionIndexReferencesV2(...args){
       if(args.length!==2)fail('invalid_options');
       return frozenCaptureJobSourceStage(args[0],args[1], 'original_selected_transaction_index_progress_refs_v2');
+    },
+    async progressCoveredOriginalFrozenCaptureJobSelectedTransactionIndexReferencesV2(...args){
+      if(args.length!==2)fail('invalid_options');
+      return frozenCaptureJobSourceStage(args[0],args[1], 'covered_selected_transaction_index_progress_refs_v2');
     },
     // Inactive ninth population owner; no route/worker/default activation.
     progressOriginalFrozenCaptureJobSelectedNumericReferencesV2: (value, options = {}) =>

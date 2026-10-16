@@ -1447,8 +1447,8 @@ test('isolated PostgreSQL: freezes a complete 60001-account original source popu
 // Independent real-native captures: preserve the original five-failure terminal
 // test, and build an entirely new issued graph for the waiting boundary. Never
 // clone/rebind job roots, summaries, original payloads or caller DONE metadata.
-for(const selectionWaitFixture of [false,true,'intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner','union-worker','early-continuations','early-worker','prefix-native','prefix-worker','initial-dispatch']) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
-  +(selectionWaitFixture==='initial-dispatch'?' with native source-prefix initial dispatch':selectionWaitFixture==='prefix-worker'?' with native source-prefix success worker':selectionWaitFixture==='prefix-native'?' with native source-prefix issuance':['early-continuations','early-worker'].includes(selectionWaitFixture)?` with early original-owner ${selectionWaitFixture}`:['intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner','union-worker'].includes(selectionWaitFixture)?` with explicit new-study selection ${selectionWaitFixture}`:selectionWaitFixture?' with issued selection waiting':''),{
+for(const selectionWaitFixture of [false,true,'intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner','union-worker','early-continuations','early-worker','prefix-native','prefix-worker','initial-dispatch','initial-dispatch-transaction-index']) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
+  +(selectionWaitFixture==='initial-dispatch-transaction-index'?' with native source-prefix initial dispatch and covered transaction index':selectionWaitFixture==='initial-dispatch'?' with native source-prefix initial dispatch':selectionWaitFixture==='prefix-worker'?' with native source-prefix success worker':selectionWaitFixture==='prefix-native'?' with native source-prefix issuance':['early-continuations','early-worker'].includes(selectionWaitFixture)?` with early original-owner ${selectionWaitFixture}`:['intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner','union-worker'].includes(selectionWaitFixture)?` with explicit new-study selection ${selectionWaitFixture}`:selectionWaitFixture?' with issued selection waiting':''),{
   // The tenth graph replays every real parent before its own A/B/EMPTY owner
   // proof. Keep all nine pre-existing paths at their original 180-second
   // deadline; reserve extra fixture time only for that new graph. This does
@@ -1456,12 +1456,13 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
   skip:!process.env.DATABASE_URL,timeout:selectionWaitFixture==='union-all-transaction-index-owner'?240_000:180_000,
 },async()=>{
   const transactionIndexOwnerFixture=selectionWaitFixture==='union-all-transaction-index-owner',
-    initialDispatchFixture=selectionWaitFixture==='initial-dispatch',
+    coveredTransactionIndexFixture=selectionWaitFixture==='initial-dispatch-transaction-index',
+    initialDispatchFixture=selectionWaitFixture==='initial-dispatch'||coveredTransactionIndexFixture,
     prefixNativeFixture=selectionWaitFixture==='prefix-native',
     prefixWorkerFixture=selectionWaitFixture==='prefix-worker',
     earlyContinuationFixture=selectionWaitFixture==='early-continuations',
     earlyWorkerFixture=selectionWaitFixture==='early-worker',
-    sharedTransactionFixture=selectionWaitFixture==='union-all-shared-transaction'||transactionIndexOwnerFixture,
+    sharedTransactionFixture=selectionWaitFixture==='union-all-shared-transaction'||transactionIndexOwnerFixture||coveredTransactionIndexFixture,
     semanticRecoveryFixture=selectionWaitFixture==='union-all-semantic-recovery',
     positiveIndexedSourceFixture=selectionWaitFixture==='union-all-site-positive'||semanticRecoveryFixture,
     observedHousingFixture=selectionWaitFixture==='union-all'||positiveIndexedSourceFixture||sharedTransactionFixture||initialDispatchFixture;
@@ -2461,7 +2462,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         dataset:{...fixtureGrant(organization).dataset,id:CAD_DATASET},valid_from:cadNow.past,expires_at:cadNow.future,
         rights_basis:{...fixtureGrant(organization).rights_basis,approved_at:cadNow.past}});
       await runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData:fixturePolicy(),
-        authorizeCadImprovementData:fixtureCadPolicy()});
+        authorizeCadImprovementData:fixtureCadPolicy(),coveredTransactionIndexFixture});
       return;
     }
     const earlyCounts={frozen_verify_refs_v2:0,frozen_geo_verify_refs_v2:0,frozen_identity_refs_v2:0};

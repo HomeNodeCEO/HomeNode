@@ -186,6 +186,44 @@ test('actual candidate owner derives inside the original transaction and deliver
   assert.equal(calls,0);
 });
 
+test('resolution refuses changed coverage, asserted authority and inconsistent native subject selection metadata',()=>{
+  for(const mutate of [m=>m.coverage='whole_native_packages_for_native_next_selected_account_only',
+    m=>m.coverage='complete_selected_union',m=>m.economic_property_membership='established',
+    m=>m.global_selected_native_deduplication=true,m=>m.subject_selected_union_member='true',
+    m=>m.subject_selected_union_member=false,m=>m.subject_account_id=null,m=>m.subject_account_id=' A']){
+    const f=fixture();mutate(f.membership);assert.throws(()=>resolve(f.packet,f.membership,check),/invalid_membership/);
+  }
+  const f=fixture();f.membership.subject_account_id='SUBJECT-WITHOUT-SOURCE-ASSOCIATION';f.membership.subject_selected_union_member=false;
+  assert.equal(resolve(f.packet,f.membership,check).native_key,'501','required subject need not be an association of this chosen source');
+});
+
+test('candidate first-seen selected account must occur in this exact chosen package, not another whole-account package',()=>{
+  for(const legacy of [false,true]){
+    const f=fixture({legacy}),p=sourcePlan({legacy,later:true});
+    f.membership.associations.push({kind:'source_records',row_key:'503',account_id:'OTHER-SELECTED',source_record_id:'503',stock_member:true,selected_union_member:true});
+    // Other packages' native associations are valid in the whole account's
+    // independent membership, but cannot prove ownership of source501/sale10.
+    assert.equal(resolve(f.packet,f.membership,check).native_key,legacy?'10':'501');
+    p.selected_entry.account_id='OTHER-SELECTED';
+    assert.throws(()=>candidate(p,f.packet,f.membership,check),/candidate_v3_invalid/);
+    p.selected_entry.account_id='OUTSIDE';assert.throws(()=>candidate(p,f.packet,f.membership,check));
+    p.selected_entry.account_id='NOT-PRESENT';assert.throws(()=>candidate(p,f.packet,f.membership,check));
+  }
+});
+
+test('candidate membership snapshot rejects hostile association descriptors and preserves the owner budget',()=>{
+  const f=fixture(),p=sourcePlan();let traps=0;const hostile=()=>{traps++;assert.fail('getter');};
+  const getter={...f.membership};Object.defineProperty(getter,'associations',{enumerable:true,get:hostile});
+  const array=[...f.membership.associations];Object.defineProperty(array,'0',{enumerable:true,get:hostile});
+  for(const m of [getter,{...f.membership,associations:array},{...f.membership,associations:Array(2)},
+    {...f.membership,associations:new Proxy(f.membership.associations,{get:hostile})},
+    {...f.membership,associations:[new Proxy(f.membership.associations[0],{get:hostile})]}])
+    assert.throws(()=>candidate(p,f.packet,m,check));
+  assert.equal(traps,0);
+  let checks=0;assert.throws(()=>candidate(p,f.packet,f.membership,()=>{if(++checks===3)throw Error('owner membership budget');}),/owner membership budget/);
+  assert.equal(checks,3);
+});
+
 test('actual closed owner exposes compact resolution only after complete original replay and both ending native/authority fences',async()=>{
   const text=readFileSync(new URL('../src/services/neighborhoodAssessment/customCohortContextCapture.js',import.meta.url),'utf8'),
     derive=text.indexOf('selectedTransactionSourceResolution=resolveNeighborhoodOriginalSourceResolutionV3('),

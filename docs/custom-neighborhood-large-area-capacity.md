@@ -1,3 +1,27 @@
+## First-source candidate membership binding (2026-10-16, inactive)
+
+The candidate grammar now requires its first-seen selected account to occur in
+the exact chosen source package's independent native associations, with native
+stock and selected-union flags true. A selected association in another package
+from that whole account cannot satisfy the check; an outside canonical sale
+account also cannot substitute for the first-seen selected account. This is a
+bounded250-row descriptor snapshot under the existing owner budget. It still
+does not establish provider parcel resolution or economic eligibility.
+
+The existing original-resolution kernel additionally checks the exact FIRST
+package coverage label, the native subject account/boolean and any association
+of that subject for consistency. Claimed economic-property authority or global
+deduplication refuses. Genuine required subjects without an association in the
+chosen package remain valid; no subject transaction is invented. Whole original
+reads, all current/ending fences and independent native parents remain required.
+
+Thirty-three focused checks pass, including unrelated-package first-seen
+substitution, outside/missing accounts, changed coverage/authority, inconsistent
+subject selection, hostile descriptors and budget expiry. Existing independent
+native32/A-first and35/B-first source/candidate probes remain unchanged and must
+execute on this new head. There are no SQL, codec, routing, scope grant, ledger,
+deadline, source-NEXT/EMPTY, report or pin changes, and no new activation.
+
 ## Original-backed first source row candidate (2026-10-16, inactive)
 
 The closed original owner has a separate two-argument candidate read. It obtains

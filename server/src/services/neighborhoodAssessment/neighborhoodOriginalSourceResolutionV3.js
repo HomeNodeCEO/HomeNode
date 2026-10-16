@@ -75,6 +75,11 @@ export function resolveNeighborhoodOriginalSourceResolutionV3(...args){
   if(p.package_version!==1||!['source_record','legacy_sale'].includes(p.kind)||p.authority!=='not_established'
     ||p.transaction_eligibility!=='not_established'||p.source_acquisition!=='not_established'||p.report_update!=='none'
     ||!Array.isArray(p.rows)||p.rows.length<1||!Array.isArray(m.associations)||m.associations.length>250)fail('invalid_package');
+  if(typeof m.subject_account_id!=='string'||!m.subject_account_id||m.subject_account_id.length>64
+    ||!m.subject_account_id.isWellFormed()||m.subject_account_id.trim()!==m.subject_account_id
+    ||/[\u0000-\u001f\u007f]/.test(m.subject_account_id)||typeof m.subject_selected_union_member!=='boolean'
+    ||m.coverage!=='whole_native_packages_for_first_registered_source_first_seen_account_only'
+    ||m.economic_property_membership!=='not_established'||m.global_selected_native_deduplication!==false)fail('invalid_membership');
   id(p.native_key);const effective=assessmentDate(p.retained_effective_date),period=prepareNeighborhoodTransactionRetainedPeriodV1(p.retained_observation_period,effective),
     counts=data(p.counts,KINDS),native=new Map(),observed=Object.fromEntries(KINDS.map(k=>[k,0]));
   if(KINDS.some(k=>typeof counts[k]!=='string'||!/^(0|[1-9][0-9]{0,2})$/.test(counts[k])||BigInt(counts[k])>250n))fail('invalid_counts');
@@ -83,6 +88,7 @@ export function resolveNeighborhoodOriginalSourceResolutionV3(...args){
     if(!KINDS.includes(a.kind))fail('invalid_membership');id(a.row_key);account(a.account_id);if(a.source_record_id!==null)id(a.source_record_id);
     if(a.account_id===null?a.stock_member!==null||a.selected_union_member!==null
       :typeof a.stock_member!=='boolean'||typeof a.selected_union_member!=='boolean'||a.selected_union_member&&!a.stock_member)fail('invalid_membership');
+    if(a.account_id===m.subject_account_id&&a.selected_union_member!==m.subject_selected_union_member)fail('invalid_membership');
     if(p.kind==='source_record'?a.source_record_id!==p.native_key:a.kind!=='sales'||a.source_record_id!==null||a.row_key!==p.native_key)continue;
     const key=`${a.kind}:${a.row_key}`;if(native.has(key))fail('invalid_membership');native.set(key,a);
   }

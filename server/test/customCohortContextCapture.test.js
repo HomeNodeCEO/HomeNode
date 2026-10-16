@@ -332,6 +332,8 @@ for(const method of ['advanceOriginalFrozenCaptureJobStockTraversalReferencesV2'
   'continueOriginalFrozenCaptureJobStockTraversalReferencesV2','continueCoveredOriginalFrozenCaptureJobStockTraversalReferencesV2','continueOriginalFrozenCaptureJobRecordedPartitionReferencesV2','continueCoveredOriginalFrozenCaptureJobRecordedPartitionReferencesV2',
   'continueOriginalFrozenCaptureJobRecordedCatalogReferencesV2','continueCoveredOriginalFrozenCaptureJobRecordedCatalogReferencesV2','awaitOriginalFrozenCaptureJobSelectionReferencesV2','awaitCoveredOriginalFrozenCaptureJobSelectionReferencesV2',
   'readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','readCoveredOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','continueOriginalFrozenCaptureJobSelectedStockUnionReferencesV2',
+  'continueCoveredOriginalFrozenCaptureJobSelectedStockUnionReferencesV2','readCoveredOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2',
+  'readCoveredOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2','progressCoveredOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2',
   'readOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2','readOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2',
   'readOriginalFrozenCaptureJobFirstSelectedAmenitiesReferencesV2',
   'readOriginalFrozenCaptureJobFirstSelectedTransactionsReferencesV2',
@@ -357,7 +359,9 @@ test(`${method} admits only the live claim and bounded operation, not caller con
   await assert.rejects(service[method](base,{captureJobClaim:claim,signal:controller.signal}),/cancelled/);
 });
 
-for(const method of ['readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','readCoveredOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2'])
+for(const method of ['readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','readCoveredOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2',
+  'continueCoveredOriginalFrozenCaptureJobSelectedStockUnionReferencesV2','readCoveredOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2',
+  'readCoveredOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2','progressCoveredOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2'])
 test(`${method} refuses Proxy claims without executing traps or checking out a connection`,async()=>{
   const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
     service=createCustomCohortContextCapture({pool:{connect(){assert.fail('must not connect');}},sourceMode:'combined-witness2-v1',

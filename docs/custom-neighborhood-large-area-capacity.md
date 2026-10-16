@@ -7937,3 +7937,46 @@ No new migration, registry, route, default worker, schedule, source grant, Apply
 publication or terminal pin transfer is activated. Current-authorized selected
 consumers, the separate CAD companion, complete semantics/coherent publication,
 terminal pin transfer/retirement and licensed large-area/live-speed proof remain.
+
+## Covered-cache selected union and recorded eligibility (2026-10-16, not activated)
+
+Four closed named owners use actual completed job-cache coverage for the
+original-reconciled selected-union replay, read-only subject housing, read-only
+first selected recorded eligibility, and recorded-eligibility progress. Legacy
+complete-cache methods keep their existing admission. The new owners require
+the same independently issued parents and immutable explicit NEW-study command.
+Each union contribution reopens every whole account original and its entire
+neutral cache, compares the entire partition entry and catalog group, and uses
+the command's exact inclusion IDs. Conflicting candidates are not promoted into
+selection, and an explicitly empty command remains empty.
+
+The selected housing/eligibility packet chooses the subject and next selected
+ordinal on the server. A required subject fallback and selected account share
+one original reader lifetime; no second child or per-account loop resets its
+byte/query/runtime budget. The original reader sublimits and outer operation
+deadline/SQL timeouts remain unchanged. Existing native union and eligibility
+guards already require matching heads, checkpoints, continuations and lease
+release in the same transaction; no extra migration is needed. All current and
+ending workspace/prior-head, actor, assignment, private-draft, subject, source,
+live-claim and independent-parent checks remain in place.
+
+240 serial focused current-owner/original-packet/union/eligibility/intent checks
+passed in3,290.6855ms with zero failures, cancellations or skips; source/native
+syntax and diff checks pass. The existing isolated fixture authors actual two-
+account replay plus fresh EMPTY under the real explicit empty command, native
+group denominators compared with the completed catalog, ending-workspace/role
+atomic rollback, orphan continuation real COMMIT refusal, lost first union and
+eligibility COMMIT ACKs, fresh claims at five with history preserved, read-only
+subject/empty-first-eligibility reopening, and native next-owner exclusion.
+The expired/cancelled human-lease claim/expiry probe executes real writes and
+repositories in one transaction and rolls that probe back before progression;
+no expired token is revived. A later acquired lease is then actually expired
+and cancellation-requested to check completed-worker exclusion again. Actual
+new-head cloud execution is pending; authored assertions are not proof.
+
+This empty-union fixture does not establish a nonempty selected metric
+population, the separately authorized CAD companion, complete amenities or
+transaction semantics, medians/COD/calendar quarters, coherent publication,
+terminal pin transfer/retirement, licensed large-area or production speed.
+No registry, HTTP route, default worker, scheduler, source grant, appraiser
+choice, report Apply, publication or pin transfer is activated.

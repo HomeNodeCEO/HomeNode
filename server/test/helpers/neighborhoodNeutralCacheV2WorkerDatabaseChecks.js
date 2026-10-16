@@ -20,6 +20,8 @@ import { runCustomCohortCoveredCatalogV2JobOnce as runCatalog } from '../../src/
 import { createCustomCohortCoveredCatalogV2WorkerRepository as catalogClaims } from '../../src/services/neighborhoodAssessment/customCohortCoveredCatalogV2WorkerRepository.js';
 import { runCustomCohortCoveredSelectionWaitV2JobOnce as runWait } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectionWaitV2JobWorker.js';
 import { createCustomCohortCoveredSelectionWaitV2WorkerRepository as waitClaims } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectionWaitV2WorkerRepository.js';
+import { runCustomCohortCoveredSelectedInitialV2JobOnce as runSelectedInitial } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectedInitialV2JobWorker.js';
+import { createCustomCohortCoveredSelectedInitialV2WorkerRepository as selectedInitialClaims } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectedInitialV2WorkerRepository.js';
 import { NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL as STOCK_PACKET,
   NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL as PAIRED_STOCK_PACKET } from '../../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
 
@@ -281,6 +283,8 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   const staleReads=stockReads;await assert.rejects(service[waitMethod](input,waitOptions),/claim_lost/);assert.equal(stockReads,staleReads);
   for(const worker of [runStock,runPartition,runCatalog,runWait])assert.deepEqual(await worker(args),{status:'idle'});
   assert.deepEqual(await job(),waiting);
+  assert.deepEqual(await runSelectedInitial(args),{status:'idle'},'only a genuine immutable human command can be adopted');
+  assert.deepEqual(await job(),waiting);
   // Explicit empty inclusion is a deliberate disposable-fixture NEW-study
   // command, never a default inferred by a worker, catalog, prior choice or UI.
   const intentMethod='resumeCoveredOriginalFrozenCaptureJobSelectionIntentReferencesV2',
@@ -323,19 +327,38 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     unionHead=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_union_v2_heads WHERE operation_id=$1',[operation])).rows[0],
     unionRows=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_union_v2_rows WHERE operation_id=$1 ORDER BY ordinal',[operation])).rows,
     unionGroups=async()=>(await pool.query('SELECT group_id,member_count,last_ordinal FROM app.neighborhood_custom_cohort_selected_union_v2_groups WHERE operation_id=$1 ORDER BY group_id',[operation])).rows;
+  const initialDispatches=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_initial_dispatch_v2 WHERE operation_id=$1',[operation])).rows;
+  assert.deepEqual(await initialDispatches(),[]);
+  await assert.rejects(tx(pool,async client=>{
+    const [adopted]=await selectedInitialClaims(client).claimDue({leaseSeconds:900});
+    assert.deepEqual(adopted.claim,resumed.claim);
+    await client.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);
+  }),error=>error.code==='55000');
+  assert.deepEqual(await initialDispatches(),[]);assert.deepEqual(await job(),humanOwnedJob);
+  let initialOwnerCalls=0;
+  const initialArgs={...args,cohortService:{async [unionMethod](value,options){
+    initialOwnerCalls++;assert.deepEqual(options.captureJobClaim,resumed.claim);
+    const ownerBefore=await job();
   for(const [probe,reason] of [['union_workspace',/custom_cohort_group_workspace_study_changed/],['union_role',/custom_cohort_job_actor_access_revoked/]]){
-    fault=probe;const reads=stockReads;await assert.rejects(service[unionMethod](input,{captureJobClaim:resumed.claim}),reason);
+    fault=probe;const reads=stockReads;await assert.rejects(service[unionMethod](value,options),reason);
     assert.equal(fault,null);assert.ok(stockReads>reads);assert.equal(await unionHead(),undefined);
-    assert.deepEqual(await unionRows(),[]);assert.deepEqual(await unionGroups(),[]);assert.deepEqual(await job(),humanOwnedJob);
+    assert.deepEqual(await unionRows(),[]);assert.deepEqual(await unionGroups(),[]);assert.deepEqual(await job(),ownerBefore);
     assert.deepEqual(await workspace(),pendingWorkspace);assert.deepEqual(await intents(),humanOwnedIntents);
     if(probe==='union_role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);
   }
-  fault='union_orphan';await assert.rejects(service[unionMethod](input,{captureJobClaim:resumed.claim}),
+  fault='union_orphan';await assert.rejects(service[unionMethod](value,options),
     error=>error.outcome_unknown===true&&error.code==='55000');assert.equal(fault,null);
   assert.equal(await unionHead(),undefined);assert.deepEqual(await unionRows(),[]);assert.deepEqual(await unionGroups(),[]);
-  assert.deepEqual(await job(),humanOwnedJob);assert.deepEqual(await workspace(),pendingWorkspace);
-  fault='union_ack';await assert.rejects(service[unionMethod](input,{captureJobClaim:resumed.claim}),error=>error.outcome_unknown===true);
+  assert.deepEqual(await job(),ownerBefore);assert.deepEqual(await workspace(),pendingWorkspace);
+  fault='union_ack';return service[unionMethod](value,options);
+  }}};
+  const initialResults=await Promise.all([runSelectedInitial(initialArgs),runSelectedInitial(initialArgs)]);
+  assert.deepEqual(initialResults.map(r=>r.status).sort(),['idle','outcome_unknown']);assert.equal(initialOwnerCalls,1);
+  const dispatches=await initialDispatches();assert.equal(dispatches.length,1);
+  assert.equal(dispatches[0].claim_token,resumed.claim.claim_token);assert.equal(dispatches[0].attempts,5);
+  assert.equal(dispatches[0].command_id,selectionIntent.command_id);assert.equal(dispatches[0].actor_user_id,actor);
   assert.equal(fault,null);assert.equal((await unionHead()).sequence,1);
+  assert.deepEqual(await runSelectedInitial(args),{status:'idle'});
   for(let i=0;i<2;i++){
     const [next]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));
     assert.equal(next.claim.attempts,5);const progress=await service[unionMethod](input,{captureJobClaim:next.claim});
@@ -365,7 +388,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   assert.equal((await job()).last_error_code,'access_revoked');assert.deepEqual(await intents(),humanOwnedIntents);
   const [laterOwner]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));
   assert.equal(laterOwner.claim.operation_id,operation);assert.equal(laterOwner.claim.attempts,5);
-  const laterOwnedJob=await job();for(const worker of [runStock,runPartition,runCatalog,runWait])assert.deepEqual(await worker(args),{status:'idle'});
+  const laterOwnedJob=await job();for(const worker of [runStock,runPartition,runCatalog,runWait,runSelectedInitial])assert.deepEqual(await worker(args),{status:'idle'});
   assert.deepEqual(await job(),laterOwnedJob);
   await pool.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);
   await tx(pool,client=>jobs(client).cancel(scope,operation));const nextOwnerPending=await job();
@@ -377,6 +400,9 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     'catalog DONE next-owner expired/cancelled claim is untouched by covered-catalog claim AND expiry');
   assert.deepEqual(await runWait(args),{status:'idle'});assert.deepEqual(await job(),nextOwnerPending,
     'covered waiting claim AND expiry cannot steal an expired/cancelled immutable human command');
+  assert.deepEqual(await runSelectedInitial(args),{status:'idle'});assert.deepEqual(await job(),nextOwnerPending,
+    'covered initial adoption AND expiry leave every later selected continuation untouched');
+  assert.deepEqual(await initialDispatches(),dispatches,'the real human token was adopted exactly once');
   assert.deepEqual(await workspace(),pendingWorkspace);assert.deepEqual(await intents(),humanOwnedIntents);
   const sourceGeneration=(await pool.query('SELECT generation_id FROM app.neighborhood_custom_cohort_job_stocks WHERE operation_id=$1',[operation])).rows[0].generation_id;
   const cacheHeader=(await pool.query(SQL.read,[sourceGeneration,JSON.parse((await pool.query(
@@ -429,6 +455,15 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     subject_housing_and_empty_first_eligibility_readonly_no_lease_extension:true,
     real_expired_cancelled_human_lease_native_claim_expiry_probe_rolled_back_without_revival:true,
     completed_workers_leave_later_owner_including_expired_cancelled_untouched:true,
+    global_header_still_building:true,nonempty_selected_metric_population:false,CAD_companion:false,
+    default_worker_activation:false,licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
+  console.info('[native-covered-selected-initial-worker-v2]',{missing_human_command_idle_without_claim:true,
+    actual_expired_adoption_real_COMMIT_refused_and_rolled_back:true,concurrent_single_real_human_resume_adoption:true,
+    original_human_token_attempt_command_and_actor_preserved:true,actual_DB_actor_saved_request_and_covered_original_owner:true,
+    every_original_entire_cache_partition_catalog_replayed:true,ending_workspace_and_role_atomic_rollback:true,
+    orphan_union_yield_real_COMMIT_refused:true,lost_actual_union_COMMIT_ACK_not_downgraded:true,
+    successful_first_union_at_failure_ceiling:5,error_history_native_parents_and_human_choice_preserved:true,
+    adoption_exactly_once_and_later_selected_owner_including_expired_cancelled_untouched:true,
     global_header_still_building:true,nonempty_selected_metric_population:false,CAD_companion:false,
     default_worker_activation:false,licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
   await tx(pool,client=>jobs(client).cancel(scope,operation));const cancelled=await job();

@@ -7980,3 +7980,47 @@ transaction semantics, medians/COD/calendar quarters, coherent publication,
 terminal pin transfer/retirement, licensed large-area or production speed.
 No registry, HTTP route, default worker, scheduler, source grant, appraiser
 choice, report Apply, publication or pin transfer is activated.
+
+## Covered selected initial handoff (2026-10-16, not activated)
+
+The dormant covered initial worker adopts an actual immutable human NEW-study
+resume token exactly once through the existing native initial-dispatch ledger.
+Every adoption, ordinary recovery and expiry lane requires the complete native
+job-cache/first-stock bridge, full actor/request scope, completed stock,
+partition and catalog, all nine matching roots and frozen-original execution.
+No pending workspace or inclusion IDs are created. Successful adoption preserves
+the human token, attempt count and error history; ordinary recovery alone uses
+the existing five-failure ceiling and a fresh native token. A separate statement
+records recovery adoption inside the same transaction so native guards see the
+actual updated job rather than a sibling DML snapshot.
+
+The worker reloads the current database actor and immutable request, checks
+cancellation, maintains the bounded lease, and invokes only the actual covered
+selected-union original owner. That owner retains every whole-original,
+entire-cache, entire-partition and catalog reconciliation, immutable selection,
+current and ending actor/assignment/private-draft/subject/workspace/source-purpose
+fence, reader sublimit and outer deadline. Only covered union progress with a
+fresh continuation can succeed. Lost real owner COMMIT acknowledgment remains
+unknown after the committed job rejects the stale failure write. Once union
+progress is issued, initial adoption and expiry leave all later claims alone.
+
+33 serial focused initial/covered-initial/wait checks passed in2,317.0764ms,
+zero failures/cancellations/skips; three source/native syntax checks pass.
+The existing native fixture now authors missing-human-command idle, actual
+initial-adoption orphan COMMIT refusal, concurrent single adoption of the
+original human token/command/actor at attempt five, real ending workspace/role
+rollback and orphan union-yield refusal through the worker's actual owner,
+lost actual union COMMIT ACK, immutable dispatch once, and later-owner expiry/
+cancellation exclusion. Cloud execution of this new head is pending. No native
+matrix, deadline, query/byte/runtime budget or failure cap is increased.
+
+The saved waiting worker6bf0d488 completed native job116865433768:417 migration,
+subject1, early2, prefix3, prepared23, edge1 and bootstrap2 tests passed with
+zero failures/cancellations/skips. Both actual covered-wait markers confirmed
+the original replays, native single claim, real rollback/ACK and human-lease
+exclusions. This is small protocol proof. Nonempty selected populations, the
+separately authorized CAD companion, complete semantic consumers, coherent
+publication, terminal pin transfer/retirement and licensed large-area/saved
+Hardy speed acceptance remain unfinished. No migration registration, HTTP route,
+default worker, schedule, source grant, Apply, publication or pin transfer is
+activated by this handoff.

@@ -62,7 +62,7 @@ export function resolveNeighborhoodOriginalCadAmenityEvidenceV2(value,check){
   const id=a.account_id,primaryCount=a.primary_original_count,secondaryCount=a.secondary_original_count;
   if(typeof id!=='string'||!id||Buffer.byteLength(id)>64||!['0','1'].includes(primaryCount)
     ||typeof secondaryCount!=='string'||!/^(?:0|[1-9]\d{0,2})$/.test(secondaryCount)
-    ||Number(primaryCount)+Number(secondaryCount)>250)fail('invalid_account');
+    ||Number(primaryCount)+Number(secondaryCount)>definition.limit_original_rows)fail('invalid_account');
   const primary=a.primary,secondary=a.secondary_originals;
   if((primary===null)!==(primaryCount==='0')||isProxy(secondary)||!Array.isArray(secondary)
     ||Object.getPrototypeOf(secondary)!==Array.prototype||secondary.length!==Number(secondaryCount)

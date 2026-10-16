@@ -49,6 +49,17 @@ checks and actual included review remain required.
 After this integration, 92 serial focused continuation, job, owner and receipt
 checks passed in 1,220.3239 ms, with zero failures, cancellations or skips.
 
+That saved continuation head `44bb4772` subsequently passed all 16 checks.
+Its full native job 116898504469 passed 417 migration, 1 subject, 8 prepared-index,
+1 edge and 2 bootstrap tests, with zero failures, skips or cancellations. The
+actual issued-success marker ran at 2026-10-16T09:18:01.5566982Z.
+This branch also integrates the actual protected startup repair #1321 merge
+`ccc439bf`. That repair passed all 14 checks and included review `87619103`
+with no actionable findings; its native fixture proves catalog readiness under
+the same held reader lock that refuses the old unnecessary ALTER. The integrated
+continuation head still requires fresh security, native and full-suite checks
+and its own actual included review. Saved parent results do not prove it.
+
 Small protocol fixtures and SQL doubles do not establish licensed acquisition,
 complete selected semantics or production speed. The CAD companion, original-
 reconciled medians/COD/calendar quarters, coherent publication, terminal pins,

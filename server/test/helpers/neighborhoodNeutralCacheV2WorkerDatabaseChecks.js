@@ -72,6 +72,11 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   assert.equal(claimed.length,1);const first=claimed[0].claim;
   assert.equal(first.attempts,1);assert.equal((await parent()).sequence,parentBefore.sequence);
   const initialState=await cacheState(),initialJob=await job();assert.equal(initialState.sequence,0);
+  const manualCad=createCustomCohortContextCapture({pool:observed,sourceMode:'combined-witness2-v1',authorizeMarketData,
+    authorizeCadImprovementData:async()=>assert.fail('an automatic job must refuse before any separate CAD policy/original read')});
+  await assert.rejects(manualCad.cacheOriginalFrozenCaptureJobCadAccountReferencesV2(input,
+    {captureJobClaim:first,cadAccountPackagePage:{cursor:''}}),/CAD_automatic_handoff_unavailable/);
+  assert.deepEqual(await cacheState(),initialState);assert.deepEqual(await job(),initialJob);
   await assert.rejects(tx(pool,async client=>{
     await client.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);
     await client.query(`UPDATE app.neighborhood_custom_cohort_neutral_success_v2_jobs

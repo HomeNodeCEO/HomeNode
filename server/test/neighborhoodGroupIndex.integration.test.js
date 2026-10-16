@@ -111,7 +111,7 @@ import { createNeighborhoodFrozenJobStockMetricPages }
 import { createNeighborhoodSharedJobStockMetricPages, createNeighborhoodSharedJobStockMetricPagesV2,
   NEIGHBORHOOD_SHARED_STOCK_METRIC_V2_PAGE_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodFrozenJobStockMetricPages.js';
-import { NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL, NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL,
+import { NEIGHBORHOOD_NATIVE_NEUTRAL_CACHE_COVERAGE_V2_SQL,NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL, NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL,
   NEIGHBORHOOD_STOCK_SUBJECT_HOUSING_PACKAGE_V2_SQL, NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,
   NEIGHBORHOOD_STOCK_SUBJECT_AND_FIRST_SELECTED_PACKAGE_V2_SQL, NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_ELIGIBILITY_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
@@ -1940,6 +1940,15 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       if(orphanPrefixYield){await client.query('ROLLBACK TO SAVEPOINT synthetic_prefix_yield');refsFault=null;prefixOrphanYieldSeen++;}
       if(refsFault==='union_delta_count'&&config.text.includes('custom-cohort-selected-union-v2:member-insert'))
         refsFault='union_delta_after_member';
+      if(config.text===NEIGHBORHOOD_NATIVE_NEUTRAL_CACHE_COVERAGE_V2_SQL&&refsFault?.startsWith('coverage_')){
+        assert.equal(result.rowCount,1,'nonvacuous actual native DONE coverage transport probe');
+        const fault=refsFault;
+        if(fault==='coverage_ending'){refsFault='coverage_after_first';return result;}
+        if(fault==='coverage_transaction'){refsFault='coverage_transaction_after_first';return result;}
+        refsFault=null;
+        if(fault==='coverage_transaction_after_first')return {...result,rows:result.rows.map(r=>({...r,transaction_id:String(BigInt(r.transaction_id)+1n)}))};
+        return {rowCount:0,rows:[]};
+      }
       if(transactionIndexOwnerFixture&&config.text===NEIGHBORHOOD_NEXT_SELECTED_TRANSACTION_INDEX_ORIGINAL_PACKAGE_V2_SQL){
         const p=result.rows[0];assert.ok(p);assert.equal(p.page_count,p.original_count);
         if(p.account_id!==null){
@@ -2375,7 +2384,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         // native indexed member read actually injects the changed value.
         const fault=refsFault;if(!['commit','cad_header','transaction_header','wait_release_rollback','intent_resume_rollback'].includes(fault)
           &&!fault?.startsWith('partition_')&&!fault?.startsWith('catalog_')&&!fault?.startsWith('union_')&&!fault?.startsWith('eligibility_')
-          &&!fault?.startsWith('evidence_')&&!fault?.startsWith('metric_')&&!fault?.startsWith('metrics_')&&!fault?.startsWith('stats_')&&!fault?.startsWith('freq_')&&!fault?.startsWith('indexed_')&&!fault?.startsWith('numeric_')&&!fault?.startsWith('semantic_')&&!fault?.startsWith('early_')&&!fault?.startsWith('prefix_'))refsFault=null;
+          &&!fault?.startsWith('coverage_')&&!fault?.startsWith('evidence_')&&!fault?.startsWith('metric_')&&!fault?.startsWith('metrics_')&&!fault?.startsWith('stats_')&&!fault?.startsWith('freq_')&&!fault?.startsWith('indexed_')&&!fault?.startsWith('numeric_')&&!fault?.startsWith('semantic_')&&!fault?.startsWith('early_')&&!fault?.startsWith('prefix_'))refsFault=null;
         if(fault==='license')await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
         if(fault==='role')await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);
         if(fault==='subject')await client.query("UPDATE app.appraisal_subject_snapshots SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2000') WHERE id=$1",[sourceSnapshot]);
@@ -3360,6 +3369,10 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     refsFault='commit';
     await assert.rejects(freshRefsOwner()[neutralMethod](refsInput,refsOptions),error=>error.outcome_unknown===true);
     const neutralFirst=await readNeutralHead();assert.equal(neutralFirst.sequence,1);
+    const coveredMethod='readCoveredFrozenCaptureJobStockAccountPackagesReferencesV2',coveredPartialFrom=refsCalls.length;
+    await assert.rejects(freshRefsOwner()[coveredMethod](refsInput,stockAccountOptions),/invalid_result|cache_coverage_unavailable/);
+    assert.ok(!refsCalls.slice(coveredPartialFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL),
+      'a real partial native head cannot admit an original consumer');
     const neutralFirstBody=JSON.parse((await pool.query('SELECT canonical_utf8 FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1 AND content_sha256=$2',
       [organization,neutralFirst.receipt_reference.content_sha256])).rows[0].canonical_utf8);
     await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
@@ -3390,6 +3403,36 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       neutralFirstBody.profile_reference.content_sha256])).rows[0];
     assert.equal(scopedHeader.status,'building');assert.equal(scopedHeader.progress.typed_rows,'0');
     assert.equal((await pool.query('SELECT 1 FROM app.neighborhood_custom_cohort_typed_original_rows WHERE operation_id=$1 LIMIT 1',[refsOperation])).rowCount,0);
+    const coveredFrom=refsCalls.length,coveredBlobs=await refsBlobCount();
+    const coveredA=await freshRefsOwner()[coveredMethod](refsInput,stockAccountOptions),
+      coveredB=await freshRefsOwner()[coveredMethod](refsInput,{...stockAccountOptions,stockAccountPackagePage:{cursor:coveredA.next_cursor}}),
+      coveredEnd=await freshRefsOwner()[coveredMethod](refsInput,{...stockAccountOptions,stockAccountPackagePage:{cursor:coveredB.next_cursor}});
+    assert.equal(coveredA.account_id,'CLOSURE-A');assert.equal(coveredB.account_id,'CLOSURE-B');assert.equal(coveredEnd.end_of_accounts,true);
+    assert.ok(coveredA.rows.some(r=>r.kind==='parcels'));assert.equal(coveredA.original_reconciliation,'every_package_original_recompiled');
+    assert.equal(refsCalls.slice(coveredFrom).filter(sql=>sql===NEIGHBORHOOD_NATIVE_NEUTRAL_CACHE_COVERAGE_V2_SQL).length,6);
+    for(const fault of ['stock_cells_mismatch','stock_cells_missing','stock_cells_original','coverage_missing','coverage_ending','coverage_transaction']){
+      refsFault=fault;await assert.rejects(freshRefsOwner()[coveredMethod](refsInput,stockAccountOptions),
+        /original_mismatch|invalid_original|invalid_result|cache_coverage_changed|cache_coverage_unavailable/);
+      assert.equal(refsFault,null);
+    }
+    for(const [fault,reason] of [['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],
+      ['subject',/subject_changed/],['claim',/claim_lost|invalid_result/],['cancel',/cancelled/]]){
+      refsFault=fault;refsAbort=new AbortController();
+      await assert.rejects(freshRefsOwner()[coveredMethod](refsInput,{...stockAccountOptions,signal:refsAbort.signal}),reason);
+      assert.equal(refsFault,null);assert.deepEqual(await readNeutralHead(),nativeNeutralDone);
+      assert.deepEqual(await readRefsCheckpoint(),identityCommitted);
+      if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+      if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    }
+    await assert.rejects(freshRefsOwner()[stockAccountMethod](refsInput,stockAccountOptions),/cache_unavailable/);
+    assert.deepEqual((await pool.query(NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read,[frozen.generationId,
+      neutralFirstBody.profile_reference.content_sha256])).rows[0],scopedHeader);
+    assert.deepEqual(await readNeutralHead(),nativeNeutralDone);assert.equal(await refsBlobCount(),coveredBlobs);
+    assert.ok(!refsCalls.slice(coveredFrom).some(sql=>/shared-typed-v2:begin|shared-typed-v2:rows|checkpoint-save|anchor-advance|anchor-insert/.test(sql)));
+    console.info('[native-covered-neutral-original-reader-v2]',{actual_native_DONE_head:true,partial_head_refused_before_originals:true,
+      global_header_still_building:true,every_original_and_entire_cache_replayed:true,missing_or_ending_coverage_refused:true,
+      same_transaction_required:true,current_and_ending_fences:true,legacy_complete_contract_preserved:true,
+      checkpoint_head_header_and_blob_counts_unchanged:true,automatic_stock_bridge:false,licensed_large_area:false,production_speed:false});
     console.info('[native-current-authorized-neutral-cache-owner-v2]',{issued_source_pages:neutralPages,
       actual_fixed_original_reads:true,entire_neutral_cache_reconciliation:true,independent_native_DONE_parents:true,
       exact_source_node_edges_and_free_DONE_refusal:true,current_and_all_ending_fences_rollback:true,

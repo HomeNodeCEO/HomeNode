@@ -28,6 +28,7 @@ import { reconcileNeighborhoodOriginalTransactionPackageV2 } from './neighborhoo
 import { projectNeighborhoodTransactionPackageV1 } from './neighborhoodSharedTransactionPackagesV1.js';
 import { prepareNeighborhoodTransactionRetainedPeriodV1 } from './neighborhoodTransactionTemporalV1.js';
 import { resolveNeighborhoodOriginalAccountHousingV2 } from './neighborhoodOriginalAccountHousingV2.js';
+import { prepareCustomCohortCaptureJobClaim } from './customCohortCaptureJobRepository.js';
 import { projectNeighborhoodOriginalRecordedGroupLabelsV2,resolveNeighborhoodOriginalRecordedGroupV2 }
   from './neighborhoodOriginalRecordedGroupV2.js';
 
@@ -37,6 +38,50 @@ export const NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_LIMITS = Object.freeze({ rows:
 const L=NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_LIMITS, TYPED=getNeighborhoodFrozenTypedOriginalV2Profile(),
   CAD_TYPED=getNeighborhoodFrozenTypedCadImprovementV1Profile();
 const KINDS=Object.freeze(['parcels','accounts']), ALL=['parcels','accounts','source_records','sales','sale_links','sync_state','sync_runs'];
+// Fixed PK metadata joins only. A native coverage head binds the actual issued
+// parents and root; it grants neither source rights nor observation truth.
+export const NEIGHBORHOOD_NATIVE_NEUTRAL_CACHE_COVERAGE_V2_SQL=`/* neighborhood-native-neutral-cache-v2:coverage */
+SELECT txid_current()::text AS transaction_id,h.sequence,h.receipt_reference,b.canonical_utf8 AS receipt_text
+FROM app.neighborhood_custom_cohort_capture_jobs job
+JOIN app.neighborhood_custom_cohort_job_stocks s ON s.operation_id=job.operation_id AND s.organization_id=job.organization_id
+JOIN app.neighborhood_custom_cohort_neutral_cache_v2_heads h ON h.operation_id=job.operation_id AND h.organization_id=job.organization_id
+JOIN app.neighborhood_custom_cohort_graph_v2_anchors g ON g.operation_id=h.operation_id AND g.organization_id=h.organization_id
+  AND g.source_reference=h.source_reference AND g.root_reference=h.root_reference AND g.receipt_reference=h.graph_reference
+JOIN app.neighborhood_custom_cohort_geo_v2_anchors geo ON geo.operation_id=h.operation_id AND geo.organization_id=h.organization_id
+  AND geo.source_reference=h.source_reference AND geo.root_reference=h.root_reference AND geo.graph_reference=h.graph_reference
+  AND geo.stock_reference=h.stock_reference AND geo.receipt_reference=h.geographic_reference
+JOIN app.neighborhood_custom_cohort_identity_v2_anchors i ON i.operation_id=h.operation_id AND i.organization_id=h.organization_id
+  AND i.source_reference=h.source_reference AND i.root_reference=h.root_reference AND i.graph_reference=h.graph_reference
+  AND i.geographic_reference=h.geographic_reference AND i.stock_reference=h.stock_reference AND i.receipt_reference=h.identity_reference
+JOIN app.neighborhood_cohort_evidence_blobs b ON b.organization_id=h.organization_id
+  AND b.content_sha256=h.receipt_reference->>'content_sha256'
+  AND b.canonical_utf8_bytes::text=h.receipt_reference->>'canonical_utf8_bytes' AND b.canonical_utf8_bytes<=16000
+JOIN app.neighborhood_cohort_evidence_blobs r ON r.organization_id=h.organization_id
+  AND r.content_sha256=h.root_reference->>'content_sha256'
+  AND r.canonical_utf8_bytes::text=h.root_reference->>'canonical_utf8_bytes' AND r.canonical_utf8_bytes<=16000
+WHERE job.operation_id=$1::uuid AND job.claim_token=$2::uuid AND job.attempts=$3::integer
+  AND job.organization_id=$4::uuid AND job.report_file_id=$5::uuid AND job.assignment_file_id=$6::bigint
+  AND job.account_id=$7 AND job.actor_user_id=$8::uuid AND job.status='running'
+  AND job.lease_expires_at>clock_timestamp() AND job.cancellation_requested_at IS NULL AND job.context_sha256 IS NULL
+  AND s.generation_id=$9::uuid AND s.status='complete' AND h.root_reference=$10::jsonb
+  AND job.checkpoint->'evidence_refs'->1=h.stock_reference AND job.checkpoint->'evidence_refs'->2=h.source_reference
+  AND job.checkpoint->'evidence_refs'->3=h.graph_reference AND job.checkpoint->'evidence_refs'->4=h.geographic_reference
+  AND job.checkpoint->'evidence_refs'->5=h.identity_reference
+  AND b.canonical_utf8::jsonb->>'format'='cohort_neutral_cache_receipt_v2'
+  AND b.canonical_utf8::jsonb->>'sequence'=h.sequence::text
+  AND b.canonical_utf8::jsonb->'source_reference'=h.source_reference AND b.canonical_utf8::jsonb->'root'=h.root_reference
+  AND b.canonical_utf8::jsonb->'graph_reference'=h.graph_reference AND b.canonical_utf8::jsonb->'geographic_reference'=h.geographic_reference
+  AND b.canonical_utf8::jsonb->'identity_reference'=h.identity_reference AND b.canonical_utf8::jsonb->'stock_reference'=h.stock_reference
+  AND b.canonical_utf8::jsonb->'profile_reference'=$11::jsonb
+  AND b.canonical_utf8::jsonb->'binding'=r.canonical_utf8::jsonb->'binding'
+  AND b.canonical_utf8::jsonb->'binding'->>'generation_id'=s.generation_id::text
+  AND b.canonical_utf8::jsonb->'after'->>'kind_index'='7'
+  AND b.canonical_utf8::jsonb->'after'->'position'='null'::jsonb
+  AND b.canonical_utf8::jsonb->'after'->>'page_count'=h.sequence::text
+  AND NOT EXISTS(SELECT 1 FROM jsonb_each($12::jsonb) expected
+    WHERE r.canonical_utf8::jsonb->'layers'->expected.key->>'ended' IS DISTINCT FROM 'true'
+      OR r.canonical_utf8::jsonb->'layers'->expected.key->'row_count' IS DISTINCT FROM expected.value)
+FOR SHARE OF job,h NOWAIT`;
 /** Refuse without including retained private observations in the error. */
 const fail=reason=>{throw new TypeError(`neighborhood_stock_original_cells_v2_${reason}`);};
 /** Compare detached validated DATA, never an authorization claim. */
@@ -384,12 +429,23 @@ SELECT coalesce('['||string_agg(encoded,',' ORDER BY row_key)||']','[]') AS page
  * selection, synchronous per-cell query callback or report authority is minted.
  */
 export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,rawGraph,effectiveDate){
+  return stockOriginalCells(client,rawOptions,rawGraph,effectiveDate,false);
+}
+/** Explicit internal reader for an independently issued, complete job cache
+ * coverage head. It never changes global completeness or replaces the whole
+ * original/entire-cache replay below. Current authority remains the owner's
+ * responsibility at both transaction ends, under this same lifetime budget. */
+export function createNeighborhoodCoveredStockOriginalCellsV2(client,rawOptions,rawGraph,effectiveDate){
+  return stockOriginalCells(client,rawOptions,rawGraph,effectiveDate,true);
+}
+function stockOriginalCells(client,rawOptions,rawGraph,effectiveDate,covered){
   const options=data(rawOptions,['claim','scope','actorUserId','geometryInput','discovery','subjectIntent','checkBudget']);
   if(typeof client?.query!=='function'||typeof options.checkBudget!=='function')fail('invalid_input');
   const g=data(rawGraph,['root','layer_counts']),r=data(g.root,['content_sha256','canonical_utf8_bytes']);
   const root=prepareNeighborhoodCohortBlobReference(r.content_sha256,r.canonical_utf8_bytes),layers=data(g.layer_counts,ALL);
   if(!Object.values(layers).every(n=>Number.isInteger(n)&&n>=0&&n<=2000000))fail('invalid_input');
   const effective=assessmentDate(effectiveDate),graph=freeze({root,layer_counts:layers});
+  const coverageClaim=covered?prepareCustomCohortCaptureJobClaim(options.claim):null;
   let used=false,queries=0,bytes=0,started;
   /** Charge all nested SQL reads against one step's deadline/query/byte budget. */
   const check=()=>{options.checkBudget();if(performance.now()-started>L.step_ms)fail('deadline');};
@@ -412,21 +468,60 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
         layer_counts:original.layer_counts,row_count:original.row_count,payload_utf8_bytes:original.payload_utf8_bytes};
       if(!same(source,expected)||Object.entries(layers).some(([k,n])=>n>Number(source.layer_counts[k].row_count)))fail('source_mismatch');
       const binding=assessmentEvidenceDigest({source,profile:TYPED}),headerValues=[stock.generation_id,TYPED.profile_ref.content_sha256];
-      /** A complete immutable cache is prerequisite DATA, never prepared here. */
+      /** The legacy complete-cache contract stays exact. The explicit covered
+       * reader also admits a consistent building header, but ONLY alongside
+       * an actual native DONE head, reopened before and after every original. */
       const validateHeader=value=>{
         const h=data(value,['binding_sha256','source_metadata','definition_json','progress','status','completed_at']);
         const p=data(h.progress,['format','binding_sha256','kind_index','after','layer_rows','typed_rows','typed_utf8_bytes']);
         if(h.binding_sha256!==binding||!same(h.source_metadata,source)||h.definition_json!==TYPED.definition_blob.canonical_json
-          ||h.status!=='complete'||typeof h.completed_at!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(h.completed_at)
-          ||p.format!=='shared_frozen_typed_progress_v2'||p.binding_sha256!==binding||p.kind_index!==7||p.after!==''||p.layer_rows!==0
-          ||p.typed_rows!==source.row_count||!count(p.typed_utf8_bytes,8000000000)||BigInt(p.typed_utf8_bytes)<BigInt(p.typed_rows))fail('cache_unavailable');
+          ||p.format!=='shared_frozen_typed_progress_v2'||p.binding_sha256!==binding
+          ||!count(p.typed_rows,14000000)||!count(p.typed_utf8_bytes,8000000000)
+          ||BigInt(p.typed_utf8_bytes)<BigInt(p.typed_rows))fail('cache_unavailable');
+        if(h.status==='complete'){
+          if(typeof h.completed_at!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(h.completed_at)
+            ||p.kind_index!==7||p.after!==''||p.layer_rows!==0||p.typed_rows!==source.row_count)fail('cache_unavailable');
+        }else{
+          if(!covered||h.status!=='building'||h.completed_at!==null||!Number.isInteger(p.kind_index)||p.kind_index<0||p.kind_index>=7
+            ||!Number.isInteger(p.layer_rows)||p.layer_rows<0||p.layer_rows>Number(source.layer_counts[ALL[p.kind_index]].row_count)
+            ||typeof p.after!=='string'||!p.after.isWellFormed()||Buffer.byteLength(p.after)>256||/[\u0000-\u001f\u007f]/.test(p.after)
+            ||(p.after==='')!==(p.layer_rows===0)
+            ||BigInt(p.typed_rows)!==ALL.slice(0,p.kind_index).reduce((n,k)=>n+BigInt(source.layer_counts[k].row_count),BigInt(p.layer_rows)))fail('cache_unavailable');
+        }
       };
       const header=one(await execute(NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read,headerValues));validateHeader(header);
+      const coverageValues=covered?[coverageClaim.operation_id,coverageClaim.claim_token,coverageClaim.attempts,
+        options.scope.organization_id,options.scope.report_file_id,options.scope.assignment_file_id,options.scope.account_id,
+        options.actorUserId,stock.generation_id,canonicalAssessmentJson(root),canonicalAssessmentJson(TYPED.definition_blob.ref),
+        canonicalAssessmentJson(layers)]:null;
+      const readCoverage=async()=>{
+        const result=data(one(await execute(NEIGHBORHOOD_NATIVE_NEUTRAL_CACHE_COVERAGE_V2_SQL,coverageValues)),
+          ['transaction_id','sequence','receipt_reference','receipt_text']);
+        if(typeof result.transaction_id!=='string'||!/^[1-9][0-9]{0,19}$/.test(result.transaction_id)
+          ||!Number.isInteger(result.sequence)||result.sequence<1||result.sequence>200000
+          ||typeof result.receipt_text!=='string'||Buffer.byteLength(result.receipt_text)>16000)fail('cache_coverage_unavailable');
+        const rawRef=data(result.receipt_reference,['content_sha256','canonical_utf8_bytes']),
+          receiptRef=prepareNeighborhoodCohortBlobReference(rawRef.content_sha256,rawRef.canonical_utf8_bytes);
+        let decoded;try{decoded=JSON.parse(result.receipt_text);}catch{fail('cache_coverage_unavailable');}
+        const receipt=data(decoded,['format','binding','source_reference','root','graph_reference','geographic_reference',
+          'identity_reference','stock_reference','profile_reference','sequence','previous','before','after']),
+          after=data(receipt.after,['kind_index','position','page_count','row_count','original_utf8_bytes','typed_utf8_bytes']);
+        if(Buffer.byteLength(result.receipt_text)!==Number(receiptRef.canonical_utf8_bytes)
+          ||assessmentEvidenceDigest(receipt)!==receiptRef.content_sha256||receipt.format!=='cohort_neutral_cache_receipt_v2'
+          ||receipt.sequence!==result.sequence||!same(receipt.root,root)||!same(receipt.profile_reference,TYPED.definition_blob.ref)
+          ||receipt.binding?.generation_id!==stock.generation_id||after.kind_index!==7||after.position!==null||after.page_count!==result.sequence
+          ||after.row_count!==Object.values(layers).reduce((n,v)=>n+v,0)
+          ||!Number.isSafeInteger(after.original_utf8_bytes)||after.original_utf8_bytes<0||after.original_utf8_bytes>8000000000
+          ||!count(after.typed_utf8_bytes,8000000000)||BigInt(after.typed_utf8_bytes)<BigInt(after.row_count))fail('cache_coverage_unavailable');
+        return result;
+      };
+      const coverage=covered?await readCoverage():null;
       return {stock,source,async finish(){
         if(!same(await stocks.read(),stock)||!same(prepareNeighborhoodSharedTypedSource(
           await execute(NEIGHBORHOOD_SHARED_TYPED_V2_SQL.source,[stock.generation_id]),stock.generation_id),source))fail('source_changed');
         const ending=one(await execute(NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read,headerValues));validateHeader(ending);
-        if(!same(ending,header))fail('source_changed');check();
+        if(!same(ending,header))fail('source_changed');
+        if(covered&&!same(await readCoverage(),coverage))fail('cache_coverage_changed');check();
       }};
   }
   /** Distinct CAD cache prerequisite inside this SAME single-use executor.

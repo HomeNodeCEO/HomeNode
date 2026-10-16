@@ -7679,3 +7679,31 @@ single claim, expired-token refusal, lost real cache COMMIT acknowledgment,
 ending role/cache rollback, preserved history at attempt three, native DONE
 idle behavior and unchanged report/assignment/pin state. Cloud execution is
 pending; this is not licensed large-area or production-speed acceptance.
+
+## Native job coverage for bounded original consumers (2026-10-16)
+
+The explicit `createNeighborhoodCoveredStockOriginalCellsV2` reader and named
+`readCoveredFrozenCaptureJobStockAccountPackagesReferencesV2` owner can admit a
+consistent building neutral-cache header only after reading the actual native
+job coverage DONE head. Fixed PK joins bind the live scoped claim, stock,
+independent graph/geographic/identity parents, exact issued root and typed
+profile. The bounded retained receipt is validated and reopened under the same
+native transaction after every whole-original/entire-cache reconciliation.
+The global header and its progress are never relabeled or advanced.
+
+The legacy complete-cache reader remains exact and never queries the new
+coverage table. All methods of the explicit covered reader retain their real
+original queries, full cache comparisons and existing single-use limits; the
+new owner also uses the unchanged whole-operation byte/query/runtime budget
+and current/ending actor, assignment, private draft, subject and source checks.
+Separate CAD cache preparation and purpose authorization remain prerequisites
+for methods needing CAD companion facts.
+
+Eighty focused owner-admission checks passed serially, including closed inputs
+for the new named owner. The existing native fixture now requires partial-head
+refusal before original reads, completed-coverage account A/B/EMPTY reads with
+the global header still building, full-original/cache forgeries, missing/ending
+coverage and transaction-change refusal, ending authorization rollback and
+unchanged head/checkpoint/header/blob state. Actual cloud execution is pending.
+No route, worker, publication, Apply or pin transfer is activated; the native
+cache-DONE to first automatic stock-traversal bridge remains separate work.

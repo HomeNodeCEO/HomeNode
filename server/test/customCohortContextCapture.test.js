@@ -382,7 +382,7 @@ test('new-study selection intent owner accepts no caller claim, source adapter, 
   await assert.rejects(service[method](base,{selectionIntent,signal:controller.signal}),/cancelled/);
 });
 
-for(const method of ['readSharedFrozenCaptureJobStockAccountPackagesReferencesV2','readOriginalFrozenCaptureJobAccountHousingReferencesV2',
+for(const method of ['readSharedFrozenCaptureJobStockAccountPackagesReferencesV2','readCoveredFrozenCaptureJobStockAccountPackagesReferencesV2','readOriginalFrozenCaptureJobAccountHousingReferencesV2',
   'readOriginalFrozenCaptureJobAccountRecordedGroupReferencesV2','readOriginalFrozenCaptureJobRecordedPartitionAccountReferencesV2',
   'readOriginalFrozenCaptureJobRecordedCatalogAccountReferencesV2',
   'readOriginalFrozenCaptureJobSelectionWorkspaceTargetReferencesV2'])

@@ -1,5 +1,42 @@
 # Complete larger-area Custom neighborhood studies
 
+## Covered selected reported-metric worker (2026-10-16, not activated)
+
+`progressCoveredOriginalFrozenCaptureJobSelectedMetricReferencesV2` composes
+the existing original-reconciled seventh pass with the independently issued
+neutral and CAD DONE coverage already adopted by the stock bridge. Its native
+metric head chooses one next selected account or the distinct terminal EMPTY.
+Every call reopens whole stock, CAD, all-date transaction and required subject
+originals, reconciles ENTIRE caches and immutable selection/catalog/partition
+lineage, and passes both-end current source-purpose/actor/assignment/private-
+draft/subject/claim/workspace/pin/head fences before retaining a metric row.
+Row, receipt, head, exact thirteen-reference checkpoint and fresh single-use
+continuation share the SAME transaction. No caller observation, ordinal, DONE,
+cursor or callback is admitted. The legacy owner remains unchanged.
+
+The separate closed worker accepts evidence DONE or incomplete metrics only.
+All claim, recovery and expiry lanes require actual adopted neutral and CAD
+native parents; metrics DONE excludes all three lanes, leaving statistics to
+its own unfinished owner. Success preserves attempts and the existing error;
+only actual failure/expiry recovery spends the unchanged five-failure ceiling.
+The same 250-original single-use paired packet and its 128-query subbudget
+remain inside the aggregate 32MB/256-query/60s owner and 16KB whole-result cap.
+
+125 serial focused owner/worker/metric contract and repository tests passed,
+zero failures/cancellations/skips (1,512.3138ms); source/native fixture syntax
+and diff checks pass. New PostgreSQL assertions extend the independently issued
+evidence job through real metric failures, ending-rights/workspace/role and
+orphan-COMMIT rollback of rows AND head, lost ACK/fresh NEXT, two distinct metric
+rows and fresh EMPTY, unchanged parents/choices/pins and the DONE expiry stop.
+Their NEW cloud/native execution is pending; authored checks are not acceptance.
+
+This pass retains exact reported comparison cells; it does not verify at-sale
+GLA, currency, economic transaction or historical housing applicability. Exact
+complete medians/CODs/calendar quarters, coherent publication, terminal pin
+handoff, licensed large-area acquisition and production-speed acceptance remain
+open. No registry, default worker, route, schedule, source grant, genuine Hardy
+choice, accepted report, Apply, publication or pin activation is added.
+
 ## Covered selected original-evidence pass (2026-10-16, not activated)
 
 `progressCoveredOriginalFrozenCaptureJobSelectedEvidenceReferencesV2` connects

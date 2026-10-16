@@ -380,6 +380,12 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true,
     readingSelectedUnionFirstAmenities: true, readingSelectedUnionFirstTransactions: true, readingSelectedMetricSource: true,
     progressingSelectedMetrics: true, allowedPhases: ['frozen_selected_evidence_refs_v2','frozen_selected_metrics_refs_v2'] },
+  covered_selected_metrics_progress_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,
+    readingSelectedUnionSubjectHousing:true,readingSelectedUnionFirstEligibility:true,
+    readingSelectedUnionFirstAmenities:true,readingSelectedUnionFirstTransactions:true,readingSelectedMetricSource:true,
+    progressingSelectedMetrics:true,coveredNeutralOriginals:true,
+    allowedPhases:['frozen_selected_evidence_refs_v2','frozen_selected_metrics_refs_v2'] },
   original_selected_first_statistics_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
     readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true,
@@ -3598,6 +3604,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             evidence_refs:[...checkpoint.evidence_refs.slice(0,12),receiptReference]});
           const continuation=await createCustomCohortV2ContinuationRepository(client).yieldIssued(claim,jobOptions);
           const result={...subjectHousingResult,status:'original_selected_reported_metric_progress_retained',
+            ...(coveredNeutralOriginals?{covered_neutral_originals:true,covered_CAD_originals:true}:{}),
             metrics_reference:receiptReference,metric_row_reference:rowReference,metric_row_retained:rowReference!==null,
             progress:plan.after,recorded_comparison_counts:afterCounts,read_only:false,
             coverage:'one_native_selected_ordinal_or_fresh_terminal_empty_probe',
@@ -4179,6 +4186,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     // rows/head/exact13 roots/continuation are retained in ONE caller TX.
     progressOriginalFrozenCaptureJobSelectedMetricReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_selected_metrics_progress_refs_v2'),
+    progressCoveredOriginalFrozenCaptureJobSelectedMetricReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'covered_selected_metrics_progress_refs_v2'),
     // Inactive, read-only statistics-source boundary; fixed first only. Fresh
     // originals and field reconciliation, NOT complete statistics/publication.
     readOriginalFrozenCaptureJobFirstSelectedStatisticsReferencesV2: (value, options = {}) =>

@@ -66,7 +66,7 @@ export function createCustomCohortSourcePrefixV2ContinuationRepository(client){
       WHERE ${FENCE} AND h.issued_transaction_id=txid_current()
       ON CONFLICT(operation_id) DO UPDATE SET sequence=EXCLUDED.sequence,source_reference=EXCLUDED.source_reference,
         root_reference=EXCLUDED.root_reference,issued_claim_token=EXCLUDED.issued_claim_token,issued_attempts=EXCLUDED.issued_attempts,
-        consumed_claim_token=NULL,consumed_attempts=NULL
+        consumed_claim_token=NULL,consumed_attempts=NULL,consumed_transaction_id=NULL
       WHERE neighborhood_custom_cohort_prefix_success_v2.consumed_claim_token IS NOT NULL
         AND EXCLUDED.sequence=neighborhood_custom_cohort_prefix_success_v2.sequence+1
       RETURNING operation_id,sequence,source_reference

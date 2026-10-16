@@ -33,7 +33,9 @@ CREATE TABLE app.neighborhood_custom_cohort_prefix_success_v2 (
   issued_claim_token uuid NOT NULL, issued_attempts integer NOT NULL CHECK(issued_attempts BETWEEN 1 AND 5),
   consumed_claim_token uuid CHECK(consumed_claim_token IS NULL OR consumed_claim_token<>issued_claim_token),
   consumed_attempts integer CHECK(consumed_attempts BETWEEN 1 AND 5),
-  CHECK((consumed_claim_token IS NULL)=(consumed_attempts IS NULL))
+  consumed_transaction_id bigint CHECK(consumed_transaction_id>0),
+  CHECK((consumed_claim_token IS NULL)=(consumed_attempts IS NULL)),
+  CHECK((consumed_claim_token IS NULL)=(consumed_transaction_id IS NULL))
 );
 CREATE FUNCTION app.guard_neighborhood_prefix_success_v2() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE job app.neighborhood_custom_cohort_capture_jobs%ROWTYPE;
@@ -63,12 +65,14 @@ BEGIN
       OR NEW.consumed_attempts IS DISTINCT FROM job.attempts+1
       OR NOT (job.status='retry' AND job.run_after<=clock_timestamp() OR job.status='running' AND job.lease_expires_at<=clock_timestamp()) THEN
       RAISE EXCEPTION 'neighborhood_prefix_success_v2_claim_conflict' USING ERRCODE='55000'; END IF;
+    NEW.consumed_transaction_id:=txid_current();
     RETURN NEW;
   END IF;
   IF h.issued_transaction_id IS DISTINCT FROM txid_current() OR job.status<>'running'
     OR job.lease_expires_at<=clock_timestamp() OR job.claim_token IS DISTINCT FROM NEW.issued_claim_token
     OR job.attempts<>NEW.issued_attempts OR h.issued_claim_token IS DISTINCT FROM NEW.issued_claim_token
-    OR h.issued_attempts<>NEW.issued_attempts OR NEW.consumed_claim_token IS NOT NULL OR NEW.consumed_attempts IS NOT NULL THEN
+    OR h.issued_attempts<>NEW.issued_attempts OR NEW.consumed_claim_token IS NOT NULL OR NEW.consumed_attempts IS NOT NULL
+    OR NEW.consumed_transaction_id IS NOT NULL THEN
     RAISE EXCEPTION 'neighborhood_prefix_success_v2_issuance_conflict' USING ERRCODE='55000'; END IF;
   IF TG_OP='INSERT' THEN
     IF NEW.sequence<>1 AND NOT EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_prefix_success_v2 c WHERE c.operation_id=NEW.operation_id) THEN
@@ -104,7 +108,8 @@ BEGIN
     IF h.issued_transaction_id IS DISTINCT FROM txid_current() OR job.status<>'retry' OR job.claim_token IS NOT NULL
       OR job.lease_expires_at IS NOT NULL OR c.issued_attempts<>job.attempts OR c.issued_claim_token<>h.issued_claim_token THEN
       RAISE EXCEPTION 'neighborhood_prefix_success_v2_commit_conflict' USING ERRCODE='55000'; END IF;
-  ELSIF job.status<>'running' OR job.claim_token IS DISTINCT FROM c.consumed_claim_token OR job.lease_expires_at<=clock_timestamp()
+  ELSIF c.consumed_transaction_id IS DISTINCT FROM txid_current() OR job.status<>'running'
+    OR job.claim_token IS DISTINCT FROM c.consumed_claim_token OR job.lease_expires_at<=clock_timestamp()
     OR job.attempts IS DISTINCT FROM c.consumed_attempts OR job.attempts<c.issued_attempts OR job.attempts>5 THEN
     RAISE EXCEPTION 'neighborhood_prefix_success_v2_commit_conflict' USING ERRCODE='55000'; END IF;
   RETURN;
@@ -153,7 +158,8 @@ BEGIN
     AND (OLD.status<>'running' OR NEW.claim_token IS DISTINCT FROM OLD.claim_token)
     AND EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_prefix_success_v2_jobs e WHERE e.operation_id=NEW.operation_id)
     AND NOT EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_prefix_success_v2 c WHERE c.operation_id=NEW.operation_id
-      AND c.organization_id=NEW.organization_id AND c.consumed_claim_token=NEW.claim_token AND c.consumed_attempts=NEW.attempts) THEN
+      AND c.organization_id=NEW.organization_id AND c.consumed_claim_token=NEW.claim_token AND c.consumed_attempts=NEW.attempts
+      AND c.consumed_transaction_id=txid_current()) THEN
     RAISE EXCEPTION 'neighborhood_prefix_success_v2_claim_conflict' USING ERRCODE='55000'; END IF;
   RETURN NEW;
 END $$;

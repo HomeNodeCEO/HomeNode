@@ -11,7 +11,7 @@ import { runCustomCohortBatchSelectedEligibilityV3JobOnce as eligibility } from 
 /** Twenty-eighth independent graph. The real V3 evidence worker has issued its
  * own fresh terminal EMPTY; this call never copies or rebinds a native parent. */
 export async function runNeighborhoodBatchSelectedMetricsV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
-  catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false}){
+  catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false}){
   const operation=input.operationId,method='progressCoveredOriginalFrozenCaptureJobBatchSelectedMetricReferencesV3',
     readMethod='readCoveredOriginalFrozenCaptureJobBatchFirstSelectedMetricReferencesV3',
     head=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_metrics_v2_heads WHERE operation_id=$1',[operation])).rows[0],
@@ -111,7 +111,7 @@ export async function runNeighborhoodBatchSelectedMetricsV3DatabaseChecks({pool,
   assert.deepEqual(await job(),terminal.job);assert.deepEqual(await parent(),terminal.parent);assert.deepEqual(await blobs(),terminal.blobs);assert.deepEqual(await head(),terminal.head);assert.deepEqual(await rows(),terminal.rows);await immutable();
   if(batchSelectedStatisticsFixture){
     await runNeighborhoodBatchSelectedStatisticsV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
-      catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedNumericFixture});return;
+      catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedNumericFixture,batchSelectedSemanticFixture});return;
   }
   console.info('[native-batch-selected-metrics-v3]',{independent_actual_V3_evidence_worker_fresh_EMPTY:true,
     read_only_first_original_candidate_and_lost_read_ACK_no_progress_or_lease_extension:true,

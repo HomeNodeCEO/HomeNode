@@ -15,7 +15,7 @@ import { NEIGHBORHOOD_SHARED_TYPED_CAD_SQL as CAD_SQL } from '../../src/services
  * recorded-comparison DONE. Real independent neutral/CAD owners precede both.
  * Complete original replay is evidence admission, not economic equivalence. */
 export async function runNeighborhoodBatchSelectedEvidenceV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
-  catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false}){
+  catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false}){
   const operation=input.operationId,method='progressCoveredOriginalFrozenCaptureJobBatchSelectedEvidenceReferencesV3',
     head=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_evidence_v2_heads WHERE operation_id=$1',[operation])).rows[0],
     parents=async()=>({union:(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_union_v2_heads WHERE operation_id=$1',[operation])).rows,
@@ -102,7 +102,7 @@ export async function runNeighborhoodBatchSelectedEvidenceV3DatabaseChecks({pool
   assert.deepEqual(await job(),terminal.job);assert.deepEqual(await parent(),terminal.parent);assert.deepEqual(await blobs(),terminal.blobs);assert.deepEqual(await head(),terminal.head);await immutable();
   if(batchSelectedMetricsFixture){
     await runNeighborhoodBatchSelectedMetricsV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
-      catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedStatisticsFixture,batchSelectedNumericFixture});return;
+      catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedStatisticsFixture,batchSelectedNumericFixture,batchSelectedSemanticFixture});return;
   }
   console.info('[native-batch-selected-evidence-v3]',{independent_actual_V3_workers_union_and_recorded_eligibility_DONE:true,
     actual_independent_CAD_DONE_global_header_still_building:true,first_CAD_amenities_and_all_date_transactions_read_only:true,

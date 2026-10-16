@@ -539,6 +539,13 @@ const FROZEN_SOURCE_STAGES = freeze({
     progressingSelectedSemantic: true, readingSelectedTransactionSource: true, readingSelectedTransactionIndex: true,
     progressingSelectedTransactionIndex: true,
     allowedPhases: ['frozen_selected_semantic_refs_v2','frozen_selected_transaction_index_refs_v2'] },
+  covered_batch_selected_semantic_progress_refs_v3: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,
+    readingSelectedUnionSubjectHousing:true,readingSelectedUnionFirstEligibility:true,
+    readingSelectedUnionFirstAmenities:true,readingSelectedUnionFirstTransactions:true,readingSelectedMetricSource:true,
+    readingSelectedStatisticsSource:true,readingSelectedFrequencySource:true,readingSelectedNumericSource:true,
+    progressingSelectedSemantic:true,coveredNeutralOriginals:true,catalogBatchLineage:true,
+    allowedPhases:['frozen_selected_numeric_refs_v2','frozen_selected_semantic_refs_v2'] },
   original_selected_semantic_progress_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
     readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true,
@@ -3666,6 +3673,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             evidence_refs:[...checkpoint.evidence_refs.slice(0,15),receiptReference]});
           const continuation=await createCustomCohortV2ContinuationRepository(client).yieldIssued(claim,jobOptions);
           const result={status:'original_selected_semantic_progress_retained',operation_id:input.operationId,
+            ...(catalogBatchLineage?{catalog_receipt_format:'cohort_recorded_catalog_batch_receipt_v3'}:{}),
             ...(coveredNeutralOriginals?{covered_neutral_originals:true,covered_CAD_originals:true,read_only:false}:{}),
             semantic_reference:receiptReference,summary_reference:summaryReference,numeric_reference:numericAnchor.receipt_reference,
             progress:plan.after,selected_entry:plan.selected_entry,exact_statistics:exactStatistics,
@@ -4509,6 +4517,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     readOriginalFrozenCaptureJobFirstSelectedRankCandidatesReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_selected_first_rank_candidates_refs_v2'),
     // Inactive tenth complete-original semantic owner; no activation/publication.
+    progressCoveredOriginalFrozenCaptureJobBatchSelectedSemanticReferencesV3(...args){
+      if(args.length!==2)fail('invalid_options');
+      return frozenCaptureJobSourceStage(args[0],args[1],'covered_batch_selected_semantic_progress_refs_v3');
+    },
     progressOriginalFrozenCaptureJobSelectedSemanticReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_selected_semantic_progress_refs_v2'),
     progressCoveredOriginalFrozenCaptureJobSelectedSemanticReferencesV2: (value, options = {}) =>

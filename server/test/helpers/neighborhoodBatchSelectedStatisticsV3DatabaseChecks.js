@@ -10,7 +10,7 @@ import { runCustomCohortBatchSelectedMetricsV3JobOnce as metrics } from '../../s
 /** Twenty-ninth independent graph, after the actual V3 metrics fresh EMPTY.
  * Contributions are source-backed account cells, not economic statistics. */
 export async function runNeighborhoodBatchSelectedStatisticsV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
-  catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedNumericFixture=false}){
+  catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false}){
   const operation=input.operationId,method='progressCoveredOriginalFrozenCaptureJobBatchSelectedStatisticsReferencesV3',
     readMethod='readCoveredOriginalFrozenCaptureJobBatchFirstSelectedStatisticsReferencesV3',
     head=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_statistics_v2_heads WHERE operation_id=$1',[operation])).rows[0],
@@ -116,7 +116,7 @@ export async function runNeighborhoodBatchSelectedStatisticsV3DatabaseChecks({po
   assert.deepEqual(await job(),terminal.job);assert.deepEqual(await parent(),terminal.parent);assert.deepEqual(await blobs(),terminal.blobs);assert.deepEqual(await head(),terminal.head);assert.deepEqual(await rows(),terminal.rows);await immutable();
   if(batchSelectedNumericFixture){
     await runNeighborhoodBatchSelectedNumericV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
-      catalogHead,groups,assertParents,setFault,readFault,originalReads,command});return;
+      catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedSemanticFixture});return;
   }
   console.info('[native-batch-selected-statistics-v3]',{independent_actual_V3_metrics_worker_fresh_EMPTY:true,
     read_only_first_contribution_every_retained_metric_row_field_reconciled_to_fresh_originals:true,

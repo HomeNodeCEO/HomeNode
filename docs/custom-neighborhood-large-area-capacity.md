@@ -1,5 +1,35 @@
 # Complete larger-area Custom neighborhood studies
 
+## Batch original-backed recorded statistics (2026-10-16, not activated)
+
+A closed V3 semantic progress entry and separate inactive worker continue from
+actual numeric DONE. Bounded provisional ranks initialize only the retained
+summary. Every selected account is then reopened from its complete originals,
+ENTIRE neutral/CAD caches, partition/catalog and all metric/contribution/index/
+numeric fields under current and ending source-purpose/actor/assignment/draft/
+subject/workspace/parent/lease fences. Only the separate fresh terminal EMPTY,
+after all original-backed contributions and state/reason/part/eligible counts
+reconcile, returns exact reported quartiles, medians, means and rational CODs.
+Recorded sqft and reported years retain their existing interpretation; currency,
+economic transactions and calendar-quarter applicability remain unestablished.
+
+The existing seventeen-key semantic receipt, bounded summary, native row/head/
+deferred COMMIT guards and exact arithmetic are unchanged. Only numeric DONE or
+incomplete semantics enter every V3 claim/recovery/expiry lane; semantic DONE
+remains for transaction work. Normal heartbeats, failure history and aggregate
+query/original/byte/runtime limits remain. The thirty-first independently
+captured native case preserves every older case and deadline and authors the
+actual parent-worker chain, cache refusal, real orphan COMMIT rollback, lost
+first acknowledgment, concurrent A/B/fresh EMPTY, positive independent golden
+quartile/median/mean/COD arithmetic and terminal next-owner exclusion.
+
+220 serial focused checks pass, zero failures/cancellations/skips (1826.7866ms);
+twenty changed JavaScript syntax and diff checks pass. New exact-head cloud
+native/full execution remains pending. New-stage every-ending-authority fault
+and ordinary V3 recovery below five remain separate unexercised proofs. Nothing
+registers/activates or establishes licensed acquisition, large-area/live speed,
+economic/quarter completion, coherent publication or terminal pin transfer.
+
 ## Batch indexed population replay (2026-10-16, not activated)
 
 Two closed V3 entries reopen the first indexed account read-only and advance

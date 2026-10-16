@@ -7,11 +7,12 @@ import { createCustomCohortBatchSelectionWaitV3WorkerRepository as waitClaims } 
 import { createCustomCohortStockBatchV3WorkerRepository as stockClaims } from '../../src/services/neighborhoodAssessment/customCohortStockBatchV3WorkerRepository.js';
 import { createCustomCohortPartitionBatchV3WorkerRepository as partitionClaims } from '../../src/services/neighborhoodAssessment/customCohortPartitionBatchV3WorkerRepository.js';
 import { createCustomCohortCatalogBatchV3WorkerRepository as catalogClaims } from '../../src/services/neighborhoodAssessment/customCohortCatalogBatchV3WorkerRepository.js';
+import { runNeighborhoodBatchSelectionIntentV3DatabaseChecks } from './neighborhoodBatchSelectionIntentV3DatabaseChecks.js';
 
 /** Twenty-second independent real capture. Source/current/ending/COMMIT work
  * stays real; a missing appraiser command is never supplied by this worker. */
 export async function runNeighborhoodBatchSelectionWaitV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,blobs,
-  catalogHead,groups,assertParents,setFault,readFault,originalReads}){
+  catalogHead,groups,assertParents,setFault,readFault,originalReads,batchSelectionIntentFixture=false}){
   const operation=input.operationId,method='awaitCoveredOriginalFrozenCaptureJobBatchSelectionReferencesV3',
     before={catalog:await catalogHead(),groups:await groups(),blobs:await blobs()},
     intents=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_v2_selection_intents WHERE operation_id=$1',[operation])).rows;
@@ -60,6 +61,11 @@ export async function runNeighborhoodBatchSelectionWaitV3DatabaseChecks({pool,in
   for(const patch of ["status='retry'","status='succeeded'","attempts=1","claim_token=gen_random_uuid(),lease_expires_at=clock_timestamp()+interval '120 seconds'","checkpoint=jsonb_set(checkpoint,'{phase}','\"frozen_source_refs_v2\"')"]){
     await assert.rejects(tx(pool,c=>c.query(`UPDATE app.neighborhood_custom_cohort_capture_jobs SET ${patch} WHERE operation_id=$1`,[operation])),
       e=>e.code==='55000');assert.deepEqual(await job(),waiting);
+  }
+  if(batchSelectionIntentFixture){
+    await runNeighborhoodBatchSelectionIntentV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,blobs,
+      catalogHead,groups,assertParents,setFault,readFault,originalReads});
+    return;
   }
   await tx(pool,c=>jobs(c).cancel(scope,operation));const cancelled=await job();assert.equal(cancelled.status,'cancelled');
   await assert.rejects(tx(pool,c=>c.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET status='retry' WHERE operation_id=$1",[operation])),e=>e.code==='55000');

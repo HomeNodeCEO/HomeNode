@@ -52,7 +52,7 @@ import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL as TRAN
 
 /** Independent disposable job; all acquisition owners, authorization, original
  * queries, native issuance, savepoint rollback and COMMITs are real. */
-export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData,coveredTransactionIndexFixture=false,stockBatchFixture=false,partitionBatchFixture=false,catalogBatchFixture=false,catalogBatchReplayFixture=false,batchSelectionWaitFixture=false}){
+export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData,coveredTransactionIndexFixture=false,stockBatchFixture=false,partitionBatchFixture=false,catalogBatchFixture=false,catalogBatchReplayFixture=false,batchSelectionWaitFixture=false,batchSelectionIntentFixture=false}){
   const input={...sourceInput,operationId:randomUUID()},operation=input.operationId;let fault=null,stockReads=0;
   const observed={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
     const text=typeof c==='string'?c:c.text,originalPacket=text===BATCH_PACKET||text===STOCK_PACKET||text===PAIRED_STOCK_PACKET||text===TRANSACTION_PACKET||text===AMENITY_PACKET,
@@ -62,6 +62,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
       ||fault==='partition_batch_orphan_row'&&text.includes('custom-cohort-recorded-partition-batch-v3:entry-insert')
       ||fault==='catalog_batch_orphan_group'&&text.includes('custom-cohort-recorded-catalog-batch-v3:contribute')
       ||fault==='batch_wait_orphan_release'&&text.includes('custom-cohort-batch-selection-wait-v3:release')
+      ||fault==='batch_intent_orphan_resume'&&text.includes('custom-cohort-v2-selection-intent:resume')
       ||['partition_orphan','catalog_orphan','union_orphan','eligibility_orphan'].includes(fault)&&text.includes('custom-cohort-v2-continuation:yield');
     if(orphan)await raw.query('SAVEPOINT synthetic_neutral_yield');
     if(fault==='batch_wait_expiry'&&text.includes('custom-cohort-batch-selection-wait-v3:release')){
@@ -243,6 +244,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     if(partitionBatchFixture)await tx(pool,client=>client.query(readFileSync(new URL('../fixtures/neighborhoodPartitionBatchV3Guard.sql',import.meta.url),'utf8')));
     if(catalogBatchFixture)await tx(pool,client=>client.query(readFileSync(new URL('../fixtures/neighborhoodCatalogBatchV3Guard.sql',import.meta.url),'utf8')));
     if(batchSelectionWaitFixture)await tx(pool,client=>client.query(readFileSync(new URL('../fixtures/neighborhoodBatchSelectionWaitV3Guard.sql',import.meta.url),'utf8')));
+    if(batchSelectionIntentFixture)await tx(pool,client=>client.query(readFileSync(new URL('../fixtures/neighborhoodBatchSelectionIntentV3Guard.sql',import.meta.url),'utf8')));
     assert.deepEqual((await pool.query("SELECT revision FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'",[scope.assignment_file_id])).rows,[]);
     const started=await service.startRecordedGroupCapture({auth:input.auth,accountId:input.accountId,assignmentFileId:input.assignmentFileId,
       expectedWorkspaceRevision:0,expectedWorkspaceCheckpoint:{workspace_version:7,active:null,pending_capture:null},
@@ -404,7 +406,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
         await runNeighborhoodCatalogBatchV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,
           setFault:value=>{fault=value;},readFault:()=>fault,packet,readBody,stockHead,partitionHead,partitionRows,
           bridgeState,cacheState,head,cadState,cadHead,protectedRows,protectedBefore,pin,batchPendingWorkspace,
-          catalogBatchReplayFixture,batchSelectionWaitFixture,originalReads:()=>stockReads});
+          catalogBatchReplayFixture,batchSelectionWaitFixture,batchSelectionIntentFixture,originalReads:()=>stockReads});
         return;
       }
       const [next]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));assert.equal(next.claim.attempts,5);

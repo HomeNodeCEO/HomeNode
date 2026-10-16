@@ -1,5 +1,40 @@
 # Complete larger-area Custom neighborhood studies
 
+## Covered selected indexed-population worker (2026-10-16, not activated)
+
+`progressCoveredOriginalFrozenCaptureJobSelectedNumericReferencesV2` composes
+the existing ninth original owner with the actual adopted neutral and CAD DONE
+coverage. Each native next selected ordinal reopens every stock, CAD, all-date
+transaction and required subject original, reconciles ENTIRE caches, and
+compares every retained metric, contribution and numeric-index field against
+that fresh original reconstruction. No caller row/value/ordinal/DONE/callback
+or stored reference/hash/count supplies semantic source authority.
+
+After all unchanged current and ending source-purpose, actor, assignment,
+draft, subject, workspace, native lineage, claim and pin fences pass, reference
+row/receipt/head/exact fifteen-reference checkpoint/fresh continuation share
+one transaction. Only contributions DONE or incomplete numeric progress belong
+to the separate closed worker; numeric DONE excludes ALL claim/recovery/expiry
+lanes. Success preserves attempts and error history, including at attempt5.
+The five-failure ceiling, aggregate 32MB/256-query/60s owner, single-use paired
+250-original/128-query subbudget and 16KB whole-result cap are unchanged.
+
+143 serial focused owner/worker/index/population/source-reopen checks pass,
+zero failures/cancellations/skips (1,871.8732ms); five changed JS syntax and diff
+checks pass. New native assertions extend the independently issued contribution
+job through real failure/recovery to attempt5, ending CAD/role/workspace and
+orphan-COMMIT rollback of rows AND head, lost ACK/fresh NEXT, two ordinals plus
+distinct EMPTY, unchanged indexes/parents/choices/pins and the DONE expiry stop
+at attempt5. NEW cloud/native execution is pending; authored checks are not
+acceptance. No deadline or failure ceiling was increased.
+
+Numeric completion still requires a later semantic owner to reopen originals
+and current authority again. Complete medians/CODs/calendar quarters,
+economic/historical applicability, coherent publication, terminal pin handoff,
+licensed large-area acquisition and production-speed acceptance remain open.
+No registry/default worker/route/schedule/grant/genuine Hardy choice/accepted
+report/Apply/publication/pin activation is added.
+
 ## Covered selected statistics-contribution worker (2026-10-16, not activated)
 
 `progressCoveredOriginalFrozenCaptureJobSelectedStatisticsReferencesV2` connects

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { runNeighborhoodBatchSelectedTransactionIndexV3DatabaseChecks } from './neighborhoodBatchSelectedTransactionIndexV3DatabaseChecks.js';
 import { runNeighborhoodNativeClaimPair as pair } from './neighborhoodNativeClaimPair.js';
 import { withCustomCohortJobTransaction as tx } from '../../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
 import { createCustomCohortCaptureJobRepository as jobs } from '../../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
@@ -10,7 +11,7 @@ import { runCustomCohortBatchSelectedNumericV3JobOnce as numeric } from '../../s
 /** Thirty-first independent graph. Every selected account is reopened after
  * numeric DONE; bounded provisional ranks alone are never source authority. */
 export async function runNeighborhoodBatchSelectedSemanticV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
-  catalogHead,groups,assertParents,setFault,readFault,originalReads,command}){
+  catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedTransactionIndexFixture=false}){
   const operation=input.operationId,method='progressCoveredOriginalFrozenCaptureJobBatchSelectedSemanticReferencesV3',
     head=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_semantic_v2_heads WHERE operation_id=$1',[operation])).rows[0],
     rows=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_semantic_v2_rows WHERE operation_id=$1 ORDER BY ordinal',[operation])).rows,
@@ -115,6 +116,10 @@ export async function runNeighborhoodBatchSelectedSemanticV3DatabaseChecks({pool
     assert.deepEqual((await client.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[operation])).rows,saved);throw rollback;
   }),e=>e===rollback);
   assert.deepEqual(await job(),terminal.job);assert.deepEqual(await parent(),terminal.parent);assert.deepEqual(await blobs(),terminal.blobs);assert.deepEqual(await head(),terminal.head);assert.deepEqual(await rows(),terminal.rows);await immutable();
+  if(batchSelectedTransactionIndexFixture){
+    await runNeighborhoodBatchSelectedTransactionIndexV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
+      catalogHead,groups,assertParents,setFault,readFault,originalReads,command});return;
+  }
   console.info('[native-batch-selected-semantic-v3]',{independent_actual_V3_numeric_worker_fresh_EMPTY:true,
     every_selected_complete_original_ENTIRE_cache_metric_contribution_index_and_numeric_member_reconciled_again:true,
     cache_refusal_real_orphan_COMMIT_rollback_lost_first_ACK_concurrent_A_B_fresh_EMPTY_native_claims5:true,

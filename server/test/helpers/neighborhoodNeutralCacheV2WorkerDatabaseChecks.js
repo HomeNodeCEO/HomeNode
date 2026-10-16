@@ -17,6 +17,8 @@ import { runCustomCohortCoveredPartitionV2JobOnce as runPartition } from '../../
 import { createCustomCohortCoveredPartitionV2WorkerRepository as partitionClaims } from '../../src/services/neighborhoodAssessment/customCohortCoveredPartitionV2WorkerRepository.js';
 import { runCustomCohortCoveredCatalogV2JobOnce as runCatalog } from '../../src/services/neighborhoodAssessment/customCohortCoveredCatalogV2JobWorker.js';
 import { createCustomCohortCoveredCatalogV2WorkerRepository as catalogClaims } from '../../src/services/neighborhoodAssessment/customCohortCoveredCatalogV2WorkerRepository.js';
+import { runCustomCohortCoveredSelectionWaitV2JobOnce as runWait } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectionWaitV2JobWorker.js';
+import { createCustomCohortCoveredSelectionWaitV2WorkerRepository as waitClaims } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectionWaitV2WorkerRepository.js';
 import { NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL as STOCK_PACKET } from '../../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
 
 /** Independent disposable job; all acquisition owners, authorization, original
@@ -28,6 +30,8 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
       ||fault==='bridge_orphan'&&text.includes('custom-cohort-cache-stock-v2:complete')
       ||['partition_orphan','catalog_orphan'].includes(fault)&&text.includes('custom-cohort-v2-continuation:yield');
     if(orphan)await raw.query('SAVEPOINT synthetic_neutral_yield');
+    if(fault==='wait_missing'&&text.includes('custom-cohort-group-workspace:read')){fault=null;
+      await raw.query("DELETE FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'",[scope.assignment_file_id]);}
     const result=await raw.query(c);
     if(text===STOCK_PACKET)stockReads++;
     if(orphan){fault=null;await raw.query('ROLLBACK TO SAVEPOINT synthetic_neutral_yield');await raw.query('RELEASE SAVEPOINT synthetic_neutral_yield');}
@@ -200,6 +204,9 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   assert.deepEqual(await job(),catalogJob);assert.deepEqual(await parent(),catalogParent);
   fault='catalog_ack';await assert.rejects(service.continueCoveredOriginalFrozenCaptureJobRecordedCatalogReferencesV2(input,{captureJobClaim:nextOwner.claim}),
     error=>error.outcome_unknown===true);assert.equal(fault,null);assert.equal((await catalogHead()).sequence,1);
+  const unfinishedCatalogJob=await job();
+  assert.deepEqual(await tx(pool,client=>waitClaims(client).claimDue({leaseSeconds:900})),[]);
+  assert.deepEqual(await job(),unfinishedCatalogJob,'an unfinished native catalog cannot enter selection-wait');
   for(let i=0;i<2;i++){
     assert.equal((await runCatalog(args)).status,'continuation_pending');
     assert.equal((await job()).attempts,5);assert.equal((await job()).last_error_code,'access_revoked');
@@ -207,30 +214,13 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   assert.equal((await catalogHead()).sequence,3);assert.equal((await parent()).sequence,parentBefore.sequence+9);
   const terminalCatalog=await job();assert.deepEqual(await runCatalog(args),{status:'idle'});assert.deepEqual(await job(),terminalCatalog);
   assert.deepEqual(await partitionHead(),completedPartitionHead);assert.deepEqual(await partitionRows(),completedPartitionRows);
-  const [selectionWaitOwner]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));
-  assert.equal(selectionWaitOwner.claim.operation_id,operation);const expectedGroups=new Map();let catalogCursor='';
-  for(let i=0;i<3;i++){
-    const packet=await service.readCoveredOriginalFrozenCaptureJobRecordedCatalogAccountReferencesV2(input,
-      {captureJobClaim:selectionWaitOwner.claim,stockAccountPackagePage:{cursor:catalogCursor}});
-    assert.equal(packet.end_of_accounts,i===2);assert.equal(packet.status,'original_reconciled_recorded_catalog_account');
-    assert.equal(packet.complete_catalog_original_replay,false);
-    if(packet.account_id!==null){
-      const group=packet.recorded_group,id=group.assigned_group_id??'discovery:unassigned',candidate=group.state==='assigned'?group.candidate_groups[0]:null;
-      const prior=expectedGroups.get(id)??{group_id:id,normalized_county:candidate?.normalized_county??null,
-        normalized_label:candidate?.normalized_label??null,member_count:0,last_ordinal:0};
-      prior.member_count++;prior.last_ordinal=i+1;expectedGroups.set(id,prior);
-    }
-    catalogCursor=packet.next_cursor;
-  }
-  assert.deepEqual(await catalogGroups(),[...expectedGroups.values()].sort((a,b)=>a.group_id<b.group_id?-1:a.group_id>b.group_id?1:0));
-  assert.equal([...expectedGroups.values()].reduce((n,g)=>n+g.member_count,0),2);
   const workspace=async()=>(await pool.query("SELECT revision,section_value FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'",[scope.assignment_file_id])).rows;
-  const waitMethod='awaitCoveredOriginalFrozenCaptureJobSelectionReferencesV2',waitOptions={captureJobClaim:selectionWaitOwner.claim},
-    beforeMissingTarget=await job(),beforeMissingReads=stockReads;
+  const waitMethod='awaitCoveredOriginalFrozenCaptureJobSelectionReferencesV2';
+  const beforePendingJob=await job(),beforePendingParent=await parent(),beforePendingReads=stockReads;
   assert.deepEqual(await workspace(),[]);
-  await assert.rejects(service[waitMethod](input,waitOptions),/custom_cohort_group_workspace_unavailable/);
-  assert.equal(stockReads,beforeMissingReads,'a missing real pending workspace refuses before terminal original transport');
-  assert.deepEqual(await job(),beforeMissingTarget);
+  assert.deepEqual(await tx(pool,client=>waitClaims(client).claimDue({leaseSeconds:900})),[]);
+  assert.deepEqual(await runWait(args),{status:'idle'});
+  assert.equal(stockReads,beforePendingReads);assert.deepEqual(await job(),beforePendingJob);assert.deepEqual(await parent(),beforePendingParent);
   // A separate explicit pending-study command through the actual current-DB
   // workspace owner. Queueing and coverage never fabricate this intent.
   const started=await service.startRecordedGroupCapture({auth:input.auth,accountId:input.accountId,assignmentFileId:input.assignmentFileId,
@@ -243,19 +233,50 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   assert.deepEqual(assignmentBeforeStamp,protectedBefore.assignment,
     'the explicit pending-study save may update only the assignment timestamp, never its facts or accepted report');
   protectedBefore=afterExplicitPending;
-  const beforeWait=await job(),beforeWaitParent=await parent();
+
+  let selectionWaitOwner,waitOptions,beforeWait,beforeWaitParent,ownerCalls=0;
+  const waitArgs={...args,cohortService:{async [waitMethod](value,options){
+    ownerCalls++;selectionWaitOwner={claim:options.captureJobClaim};waitOptions={captureJobClaim:selectionWaitOwner.claim};
+    assert.equal(selectionWaitOwner.claim.operation_id,operation);assert.equal(selectionWaitOwner.claim.attempts,5);
+    const expectedGroups=new Map();let catalogCursor='';
+    for(let i=0;i<3;i++){
+    const packet=await service.readCoveredOriginalFrozenCaptureJobRecordedCatalogAccountReferencesV2(input,
+      {captureJobClaim:selectionWaitOwner.claim,stockAccountPackagePage:{cursor:catalogCursor}});
+    assert.equal(packet.end_of_accounts,i===2);assert.equal(packet.status,'original_reconciled_recorded_catalog_account');
+    assert.equal(packet.complete_catalog_original_replay,false);
+    if(packet.account_id!==null){
+      const group=packet.recorded_group,id=group.assigned_group_id??'discovery:unassigned',candidate=group.state==='assigned'?group.candidate_groups[0]:null;
+      const prior=expectedGroups.get(id)??{group_id:id,normalized_county:candidate?.normalized_county??null,
+        normalized_label:candidate?.normalized_label??null,member_count:0,last_ordinal:0};
+      prior.member_count++;prior.last_ordinal=i+1;expectedGroups.set(id,prior);
+    }
+    catalogCursor=packet.next_cursor;
+    }
+    assert.deepEqual(await catalogGroups(),[...expectedGroups.values()].sort((a,b)=>a.group_id<b.group_id?-1:a.group_id>b.group_id?1:0));
+    assert.equal([...expectedGroups.values()].reduce((n,g)=>n+g.member_count,0),2);
+
+    const beforeMissingTarget=await job(),beforeMissingReads=stockReads;
+    fault='wait_missing';await assert.rejects(service[waitMethod](input,waitOptions),/custom_cohort_group_workspace_unavailable/);
+    assert.equal(fault,null);assert.equal(stockReads,beforeMissingReads,'a real missing pending workspace refuses before terminal originals');
+    assert.deepEqual(await job(),beforeMissingTarget);assert.deepEqual(await workspace(),pendingWorkspace);
+    beforeWait=await job();beforeWaitParent=await parent();
   for(const [probe,reason] of [['wait_workspace',/custom_cohort_group_workspace_study_changed/],['wait_role',/custom_cohort_job_actor_access_revoked/]]){
     fault=probe;const beforeReads=stockReads;await assert.rejects(service[waitMethod](input,waitOptions),reason);
     assert.equal(fault,null);assert.equal(stockReads,beforeReads+1);
     assert.deepEqual(await job(),beforeWait);assert.deepEqual(await parent(),beforeWaitParent);assert.deepEqual(await workspace(),pendingWorkspace);
     if(probe==='wait_role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);
   }
-  fault='wait_ack';await assert.rejects(service[waitMethod](input,waitOptions),error=>error.outcome_unknown===true);assert.equal(fault,null);
+
+    fault='wait_ack';return service[waitMethod](value,options);
+  }}};
+  const waitResults=await Promise.all([runWait(waitArgs),runWait(waitArgs)]);
+  assert.deepEqual(waitResults.map(r=>r.status).sort(),['idle','outcome_unknown']);
+  assert.equal(ownerCalls,1);assert.equal(fault,null);
   const waiting=await job();assert.equal(waiting.status,'awaiting_selection');assert.equal(waiting.claim_token,null);assert.equal(waiting.lease_expires_at,null);
   assert.equal(waiting.attempts,5);assert.equal(waiting.last_error_code,'access_revoked');assert.deepEqual(waiting.checkpoint,beforeWait.checkpoint);
   assert.deepEqual(await workspace(),pendingWorkspace);assert.deepEqual(await parent(),beforeWaitParent);
   const staleReads=stockReads;await assert.rejects(service[waitMethod](input,waitOptions),/claim_lost/);assert.equal(stockReads,staleReads);
-  for(const worker of [runStock,runPartition,runCatalog])assert.deepEqual(await worker(args),{status:'idle'});
+  for(const worker of [runStock,runPartition,runCatalog,runWait])assert.deepEqual(await worker(args),{status:'idle'});
   assert.deepEqual(await job(),waiting);
   // Explicit empty inclusion is a deliberate disposable-fixture NEW-study
   // command, never a default inferred by a worker, catalog, prior choice or UI.
@@ -277,7 +298,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   assert.deepEqual(reopened.included_recorded_group_ids,[]);assert.equal(reopened.command_id,selectionIntent.command_id);
   assert.equal(reopened.read_only,true);assert.equal(reopened.lease_extended,false);
   assert.deepEqual(await job(),humanOwnedJob);assert.deepEqual(await intents(),humanOwnedIntents);assert.deepEqual(await workspace(),pendingWorkspace);
-  for(const worker of [runStock,runPartition,runCatalog])assert.deepEqual(await worker(args),{status:'idle'});
+  for(const worker of [runStock,runPartition,runCatalog,runWait])assert.deepEqual(await worker(args),{status:'idle'});
   assert.deepEqual(await job(),humanOwnedJob,'completed acquisition workers cannot steal the genuine command resume lease');
   await pool.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);
   await tx(pool,client=>jobs(client).cancel(scope,operation));const nextOwnerPending=await job();
@@ -287,6 +308,8 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     'partition DONE next-owner expired/cancelled claim is untouched by covered-partition claim AND expiry');
   assert.deepEqual(await runCatalog(args),{status:'idle'});assert.deepEqual(await job(),nextOwnerPending,
     'catalog DONE next-owner expired/cancelled claim is untouched by covered-catalog claim AND expiry');
+  assert.deepEqual(await runWait(args),{status:'idle'});assert.deepEqual(await job(),nextOwnerPending,
+    'covered waiting claim AND expiry cannot steal an expired/cancelled immutable human command');
   assert.deepEqual(await workspace(),pendingWorkspace);assert.deepEqual(await intents(),humanOwnedIntents);
   const sourceGeneration=(await pool.query('SELECT generation_id FROM app.neighborhood_custom_cohort_job_stocks WHERE operation_id=$1',[operation])).rows[0].generation_id;
   const cacheHeader=(await pool.query(SQL.read,[sourceGeneration,JSON.parse((await pool.query(
@@ -317,6 +340,13 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     fresh_main_claim_each_step:true,catalog_DONE_idle_and_expired_cancelled_selection_wait_claim_untouched:true,
     native_cache_bridge_stock_and_partition_parents_unchanged:true,global_header_still_building:true,
     genuine_selection_intent:false,default_worker_activation:false,licensed_large_area:false,production_speed:false,pin_transfer:false});
+  console.info('[native-covered-selection-wait-worker-v2]',{missing_pending_study_idle_without_claim_or_original_read:true,
+    concurrent_single_native_catalog_DONE_adoption:true,actual_current_DB_actor_request_and_original_wait_owner:true,
+    every_catalog_group_compared_with_newly_replayed_whole_originals:true,missing_and_ending_workspace_and_role_rollback:true,
+    lost_real_wait_COMMIT_ACK_not_downgraded:true,success_at_failure_ceiling:5,error_history_and_native_parents_preserved:true,
+    waiting_repeated_idle_and_immutable_human_resume_lease_including_expired_cancelled_untouched:true,
+    global_header_still_building:true,default_worker_activation:false,genuine_group_choice:false,
+    licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
   console.info('[native-covered-selection-boundary-v2]',{missing_real_pending_workspace_refused_before_originals:true,
     separate_current_DB_pending_study_command_required:true,fresh_terminal_original_cache_partition_probe:true,
     ending_workspace_and_role_roll_back_wait_and_provisional_command:true,lost_actual_wait_and_command_COMMIT_ACKs:true,

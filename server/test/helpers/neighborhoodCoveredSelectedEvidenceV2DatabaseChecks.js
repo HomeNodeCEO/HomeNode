@@ -323,7 +323,8 @@ export async function runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks({ p
     ratio = (a,b) => { let x=a,y=b; while(y){const t=x%y;x=y;y=t;} return {numerator:(a/x).toString(),denominator:(b/x).toString()}; };
   for (const key of ['reported_year_built','reported_residential_area','reported_site_area']) {
     const values=indexBefore.map(r=>r[key]).filter(v=>v!==null).map(scaled).sort((a,b)=>a<b?-1:a>b?1:0),n=values.length,actual=exactStatistics[key];
-    assert.ok(n<=2); assert.equal(actual.selected_count,2); assert.equal(actual.observed_count,n);
+    assert.equal(n,key==='reported_site_area'?2:1,'the independently captured fixture has genuine eligible observations');
+    assert.equal(actual.selected_count,2); assert.equal(actual.observed_count,n);
     const median=n===0?null:n===1?values[0]:(values[0]+values[1])/2n;
     assert.equal(actual.median,median===null?null:finite(median));
     assert.equal(actual.q1,n===0?null:finite(n===1?values[0]:(3n*values[0]+values[1])/4n));
@@ -331,6 +332,11 @@ export async function runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks({ p
     assert.deepEqual(actual.cod_percent,n===0||median===0n?null:ratio(100n*values.reduce((sum,v)=>sum+(v>median?v-median:median-v),0n),BigInt(n)*median));
     assert.equal(actual.cod_reason,!n?'no_eligible_observations':median===0n?'zero_median':null);
   }
+  assert.equal(exactStatistics.reported_year_built.median,'1960');
+  assert.equal(exactStatistics.reported_residential_area.median,'1000.01');
+  assert.equal(exactStatistics.reported_site_area.q1,'2000'); assert.equal(exactStatistics.reported_site_area.median,'4000');
+  assert.equal(exactStatistics.reported_site_area.q3,'6000');
+  assert.deepEqual(exactStatistics.reported_site_area.cod_percent,{numerator:'100',denominator:'1'});
   const semanticCompletedRows=await semanticRows(); assert.deepEqual(semanticCompletedRows.map(r=>r.ordinal),[1,2]);
   assert.equal((await semantic()).sequence,3); const semanticDoneJob=await job();
   assert.equal(semanticDoneJob.checkpoint.phase,'frozen_selected_semantic_refs_v2'); assert.equal(semanticDoneJob.checkpoint.evidence_refs.length,16);

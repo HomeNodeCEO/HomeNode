@@ -1,5 +1,41 @@
 # Complete larger-area Custom neighborhood studies
 
+## Whole-account batch source owner (2026-10-16, not activated)
+
+The closed `readCoveredFrozenCaptureJobWholeAccountBatchReferencesV2` owner
+reopens one native C-text stock prefix of at most eight WHOLE accounts under
+one single-use child executor. It counts each original kind at cap plus one,
+admits a prefix within the unchanged aggregate250-original cap, sizes complete
+originals and caches before encoding, and admits a complete account byte prefix
+under the existing bounds. A later excluded account remains NEXT; an oversized
+first account refuses completely and never becomes EMPTY. Only a fresh empty
+native probe establishes this read's end. All outside parcel parts, ENTIRE
+neutral cache values, retained-year observations, housing and original512-byte
+group labels are reconciled for every included account.
+Every account's housing interpretation must equal the immutable job choice.
+
+Actual native source/graph/geography/identity/stock/cache prerequisites, the
+current database actor/assignment/draft/subject and exact pending workspace,
+source-purpose decisions and every ending fence share one transaction and the
+existing32MB/256-query/60s owner plus250-original/128-query child limits. The
+original single-account readers and immutable receipt grammar are unchanged.
+No batch receipt, native checkpoint, continuation, registry or activation is
+issued. Coherent batched traversal, partition and catalog writers with one
+receipt per run remain required; this source read alone does not close that
+capacity review or establish licensed acquisition or production speed.
+
+227 serial focused checks pass with zero failures/cancellations/skips
+(2,524.914ms); seven changed JS syntax checks and the diff check pass. Added
+cloud tests independently exercise the actual issued owner, whole outside
+parts, ENTIRE cache replay, ending source-rights/role/workspace/cache refusal,
+lost actual read-only COMMIT ACK, fresh EMPTY, unchanged native parents,
+history, blobs, reports, choices and pins. These owner tests also compare every
+batch row, observation and complete recorded group with the independently
+reopened existing single-account catalog owner. Separate temporary SQL DATA tests
+exercise8+1+EMPTY, actual bounded plan admission,250/251 originals, aggregate
+byte-prefix continuation, oversized-first refusal and missing-cache retention.
+NEW cloud execution is pending; authored tests are not native acceptance.
+
 ## Covered native transaction-index worker (2026-10-16, not activated)
 
 The separate closed worker connects the existing eleventh original owner to
@@ -18,7 +54,13 @@ two selected accounts and fresh EMPTY, ending CAD/role/workspace/orphan-COMMIT
 rollback of all child tables and blobs, lost ACK, stale claim refusal and
 attempt-five success. The old initial-dispatch variant and its semantic-DONE
 terminal/expiry assertions remain intact; the new variant also has 180s.
-Actual cloud execution remains required. No registry, scheduler, source grant,
+Exact261eaa23 foundation38918986957 ALL4 and sales38918987002 pass. FULL native
+117033707669 (4,464,908 characters inspected) passes417 migrations, subject1,
+early2, prefix/initial4, prepared24, edge1 and bootstrap2, zero failures,
+cancellations or skips. Actual transaction-index markers at14:55:02 and15:22:32
+confirm the new fixture; its full pass takes35,962.408367ms under the unchanged
+180,000ms deadline. This saved inactive child is not main release proof.
+No registry, scheduler, source grant,
 genuine choice, Apply, publication or pin activation is added. Native key
 completion is not economic deduplication, at-sale applicability, calendar
 quarters, licensed acquisition or production speed acceptance.
@@ -26,7 +68,7 @@ quarters, licensed acquisition or production speed acceptance.
 108 serial focused namespace/index/native-admission/owner/worker/source-reopen
 and planner checks pass, zero failures/cancellations/skips (2,765.2074ms).
 Six changed JS syntax checks and the diff check pass. This is local component
-validation; the new native variant and full cloud suite are still pending.
+validation; the new native variant and full cloud suite also pass as above.
 
 The new review on merged catalog code also identifies one-account traversal,
 partition and catalog transactions as a large-area cost. Bounded batches of

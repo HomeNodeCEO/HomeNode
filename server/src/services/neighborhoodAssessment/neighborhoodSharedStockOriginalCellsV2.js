@@ -1,4 +1,5 @@
 import { performance } from 'node:perf_hooks';
+import { NEIGHBORHOOD_STOCK_WHOLE_ACCOUNT_BATCH_V2_SQL } from './neighborhoodStockWholeAccountBatchV2.js';
 import { isProxy } from 'node:util/types';
 import { assessmentDate, assessmentEvidenceDigest, canonicalAssessmentJson } from './contract.js';
 import { prepareNeighborhoodCohortBlob, prepareNeighborhoodCohortBlobReference } from './cohortEvidenceBlobRepository.js';
@@ -636,6 +637,59 @@ function stockOriginalCells(client,rawOptions,rawGraph,effectiveDate,covered,cad
         original_reconciliation:'every_package_original_recompiled',selected_union:'not_established',
         source_acquisition:'not_established',report_update:'none'});
   }
+  /** A single native prefix, one open/finish pair and one aggregate budget.
+   * No per-account reader reset, filtered source sweep or inferred terminal end. */
+  async function wholeAccountBatch(rawPage){
+    const page=prepareNeighborhoodStockAccountPackagePageV2(rawPage),context=await open(),{stock,source}=context;
+    const result=one(await execute(NEIGHBORHOOD_STOCK_WHOLE_ACCOUNT_BATCH_V2_SQL,[stock.operation_id,stock.generation_id,
+      TYPED.profile_ref.content_sha256,page.cursor,L.rows,L.page_utf8_bytes,L.row_utf8_bytes,L.original_utf8_bytes,L.output_utf8_bytes]));
+    if(!Array.isArray(result.accounts)||result.accounts.length>8||!Number.isInteger(result.original_count)||result.original_count<0
+      ||!Number.isInteger(result.page_count)||result.page_count<0||result.invalid_count!==0
+      ||typeof result.packet_oversize!=='boolean'||typeof result.page_json!=='string')fail('invalid_result');
+    let previousAccount=page.cursor,total=0;const kindTotals={parcels:0,accounts:0};
+    const packets=result.accounts.map(value=>{
+      const a=data(value,['account_id','geographic_parcel_count','original_counts']),counts=data(a.original_counts,KINDS);
+      cursor(a.account_id,'accounts');
+      if(!a.account_id||Buffer.compare(Buffer.from(a.account_id),Buffer.from(previousAccount))<=0
+        ||!Object.values(counts).every(n=>Number.isInteger(n)&&n>=0&&n<=L.rows+1)
+        ||!count(a.geographic_parcel_count,2000000)||a.geographic_parcel_count==='0'
+        ||BigInt(a.geographic_parcel_count)>BigInt(counts.parcels)||counts.accounts>1)fail('invalid_result');
+      previousAccount=a.account_id;total+=counts.parcels+counts.accounts;
+      for(const kind of KINDS)kindTotals[kind]+=counts[kind];
+      return {...a,rows:[]};
+    });
+    if(total!==result.original_count)fail('invalid_result');
+    if(total>L.rows){if(result.accounts.length!==1||result.page_count!==0||result.page_json!=='[]')fail('invalid_result');fail('account_package_row_limit');}
+    if(result.packet_oversize)fail('account_package_byte_limit');
+    if(result.page_count!==total||KINDS.some(k=>kindTotals[k]>layers[k])||Buffer.byteLength(result.page_json)>L.page_utf8_bytes)fail('invalid_result');
+    let rows;try{rows=JSON.parse(result.page_json);}catch{fail('invalid_result');}
+    if(!Array.isArray(rows)||rows.length!==total)fail('invalid_result');
+    const byAccount=new Map(packets.map(p=>[p.account_id,p]));let previous=null;
+    for(const value of rows){
+      const row=reconcile(value,true);
+      // Compare each native C-text component; JSON escaping is never key order.
+      if(previous&&[row.account_id,row.kind,row.row_key].reduce((c,v,i)=>c||Buffer.compare(Buffer.from(v),Buffer.from(previous[i])),0)<=0)fail('invalid_original');
+      previous=[row.account_id,row.kind,row.row_key];
+      const packet=byAccount.get(row.account_id);if(!packet)fail('invalid_original');packet.rows.push(row);
+    }
+    for(const p of packets){
+      const seen={parcels:0,accounts:0};for(const row of p.rows)seen[row.kind]++;
+      if(!same(seen,p.original_counts))fail('invalid_result');
+      p.observations=resolveAccount(p.rows);p.recorded_housing=resolveNeighborhoodOriginalAccountHousingV2(p.rows,check);
+      p.recorded_group=resolveNeighborhoodOriginalRecordedGroupV2(p.rows,check);
+      p.account_original_state=p.original_counts.accounts===1?'present':'absent';
+    }
+    const output={page_version:2,status:'reconciled_stock_whole_account_batch',authority:'not_established',
+      coverage:'one_bounded_native_stock_prefix_only',graph,stock,source_metadata:source,typed_profile:TYPED,effective_date:effective,
+      cursor:page.cursor,accounts:packets,account_count:packets.length,original_count:total,
+      read_only:true,lease_extended:false,context_complete:false,pin_transfer:false,
+      shared_budget:'one_single_use_250_original_128_query_32MB_60s_child',
+      next_cursor:previousAccount,end_of_accounts:packets.length===0,
+      original_reconciliation:'every_package_original_recompiled',native_progress:'not_issued',
+      selected_union:'not_established',source_acquisition:'not_established',report_update:'none'};
+    if(Buffer.byteLength(JSON.stringify(output))>L.output_utf8_bytes)fail('byte_limit');
+    await context.finish();return freeze(output);
+  }
   /** Both complete accounts share every original/transport/output/SQL bound.
    * This is source DATA only; actual issued owner chooses the next cursor and
    * independently fences the full native graph, intent and current authority. */
@@ -838,6 +892,8 @@ function stockOriginalCells(client,rawOptions,rawGraph,effectiveDate,covered,cad
         original_reconciliation:'every_delivered_original_recompiled',selected_union:'not_established',
         source_acquisition:'not_established',report_update:'none'});
     },
+    /** Fixed whole-account source batch; native progress remains unissued. */
+    wholeAccountBatch(...args){if(args.length!==1)fail('invalid_input');return wholeAccountBatch(args[0]);},
     /** All retained originals for ONE server-picked account, or complete refusal. */
     accountPackage:rawPage=>accountPackage(rawPage,false),
     /** Distinct dormant bounded consumer; legacy package bytes stay unchanged. */

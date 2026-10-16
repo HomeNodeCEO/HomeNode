@@ -8024,3 +8024,40 @@ publication, terminal pin transfer/retirement and licensed large-area/saved
 Hardy speed acceptance remain unfinished. No migration registration, HTTP route,
 default worker, schedule, source grant, Apply, publication or pin transfer is
 activated by this handoff.
+
+## Covered union and recorded-eligibility worker (2026-10-16, not activated)
+
+The separate dormant covered progress worker consumes one real issued native
+union/recorded-eligibility continuation. Its three routes are union-incomplete
+to union, union-DONE to recorded eligibility, and eligibility-incomplete to
+recorded eligibility. Eligibility-DONE is excluded from successful claiming,
+ordinary recovery and expiry, including a cancelled or expired next-owner
+lease. An unfinished CAD/evidence owner is not dispatched.
+
+Every lane requires the fixed native job-cache/first-stock/stock/partition/
+catalog lineage, all nine original roots, immutable human command and request,
+current matching union or eligibility head/checkpoint, and bounded routing
+receipt. These are structural routing guards; the actual original owner still
+reopens and reconciles every original, entire cache, partition and catalog with
+all current/ending permissions and workspace fences. The worker reloads the
+actual database actor and saved request, checks heartbeat/cancellation, and
+requires covered progress and its next native continuation. Successful claims
+preserve attempt five and error history. Only ordinary recovery spends the
+existing failure budget. No source/purpose or population authority is inferred
+from a receipt, count, hash or callback.
+
+20 serial focused covered/legacy selected-worker checks passed in1,206.2501ms
+with zero failures/cancellations/skips; three syntax checks pass. The existing
+isolated native fixture now authors actual fresh worker claims for each union
+original and fresh EMPTY, a concurrent worker idle at the first worker's real
+live lease, actual union-DONE routing into recorded eligibility, read-only
+housing/first-eligibility under that real worker claim, real orphan eligibility
+COMMIT refusal and lost COMMIT acknowledgment, and eligibility-DONE repeated
+idle and later-owner expiry/cancellation exclusion. Actual cloud execution is
+pending. No matrix, timeout, budget or failure ceiling is increased.
+
+The deliberately empty human command remains empty. Nonempty selected metrics,
+the separately authorized CAD companion, remaining semantics, publication,
+terminal pins and licensed large-area/Hardy speed acceptance remain open.
+No migration registration, default worker, route, scheduler, source grant,
+appraiser choice, report Apply, publication or pin transfer is activated.

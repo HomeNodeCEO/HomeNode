@@ -7892,3 +7892,48 @@ report Apply, publication or terminal pin transfer is activated. Automatic
 covered selection-wait dispatch, complete current-authorized selected-union
 consumers/CAD companion, semantics/publication and licensed large-area/live-speed
 acceptance remain open.
+
+## Covered-cache selection-wait worker (2026-10-16, not activated)
+
+The dormant worker claims only independently issued covered catalog DONE with
+the fixed native cache/bridge/stock/partition/catalog/continuation lineage and
+the same job, actor and request scope. Both fresh success and genuine recovery
+require an existing matching pending V7 study (operation, shared date range,
+discovery and private-source intent). Missing intent stays idle without a claim
+or original read; the worker cannot create a pending workspace or group choice.
+That bounded locator is not authority: the original owner still opens the whole
+workspace and prior active head under its normal locks, replays the fresh terminal
+whole-original/entire-cache/partition probe, and checks all current and ending
+actor, assignment, private draft, subject, source-purpose and live-claim fences.
+
+Successful fresh claims preserve attempts and failure history, including success
+at five. Genuine recovery retains the five-failure ceiling. The waiting owner
+releases only its lease; awaiting-selection jobs and every job with an actual
+immutable human command are excluded from all claim/expiry lanes, including an
+expired or cancelled human resume lease. Lost owner COMMIT acknowledgment cannot
+downgrade the committed waiting state or overwrite a successor. The result is
+status only and makes no group, completed-context, publication or pin claim.
+
+154 serial focused dispatcher/current-owner/pending-workspace/wait/intent/catalog
+checks passed in1,292.605ms, zero failures/cancellations/skips. The existing native
+fixture now authors unfinished-catalog and missing-pending refusal, concurrent
+single fresh catalog-DONE adoption through the actual worker, complete catalog
+groups compared with newly replayed originals, real missing/ending-workspace and
+ending-role rollback, lost actual waiting COMMIT ACK, success at five, waiting
+idle and all completed workers leaving the immutable human command alone even
+after expiry/cancellation. Existing explicit NEW-study choice, immutable command
+replay, whole originals, parent roots, report and pin checks remain. No matrix,
+deadline, runtime/query/byte budget or failure cap was increased. New-head cloud
+execution is pending; authored assertions are not execution proof.
+
+The saved parent catalog650e7a0d completed its full native run116852244564:
+417 migrations, subject1, early2, source-prefix3, prepared23, edge1 and bootstrap2
+all passed with zero failures/cancellations/skips. Its two actual catalog markers
+confirmed original/cache/partition reconciliation and the native rollback/ACK/
+history/next-owner guards. This is small native protocol proof, not licensed
+large-area or production-speed acceptance.
+
+No new migration, registry, route, default worker, schedule, source grant, Apply,
+publication or terminal pin transfer is activated. Current-authorized selected
+consumers, the separate CAD companion, complete semantics/coherent publication,
+terminal pin transfer/retirement and licensed large-area/live-speed proof remain.

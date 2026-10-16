@@ -3530,6 +3530,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         // Release ONLY the lease. No groups, publication or old choice carried.
         const waiting=await createCustomCohortV2SelectionWaitRepository(client).awaitSelection(claim,jobOptions);
         budget.check();return freeze({...waiting,operation_id:input.operationId,selection_workspace_target:selectionWorkspaceTarget,
+          ...(coveredNeutralOriginals?{covered_neutral_originals:true}:{}),
           original_reconciliation:'fresh_terminal_original_cache_and_partition_empty_probe_after_issued_catalog_DONE',
           complete_catalog_semantic_replay:'not_established',selected_union:'not_established',statistics:'not_established',
           publication:'not_established',source_acquisition:'not_established',report_update:'none'});

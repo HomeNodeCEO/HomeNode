@@ -7611,3 +7611,38 @@ handoff. Native per-job source-root coverage and lease/success issuance, both-en
 current authorization, the CAD companion owner and reader activation remain
 open. No route, dispatcher activation, source grant, publication, Apply or pin
 transfer is introduced.
+
+### Current-authorized native neutral coverage owner (2026-10-16)
+
+The inactive manual `reconcileFrozenCaptureJobNeutralOriginalsReferencesV2`
+owner now requires the actual issued DONE graph, geographic and identity
+parents. Each step follows exactly one source-root node, replays its real fixed
+stock/one-hop original SQL, compiles every original and reconciles the complete
+shared neutral cache row. All authority, prerequisite, source, compiled input,
+cache and ending SQL use the same bounded executor. Every current/ending actor,
+assignment, private draft, subject, source-purpose, claim, stock and parent fence
+runs before retaining the coverage head in that same transaction.
+
+Unregistered `20261212_custom_cohort_neutral_cache_v2_heads.sql` independently
+checks the next actual source-node edge and exact previous state, including all
+seven layers. A free DONE receipt cannot skip a node. Current receipt/root blob
+foreign keys retain the native head independently of the unchanged identity
+checkpoint. A deferred native fence binds each issued head to the same live
+claim and transaction. No original or typed values are copied into job rows.
+The shared full-generation header remains building until its separate complete
+original population has actually been processed.
+
+This manual lane explicitly refuses automatic execution-mode/continuation
+enrollment before original replay. Automatic cache success/recovery and its
+strict completed-cache bridge into stock traversal still need implementation;
+the existing continuation ceilings and five-attempt failure cap are unchanged.
+Readers still require the existing global cache contract, and no worker, source
+grant, publication, Apply, pin transfer or migration registration activates.
+
+Ninety-three focused owner/admission/CAS/page/traversal checks pass serially.
+The extended native fixture requires current/ending refusals, rollback of cache
+and coverage together, a lost actual COMMIT acknowledgment, exact remaining
+source edges, free-DONE rejection and complete-head reopen while global progress
+stays unchanged. Cloud native execution of this new owner is pending. These
+small protocol fixtures do not establish licensed large-area or live speed
+acceptance.

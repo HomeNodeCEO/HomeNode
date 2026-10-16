@@ -3333,6 +3333,63 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     assert.ok(!refsCalls.slice(noCacheFrom).includes(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
     assert.ok(!refsCalls.slice(noCacheFrom).includes(NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL));
     assert.ok(!refsCalls.slice(noCacheFrom).some(sql=>/shared-typed-v2:begin|shared-typed-v2:rows|shared-v2-stock-metrics:page|checkpoint-save/.test(sql)));
+    // Actual current-authorized manual owner, not the offline whole-generation
+    // builder. Automatic enrolled jobs remain blocked by the native head guard.
+    await withCustomCohortJobTransaction(pool,client=>client.query(readFileSync(
+      new URL('../migrations/20261212_custom_cohort_neutral_cache_v2_heads.sql',import.meta.url),'utf8')));
+    const neutralMethod='reconcileFrozenCaptureJobNeutralOriginalsReferencesV2',
+      readNeutralHead=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_neutral_cache_v2_heads WHERE operation_id=$1',[refsOperation])).rows[0]??null,
+      neutralRows=async()=>(await pool.query(`SELECT to_jsonb(r) AS body FROM app.neighborhood_frozen_typed_v2_rows r
+        WHERE generation_id=$1 ORDER BY kind,row_key LIMIT 251`,[frozen.generationId])).rows;
+    assert.equal(await readNeutralHead(),null);assert.deepEqual(await neutralRows(),[]);
+    for(const [fault,reason] of [['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],
+      ['subject',/subject_changed/],['claim',/claim_lost/],['cancel',/cancelled/]]){
+      refsFault=fault;refsAbort=new AbortController();
+      await assert.rejects(freshRefsOwner()[neutralMethod](refsInput,{...refsOptions,signal:refsAbort.signal}),reason);
+      assert.equal(refsFault,null);assert.equal(await readNeutralHead(),null);assert.deepEqual(await neutralRows(),[]);
+      assert.deepEqual(await readRefsCheckpoint(),identityCommitted);assert.deepEqual(await readIdentityAnchor(),identityIssued);
+      if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+      if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+    }
+    refsFault='commit';
+    await assert.rejects(freshRefsOwner()[neutralMethod](refsInput,refsOptions),error=>error.outcome_unknown===true);
+    const neutralFirst=await readNeutralHead();assert.equal(neutralFirst.sequence,1);
+    const neutralFirstBody=JSON.parse((await pool.query('SELECT canonical_utf8 FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1 AND content_sha256=$2',
+      [organization,neutralFirst.receipt_reference.content_sha256])).rows[0].canonical_utf8);
+    await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
+      const forged={...neutralFirstBody,sequence:2,previous:neutralFirst.receipt_reference,before:neutralFirstBody.after,
+        after:{...neutralFirstBody.after,kind_index:7,page_count:2}};
+      const ref=await createNeighborhoodCohortBlobRepository(client,organization).put(canonicalAssessmentJson(forged));
+      await client.query(`UPDATE app.neighborhood_custom_cohort_neutral_cache_v2_heads SET receipt_reference=$2,sequence=2 WHERE operation_id=$1`,
+        [refsOperation,ref]);
+    }),error=>error.code==='55000');
+    assert.deepEqual(await readNeutralHead(),neutralFirst,'free DONE cannot skip issued source-node edges');
+    let neutralLast,neutralPages=1;
+    do{
+      const from=refsCalls.length;
+      neutralLast=await freshRefsOwner()[neutralMethod](refsInput,refsOptions);neutralPages++;
+      assert.equal((await readNeutralHead()).sequence,neutralPages);
+      assert.equal(refsCalls.slice(from).filter(sql=>sql.includes('neighborhood-frozen-job-closure:')).length,1,
+        'every coverage step reopens exactly one fixed original page');
+      assert.ok(neutralPages<=graphPages);
+    }while(!neutralLast.all_issued_source_pages_reconciled);
+    assert.equal(neutralPages,graphPages);assert.equal(neutralLast.automatic_success_handoff,false);
+    const nativeNeutralDone=await readNeutralHead(),neutralFrom=refsCalls.length;
+    const neutralReopened=await freshRefsOwner()[neutralMethod](refsInput,refsOptions);
+    assert.equal(neutralReopened.advanced,false);assert.equal(neutralReopened.all_issued_source_pages_reconciled,true);
+    assert.deepEqual(await readNeutralHead(),nativeNeutralDone);
+    assert.ok(!refsCalls.slice(neutralFrom).some(sql=>/neighborhood-frozen-job-closure:|shared-typed-v2:rows|anchor-advance|anchor-insert/.test(sql)));
+    assert.deepEqual(await readRefsCheckpoint(),identityCommitted);assert.deepEqual(await readIdentityAnchor(),identityIssued);
+    const scopedHeader=(await pool.query(NEIGHBORHOOD_SHARED_TYPED_V2_SQL.read,[frozen.generationId,
+      neutralFirstBody.profile_reference.content_sha256])).rows[0];
+    assert.equal(scopedHeader.status,'building');assert.equal(scopedHeader.progress.typed_rows,'0');
+    assert.equal((await pool.query('SELECT 1 FROM app.neighborhood_custom_cohort_typed_original_rows WHERE operation_id=$1 LIMIT 1',[refsOperation])).rowCount,0);
+    console.info('[native-current-authorized-neutral-cache-owner-v2]',{issued_source_pages:neutralPages,
+      actual_fixed_original_reads:true,entire_neutral_cache_reconciliation:true,independent_native_DONE_parents:true,
+      exact_source_node_edges_and_free_DONE_refusal:true,current_and_all_ending_fences_rollback:true,
+      lost_actual_COMMIT_ACK_reopens_next_edge:true,native_receipt_root_FK_retention:true,global_progress_unchanged:true,
+      per_job_typed_or_original_copies:0,automatic_success_handoff:false,reader_activation:false,
+      licensed_large_area:false,production_speed:false,pin_transfer:false});
     const neutralPrepared=await sharedTypedV2Complete(pool,frozen.generationId);
     assert.equal(neutralPrepared.all_layers_typed,true);
     const metricBeforeBlobs=await refsBlobCount(),metricFrom=refsCalls.length;

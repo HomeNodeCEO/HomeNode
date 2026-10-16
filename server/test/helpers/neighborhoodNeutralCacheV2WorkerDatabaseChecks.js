@@ -25,13 +25,15 @@ import { createCustomCohortCoveredSelectedInitialV2WorkerRepository as selectedI
 import { runCustomCohortCoveredSelectedProgressV2JobOnce as runSelectedProgress } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectedProgressV2JobWorker.js';
 import { NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL as STOCK_PACKET,
   NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL as PAIRED_STOCK_PACKET } from '../../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
+import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL as TRANSACTION_PACKET }
+  from '../../src/services/neighborhoodAssessment/neighborhoodSelectedTransactionOriginalPackageV2.js';
 
 /** Independent disposable job; all acquisition owners, authorization, original
  * queries, native issuance, savepoint rollback and COMMITs are real. */
 export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData}){
   const input={...sourceInput,operationId:randomUUID()},operation=input.operationId;let fault=null,stockReads=0;
   const observed={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
-    const text=typeof c==='string'?c:c.text,originalPacket=text===STOCK_PACKET||text===PAIRED_STOCK_PACKET,
+    const text=typeof c==='string'?c:c.text,originalPacket=text===STOCK_PACKET||text===PAIRED_STOCK_PACKET||text===TRANSACTION_PACKET,
       orphan=fault==='orphan'&&text.includes('custom-cohort-neutral-success-v2:yield')
       ||fault==='bridge_orphan'&&text.includes('custom-cohort-cache-stock-v2:complete')
       ||['partition_orphan','catalog_orphan','union_orphan','eligibility_orphan'].includes(fault)&&text.includes('custom-cohort-v2-continuation:yield');
@@ -41,11 +43,11 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     const result=await raw.query(c);
     if(originalPacket)stockReads++;
     if(orphan){fault=null;await raw.query('ROLLBACK TO SAVEPOINT synthetic_neutral_yield');await raw.query('RELEASE SAVEPOINT synthetic_neutral_yield');}
-    if(['wait_workspace','intent_workspace','union_workspace'].includes(fault)&&originalPacket){fault=null;await raw.query(`UPDATE app.custom_appraisal_workfile_sections
+    if(['wait_workspace','intent_workspace','union_workspace','transaction_workspace'].includes(fault)&&originalPacket){fault=null;await raw.query(`UPDATE app.custom_appraisal_workfile_sections
       SET section_value=jsonb_set(section_value,'{pending_capture,operation_id}',to_jsonb($2::text))
       WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`,[scope.assignment_file_id,randomUUID()]);}
-    if(fault==='role'&&text===SQL.insert||['bridge_role','partition_role','catalog_role','wait_role','intent_role','union_role'].includes(fault)&&originalPacket){fault=null;await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[scope.organization_id,actor]);}
-    if(['ack','bridge_ack','partition_ack','catalog_ack','wait_ack','intent_ack','union_ack','eligibility_ack'].includes(fault)&&text==='COMMIT'){fault=null;throw Error('lost actual original owner COMMIT ACK');}
+    if(fault==='role'&&text===SQL.insert||['bridge_role','partition_role','catalog_role','wait_role','intent_role','union_role','transaction_role'].includes(fault)&&originalPacket){fault=null;await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[scope.organization_id,actor]);}
+    if(['ack','bridge_ack','partition_ack','catalog_ack','wait_ack','intent_ack','union_ack','eligibility_ack','transaction_ack'].includes(fault)&&text==='COMMIT'){fault=null;throw Error('lost actual original owner COMMIT ACK');}
     return result;
   }};}},service=createCustomCohortContextCapture({pool:observed,sourceMode:'combined-witness2-v1',authorizeMarketData}),
     args={pool,cohortService:service,leaseSeconds:900},job=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[operation])).rows[0],
@@ -399,6 +401,36 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   eligibilityCalls++;assert.equal(options.captureJobClaim.attempts,5);
   const eligibilityBefore=await job(),unionBefore=await unionHead(),nativeGroupsBefore=await unionGroups(),
     eligibilityOwner={claim:options.captureJobClaim};
+  const transactionMethod='readCoveredOriginalFrozenCaptureJobFirstSelectedTransactionsReferencesV2';
+  for(const [probe,reason] of [['transaction_workspace',/custom_cohort_group_workspace_study_changed/],
+    ['transaction_role',/custom_cohort_job_actor_access_revoked/]]){
+    fault=probe;const reads=stockReads;await assert.rejects(service[transactionMethod](value,options),reason);
+    assert.equal(fault,null);assert.equal(stockReads,reads+1);
+    assert.deepEqual(await job(),eligibilityBefore);assert.deepEqual(await unionHead(),unionBefore);
+    assert.deepEqual(await unionGroups(),nativeGroupsBefore);assert.deepEqual(await intents(),humanOwnedIntents);
+    assert.deepEqual(await workspace(),pendingWorkspace);
+    if(probe==='transaction_role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);
+  }
+  const transactions=await service[transactionMethod](value,options);
+  assert.equal(transactions.status,'current_authorized_first_selected_original_transactions_reopened');
+  assert.equal(transactions.covered_neutral_originals,true);assert.equal(transactions.selected_entry.ordinal,1);
+  assert.equal(transactions.selected_entry.account_id,selectedRows[0].account_id);
+  assert.equal(transactions.read_only,true);assert.equal(transactions.lease_extended,false);
+  assert.equal(transactions.complete_selected_union_transactions,false);assert.equal(transactions.context_complete,false);
+  assert.equal(transactions.pin_transfer,false);assert.equal(transactions.report_update,'none');
+  assert.equal(Object.hasOwn(transactions,'selected_CAD'),false);
+  const nativeTransactions=transactions.selected_transactions;
+  assert.equal(nativeTransactions.account_id,selectedRows[0].account_id);
+  assert.equal(nativeTransactions.package_count,nativeTransactions.packages.length);
+  assert.equal(nativeTransactions.original_count,nativeTransactions.packages.reduce((n,p)=>n+p.rows.length,0));
+  assert.equal(nativeTransactions.complete_selected_union_transactions,false);
+  assert.deepEqual(nativeTransactions.retained_observation_period,input.observationPeriod);
+  assert.ok(Buffer.byteLength(JSON.stringify(transactions))<=16000);
+  fault='transaction_ack';await assert.rejects(service[transactionMethod](value,options),error=>error.outcome_unknown===true);
+  assert.equal(fault,null);assert.deepEqual(await service[transactionMethod](value,options),transactions);
+  assert.deepEqual(await job(),eligibilityBefore);assert.deepEqual(await unionHead(),unionBefore);
+  assert.deepEqual(await unionGroups(),nativeGroupsBefore);assert.deepEqual(await intents(),humanOwnedIntents);
+  assert.deepEqual(await workspace(),pendingWorkspace);
   for(const method of ['readCoveredOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2','readCoveredOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2']){
     const read=await service[method](input,{captureJobClaim:eligibilityOwner.claim});
     assert.equal(read.covered_neutral_originals,true);assert.equal(read.read_only,true);assert.equal(read.lease_extended,false);
@@ -509,6 +541,14 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     native_eligibility_sequence_three_and_terminal_selected_ordinal_two:true,immutable_human_command_and_failure_history_preserved:true,
     original_native_parents_workspace_reports_and_pins_preserved:true,global_header_still_building:true,
     nonempty_selected_metric_population:false,CAD_companion:false,complete_semantics:false,
+    default_worker_activation:false,licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
+  console.info('[native-covered-first-selected-transactions-v2]',{server_owned_first_native_selected_ordinal_one:true,
+    actual_whole_stock_subject_all_date_transaction_originals_and_entire_cache_reopened:true,
+    entire_partition_catalog_and_immutable_human_command_reconciled:true,native_packages_and_original_counts_retained_without_truncation:true,
+    real_ending_workspace_and_role_refusal:true,lost_actual_readonly_COMMIT_ACK_fresh_reopen_identical:true,
+    no_job_head_union_groups_intent_workspace_or_lease_mutation:true,one_existing_original_query_transport_and_runtime_budget:true,
+    global_header_still_building:true,separate_CAD_companion:false,economic_equivalence:false,
+    complete_selected_union_transactions:false,calendar_quarters:false,statistics:false,
     default_worker_activation:false,licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
   console.info('[native-covered-selected-initial-worker-v2]',{missing_human_command_idle_without_claim:true,
     actual_expired_adoption_real_COMMIT_refused_and_rolled_back:true,concurrent_single_real_human_resume_adoption:true,

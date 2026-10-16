@@ -320,6 +320,10 @@ const FROZEN_SOURCE_STAGES = freeze({
     catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
     readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true, readingSelectedUnionFirstTransactions: true,
     allowedPhases: ['frozen_selected_union_refs_v2'] },
+  covered_selected_union_first_transactions_refs_v2: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,
+    readingSelectedUnionSubjectHousing:true,readingSelectedUnionFirstEligibility:true,readingSelectedUnionFirstTransactions:true,
+    coveredNeutralOriginals:true,allowedPhases:['frozen_selected_union_refs_v2'] },
   original_selected_union_first_combined_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
     readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true,
@@ -3487,8 +3491,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             complete_selected_recorded_comparison_pass:eligibilityPlan.after.done,
             complete_selected_union_eligibility:false,continuation});
         }
-        if(readingSelectedUnionSubjectHousing&&coveredNeutralOriginals)
-          return freeze({...subjectHousingResult,covered_neutral_originals:true});
+        if(readingSelectedUnionSubjectHousing&&coveredNeutralOriginals){
+          const coveredResult={...subjectHousingResult,covered_neutral_originals:true};
+          if(Buffer.byteLength(JSON.stringify(coveredResult))>16000)fail('byte_limit');
+          return freeze(coveredResult);
+        }
         if(readingSelectedUnionSubjectHousing)return freeze(subjectHousingResult);
         const beforeCounts=unionCounts,{selected_count:beforeSelected,...beforeGroupCounts}=beforeCounts;
         if(unionPlan.entry)unionCounts=await unionStore.contribute(unionAnchor,unionPlan.entry);
@@ -3979,6 +3986,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       frozenCaptureJobSourceStage(value, options, 'original_selected_union_first_amenities_refs_v2'),
     readOriginalFrozenCaptureJobFirstSelectedTransactionsReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_selected_union_first_transactions_refs_v2'),
+    /** Fixed first native selected account only. Job-cache coverage is never
+     * economic equivalence, complete union transactions or publication. */
+    readCoveredOriginalFrozenCaptureJobFirstSelectedTransactionsReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'covered_selected_union_first_transactions_refs_v2'),
     readOriginalFrozenCaptureJobFirstSelectedCombinedEvidenceReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_selected_union_first_combined_refs_v2'),
     progressOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2: (value, options = {}) =>

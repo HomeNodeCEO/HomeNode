@@ -37,7 +37,7 @@ function fixture({ rowCount = 2, hook = () => null } = {}) {
     }
     if (text === SQL.insert) {
       assert.equal(v.length, 4); const input = JSON.parse(v[3]); rows.push(...input);
-      return result({ inserted_count: input.length, typed_utf8_bytes: String(input.reduce((n, r) => n + Buffer.byteLength(JSON.stringify(r.typed)), 0)) });
+      return result({ inserted_count: input.length, reconciled_count: input.length, typed_utf8_bytes: String(input.reduce((n, r) => n + Buffer.byteLength(JSON.stringify(r.typed)), 0)) });
     }
     if (text.includes('shared-typed-v2:progress')) {
       assert.equal(v.length, 5); header.progress = JSON.parse(v[2]); header.status = v[3];
@@ -116,7 +116,9 @@ test('caller-owned stable RR/UTC writable transactions, ending checks and a fres
 });
 
 test('original-text/hash/identity acknowledgement, page bounds, completion totals and CAS are not bypassed', async () => {
-  for (const override of [result({ inserted_count: 1, typed_utf8_bytes: '100' }), result({ inserted_count: 2, typed_utf8_bytes: '0' })]) {
+  for (const override of [result({ inserted_count: 1, typed_utf8_bytes: '100' }), result({ inserted_count: 2, typed_utf8_bytes: '0' }),
+    result({inserted_count:0,reconciled_count:1,typed_utf8_bytes:'100'}),result({inserted_count:3,reconciled_count:2,typed_utf8_bytes:'100'}),
+    result({inserted_count:-1,reconciled_count:2,typed_utf8_bytes:'100'})]) {
     const f = fixture({ hook: c => c.text === SQL.insert ? override : null }); await assert.rejects(f.builder().step(), /original_mismatch/);
   }
   for (const patch of [{ candidate_count: 251 }, { next_cursor: 'other' }, { page_count: 0, candidate_count: 1, page_json: '[]' },
@@ -132,6 +134,19 @@ test('original-text/hash/identity acknowledgement, page bounds, completion total
   const lost = fixture({ hook: c => c.text.includes('shared-typed-v2:progress') ? { rowCount: 0, rows: [] } : null });
   await assert.rejects(lost.builder().step(), /write_lost/);
   assert.match(SQL.insert, /original.payload::text=input.original_text/); assert.match(SQL.insert, /encode\(sha256\(convert_to/);
+});
+
+test('preexisting neutral rows still require fresh complete original compilation and full reconciliation before progress',async()=>{
+  let compiled;
+  const f=fixture({hook:c=>{
+    if(c.text!==SQL.insert)return null;compiled=JSON.parse(c.values[3]);
+    return result({inserted_count:0,reconciled_count:compiled.length,
+      typed_utf8_bytes:String(compiled.reduce((n,row)=>n+Buffer.byteLength(JSON.stringify(row.typed)),0))});
+  }});
+  const r=await f.builder().step();assert.equal(r.progress.typed_rows,'2');assert.equal(compiled.length,2);
+  assert.ok(compiled.every(row=>row.original_text&&row.typed.typed_original_version===2));
+  assert.match(SQL.insert,/cached\.typed=original\.typed/);assert.match(SQL.insert,/ON CONFLICT\(generation_id,profile_sha256,kind,row_key\) DO NOTHING/);
+  assert.doesNotMatch(SQL.insert,/DO UPDATE|UPDATE app\./);
 });
 
 test('V2 migration separates date-neutral keys, derives seven bounded totals and retires before originals without activation', () => {

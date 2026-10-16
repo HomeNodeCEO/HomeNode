@@ -126,17 +126,33 @@ const READ_V2 = `/* neighborhood-shared-typed-v2:read */ SELECT binding_sha256,s
 const PAGE_V2 = PAGE.replace('neighborhood-shared-typed:page', 'neighborhood-shared-typed-v2:page');
 const INSERT_V2 = `/* neighborhood-shared-typed-v2:rows */ WITH input AS (
   SELECT * FROM jsonb_to_recordset($4::jsonb) AS x(row_key text,original_text text,typed jsonb)
-), written AS (
-  INSERT INTO app.neighborhood_frozen_typed_v2_rows
-    (generation_id,profile_sha256,kind,row_key,account_id,source_record_id,original_payload_sha256,typed)
-  SELECT $1::uuid,$2,$3,original.row_key,original.account_id,original.source_record_id,
-    input.typed->'original'->>'payload_sha256',input.typed FROM input
+), admitted AS MATERIALIZED (
+  SELECT original.row_key,original.account_id,original.source_record_id,
+    input.typed->'original'->>'payload_sha256' AS original_payload_sha256,input.typed FROM input
   JOIN app.neighborhood_frozen_source_rows original ON original.generation_id=$1::uuid AND original.kind=$3 AND original.row_key=input.row_key
   WHERE original.payload::text=input.original_text AND original.account_id IS NOT DISTINCT FROM input.typed->>'account_id'
     AND original.source_record_id::text IS NOT DISTINCT FROM input.typed->>'source_record_id'
     AND encode(sha256(convert_to(original.payload::text,'UTF8')),'hex')=input.typed->'original'->>'payload_sha256'
-  RETURNING typed_utf8_bytes AS bytes
-) SELECT count(*)::integer AS inserted_count,coalesce(sum(bytes),0)::text AS typed_utf8_bytes FROM written`;
+), written AS (
+  INSERT INTO app.neighborhood_frozen_typed_v2_rows
+    (generation_id,profile_sha256,kind,row_key,account_id,source_record_id,original_payload_sha256,typed)
+  SELECT $1::uuid,$2,$3,row_key,account_id,source_record_id,original_payload_sha256,typed FROM admitted
+  ON CONFLICT(generation_id,profile_sha256,kind,row_key) DO NOTHING
+  RETURNING row_key,account_id,source_record_id,original_payload_sha256,typed,typed_utf8_bytes
+), stored AS MATERIALIZED (
+  -- A data-modifying CTE shares the command snapshot. Read new rows through
+  -- RETURNING, and existing rows through the indexed immutable relation.
+  SELECT * FROM written UNION ALL
+  SELECT cached.row_key,cached.account_id,cached.source_record_id,cached.original_payload_sha256,cached.typed,cached.typed_utf8_bytes
+  FROM app.neighborhood_frozen_typed_v2_rows cached JOIN input USING(row_key)
+  WHERE cached.generation_id=$1::uuid AND cached.profile_sha256=$2 AND cached.kind=$3
+), reconciled AS (
+  SELECT cached.typed_utf8_bytes FROM admitted original JOIN stored cached USING(row_key)
+  WHERE cached.account_id IS NOT DISTINCT FROM original.account_id
+    AND cached.source_record_id IS NOT DISTINCT FROM original.source_record_id
+    AND cached.original_payload_sha256=original.original_payload_sha256 AND cached.typed=original.typed
+) SELECT (SELECT count(*)::integer FROM written) AS inserted_count,
+  count(*)::integer AS reconciled_count,coalesce(sum(typed_utf8_bytes),0)::text AS typed_utf8_bytes FROM reconciled`;
 const BEGIN_V1 = `/* neighborhood-shared-typed:begin */ INSERT INTO app.neighborhood_frozen_typed_generations
   (generation_id,profile_sha256,effective_date,binding_sha256,source_metadata,definition_json,progress)
   VALUES($1::uuid,$2,$3::date,$4,$5::jsonb,$6,$7::jsonb)`;
@@ -162,15 +178,28 @@ const PAGE_CAD=PAGE.replace('neighborhood-shared-typed:page','neighborhood-share
   .replace('app.neighborhood_frozen_source_rows','app.neighborhood_frozen_cad_improvement_rows');
 const INSERT_CAD=`/* neighborhood-shared-typed-CAD:rows */ WITH input AS (
   SELECT * FROM jsonb_to_recordset($4::jsonb) AS x(row_key text,original_text text,typed jsonb)
-), written AS (
-  INSERT INTO app.neighborhood_frozen_typed_cad_rows
-    (generation_id,profile_sha256,kind,row_key,account_id,original_payload_sha256,typed)
-  SELECT $1::uuid,$2,$3,original.row_key,original.account_id,original.payload_sha256,input.typed FROM input
+), admitted AS MATERIALIZED (
+  SELECT original.row_key,original.account_id,original.payload_sha256 AS original_payload_sha256,input.typed FROM input
   JOIN app.neighborhood_frozen_cad_improvement_rows original ON original.generation_id=$1::uuid AND original.kind=$3 AND original.row_key=input.row_key
   WHERE original.payload::text=input.original_text AND original.account_id=input.typed->>'account_id'
     AND original.payload_sha256=input.typed->'original'->>'payload_sha256'
-  RETURNING typed_utf8_bytes AS bytes
-) SELECT count(*)::integer AS inserted_count,coalesce(sum(bytes),0)::text AS typed_utf8_bytes FROM written`;
+), written AS (
+  INSERT INTO app.neighborhood_frozen_typed_cad_rows
+    (generation_id,profile_sha256,kind,row_key,account_id,original_payload_sha256,typed)
+  SELECT $1::uuid,$2,$3,row_key,account_id,original_payload_sha256,typed FROM admitted
+  ON CONFLICT(generation_id,profile_sha256,kind,row_key) DO NOTHING
+  RETURNING row_key,account_id,original_payload_sha256,typed,typed_utf8_bytes
+), stored AS MATERIALIZED (
+  SELECT * FROM written UNION ALL
+  SELECT cached.row_key,cached.account_id,cached.original_payload_sha256,cached.typed,cached.typed_utf8_bytes
+  FROM app.neighborhood_frozen_typed_cad_rows cached JOIN input USING(row_key)
+  WHERE cached.generation_id=$1::uuid AND cached.profile_sha256=$2 AND cached.kind=$3
+), reconciled AS (
+  SELECT cached.typed_utf8_bytes FROM admitted original JOIN stored cached USING(row_key)
+  WHERE cached.account_id=original.account_id AND cached.original_payload_sha256=original.original_payload_sha256
+    AND cached.typed=original.typed
+) SELECT (SELECT count(*)::integer FROM written) AS inserted_count,
+  count(*)::integer AS reconciled_count,coalesce(sum(typed_utf8_bytes),0)::text AS typed_utf8_bytes FROM reconciled`;
 const BEGIN_CAD=BEGIN_V2.replaceAll('neighborhood-shared-typed-v2:','neighborhood-shared-typed-CAD:')
   .replace('app.neighborhood_frozen_typed_v2_generations','app.neighborhood_frozen_typed_cad_generations');
 const UPDATE_CAD=UPDATE_V2.replaceAll('neighborhood-shared-typed-v2:','neighborhood-shared-typed-CAD:')
@@ -193,7 +222,9 @@ export function createNeighborhoodSharedTypedGeneration(client, rawOptions) {
 /** Dormant generation/profile-only V2 syntax cache. An authorized offline owner
  * must fence integrated source rights at both transaction ends. No report date,
  * stock/selection, licensed acquisition, route, job dispatcher or worker is
- * supplied. Report consumers must separately apply retained date policies. */
+ * supplied. Each page recompiles every original and reconciles the entire typed
+ * row even when another authorized producer already inserted it. Native totals
+ * count only new INSERTs. Report consumers separately apply retained dates. */
 export function createNeighborhoodSharedTypedGenerationV2(client, rawOptions) {
   return sharedTypedGeneration(client, rawOptions, true);
 }
@@ -290,7 +321,11 @@ function sharedTypedGeneration(client, rawOptions, neutral) {
       let writtenBytes = 0;
       if (input.length) {
         const ack = one(await query(cad?INSERT_CAD:neutral ? INSERT_V2 : INSERT, [...key, kind, encoded]));
-        if (ack.inserted_count !== input.length || !count(ack.typed_utf8_bytes, L.step_utf8_bytes)
+        // Every input was freshly compiled from its complete original. Reuse
+        // requires full cached JSON/identity equality, never a hash/count alone.
+        if ((neutral ? ack.reconciled_count : ack.inserted_count) !== input.length
+          || !Number.isInteger(ack.inserted_count) || ack.inserted_count < 0 || ack.inserted_count > input.length
+          || !count(ack.typed_utf8_bytes, L.step_utf8_bytes)
           || Number(ack.typed_utf8_bytes) < input.length) fail('original_mismatch');
         writtenBytes = Number(ack.typed_utf8_bytes);
       }

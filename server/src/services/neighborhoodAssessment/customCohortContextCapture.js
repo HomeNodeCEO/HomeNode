@@ -186,6 +186,12 @@ const FROZEN_SOURCE_STAGES = freeze({
     allowedPhases: ['frozen_verify_refs_v2', 'frozen_geo_verify_refs_v2'] },
   identity_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     allowedPhases: ['frozen_geo_verify_refs_v2', 'frozen_identity_refs_v2'] },
+  verify_continue_refs_v2: { referencesV2: true, verifying: true, yieldingEarlyProgress: true,
+    allowedPhases: ['frozen_source_refs_v2', 'frozen_verify_refs_v2'] },
+  geographic_continue_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, yieldingEarlyProgress: true,
+    allowedPhases: ['frozen_verify_refs_v2', 'frozen_geo_verify_refs_v2'] },
+  identity_continue_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true, yieldingEarlyProgress: true,
+    allowedPhases: ['frozen_geo_verify_refs_v2', 'frozen_identity_refs_v2'] },
   verify_v1: { verifying: true, allowedPhases: ['frozen_source_v1', 'frozen_verify_v1'] },
   geographic_v1: { verifying: true, stockVerifying: true, allowedPhases: ['frozen_verify_v1', 'frozen_geo_verify_v1'] },
   identity_v1: { verifying: true, stockVerifying: true, identityVerifying: true,
@@ -1787,7 +1793,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
   async function frozenCaptureJobSourceStage(value, options = {}, stage = 'prefix_v1') {
     if(typeof stage!=='string'||!Object.hasOwn(FROZEN_SOURCE_STAGES,stage))
       fail('frozen_source_representation_unsupported');
-    const {referencesV2=false,verifying=false,stockVerifying=false,identityVerifying=false,
+    const {referencesV2=false,verifying=false,stockVerifying=false,identityVerifying=false,yieldingEarlyProgress=false,
       typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,
@@ -1897,6 +1903,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       // retention and all-date one-hop fields. Retained grant metadata is not
       // authority: current policy must allow before any licensed original.
       const decision=await boundedPolicy(authorizeMarketData,client,input.auth,context,purpose,budget);
+      // Dormant early owners enroll only AFTER current actor/assignment/draft/
+      // subject and source permission, before actual independently guarded DML.
+      // Native deferred obligations reject an orphan progress COMMIT. The
+      // ordinary explicit verification entry points retain their old contract.
+      if(yieldingEarlyProgress)await createCustomCohortV2ContinuationRepository(client).beginEarlyIssued(claim,jobOptions);
       if(readingRetainedSelectionIntent)issuedSelectionIntent=await createCustomCohortV2SelectionIntentRepository(client)
         .readRetained(claim,{...jobOptions,workspaceTarget:selectionWorkspaceTarget});
       if(replayingSelectedUnion)issuedSelectionIntent=await createCustomCohortV2SelectionIntentRepository(client)
@@ -3411,6 +3422,13 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const continuation=await createCustomCohortV2ContinuationRepository(client).yieldIssued(claim,jobOptions);
         budget.check();return freeze({...(catalogingRecordedGroups?catalogResult:partitioningRecordedGroups?partitionResult:traversalResult),continuation});
       }
+      // Every unchanged original/current-authority ending fence above must
+      // pass first. A DONE replay makes no new head and cannot yield it twice.
+      const earlyAdvanced=identityVerifying?identityVerification?.advanced
+        :stockVerifying?stockVerification?.advanced:verification?.advanced;
+      const earlyContinuation=yieldingEarlyProgress?{context_complete:false,pin_transfer:false,...(earlyAdvanced
+        ?{continuation:await createCustomCohortV2ContinuationRepository(client).yieldIssued(claim,jobOptions)}:{})}:{};
+      budget.check();
       if(catalogingRecordedGroups)return freeze(catalogResult);
       if(partitioningRecordedGroups||readingRecordedPartition)return freeze(partitionResult);
       if(traversingStock)return freeze(traversalResult);
@@ -3429,7 +3447,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         advanced:typedOriginals.advanced,typed_layer_count:typedOriginals.progress.kind_index,all_layers_typed:typedOriginals.all_layers_typed,
         typed_profile_ref:typedOriginals.profile_ref,individual_original_interpretation:typedOriginals.all_layers_typed?'complete':'in_progress',
         property_transaction_observations:'not_established',source_freshness:'not_established',source_acquisition:'not_established',report_update:'none'});
-      if(identityVerifying) return freeze({status:'source_identity_progress_retained',operation_id:input.operationId,
+      if(identityVerifying) return freeze({...earlyContinuation,status:'source_identity_progress_retained',operation_id:input.operationId,
         source_reference:reference,verification_reference:verificationReference,stock_verification_reference:stockVerificationReference,
         identity_verification_reference:identityVerificationReference,generation_id:stock.generation_id,
         advanced:identityVerification.advanced,verified_layer_count:identityVerification.progress.kind_index,
@@ -3440,14 +3458,14 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         origin_count_scope:'source_graph_account_parcel_parts_not_geographic_stock',
         missing_account_count:identityVerification.progress.missing_account_count,
         typed_numerical_observations:'not_established',source_freshness:'not_established',source_acquisition:'not_established',report_update:'none'});
-      if(stockVerifying) return freeze({status:'geographic_original_progress_retained',operation_id:input.operationId,
+      if(stockVerifying) return freeze({...earlyContinuation,status:'geographic_original_progress_retained',operation_id:input.operationId,
         source_reference:reference,verification_reference:verificationReference,stock_verification_reference:stockVerificationReference,
         generation_id:stock.generation_id,advanced:stockVerification.advanced,
         verified_parcels:stockVerification.progress.verified_parcels,verified_unassociated:stockVerification.progress.verified_unassociated,
         all_parcels_verified:stockVerification.all_parcels_verified,original_graph_verification:'representation_verified',
         geographic_stock_verification:stockVerification.all_parcels_verified?'originals_verified':'in_progress',
         typed_identity_closure:'not_established',source_acquisition:'not_established',report_update:'none'});
-      if(verifying) return freeze({status:'original_graph_progress_retained',operation_id:input.operationId,
+      if(verifying) return freeze({...earlyContinuation,status:'original_graph_progress_retained',operation_id:input.operationId,
         source_reference:reference,verification_reference:verificationReference,generation_id:stock.generation_id,
         advanced:verification.advanced,verified_layer_count:verification.verified_layer_count,
         all_layers_verified:verification.all_layers_verified,
@@ -3593,6 +3611,15 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * checkpoint progress. No legacy cast, source grant, worker dispatch or Apply. */
     verifyFrozenCaptureJobSourceReferencesV2Page: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'verify_refs_v2'),
+    /** Dormant same-TX issued success handoffs through the SAME original owners.
+     * The unregistered early-continuation candidate must be composed first.
+     * No caller source, phase, progress cursor, DONE or failure reset admitted. */
+    continueFrozenCaptureJobSourceReferencesV2Page: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'verify_continue_refs_v2'),
+    continueFrozenCaptureJobStockOriginalReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'geographic_continue_refs_v2'),
+    continueFrozenCaptureJobSourceIdentityReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'identity_continue_refs_v2'),
     /** Explicit V2 geographic original owner. Requires the completed issued
      * graph and advances only its own independent geographic issuance head;
      * never casts V1 progress, grants source rights, releases a pin or Applies. */

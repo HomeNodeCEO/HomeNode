@@ -1,5 +1,41 @@
 # Complete larger-area Custom neighborhood studies
 
+## Early original-owner success continuations (2026-10-15, inactive)
+
+Three new named internal entry points run the existing graph, geographic and
+identity owners, including their original SQL and every current/ending actor,
+assignment, draft, subject and source-rights fence. Only a genuinely advanced
+independent native head can release a successful continuation. A DONE replay
+does not yield the same receipt again. No caller phase, cursor, DONE, source
+adapter, group choice or dense population array is admitted.
+
+Unregistered candidate `20261208_custom_cohort_early_continuations_v2.sql`
+composes atomically after the transaction-index owner candidate. One immutable
+enrollment row binds the actual job, actor and saved request. Fresh native
+anchor DML is stamped with the real transaction ID after its existing
+identity/edge/count guards; old rows are not backfilled as fresh issuance.
+Deferred constraints require the exact head, checkpoint, native continuation
+and lease release to COMMIT together. Rolling back only the yield cannot
+commit orphan original progress. Previous-transaction heads cannot be reissued.
+Successful single-use claims retain attempts and error history; ordinary
+failure recovery still consumes the five-attempt budget.
+
+The graph/geographic/identity pass ceilings are 200,000 / 400,000 / 600,000.
+No historical later-phase ceiling is raised. Adjacent phase handoffs require
+the exact issued parent, including identity-to-stock-traversal admission.
+The complete existing later-phase/native claim guards are retained.
+
+The new cloud-only independent graph exercises all existing early-owner
+source/fault probes plus actual orphan-COMMIT refusal, three lost owner-COMMIT
+acknowledgments, concurrent single-token consumption, generic failure-claimer
+exclusion, ordinary recovery and immutable enrollment. The eleven older
+graphs and their deadlines remain intact. Focused changed contracts pass
+31/31 serially in about 0.7 seconds; native/full cloud execution is pending.
+This is small protocol coverage, not existing-database large-area or speed
+acceptance. No source prefix worker, automatic early dispatcher, default
+route, migration registration, selection, publication, terminal pin transfer,
+activation or deployment is added. Those roadmap steps remain unfinished.
+
 ## Cloud protocol-test cost diagnostics (2026-10-15)
 
 Exact selected-worker head `5ca1eecd` executed the new expiry regression and

@@ -106,3 +106,70 @@ test('tenth-only continuation adds its finite pass without widening ninth or his
   await assert.rejects(setup({phase:'frozen_selected_numeric_refs_v2',sequence:18000010}).owner.yieldIssued(claim,options),/corrupt/);
   await assert.rejects(setup({phase:'frozen_selected_statistics_refs_v2',sequence:16000009}).owner.yieldIssued(claim,options),/corrupt/);
 });
+
+test('dormant original graph/geography/identity successes retain finite native pass ceilings and failure history',async()=>{
+  for(const [phase,maximum] of [['frozen_verify_refs_v2',200000],['frozen_geo_verify_refs_v2',400000],['frozen_identity_refs_v2',600000]]){
+    const result=await setup({phase,sequence:maximum}).owner.yieldIssued(claim,options);
+    assert.equal(result.phase,phase);assert.equal(result.attempts,5);assert.equal(result.continuation_sequence,maximum);
+    assert.equal(result.context_complete,false);assert.equal(result.pin_transfer,false);
+    for(const sequence of [0,maximum+1,1.5])await assert.rejects(setup({phase,sequence}).owner.yieldIssued(claim,options),/corrupt/);
+  }
+  await assert.rejects(setup({phase:'frozen_source_refs_v2'}).owner.yieldIssued(claim,options),/corrupt/);
+  await assert.rejects(setup({phase:'frozen_stock_traversal_refs_v2',sequence:16000009}).owner.yieldIssued(claim,options),/corrupt/);
+});
+test('early enrollment binds only the actual scoped live job and requires one caller transaction before writes',async()=>{
+  const calls=[];let transaction=4;
+  const owner=repository({async query(sql,values){
+    calls.push({sql,values});
+    if(sql.includes(':transaction'))return {rowCount:1,rows:[{transaction_id:String(transaction)}]};
+    if(sql.includes(':begin-early'))return {rowCount:0,rows:[]};
+    if(sql.includes(':read-early'))return {rowCount:1,rows:[{operation_id:claim.operation_id}]};
+    assert.fail(sql);
+  }});
+  assert.equal(await owner.beginEarlyIssued(claim,options),undefined);
+  const insert=calls.find(row=>row.sql.includes(':begin-early'));
+  assert.deepEqual(insert.values,[claim.operation_id,claim.claim_token,5,...Object.values(scope),id(5)]);
+  assert.match(insert.sql,/job\.actor_user_id=\$8::uuid/);
+  assert.match(insert.sql,/request_sha256/);
+  assert.match(insert.sql,/ON CONFLICT\(operation_id\) DO NOTHING/);
+  assert.doesNotMatch(insert.sql,/SET attempts|DELETE|UPDATE app\.|source_reference|payload|BEGIN|COMMIT/);
+  calls.length=0;
+  for(const extra of ['checkpoint','phase','done','source','readOriginal','attempts'])
+    await assert.rejects(owner.beginEarlyIssued(claim,{...options,[extra]:true}),/invalid_/);
+  assert.equal(calls.length,0);
+  const moving=repository({async query(){return {rowCount:1,rows:[{transaction_id:String(++transaction)}]};}});
+  await assert.rejects(moving.beginEarlyIssued(claim,options),/caller_transaction_required/);
+});
+test('early native candidate keeps original guards, same-TX issuance and deferred release; no registry or default activation',()=>{
+  const sql=readFileSync(new URL('../migrations/20261208_custom_cohort_early_continuations_v2.sql',import.meta.url),'utf8'),
+    registry=readFileSync(new URL('../src/database/mobileMigrations.js',import.meta.url),'utf8'),
+    owner=readFileSync(new URL('../src/services/neighborhoodAssessment/customCohortContextCapture.js',import.meta.url),'utf8'),
+    fixture=readFileSync(new URL('./neighborhoodGroupIndex.integration.test.js',import.meta.url),'utf8');
+  assert.ok(!registry.includes('20261208_custom_cohort_early_continuations_v2.sql'));
+  for(const text of ['early_issued_tx IS DISTINCT FROM txid_current()','DEFERRABLE INITIALLY DEFERRED',
+    'neighborhood_early_v2_commit_conflict','NEW.issued_attempts<OLD.issued_attempts','OLD.consumed_claim_token IS NULL',
+    'early_receipt->\'previous\' IS DISTINCT FROM OLD.progress_reference','h.identity_reference=OLD.progress_reference',
+    'h.graph_reference=OLD.progress_reference','h.geographic_reference=OLD.progress_reference',
+    'NEW.sequence>200000)','NEW.sequence>400000)','NEW.sequence>600000)',
+    "NEW.phase='frozen_selected_semantic_refs_v2' AND NEW.sequence>20000010",
+    "NEW.phase='frozen_selected_transaction_index_refs_v2' AND NEW.sequence>22000011",
+    'NEW.issued_transaction_id IS DISTINCT FROM OLD.issued_transaction_id','BEFORE TRUNCATE'])
+    assert.ok(sql.includes(text),text);
+  assert.doesNotMatch(sql,/DISABLE TRIGGER|DROP TRIGGER|DROP TABLE|DELETE FROM|UPDATE app\.|SET attempts|attempts=0|CREATE EXTENSION/);
+  // PL/pgSQL scans outer IF up to THEN; an unparenthesized CASE exposes its
+  // inner THEN as the IF terminator and fails native compilation (42601).
+  assert.match(sql,/evidence_refs'\)<>\(CASE NEW\.phase[\s\S]*?ELSE 6 END\) OR job\.context_sha256/);
+  assert.doesNotMatch(sql,/<>CASE NEW\.phase/);
+  for(const match of sql.matchAll(/CREATE (?:TABLE|FUNCTION|TRIGGER|CONSTRAINT TRIGGER) (?:app\.)?([a-z0-9_]+)/g))
+    assert.ok(Buffer.byteLength(match[1])<=63,match[1]);
+  assert.ok(owner.indexOf('if(yieldingEarlyProgress)')>owner.indexOf('const decision=await boundedPolicy(authorizeMarketData'));
+  assert.ok(owner.indexOf('const earlyContinuation=')>owner.indexOf('if(identityAnchorStore&&!same(await identityAnchorStore.read(),identityAnchor))'));
+  for(const name of ['continueFrozenCaptureJobSourceReferencesV2Page','continueFrozenCaptureJobStockOriginalReferencesV2',
+    'continueFrozenCaptureJobSourceIdentityReferencesV2','[native-early-original-success-continuations-v2]',
+    'early_orphan_commit','synthetic_early_recovery','previous_TX_head_cannot_reissue'])
+    assert.ok(fixture.includes(name)||owner.includes(name),name);
+  assert.ok(fixture.includes("!fault?.startsWith('early_')"));
+  assert.ok(fixture.includes('earlyOrphanYieldSeen,seenBefore+1'));
+  assert.ok(fixture.includes('const ownerAttempts=refsClaim.attempts;'));
+  assert.ok(fixture.includes('assert.equal(result.continuation.attempts,ownerAttempts);'));
+});

@@ -4,6 +4,7 @@ import { prepareNeighborhoodCohortBlobReference } from './cohortEvidenceBlobRepo
 
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const PHASES=['frozen_stock_traversal_refs_v2','frozen_recorded_partition_refs_v2','frozen_recorded_catalog_refs_v2','frozen_selected_union_refs_v2','frozen_selected_eligibility_refs_v2','frozen_selected_evidence_refs_v2','frozen_selected_metrics_refs_v2','frozen_selected_statistics_refs_v2','frozen_selected_numeric_refs_v2','frozen_selected_semantic_refs_v2'];
+const EARLY_PHASES=['frozen_verify_refs_v2','frozen_geo_verify_refs_v2','frozen_identity_refs_v2'];
 const fail=reason=>{throw new TypeError(`custom_cohort_v2_continuation_${reason}`);};
 function data(v,keys){if(!v||isProxy(v)||Object.getPrototypeOf(v)!==Object.prototype)fail('invalid_input');
   const ds=Object.getOwnPropertyDescriptors(v),names=Reflect.ownKeys(ds);
@@ -22,7 +23,31 @@ export function createCustomCohortV2ContinuationRepository(client){
   if(typeof client?.query!=='function')fail('client_required');
   const tx=async()=>{const id=one(await client.query('/* custom-cohort-v2-continuation:transaction */ SELECT txid_current()::text AS transaction_id')).transaction_id;
     if(typeof id!=='string'||!/^[1-9][0-9]{0,19}$/.test(id))fail('caller_transaction_required');return id;};
-  return Object.freeze({async yieldIssued(rawClaim,rawOptions){
+  return Object.freeze({async beginEarlyIssued(...args){
+    if(args.length!==2)fail('invalid_input');
+    const claim=prepareCustomCohortCaptureJobClaim(args[0]),options=data(args[1],['scope','actorUserId']),scope=scopeOf(options.scope);
+    if(typeof options.actorUserId!=='string'||!UUID.test(options.actorUserId))fail('invalid_scope');
+    const values=[claim.operation_id,claim.claim_token,claim.attempts,scope.organization_id,scope.report_file_id,
+      scope.assignment_file_id,scope.account_id,options.actorUserId],started=await tx();
+    if(await tx()!==started)fail('caller_transaction_required');
+    await client.query(`/* custom-cohort-v2-continuation:begin-early */
+      INSERT INTO app.neighborhood_custom_cohort_early_v2_jobs(operation_id,organization_id,actor_user_id,request_sha256)
+      SELECT job.operation_id,job.organization_id,job.actor_user_id,job.request_sha256
+      FROM app.neighborhood_custom_cohort_capture_jobs job
+      WHERE job.operation_id=$1::uuid AND job.claim_token=$2::uuid AND job.attempts=$3::integer
+        AND job.organization_id=$4::uuid AND job.report_file_id=$5::uuid AND job.assignment_file_id=$6::bigint
+        AND job.account_id=$7 AND job.actor_user_id=$8::uuid AND job.status='running'
+        AND job.lease_expires_at>clock_timestamp() AND job.cancellation_requested_at IS NULL AND job.context_sha256 IS NULL
+      ON CONFLICT(operation_id) DO NOTHING`,values);
+    one(await client.query(`/* custom-cohort-v2-continuation:read-early */
+      SELECT e.operation_id FROM app.neighborhood_custom_cohort_early_v2_jobs e
+      JOIN app.neighborhood_custom_cohort_capture_jobs job USING(operation_id,organization_id,actor_user_id,request_sha256)
+      WHERE job.operation_id=$1::uuid AND job.claim_token=$2::uuid AND job.attempts=$3::integer
+        AND job.organization_id=$4::uuid AND job.report_file_id=$5::uuid AND job.assignment_file_id=$6::bigint
+        AND job.account_id=$7 AND job.actor_user_id=$8::uuid AND job.status='running'
+        AND job.lease_expires_at>clock_timestamp() AND job.cancellation_requested_at IS NULL AND job.context_sha256 IS NULL`,values));
+    if(await tx()!==started)fail('caller_transaction_required');
+  },async yieldIssued(rawClaim,rawOptions){
     const claim=prepareCustomCohortCaptureJobClaim(rawClaim),options=data(rawOptions,['scope','actorUserId']),scope=scopeOf(options.scope);
     if(typeof options.actorUserId!=='string'||!UUID.test(options.actorUserId))fail('invalid_scope');
     const values=[claim.operation_id,claim.claim_token,claim.attempts,scope.organization_id,scope.report_file_id,
@@ -50,8 +75,11 @@ export function createCustomCohortV2ContinuationRepository(client){
         RETURNING issued.sequence,issued.phase,issued.progress_reference,job.attempts`,values));
     // Adding ninth progress must NOT widen the historical eight-phase ceiling.
     // Actual native heads/continuation guards still derive every sequence.
-    const maximumSequence=row.phase==='frozen_selected_semantic_refs_v2'?20000010:row.phase==='frozen_selected_numeric_refs_v2'?18000009:16000008;
-    if(!Number.isInteger(row.sequence)||row.sequence<1||row.sequence>maximumSequence||row.attempts!==claim.attempts||!PHASES.includes(row.phase))fail('corrupt');
+    const earlyIndex=EARLY_PHASES.indexOf(row.phase);
+    const maximumSequence=earlyIndex>=0?(earlyIndex+1)*200000
+      :row.phase==='frozen_selected_semantic_refs_v2'?20000010:row.phase==='frozen_selected_numeric_refs_v2'?18000009:16000008;
+    if(!Number.isInteger(row.sequence)||row.sequence<1||row.sequence>maximumSequence||row.attempts!==claim.attempts
+      ||!PHASES.includes(row.phase)&&earlyIndex<0)fail('corrupt');
     const r=data(row.progress_reference,['content_sha256','canonical_utf8_bytes']),reference=prepareNeighborhoodCohortBlobReference(r.content_sha256,r.canonical_utf8_bytes);
     if(Number(reference.canonical_utf8_bytes)>16000)fail('corrupt');
     if(await tx()!==started)fail('caller_transaction_required');

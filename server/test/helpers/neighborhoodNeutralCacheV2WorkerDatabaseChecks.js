@@ -76,6 +76,8 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     authorizeCadImprovementData:async()=>assert.fail('an automatic job must refuse before any separate CAD policy/original read')});
   await assert.rejects(manualCad.cacheOriginalFrozenCaptureJobCadAccountReferencesV2(input,
     {captureJobClaim:first,cadAccountPackagePage:{cursor:''}}),/CAD_automatic_handoff_unavailable/);
+  await assert.rejects(manualCad.continueOriginalFrozenCaptureJobCadCacheCoverageReferencesV2(input,
+    {captureJobClaim:first}),/CAD_automatic_handoff_unavailable/);
   assert.deepEqual(await cacheState(),initialState);assert.deepEqual(await job(),initialJob);
   await assert.rejects(tx(pool,async client=>{
     await client.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);

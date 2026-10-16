@@ -34,7 +34,11 @@ import { createNeighborhoodScopedCadOriginalAccountV2 } from './neighborhoodScop
 import { describeNeighborhoodCadImprovementPurpose } from '../../security/customNeighborhoodCadImprovementSourcePolicy.js';
 import { createNeighborhoodFrozenJobTypedOriginals } from './neighborhoodFrozenJobTypedOriginals.js';
 import { getNeighborhoodFrozenTypedOriginalV1Profile,getNeighborhoodFrozenTypedOriginalV2Profile } from './neighborhoodFrozenTypedOriginalV1.js';
-import { createNeighborhoodSharedTypedOriginalPageV2 } from './neighborhoodSharedTypedGeneration.js';
+import { createNeighborhoodSharedTypedOriginalPageV2,NEIGHBORHOOD_SHARED_TYPED_CAD_SQL,prepareNeighborhoodSharedTypedCadSource }
+  from './neighborhoodSharedTypedGeneration.js';
+import { getNeighborhoodFrozenTypedCadImprovementV1Profile } from './neighborhoodFrozenTypedCadImprovementV1.js';
+import { createCustomCohortCadCacheV2HeadRepository } from './customCohortCadCacheV2HeadRepository.js';
+import { prepareCohortCadCacheCoverageReceiptV2,initialCohortCadCacheCoverageV2State } from './cohortCadCacheCoverageReceiptV2.js';
 import { createNeighborhoodFrozenJobStockMetricPages, createNeighborhoodSharedJobStockMetricPages,
   createNeighborhoodSharedJobStockMetricPagesV2, prepareNeighborhoodFrozenStockMetricPage }
   from './neighborhoodFrozenJobStockMetricPages.js';
@@ -230,6 +234,8 @@ const FROZEN_SOURCE_STAGES = freeze({
   cache_CAD_original_account_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingCadPages: true, projectingCadAccounts: true, reconcilingCadAccounts: true, cachingCadOriginals: true,
     allowedPhases: ['frozen_identity_refs_v2'] },
+  cache_CAD_coverage_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    readingCadPages: true, cachingCadCoverage: true, allowedPhases: ['frozen_identity_refs_v2'] },
   original_CAD_amenity_evidence_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingCadPages: true, projectingCadAccounts: true, reconcilingCadAccounts: true, resolvingCadAmenities: true, allowedPhases: ['frozen_identity_refs_v2'] },
   shared_transaction_pages_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
@@ -1860,7 +1866,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       fail('frozen_source_representation_unsupported');
     const {referencesV2=false,issuingSourcePrefix=false,yieldingSourcePrefix=false,verifying=false,stockVerifying=false,identityVerifying=false,yieldingEarlyProgress=false,
       typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,cachingNeutralOriginals=false,yieldingNeutralProgress=false,
-      readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,cachingCadOriginals=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
+      readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,cachingCadOriginals=false,cachingCadCoverage=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,coveredNeutralOriginals=false,cacheStockHandoff=false,
       resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,partitioningRecordedGroups=false,
       readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,readingSelectedUnionFirstEligibility=false,readingSelectedUnionFirstAmenities=false,readingSelectedUnionFirstTransactions=false,progressingSelectedEligibility=false,progressingSelectedEvidence=false,readingSelectedMetricSource=false,progressingSelectedMetrics=false,readingSelectedStatisticsSource=false,progressingSelectedStatistics=false,readingSelectedFrequencySource=false,readingSelectedNumericSource=false,progressingSelectedNumeric=false,readingSelectedRankCandidates=false,progressingSelectedSemantic=false,readingSelectedTransactionSource=false,preparingSelectedTransactionFirstCandidate=false,readingSelectedTransactionIndex=false,progressingSelectedTransactionIndex=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
@@ -1869,7 +1875,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
       const descriptors=Object.getOwnPropertyDescriptors(options),keys=Reflect.ownKeys(descriptors);
       const admittedKeys=[...(selectingCatalogIntent?['selectionIntent']:['captureJobClaim']),'signal','deadline',...(readingSharedStockMetrics?['stockMetricPage']:[]),
-        ...(readingCadPages?[reconcilingCadAccounts?'cadAccountPackagePage':projectingCadAccounts?'cadAccountPage':'cadImprovementPage']:[]),
+        ...(readingCadPages&&!cachingCadCoverage?[reconcilingCadAccounts?'cadAccountPackagePage':projectingCadAccounts?'cadAccountPage':'cadImprovementPage']:[]),
         ...(readingTransactionPages?['transactionPage']:[]),...(readingTransactionPackages?['transactionPackagePage']:[]),
         ...(readingStockOriginalCells?['stockOriginalCellPage']:[]),...(readingStockAccountPackages?['stockAccountPackagePage']:[])];
       if(keys.some(key=>!admittedKeys.includes(key)
@@ -1881,7 +1887,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     if(!selectingCatalogIntent&&providedIntent!==undefined)fail('invalid_options');
     const selectionIntent=selectingCatalogIntent?prepareCustomCohortV2SelectionIntent(providedIntent):null;
     const metricPage=readingStockMetrics||readingSharedStockMetrics?prepareNeighborhoodFrozenStockMetricPage(stockMetricPage):null;
-    const cadPage=readingCadPages?reconcilingCadAccounts?prepareNeighborhoodOriginalCadAccountPackagePageV2(cadAccountPackagePage)
+    const cadPage=readingCadPages&&!cachingCadCoverage?reconcilingCadAccounts?prepareNeighborhoodOriginalCadAccountPackagePageV2(cadAccountPackagePage)
       :projectingCadAccounts?prepareNeighborhoodSharedJobCadAccountPage(cadAccountPage)
       :prepareNeighborhoodSharedJobCadPage(cadImprovementPage):null;
     const transactionInput=readingTransactionPages?prepareNeighborhoodSharedTransactionPageV2(transactionPage):null;
@@ -1901,11 +1907,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     if(!reportedProfile) fail('frozen_source_profile_unsupported');
     if(originalInput.privateSalesImport || originalInput.discovery?.profile_id!=='custom-suburban-radius-v2') fail('frozen_discovery_unsupported');
     if(readingCadSource&&typeof authorizeCadImprovementData!=='function')fail('CAD_source_policy_required');
-    const boundedOriginalAccountOwner=cachingCadOriginals||cachingNeutralOriginals||coveredNeutralOriginals||traversingStock||partitioningRecordedGroups||readingRecordedPartition||catalogingRecordedGroups;
+    const boundedOriginalAccountOwner=cachingCadCoverage||cachingCadOriginals||cachingNeutralOriginals||coveredNeutralOriginals||traversingStock||partitioningRecordedGroups||readingRecordedPartition||catalogingRecordedGroups;
     const budget=operationBudget(budgetOptions,boundedOriginalAccountOwner
       ?CUSTOM_COHORT_ORIGINAL_ACCOUNT_OWNER_LIMITS.operation_ms:LIMITS.capture_duration_ms);
     return transaction(pool,'READ COMMITTED',budget,async transactionClient=>{
-      const client=cachingCadOriginals||cachingNeutralOriginals?createCustomCohortNeutralCacheOwnerBudget(transactionClient,{checkBudget:budget.check})
+      const client=cachingCadCoverage||cachingCadOriginals||cachingNeutralOriginals?createCustomCohortNeutralCacheOwnerBudget(transactionClient,{checkBudget:budget.check})
         :boundedOriginalAccountOwner?createCustomCohortOriginalAccountOwnerBudget(transactionClient,{checkBudget:budget.check}):transactionClient;
       const locator=one(await client.query(`/* custom-cohort-capture:job-organization */
         SELECT organization_id FROM app.assignment_files WHERE id=$1::bigint AND account_id=$2`,
@@ -1933,7 +1939,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(!sameFrozenRequest(await jobs.readRequest(claim,jobOptions),requested)) fail('operation_conflict');
       // This is one manual cache operation, not durable automatic coverage.
       // An enrolled job must wait for a separately guarded CAD success bridge.
-      const assertManualCadCache=async()=>{if(cachingCadOriginals){
+      const assertManualCadCache=async()=>{if(cachingCadCoverage||cachingCadOriginals){
         const manual=one(await client.query(`/* custom-cohort-CAD-cache-account-v2:manual */
           SELECT job.request_payload->>'execution_mode' IS NULL
             AND NOT EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_v2_continuations c WHERE c.operation_id=job.operation_id) AS allowed
@@ -2359,7 +2365,51 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const reader=neutralSharedMetrics?createNeighborhoodSharedJobStockMetricPagesV2:createNeighborhoodSharedJobStockMetricPages;
         stockMetricResult=await reader(client,stockOptions,graph,context.effective_date).page(metricPage);
       }
-      if(readingCadPages){
+      let cadCoverageStore=null,cadCoverageHead=null,cadCoverageNeutralStore=null,cadCoverageNeutralHead=null,
+        cadCoverageExpected=null,cadCoverageIssued=null,cadCoveragePlan=null,cadCoverageResult=null;
+      if(cachingCadCoverage){
+        const neutralExpected={binding,source_reference:reference,root,graph_reference:verificationReference,
+          geographic_reference:stockVerificationReference,identity_reference:identityVerificationReference,stock_reference:stockReference,
+          profile_reference:getNeighborhoodFrozenTypedOriginalV2Profile().definition_blob.ref};
+        const refs={source_reference:reference,root_reference:root,graph_reference:verificationReference,
+          geographic_reference:stockVerificationReference,identity_reference:identityVerificationReference,stock_reference:stockReference};
+        cadCoverageNeutralStore=createCustomCohortNeutralCacheV2HeadRepository({client,claim,scope,actorUserId:input.auth.userId,...refs});
+        cadCoverageNeutralHead=await cadCoverageNeutralStore.read();if(!cadCoverageNeutralHead)fail('CAD_neutral_coverage_unavailable');
+        const text=await blobs.get(cadCoverageNeutralHead.receipt_reference.content_sha256,cadCoverageNeutralHead.receipt_reference.canonical_utf8_bytes);
+        if(text===null||Buffer.byteLength(text)>16000)fail('checkpoint_conflict');
+        let neutral;try{neutral=JSON.parse(text);}catch{fail('checkpoint_conflict');}
+        exactKeys(neutral,['format',...Object.keys(neutralExpected),'sequence','previous','before','after']);
+        if(neutral.format!=='cohort_neutral_cache_receipt_v2'||neutral.sequence!==cadCoverageNeutralHead.sequence
+          ||neutral.after?.kind_index!==7||!Object.keys(neutralExpected).every(k=>same(neutral[k],neutralExpected[k])))fail('CAD_neutral_coverage_unavailable');
+        const cadSource=prepareNeighborhoodSharedTypedCadSource(await client.query(NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.source,[stock.generation_id]),stock.generation_id);
+        if(cadSource.source_snapshot!==stock.original.source_snapshot||cadSource.started_at!==stock.original.source_transaction_started_at)fail('CAD_source_changed');
+        cadCoverageExpected={binding,...refs,neutral_reference:cadCoverageNeutralHead.receipt_reference,
+          typed_profile_reference:getNeighborhoodFrozenTypedCadImprovementV1Profile().definition_blob.ref,
+          cad_source_metadata:cadSource,cad_purpose:cadPurpose,cad_decision:cadDecision,stock_account_count:stock.population.account_count};
+        cadCoverageStore=createCustomCohortCadCacheV2HeadRepository({client,claim,scope,actorUserId:input.auth.userId,
+          ...refs,neutral_reference:cadCoverageNeutralHead.receipt_reference});
+        cadCoverageHead=await cadCoverageStore.read();
+        if(cadCoverageHead){
+          const text=await blobs.get(cadCoverageHead.receipt_reference.content_sha256,cadCoverageHead.receipt_reference.canonical_utf8_bytes);
+          if(text===null||Buffer.byteLength(text)>16000)fail('checkpoint_conflict');
+          let body;try{body=JSON.parse(text);}catch{fail('checkpoint_conflict');}
+          cadCoverageIssued=prepareCohortCadCacheCoverageReceiptV2(body,cadCoverageExpected);
+          if(cadCoverageIssued.sequence!==cadCoverageHead.sequence)fail('checkpoint_conflict');
+        }
+        const before=cadCoverageIssued?.after??initialCohortCadCacheCoverageV2State();
+        cadCoverageResult=await createNeighborhoodScopedCadOriginalAccountV2(client,stockOptions).reconcile({cursor:before.after_account});
+        if(before.done&&!cadCoverageResult.end_of_accounts)fail('CAD_coverage_changed');
+        if(!before.done){
+          const r=cadCoverageResult,entry=r.end_of_accounts?null:{account_id:r.account_id,geographic_parcel_count:r.geographic_parcel_count,
+            primary_count:r.original_counts.primary,secondary_count:r.original_counts.secondary};
+          cadCoveragePlan=prepareCohortCadCacheCoverageReceiptV2({format:'cohort_CAD_cache_coverage_receipt_v2',...cadCoverageExpected,
+            sequence:(cadCoverageHead?.sequence??0)+1,previous:cadCoverageHead?.receipt_reference??null,before,entry,
+            after:{after_account:r.next_cursor,account_count:before.account_count+Number(entry!==null),
+              original_count:before.original_count+r.reconciled_rows,typed_utf8_bytes:String(BigInt(before.typed_utf8_bytes)+BigInt(r.typed_utf8_bytes)),
+              done:r.end_of_accounts}},cadCoverageExpected);
+        }
+      }
+      if(readingCadPages&&!cachingCadCoverage){
         const graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
         if(cachingCadOriginals){
           stockMetricResult=await createNeighborhoodScopedCadOriginalAccountV2(client,stockOptions).reconcile(cadPage);
@@ -3198,6 +3248,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(geographicAnchorStore&&!same(await geographicAnchorStore.read(),geographicAnchor))fail('checkpoint_conflict');
       if(identityAnchorStore&&!same(await identityAnchorStore.read(),identityAnchor))fail('checkpoint_conflict');
       if(neutralCacheStore&&!same(await neutralCacheStore.read(),neutralCacheHead))fail('checkpoint_conflict');
+      if(cadCoverageStore){
+        if(!same(await cadCoverageStore.read(),cadCoverageHead)||!same(await cadCoverageNeutralStore.read(),cadCoverageNeutralHead))fail('CAD_coverage_changed');
+        if(!same(prepareNeighborhoodSharedTypedCadSource(await client.query(NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.source,
+          [stock.generation_id]),stock.generation_id),cadCoverageExpected.cad_source_metadata))fail('CAD_source_changed');
+      }
       if(traversalAnchorStore&&!same(await traversalAnchorStore.read(),traversalAnchor))fail('checkpoint_conflict');
       if(partitionStore&&!same(await partitionStore.read(),partitionAnchor))fail('checkpoint_conflict');
       if(!readingSelectedUnionSubjectHousing&&(readingRecordedPartition||catalogingRecordedGroups)&&!same(await partitionStore.readNextEntry(partitionReadCursor),partitionReadEntry))fail('partition_original_mismatch');
@@ -3206,6 +3261,16 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if((readingSelectionWorkspaceTarget||awaitingSelection||selectingCatalogIntent||readingRetainedSelectionIntent||replayingSelectedUnion)&&!same(await readCustomCohortFrozenSelectionWorkspaceTarget({
         client,input,scopeJson:canonicalAssessmentJson(scope),checkBudget:budget.check}),selectionWorkspaceTarget))fail('workspace_target_changed');
       budget.check();
+      if(cachingCadCoverage){
+        if(cadCoveragePlan){const ref=await blobs.put(canonicalAssessmentJson(cadCoveragePlan));cadCoverageHead=await cadCoverageStore.advance(cadCoverageHead,ref);}
+        budget.check();return freeze({status:'current_authorized_CAD_cache_coverage_progress_v2',operation_id:input.operationId,
+          advanced:cadCoveragePlan!==null,cache_coverage_reference:cadCoverageHead.receipt_reference,
+          neutral_reference:cadCoverageNeutralHead.receipt_reference,progress:(cadCoveragePlan??cadCoverageIssued).after,
+          reconciled_rows:cadCoverageResult.reconciled_rows,inserted_rows:cadCoverageResult.inserted_rows,
+          CAD_source_authorization:{purpose:cadPurpose,decision:cadDecision},
+          global_progress_advanced:false,automatic_handoff:false,context_complete:false,pin_transfer:false,source_acquisition:'not_established',
+          publication:'not_established',report_update:'none'});
+      }
       if(cachingNeutralOriginals){
         // Every actual actor/assignment/draft/subject/source/claim/stock/root
         // and independent-parent ending fence above precedes head retention.
@@ -3870,6 +3935,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * No native coverage head, checkpoint, lease handoff or consumer activation. */
     cacheOriginalFrozenCaptureJobCadAccountReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'cache_CAD_original_account_refs_v2'),
+    /** Native head chooses each whole account; no caller page or continuation.
+     * Explicit manual operation until the separate automatic success bridge. */
+    continueOriginalFrozenCaptureJobCadCacheCoverageReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'cache_CAD_coverage_refs_v2'),
     /** Resolve retained local amenity evidence only after full original replay;
      * no provider dictionary, verified presence, aggregate or live activation. */
     readOriginalFrozenCaptureJobCadAmenityEvidenceReferencesV2: (value, options = {}) =>

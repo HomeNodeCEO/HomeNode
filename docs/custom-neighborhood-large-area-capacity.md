@@ -8141,3 +8141,44 @@ and identical fresh reopen, output bounds and unchanged job/heads/groups/intent/
 workspace/lease. New-head native/cloud execution is pending. No matrix, deadline,
 budget or failure ceiling is increased. No migration, route, default worker,
 schedule, grant, appraiser choice, Apply, publication or pin transfer is activated.
+
+## Independent manual CAD account coverage (2026-10-16, inactive)
+
+The separate manual CAD owner now has an independent native coverage head.
+It requires the actual issued seven-layer neutral DONE head, the original
+source/root/graph/geography/identity/stock lineage, a complete CAD companion
+from the same retained snapshot, its fixed date-neutral profile, and the
+separate current CAD purpose and decision. Callers supply no account, cursor,
+page, source adapter or progress. The actual head selects the next C-ordered
+stock account; the owner reads every primary and secondary original, recompiles
+it and reconciles the entire cached JSON under one existing32MB input/result,
+256 SQL call and60s budget. Each native kind counter stops at251 before payload
+admission, with the existing250-row,1MB-original and2.1MB packet ceilings.
+
+Each receipt retains the complete account denominator, original counts and
+typed bytes. A separate real EMPTY probe is required after the final account.
+Native guards compare the exact next stock key and original counters, prohibit
+skipped transitions, free DONE and NULL byte totals, retain the original root
+and neutral receipt through foreign keys, and recheck the real live claim at
+deferred COMMIT. All actor, assignment, private-draft, subject, source-purpose,
+parent, cancellation and claim checks also run in the actual owner at both ends.
+A genuine failure consumes the existing ordinary attempt; successful manual
+progress preserves its claim, failure history and original job checkpoint.
+
+The authored isolated database case creates a separate real manual job and all
+its actual native parents. It probes missing/unfinished neutral coverage,
+ending CAD revocation/revision, actor/assignment/draft/subject/cancellation,
+whole-original text forgery, the same aggregate byte ceiling, actual deferred
+COMMIT lease expiry, free DONE/NULL-byte/delete refusal, real lost COMMIT ACK,
+fresh higher-attempt recovery, the next account, distinct EMPTY and unchanged
+completed reopen. It reuses the fixture's already-complete global CAD cache;
+the preceding manual account-owner case separately proves actual scoped cache
+bootstrap and rollback. New-head cloud execution of this coverage case remains
+pending. Unit DATA and SQL doubles do not establish native or licensed proof.
+
+The new migration20261217 remains unregistered. Automatic jobs are refused
+before companion originals; no automatic success/lease bridge, consumer
+admission, default worker, scheduler, grant, publication, report Apply or pin
+transfer is activated. Complete amenities/economic/transaction semantics,
+selected-union statistics/calendar quarters, coherent publication, terminal
+pins and licensed large-area/saved Hardy speed acceptance remain required.

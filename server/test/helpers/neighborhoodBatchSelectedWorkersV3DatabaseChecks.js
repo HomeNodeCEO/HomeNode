@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { runNeighborhoodBatchRecordedEligibilityV3DatabaseChecks } from './neighborhoodBatchRecordedEligibilityV3DatabaseChecks.js';
 import { randomUUID } from 'node:crypto';
 import { withCustomCohortJobTransaction as tx } from '../../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
 import { createCustomCohortCaptureJobRepository as jobs } from '../../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
@@ -13,7 +14,7 @@ import { runCustomCohortCoveredSelectedProgressV2JobOnce as legacyProgress } fro
 /** Twenty-fifth independent real capture. Workers supply no group IDs, source
  * adapter, progress, counts or membership. The real original owner does all IO. */
 export async function runNeighborhoodBatchSelectedWorkersV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
-  catalogHead,groups,assertParents,setFault,readFault,originalReads,claim,command}){
+  catalogHead,groups,assertParents,setFault,readFault,originalReads,claim,command,batchRecordedEligibilityFixture=false}){
   const operation=input.operationId,method='continueCoveredOriginalFrozenCaptureJobBatchSelectedStockUnionReferencesV3',
     before={job:await job(),parent:await parent(),catalog:await catalogHead(),groups:await groups(),blobs:await blobs()},
     dispatches=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_initial_dispatch_v2 WHERE operation_id=$1',[operation])).rows,
@@ -103,6 +104,10 @@ export async function runNeighborhoodBatchSelectedWorkersV3DatabaseChecks({pool,
   }),e=>e===rollback);
   assert.deepEqual(await job(),terminal.job);assert.deepEqual(await parent(),terminal.parent);assert.deepEqual(await blobs(),terminal.blobs);
   assert.deepEqual(await union(),terminal.union);assert.deepEqual(await dispatches(),ownedDispatch);await immutable();
+  if(batchRecordedEligibilityFixture){
+    await runNeighborhoodBatchRecordedEligibilityV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
+      catalogHead,groups,assertParents,setFault,readFault,originalReads,command});return;
+  }
   console.info('[native-batch-selected-workers-v3]',{independent_actual_initial_source_cache_stock_partition_catalog_wait_and_explicit_command:true,
     changed_pending_target_not_claimed_and_real_orphan_initial_adoption_COMMIT_refused:true,
     concurrent_initial_adoption_once_preserves_actual_human_resume_token_and_failure5:true,

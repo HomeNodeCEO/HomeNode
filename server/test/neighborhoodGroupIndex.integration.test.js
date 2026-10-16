@@ -3900,7 +3900,9 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
     const targetQueries=refsCalls.slice(targetFrom);
     assert.ok(!targetQueries.some(sql=>/ST_DWithin|checkpoint-save|anchor-(?:advance|insert)|:entry-insert|:contribute|INSERT INTO|UPDATE app\./.test(sql)));
     assertBoundedCohortAuthorityAggregates(targetQueries.map((text,index)=>({text,values:refsQueryParameters[targetFrom+index]})),
-      {actorUserId:actor,organizationId:organization,assignmentFileId:assignment});
+      {actorUserId:actor,organizationId:organization,assignmentFileId:assignment,
+        originals:{operationId:refsOperation,generationId:refsBinding.generation_id,
+          profileSha256:getNeighborhoodFrozenTypedOriginalV2Profile().profile_ref.content_sha256}});
     console.info('[native-original-selection-workspace-target-v2]',{accounts:2,fresh_empty_probe:true,
       actual_pending_job_period_discovery_private_review_fenced_before_original_io:true,actual_workspace_revision_and_pending_fenced_both_ends:true,
       exactly_one_whole_original_packet_per_call:true,current_ending_authority_and_original_cache_partition_catalog_group_fences:true,

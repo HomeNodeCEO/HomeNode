@@ -7,7 +7,13 @@ export const NEIGHBORHOOD_CI_PREPARED_STATEMENT_LIMIT = 512;
 // with current values. Avoid JIT/custom-plan setup for repeated small probes:
 // https://www.postgresql.org/docs/17/jit-decision.html
 // https://www.postgresql.org/docs/17/runtime-config-query.html#GUC-PLAN-CACHE-MODE
-export const NEIGHBORHOOD_CI_PROTOCOL_SESSION_OPTIONS = '-c jit=off -c plan_cache_mode=force_generic_plan';
+// These tiny graphs also have long, explicit native-parent JOIN chains. Honor
+// their written join order instead of repeatedly searching equivalent orders
+// as fault probes create fresh connections. Every JOIN/predicate still runs;
+// no query, row, original, constraint or current authority check is omitted.
+// This is not a production planner setting or a population-speed benchmark:
+// https://www.postgresql.org/docs/17/explicit-joins.html
+export const NEIGHBORHOOD_CI_PROTOCOL_SESSION_OPTIONS = '-c jit=off -c plan_cache_mode=force_generic_plan -c join_collapse_limit=1';
 const TIMING_FAMILY_LIMIT = 128;
 
 /** Disposable CI fixture only. Repeated exact parameterized SQL can reuse the

@@ -1470,8 +1470,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
   const preparedCiQueries=observeNeighborhoodCiPreparedQueries(pool);
   let protocolQueryOptions=null;
   try {
-    protocolQueryOptions=(await pool.query("SELECT current_setting('jit') AS jit,current_setting('plan_cache_mode') AS plan_cache_mode")).rows[0];
-    assert.deepEqual(protocolQueryOptions,{jit:'off',plan_cache_mode:'force_generic_plan'});
+    protocolQueryOptions=(await pool.query("SELECT current_setting('jit') AS jit,current_setting('plan_cache_mode') AS plan_cache_mode,current_setting('join_collapse_limit') AS join_collapse_limit")).rows[0];
+    assert.deepEqual(protocolQueryOptions,{jit:'off',plan_cache_mode:'force_generic_plan',join_collapse_limit:'1'});
     await pool.query(NEIGHBORHOOD_CACHED_SOURCE_SCHEMA);
     await pool.query('ALTER TABLE core.primary_improvements ADD COLUMN IF NOT EXISTS pool boolean');
     // Only this disposable fixture accepts a Polygon CAD geometry, proving

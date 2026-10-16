@@ -12,7 +12,14 @@ its new generation's whole originals and ENTIRE caches. No original, head or
 cache is cloned/rebound; no assertion, query, owner budget, failure ceiling or
 180-second deadline is removed or widened. This compact protocol fixture is
 explicitly not large-source byte-capacity, licensed acquisition or speed proof.
-New exact-head native execution is required after this fixture correction.
+That compact-source correction still reached 180,001ms; its later marker is
+also not acceptance. The disposable CI graph session now honors the SQL's
+explicit JOIN order (`join_collapse_limit=1`) to avoid repeated join-order
+search in the long native-parent chains. Every SQL/predicate/original read,
+constraint, fault probe and deadline remains installed; production planner
+settings are unchanged. 21 focused planner/worker/numeric checks pass, zero
+failures/cancellations/skips (242.0248ms). New exact-head native execution must
+verify this planning-cost correction; it is not production speed proof.
 
 `progressCoveredOriginalFrozenCaptureJobSelectedNumericReferencesV2` composes
 the existing ninth original owner with the actual adopted neutral and CAD DONE

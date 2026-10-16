@@ -1,5 +1,39 @@
 # Complete larger-area Custom neighborhood studies
 
+## Covered native transaction-index worker (2026-10-16, not activated)
+
+The separate closed worker connects the existing eleventh original owner to
+actual completed neutral and adopted CAD coverage. It accepts only semantic
+DONE or incomplete native transaction-index progress and excludes index DONE
+from every claim/recovery/expiry lane. Each native-selected account reopens
+whole stock, CAD, all-date one-hop transaction and required subject originals,
+ENTIRE caches and every prior retained member under all current and ending
+authority fences. Native source BIGINT and legacy C-text identities, first-seen
+ordinals and per-account edges stay separate. Shared keys never skip a replay.
+Rows, keys, edges, head, exact17 checkpoint and single-use release share one
+transaction. No original budget, deadline or five-failure ceiling is changed.
+
+A NEW independently captured native variant extends through the real owner,
+two selected accounts and fresh EMPTY, ending CAD/role/workspace/orphan-COMMIT
+rollback of all child tables and blobs, lost ACK, stale claim refusal and
+attempt-five success. The old initial-dispatch variant and its semantic-DONE
+terminal/expiry assertions remain intact; the new variant also has 180s.
+Actual cloud execution remains required. No registry, scheduler, source grant,
+genuine choice, Apply, publication or pin activation is added. Native key
+completion is not economic deduplication, at-sale applicability, calendar
+quarters, licensed acquisition or production speed acceptance.
+
+108 serial focused namespace/index/native-admission/owner/worker/source-reopen
+and planner checks pass, zero failures/cancellations/skips (2,765.2074ms).
+Six changed JS syntax checks and the diff check pass. This is local component
+validation; the new native variant and full cloud suite are still pending.
+
+The new review on merged catalog code also identifies one-account traversal,
+partition and catalog transactions as a large-area cost. Bounded batches of
+WHOLE accounts and one receipt per run remain required before capacity/speed
+acceptance. Every account must still be originally reconciled; digests or
+counts cannot substitute for the actual entries or source-purpose authority.
+
 ## Covered selected exact-statistics worker (2026-10-16, not activated)
 
 `progressCoveredOriginalFrozenCaptureJobSelectedSemanticReferencesV2` connects

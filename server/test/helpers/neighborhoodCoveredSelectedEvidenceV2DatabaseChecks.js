@@ -22,11 +22,13 @@ import { runCustomCohortCoveredSelectedMetricsV2JobOnce as runMetrics } from '..
 import { runCustomCohortCoveredSelectedStatisticsV2JobOnce as runStatistics } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectedStatisticsV2JobWorker.js';
 import { runCustomCohortCoveredSelectedNumericV2JobOnce as runNumeric } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectedNumericV2JobWorker.js';
 import { runCustomCohortCoveredSelectedSemanticV2JobOnce as runSemantic } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectedSemanticV2JobWorker.js';
+import { runCustomCohortCoveredSelectedTransactionIndexV2JobOnce as runTransactionIndex } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectedTransactionIndexV2JobWorker.js';
 import { NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL as PACKET,
   NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL as METRIC_PACKET,
   NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL as STATISTICS_PACKET,
   NEIGHBORHOOD_NEXT_SELECTED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL as NUMERIC_PACKET,
-  NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL as SEMANTIC_PACKET }
+  NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL as SEMANTIC_PACKET,
+  NEIGHBORHOOD_NEXT_SELECTED_TRANSACTION_INDEX_ORIGINAL_PACKAGE_V2_SQL as TRANSACTION_INDEX_PACKET }
   from '../../src/services/neighborhoodAssessment/neighborhoodSelectedTransactionOriginalPackageV2.js';
 import { CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_RIGHTS_KEY as CAD_RIGHTS }
   from '../../src/security/customNeighborhoodCadImprovementSourcePolicy.js';
@@ -35,7 +37,7 @@ import { CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_RIGHTS_KEY as CAD_RIGHTS }
  * selection is copied. Existing earlier boundary/failure fixtures stay intact.
  * Same matrix/deadline; real fixture-only selection is never a production choice. */
 export async function runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks({ pool, input: sourceInput, scope, actor,
-  authorizeMarketData, authorizeCadImprovementData }) {
+  authorizeMarketData, authorizeCadImprovementData, coveredTransactionIndexFixture=false }) {
   const input = { ...sourceInput, operationId: randomUUID() }, operation = input.operationId;
   // The preceding independent fixture already exercises its large original
   // byte boundary. Capture a NEW positive-worker source from live fixture
@@ -61,7 +63,7 @@ export async function runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks({ p
     if (orphan) await raw.query('SAVEPOINT synthetic_evidence_orphan');
     const result = await raw.query(c);
     if (orphan) { fault = null; await raw.query('ROLLBACK TO SAVEPOINT synthetic_evidence_orphan'); await raw.query('RELEASE SAVEPOINT synthetic_evidence_orphan'); }
-    if ([PACKET, METRIC_PACKET, STATISTICS_PACKET, NUMERIC_PACKET, SEMANTIC_PACKET].includes(text)) {
+    if ([PACKET, METRIC_PACKET, STATISTICS_PACKET, NUMERIC_PACKET, SEMANTIC_PACKET, TRANSACTION_INDEX_PACKET].includes(text)) {
       originalReads++;
       if (fault === 'role') { fault = null; await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2', [scope.organization_id, actor]); }
       if (fault === 'workspace') { fault = null; await raw.query(`UPDATE app.custom_appraisal_workfile_sections
@@ -83,6 +85,8 @@ export async function runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks({ p
     assert.fail('bounded independent evidence parent lane did not end');
   };
   await service.queueFrozenOriginalCaptureJobV2(input); assert.equal((await runInitial(args)).status, 'continuation_pending');
+  assert.equal((await pool.query('SELECT generation_id::text FROM app.neighborhood_custom_cohort_job_stocks WHERE operation_id=$1',
+    [operation])).rows[0].generation_id, positiveSource.generationId);
   for (const [worker, limit] of [[runPrefix, 12], [runEarly, 100], [runCache, 50], [runCad, 10]]) await drain(worker, limit);
   assert.equal((await runBridge(args)).status, 'continuation_pending');
   for (const worker of [runStock, runPartition, runCatalog]) await drain(worker, 10);
@@ -361,6 +365,67 @@ export async function runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks({ p
   assert.equal(semanticDoneJob.checkpoint.phase,'frozen_selected_semantic_refs_v2'); assert.equal(semanticDoneJob.checkpoint.evidence_refs.length,16);
   assert.deepEqual(await runSemantic(args),{status:'idle'}); assert.deepEqual(await runSemantic(args),{status:'idle'}); assert.deepEqual(await runNumeric(args),{status:'idle'});
   assert.deepEqual(await job(),semanticDoneJob); assert.deepEqual(await numeric(),numericHeadDone); assert.deepEqual(await numericIndex(),indexBefore);
+  let transactionDoneSnapshot=null;
+  if(coveredTransactionIndexFixture){
+    // A separate genuinely issued variant retains the old semantic-terminal
+    // graph unchanged. This graph alone continues through the actual eleventh
+    // owner, still inside the same 180s and existing fifth failure attempt.
+    const transactionMethod='progressCoveredOriginalFrozenCaptureJobSelectedTransactionIndexReferencesV2',
+      tables=['selected_transaction_index_v2_heads','selected_transaction_index_v2_rows',
+        'selected_transaction_source_v2_keys','selected_transaction_legacy_v2_keys','selected_transaction_index_v2_edges'],
+      snapshot=async()=>{
+        const result=[];
+        for(const table of tables)result.push((await pool.query(`SELECT * FROM app.neighborhood_custom_cohort_${table}
+          WHERE operation_id=$1 ORDER BY to_jsonb(neighborhood_custom_cohort_${table})::text COLLATE "C"`,[operation])).rows);
+        return result;
+      }, before=await snapshot(), semanticHeadDone=await semantic();
+    assert.ok(before.every(rows=>rows.length===0)); let transactionClaim;
+    assert.equal((await runTransactionIndex({...args,cohortService:{async [transactionMethod](value,options){
+      transactionClaim=options.captureJobClaim;assert.equal(transactionClaim.attempts,5);
+      const claimed=await job(),beforeBlobs=await blobCount();
+      for(const [probe,reason] of [['workspace',/custom_cohort_group_workspace_study_changed/],['role',/job_actor_access_revoked/],
+        ['cad',/market_data_access_denied/],['orphan',e=>e.outcome_unknown===true&&e.code==='55000']]){
+        fault=probe;const reads=originalReads;await assert.rejects(service[transactionMethod](value,options),reason);
+        assert.equal(fault,null);assert.equal(originalReads,reads+1);
+        if(probe==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);
+        assert.deepEqual(await job(),claimed);assert.deepEqual(await snapshot(),before);assert.equal(await blobCount(),beforeBlobs);
+        assert.deepEqual(await semantic(),semanticHeadDone);assert.deepEqual(await semanticRows(),semanticCompletedRows);
+        assert.deepEqual(await nativeParents(),parents);assert.deepEqual(await workspace(),pendingWorkspace);
+      }
+      fault='ack';return service[transactionMethod](value,options);
+    }}})).status,'outcome_unknown');
+    assert.equal(fault,null);const first=await snapshot();assert.equal(first[0][0].sequence,1);assert.equal(first[1].length,1);
+    await assert.rejects(service[transactionMethod](input,{captureJobClaim:transactionClaim}),/claim_lost/);
+    for(const done of [false,true]){
+      assert.equal((await runTransactionIndex({...args,cohortService:{async [transactionMethod](value,options){
+        assert.equal(options.captureJobClaim.attempts,5);assert.notEqual(options.captureJobClaim.claim_token,transactionClaim.claim_token);
+        const reads=originalReads,step=await service[transactionMethod](value,options);assert.equal(originalReads,reads+1);
+        assert.equal(step.covered_neutral_originals,true);assert.equal(step.covered_CAD_originals,true);assert.equal(step.read_only,false);
+        assert.equal(step.progress.done,done);assert.equal(step.complete_original_reconciled_selected_index,done);
+        assert.equal(step.selected_entry?.ordinal??null,done?null:2);
+        assert.equal(step.global_economic_transaction_deduplication,false);assert.equal(step.economic_transactions,'not_established');
+        assert.equal(step.at_sale_facts,'not_established');assert.equal(step.calendar_quarters,'not_established');
+        assert.equal(step.context_complete,false);assert.equal(step.pin_transfer,false);assert.equal(step.report_update,'none');
+        assert.ok(Buffer.byteLength(JSON.stringify(step))<=16000);return step;
+      }}})).status,'continuation_pending');
+      assert.equal((await job()).attempts,5);assert.equal((await job()).last_error_code,'capture_failed');
+    }
+    transactionDoneSnapshot=await snapshot();const [heads,members,sources,legacies,edges]=transactionDoneSnapshot;
+    assert.equal(heads[0].sequence,3);assert.deepEqual(members.map(r=>r.ordinal).sort(),[1,2]);
+    assert.deepEqual(sources.map(r=>r.source_record_id).sort(),['501','503','504']);
+    assert.deepEqual(legacies.map(r=>r.legacy_sale_key).sort(),['10','3']);assert.equal(edges.length,6);
+    assert.equal(sources.find(r=>r.source_record_id==='501').first_selected_ordinal,1);
+    assert.ok(sources.filter(r=>r.source_record_id!=='501').every(r=>r.first_selected_ordinal===2));
+    assert.ok(legacies.every(r=>r.first_selected_ordinal===2));
+    for(const ordinal of [1,2])assert.ok(edges.some(r=>r.ordinal===ordinal&&r.source_record_id==='501'),
+      'the shared native package keeps both selected edges and is independently replayed for each account');
+    assert.ok(!sources.some(r=>r.source_record_id==='502'),'outside second-hop source is not expanded');
+    const doneJob=await job();assert.equal(doneJob.checkpoint.phase,'frozen_selected_transaction_index_refs_v2');
+    assert.equal(doneJob.checkpoint.evidence_refs.length,17);assert.equal(doneJob.context_sha256,null);
+    assert.deepEqual(await semantic(),semanticHeadDone);assert.deepEqual(await semanticRows(),semanticCompletedRows);
+    assert.deepEqual(await runTransactionIndex(args),{status:'idle'});assert.deepEqual(await runTransactionIndex(args),{status:'idle'});
+    assert.deepEqual(await snapshot(),transactionDoneSnapshot);assert.deepEqual(await job(),doneJob);
+  }
   const [nextOwner] = await tx(pool, client => mainClaims(client).claimDue({ limit: 1, leaseSeconds: 900 }));
   assert.equal(nextOwner.claim.operation_id, operation); assert.equal(nextOwner.claim.attempts, 5);
   await pool.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1", [operation]);
@@ -375,6 +440,18 @@ export async function runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks({ p
     'all numeric claim AND expiry lanes leave the expired/cancelled numeric-DONE semantic owner untouched even at attempt5');
   assert.deepEqual(await runSemantic(args),{status:'idle'}); assert.deepEqual(await job(),nextPending,
     'all semantic claim AND expiry lanes leave the expired/cancelled semantic-DONE transaction owner untouched at attempt5');
+  if(coveredTransactionIndexFixture){
+    assert.deepEqual(await runTransactionIndex(args),{status:'idle'});assert.deepEqual(await job(),nextPending,
+      'every transaction-index claim and expiry lane leaves the next expired cancelled owner untouched at attempt5');
+    console.info('[native-covered-selected-original-transaction-index-v2]',{independent_issued_graph_and_actual_semantic_DONE:true,
+      whole_originals_entire_caches_and_every_prior_member_reconciled_each_step:true,
+      exact_shared_source_and_separate_legacy_keys_edges_first_seen_and_fresh_EMPTY:true,
+      ending_CAD_role_workspace_and_orphan_COMMIT_rollback_all_children_heads_blobs_and_release:true,
+      lost_ACK_fresh_NEXT_stale_claim_refusal_and_attempt5_history_preserved:true,
+      transaction_DONE_all_claim_recovery_expiry_lanes_excluded_at_attempt5:true,
+      original_caps_deadline_and_failure_ceiling_unchanged:true,economic_transactions:false,at_sale_facts:false,
+      calendar_quarters:false,publication:false,pin_transfer:false,licensed_large_area:false,production_speed:false});
+  }
   assert.deepEqual(await nativeParents(), parents); assert.deepEqual(await workspace(), pendingWorkspace);
   assert.deepEqual(await evidence(), evidenceDone); assert.deepEqual(await metricRows(), rows);
   assert.deepEqual(await metrics(), metricHeadDone); assert.deepEqual(await contributionRows(), contributions);
@@ -384,7 +461,7 @@ export async function runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks({ p
     every_selected_whole_original_entire_cache_metric_contribution_index_and_ninth_field_reconciled_again:true,
     two_selected_semantic_rows_then_fresh_EMPTY_before_exact_statistics:true, independent_exact_fixture_median_quartile_COD_checks:true,
     ending_CAD_role_workspace_orphan_COMMIT_roll_back_summary_blobs_rows_head_and_release:true,
-    lost_ACK_fresh_NEXT_stale_claim_refusal_and_success_at_attempt5_preserve_history:true, semantic_DONE_all_claim_expiry_lanes_excluded_at_attempt5:true,
+    lost_ACK_fresh_NEXT_stale_claim_refusal_and_success_at_attempt5_preserve_history:true, semantic_DONE_all_claim_expiry_lanes_excluded_at_attempt5:!coveredTransactionIndexFixture,
     all_originals_indexes_prior_heads_rows_choices_workspace_pins_unchanged:true, all_aggregate_budgets_deadlines_failure_ceiling_unchanged:true,
     calendar_quarters:false,economic_historical_transaction_completeness:false,publication:false,pin_transfer:false,licensed_large_area:false,production_speed:false });
   console.info('[native-covered-selected-original-indexed-population-v2]', { actual_statistics_DONE_parent_and_independent_job: true,

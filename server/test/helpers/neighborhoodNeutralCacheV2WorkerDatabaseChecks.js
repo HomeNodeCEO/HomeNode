@@ -41,7 +41,7 @@ import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL as TRAN
 
 /** Independent disposable job; all acquisition owners, authorization, original
  * queries, native issuance, savepoint rollback and COMMITs are real. */
-export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData}){
+export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData,coveredTransactionIndexFixture=false}){
   const input={...sourceInput,operationId:randomUUID()},operation=input.operationId;let fault=null,stockReads=0;
   const observed={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
     const text=typeof c==='string'?c:c.text,originalPacket=text===STOCK_PACKET||text===PAIRED_STOCK_PACKET||text===TRANSACTION_PACKET||text===AMENITY_PACKET,
@@ -776,5 +776,5 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     first_failure_fresh_attempt2_and_real_A_success:true,committed_A_preserved_across_four_failed_B_claims:true,
     unchanged_five_failure_terminal_and_error_history:true,no_CAD_DONE_stock_adoption_context_or_pin_transfer:true,
     original_checkpoint_unchanged:true,licensed_large_area:false,production_speed:false});
-  await runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData});
+  await runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData,coveredTransactionIndexFixture});
 }

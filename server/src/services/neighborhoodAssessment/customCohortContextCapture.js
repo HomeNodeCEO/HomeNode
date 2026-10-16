@@ -2530,6 +2530,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         // upgrade. Bind the bounded result to that EXACT retained choice too.
         if(resolvingStockAccountHousing&&stockMetricResult.recorded_housing!==null
           &&!same(stockMetricResult.recorded_housing.retained_housing_interpretation,housingProfile))fail('checkpoint_conflict');
+        if(readingStockWholeAccountBatch&&stockMetricResult.accounts.some(account=>
+          !same(account.recorded_housing.retained_housing_interpretation,housingProfile)))fail('checkpoint_conflict');
       }
       let traversalAnchorStore=null,traversalAnchor=null,traversalResult=null;
       if(traversingStock){

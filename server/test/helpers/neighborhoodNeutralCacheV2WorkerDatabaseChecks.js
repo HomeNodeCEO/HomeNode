@@ -331,6 +331,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     ownerCalls++;selectionWaitOwner={claim:options.captureJobClaim};waitOptions={captureJobClaim:selectionWaitOwner.claim};
     assert.equal(selectionWaitOwner.claim.operation_id,operation);assert.equal(selectionWaitOwner.claim.attempts,5);
 
+    let batchReconciledAccounts=null;
     if(coveredTransactionIndexFixture){
       const batchOptions={captureJobClaim:selectionWaitOwner.claim,stockAccountPackagePage:{cursor:''}},
         batchRead=()=>service.readCoveredFrozenCaptureJobWholeAccountBatchReferencesV2(input,batchOptions),
@@ -359,6 +360,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
       assert.equal(packet.original_count,packet.accounts.reduce((n,a)=>n+a.rows.length,0));
       assert.ok(packet.accounts.every(a=>a.rows.length>=1&&a.original_counts.parcels>=1));
       assert.equal(packet.accounts[0].original_counts.parcels,2,'the complete outside part is reread in the batch');
+      batchReconciledAccounts=new Map(packet.accounts.map(account=>[account.account_id,account]));
       const empty=await service.readCoveredFrozenCaptureJobWholeAccountBatchReferencesV2(input,
         {captureJobClaim:selectionWaitOwner.claim,stockAccountPackagePage:{cursor:packet.next_cursor}});
       assert.equal(empty.end_of_accounts,true);assert.equal(empty.account_count,0);assert.equal(empty.original_count,0);await assertUnchanged();
@@ -375,6 +377,11 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     assert.equal(packet.end_of_accounts,i===2);assert.equal(packet.status,'original_reconciled_recorded_catalog_account');
     assert.equal(packet.complete_catalog_original_replay,false);
     if(packet.account_id!==null){
+      if(batchReconciledAccounts){
+        const batchAccount=batchReconciledAccounts.get(packet.account_id);assert.ok(batchAccount);
+        for(const field of ['rows','original_counts','geographic_parcel_count','observations','recorded_group','account_original_state'])
+          assert.deepEqual(batchAccount[field],packet[field],`batch ${field} equals the separately reopened whole original account`);
+      }
       const group=packet.recorded_group,id=group.assigned_group_id??'discovery:unassigned',candidate=group.state==='assigned'?group.candidate_groups[0]:null;
       const prior=expectedGroups.get(id)??{group_id:id,normalized_county:candidate?.normalized_county??null,
         normalized_label:candidate?.normalized_label??null,member_count:0,last_ordinal:0};

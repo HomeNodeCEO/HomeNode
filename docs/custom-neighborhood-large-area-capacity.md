@@ -12,6 +12,7 @@ first account refuses completely and never becomes EMPTY. Only a fresh empty
 native probe establishes this read's end. All outside parcel parts, ENTIRE
 neutral cache values, retained-year observations, housing and original512-byte
 group labels are reconciled for every included account.
+Every account's housing interpretation must equal the immutable job choice.
 
 Actual native source/graph/geography/identity/stock/cache prerequisites, the
 current database actor/assignment/draft/subject and exact pending workspace,
@@ -24,11 +25,13 @@ receipt per run remain required; this source read alone does not close that
 capacity review or establish licensed acquisition or production speed.
 
 227 serial focused checks pass with zero failures/cancellations/skips
-(2,614.2468ms); seven changed JS syntax checks and the diff check pass. Added
+(2,524.914ms); seven changed JS syntax checks and the diff check pass. Added
 cloud tests independently exercise the actual issued owner, whole outside
 parts, ENTIRE cache replay, ending source-rights/role/workspace/cache refusal,
 lost actual read-only COMMIT ACK, fresh EMPTY, unchanged native parents,
-history, blobs, reports, choices and pins. Separate temporary SQL DATA tests
+history, blobs, reports, choices and pins. These owner tests also compare every
+batch row, observation and complete recorded group with the independently
+reopened existing single-account catalog owner. Separate temporary SQL DATA tests
 exercise8+1+EMPTY, actual bounded plan admission,250/251 originals, aggregate
 byte-prefix continuation, oversized-first refusal and missing-cache retention.
 NEW cloud execution is pending; authored tests are not native acceptance.

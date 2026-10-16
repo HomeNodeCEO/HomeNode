@@ -256,12 +256,30 @@ export function prepareNeighborhoodSharedTypedSource(result,generationId){
  * Global builder progress is never advanced by this scoped producer.
  */
 export function createNeighborhoodSharedTypedOriginalPageV2(client,rawOptions){
+  return scopedOriginalPage(client,rawOptions,false);
+}
+
+/** Fixed extra-field CAD page writer, never the whole-source CAD builder.
+ * The actual owner must already have read these complete original payloads
+ * under the separate CAD purpose and must fence scope/rights at BOTH ends in
+ * this SAME transaction. This supplies no account cursor, coverage head,
+ * source permission, cache completeness or consumer admission on a miss.
+ * Existing complete-cache CAD consumers retain their separate prerequisites.
+ */
+export function createNeighborhoodSharedTypedCadOriginalPageV1(client,rawOptions){
+  return scopedOriginalPage(client,rawOptions,true);
+}
+
+function scopedOriginalPage(client,rawOptions,cad){
   if(!isCustomCohortNeutralCacheOwnerBudget(client))fail('aggregate_owner_required');
   const o=data(rawOptions,['generationId'],['signal','checkBudget']);
   if(typeof o.generationId!=='string'||!UUID.test(o.generationId)
     ||o.signal!==undefined&&!(o.signal instanceof AbortSignal)
     ||o.checkBudget!==undefined&&typeof o.checkBudget!=='function')fail('invalid_input');
-  const generation=o.generationId,profile=getNeighborhoodFrozenTypedOriginalV2Profile(),
+  const generation=o.generationId,profile=cad?getNeighborhoodFrozenTypedCadImprovementV1Profile():getNeighborhoodFrozenTypedOriginalV2Profile(),
+    kinds=cad?CAD_KINDS:KINDS,format=cad?'shared_frozen_typed_CAD_progress_v1':'shared_frozen_typed_progress_v2',
+    sourceSql=cad?SOURCE_CAD:SOURCE,readSql=cad?READ_CAD:READ_V2,beginSql=cad?BEGIN_CAD:BEGIN_V2,insertSql=cad?INSERT_CAD:INSERT_V2,
+    prepareProgress=value=>progressOf(value,format,kinds,cad?4_000_000:L.total_rows),
     key=[generation,profile.profile_ref.content_sha256],deadline=performance.now()+L.step_ms;
   let used=false,queries=0;
   const check=()=>{if(o.signal?.aborted)fail('cancelled');o.checkBudget?.();
@@ -281,7 +299,7 @@ export function createNeighborhoodSharedTypedOriginalPageV2(client,rawOptions){
   return Object.freeze({async reconcile(rawPage){
     if(used)fail('builder_already_used');used=true;check();
     const page=data(rawPage,['kind','rows']);
-    if(!KINDS.includes(page.kind)||!Array.isArray(page.rows)||types.isProxy(page.rows)
+    if(!kinds.includes(page.kind)||!Array.isArray(page.rows)||types.isProxy(page.rows)
       ||page.rows.length>L.rows||Reflect.ownKeys(page.rows).length!==page.rows.length+1)fail('invalid_original');
     const seen=new Set(),rows=[];
     for(let i=0;i<page.rows.length;i++){
@@ -295,39 +313,39 @@ export function createNeighborhoodSharedTypedOriginalPageV2(client,rawOptions){
     if(Buffer.byteLength(JSON.stringify(rows))>L.page_utf8_bytes)fail('byte_limit');
     const tx=transactionOf(await query(SNAPSHOT));
     if(!same(transactionOf(await query(SNAPSHOT)),tx))fail('caller_transaction_changed');
-    const source=sourceOf(await query(SOURCE,[generation]),generation),binding=assessmentEvidenceDigest({source,profile});
-    let found=await query(READ_V2,key);
+    const source=sourceOf(await query(sourceSql,[generation]),generation,cad),binding=assessmentEvidenceDigest({source,profile});
+    let found=await query(readSql,key);
     if(found.rowCount===0&&found.rows?.length===0){
-      const initial=progressOf({format:'shared_frozen_typed_progress_v2',binding_sha256:binding,
-        kind_index:0,after:'',layer_rows:0,typed_rows:'0',typed_utf8_bytes:'0'},'shared_frozen_typed_progress_v2');
-      await query(`${BEGIN_V2} ON CONFLICT(generation_id,profile_sha256) DO NOTHING`,
+      const initial=prepareProgress({format,binding_sha256:binding,
+        kind_index:0,after:'',layer_rows:0,typed_rows:'0',typed_utf8_bytes:'0'});
+      await query(`${beginSql} ON CONFLICT(generation_id,profile_sha256) DO NOTHING`,
         [...key,binding,JSON.stringify(source),profile.definition_blob.canonical_json,JSON.stringify(initial)]);
     }
-    const header=data(one(await query(`${READ_V2} FOR UPDATE NOWAIT`,key)),
+    const header=data(one(await query(`${readSql} FOR UPDATE NOWAIT`,key)),
       ['binding_sha256','source_metadata','definition_json','progress','status','completed_at']);
-    const progress=progressOf(header.progress,'shared_frozen_typed_progress_v2');
+    const progress=prepareProgress(header.progress);
     if(!progress||progress.binding_sha256!==binding||header.binding_sha256!==binding||!same(header.source_metadata,source)
       ||header.definition_json!==profile.definition_blob.canonical_json
-      ||header.status!==(progress.kind_index===KINDS.length?'complete':'building')
+      ||header.status!==(progress.kind_index===kinds.length?'complete':'building')
       ||(header.status==='complete'?!DATE.test(header.completed_at??''):header.completed_at!==null))fail('checkpoint_mismatch');
-    const scanned=KINDS.slice(0,progress.kind_index).reduce((n,k)=>n+Number(source.layer_counts[k].row_count),0)+progress.layer_rows;
-    if(String(scanned)!==progress.typed_rows||progress.kind_index<KINDS.length
-      &&progress.layer_rows>Number(source.layer_counts[KINDS[progress.kind_index]].row_count))fail('checkpoint_mismatch');
+    const scanned=kinds.slice(0,progress.kind_index).reduce((n,k)=>n+Number(source.layer_counts[k].row_count),0)+progress.layer_rows;
+    if(String(scanned)!==progress.typed_rows||progress.kind_index<kinds.length
+      &&progress.layer_rows>Number(source.layer_counts[kinds[progress.kind_index]].row_count))fail('checkpoint_mismatch');
     const input=rows.map(row=>{check();return {row_key:row.row_key,original_text:row.payload_text,
-      typed:compileNeighborhoodFrozenTypedOriginalV2({kind:page.kind,...row})};});
+      typed:(cad?compileNeighborhoodFrozenTypedCadImprovementV1:compileNeighborhoodFrozenTypedOriginalV2)({kind:page.kind,...row})};});
     let inserted=0,typedBytes='0';
     if(input.length){
       const encoded=JSON.stringify(input);
       if(Buffer.byteLength(encoded)>L.step_utf8_bytes)fail('byte_limit');
-      const ack=one(await query(INSERT_V2,[...key,page.kind,encoded]));
+      const ack=one(await query(insertSql,[...key,page.kind,encoded]));
       if(ack.reconciled_count!==input.length||!Number.isInteger(ack.inserted_count)
         ||ack.inserted_count<0||ack.inserted_count>input.length||!count(ack.typed_utf8_bytes,L.step_utf8_bytes)
         ||Number(ack.typed_utf8_bytes)<input.length)fail('original_mismatch');
       inserted=ack.inserted_count;typedBytes=ack.typed_utf8_bytes;
     }
-    if(!same(one(await query(READ_V2,key)),header)||!same(sourceOf(await query(SOURCE,[generation]),generation),source)
+    if(!same(one(await query(readSql,key)),header)||!same(sourceOf(await query(sourceSql,[generation]),generation,cad),source)
       ||!same(transactionOf(await query(SNAPSHOT)),tx))fail('source_changed');
-    check();return freeze({status:'shared_neutral_original_page_reconciled_v2',authority:'not_established',
+    check();return freeze({status:cad?'shared_neutral_CAD_original_page_reconciled_v1':'shared_neutral_original_page_reconciled_v2',authority:'not_established',
       generation_id:generation,profile_reference:profile.definition_blob.ref,kind:page.kind,
       reconciled_rows:input.length,inserted_rows:inserted,typed_utf8_bytes:typedBytes,
       shared_cache_status:header.status,global_progress_advanced:false,job_coverage:'not_established',

@@ -336,6 +336,7 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
       exact_profile:getNeighborhoodFrozenTypedCadImprovementV1Profile().profile_ref.content_sha256,
       missing_boolean_not_false:true,duplicate_numbers_not_deduped:true,job_cache_writes:0,
       amenity_resolution:false,source_acquisition:false,report_update:false,production_latency:false});
+    await runSharedTypedScopedPageBootstrapDatabaseChecks(pool,first.generationId,true);
     await assert.rejects(createNeighborhoodSharedTypedCadGenerationV1(pool,{generationId:first.generationId}).step(),/caller_transaction_required/);
     let cadSourceProbes=0;
     const cadEndingFault={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
@@ -357,6 +358,7 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     await assert.rejects(sharedTypedCadStep(cadLostAck,first.generationId),e=>e.outcome_unknown===true);
     const cadOpened=await sharedTypedCadStep(pool,first.generationId);assert.equal(cadOpened.advanced,false);
     assert.equal(cadOpened.progress.kind_index,1);assert.equal(cadOpened.progress.typed_rows,'3');
+    await runSharedTypedScopedPageDatabaseChecks(pool,first.generationId,false,true);
     await runSharedTypedReconciliationDatabaseChecks(pool,NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.insert,cadWrittenValues,true);
     const cadChangedText={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
       const r=await raw.query(c);if(c.text===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.page&&r.rows[0].page_count){
@@ -370,6 +372,7 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
       e=>e.code==='55000'&&/population_incomplete/.test(e.message));
     const cadComplete=await sharedTypedCadStep(pool,first.generationId,cadOpened.progress);
     assert.equal(cadComplete.all_layers_typed,true);assert.equal(cadComplete.progress.kind_index,2);assert.equal(cadComplete.progress.typed_rows,'7');
+    await runSharedTypedScopedPageDatabaseChecks(pool,first.generationId,true,true);
     assert.deepEqual((await pool.query(`SELECT count(*)::int AS n,count(*) FILTER(WHERE typed.original_payload_sha256<>original.payload_sha256)::int AS bad
       FROM app.neighborhood_frozen_typed_cad_rows typed JOIN app.neighborhood_frozen_cad_improvement_rows original USING(generation_id,kind,row_key)
       WHERE generation_id=$1`,[first.generationId])).rows[0],{n:7,bad:0});

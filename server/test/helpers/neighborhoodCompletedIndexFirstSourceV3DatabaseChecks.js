@@ -87,6 +87,52 @@ export async function runNeighborhoodCompletedIndexFirstSourceV3DatabaseChecks({
   reads=originalReads();setFault('completed_source_ack');await assert.rejects(resolve(),e=>e.outcome_unknown===true);
   assert.equal(readFault(),null);assert.equal(originalReads(),reads+1);await unchanged();
   reads=originalReads();assert.deepEqual(await resolve(),resolved);assert.equal(originalReads(),reads+1);await unchanged();
+  const candidateMethod='readCoveredOriginalFrozenCaptureJobCompletedIndexFirstSourceResolutionCandidateReferencesV3',
+    prepare=()=>service[candidateMethod](input,options);
+  reads=originalReads();
+  await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[scope.organization_id,actor]);
+  try{await assert.rejects(prepare(),/custom_cohort_job_actor_access_revoked/);assert.equal(originalReads(),reads);}
+  finally{await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);}
+  await unchanged();
+  for(const [fault,reason] of [['completed_source_cache',/original_mismatch/],
+    ['union_workspace',/custom_cohort_group_workspace_study_changed/],
+    ['catalog_replay_rights',/market_data_access_denied|market_policy_changed/],
+    ['selected_CAD_deny',/market_data_access_denied|cad_policy_changed/]]){
+    reads=originalReads();setFault(fault);await assert.rejects(prepare(),reason);
+    assert.equal(readFault(),null);assert.equal(originalReads(),reads+1);await unchanged();
+  }
+  reads=originalReads();const proposed=await prepare();assert.equal(originalReads(),reads+1);await unchanged();
+  assert.equal(proposed.status,'current_authorized_first_completed_index_source_resolution_candidate');
+  assert.equal(Object.hasOwn(proposed,'selected_source_resolution'),false,'retain only one resolution in the unchanged response cap');
+  const candidate=proposed.selected_source_resolution_candidate;
+  assert.equal(candidate.format,'cohort_first_source_resolution_candidate_v3');
+  assert.deepEqual(candidate.selected_source,resolved.selected_source);
+  assert.deepEqual(candidate.resolution,observation);
+  assert.deepEqual(candidate.transaction_index_reference,resolved.transaction_index_reference);
+  assert.equal(candidate.transaction_index_sequence,3);
+  assert.equal(candidate.first_seen_selected_entry.account_id,laterFirstSource?'CLOSURE-B':'CLOSURE-A');
+  assert.equal(candidate.first_seen_selected_entry.ordinal,laterFirstSource?2:1);
+  assert.equal(candidate.first_seen_selected_entry.ordinal,candidate.selected_source.first_selected_ordinal);
+  for(const key of ['entry_reference','metric_row_reference','contribution_row_reference'])
+    assert.deepEqual(candidate.first_seen_selected_entry[key],owned.index.selected_transaction_index_v2_rows.find(
+      row=>row.ordinal===candidate.selected_source.first_selected_ordinal)[key]);
+  for(const key of ['durable_source_resolution_issued','source_cursor_advanced','complete_selected_union'])assert.equal(candidate[key],false);
+  for(const key of ['economic_transaction_eligibility','quarter_statistics','authority'])assert.equal(candidate[key],'not_established');
+  assert.equal(proposed.read_only,true);assert.equal(proposed.source_resolution_candidate_retained,false);
+  assert.equal(proposed.source_cursor_advanced,false);assert.equal(proposed.lease_extended,false);assert.equal(proposed.pin_transfer,false);
+  assert.ok(Buffer.byteLength(JSON.stringify(candidate))<=12000);assert.ok(Buffer.byteLength(JSON.stringify(proposed))<=16000);
+  reads=originalReads();setFault('completed_source_ack');await assert.rejects(prepare(),e=>e.outcome_unknown===true);
+  assert.equal(readFault(),null);assert.equal(originalReads(),reads+1);await unchanged();
+  reads=originalReads();assert.deepEqual(await prepare(),proposed);assert.equal(originalReads(),reads+1);await unchanged();
+  console.info('[native-completed-index-first-source-candidate-v3]',{
+    actual_native_FIRST_whole_original_package_and_independent_native_membership:true,
+    first_seen_selected_account:laterFirstSource?'B_ordinal2_after_empty_A':'A_ordinal1',
+    exact_index_reference_and_all_first_seen_member_references:true,
+    candidate_derived_inside_original_owner_delivered_after_all_ending_fences_and_repeat:true,
+    original_resolution_not_caller_supplied:true,current_actor_before_IO_and_ending_market_CAD_workspace_cache_refusals:true,
+    actual_lost_readonly_COMMIT_ACK_identical_fresh_reopen_and_all_retained_state_unchanged:true,
+    durable_source_resolution_issued:false,source_NEXT_or_EMPTY:false,economic_eligibility:false,quarter_statistics:false,
+    publication:false,pin_transfer:false,licensed_large_area:false,production_speed:false});
   console.info('[native-completed-index-first-source-resolution-v3]',{
     actual_whole_source501_and_selected_A_B_outside_canonical_sale_account_reopened:!laterFirstSource,
     actual_whole_source501_selected_B_and_outside_account_after_empty_A:laterFirstSource,

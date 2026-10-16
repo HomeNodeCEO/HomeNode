@@ -65,7 +65,7 @@ function pageOf(value, length) {
 const DEFINITION = freeze({ id: 'neighborhood-exact-decimal-paged-distribution-v1', revision: '1', limits: L,
   input: 'canonical_nonnegative_decimal_strings_with_owner_derived_exhaustive_five_state_counts',
   quantiles: 'whole_observed_population_Hyndman_Fan_type7_q1_median_q3_exact_no_page_median_average',
-  mean_and_dispersion: 'reduced_exact_nonnegative_rationals_no_display_rounding',
+  mean_and_dispersion: 'reduced_exact_nonnegative_rationals_no_display_rounding_absolute_deviation_about_exact_median',
   cod_percent: '100_times_sum_absolute_deviation_from_exact_median_divided_by_count_times_median',
   zero_median: 'COD_null_not_zero_or_infinite', missing: 'all_five_states_remain_in_member_denominator',
   traversal: 'two_complete_fresh_global_sorted_passes_same_exact_ordered_decimal_digest_including_empty',
@@ -168,7 +168,7 @@ export async function exactDecimalDistributionFromSortedPagesV1(rawOptions) {
     low: low === null ? null : decimal(low, 12), q1: quarterDecimal(q[0]), median: quarterDecimal(median),
     q3: quarterDecimal(q[2]), high: high === null ? null : decimal(high, 12),
     mean: count ? ratio(sum, BigInt(count) * SCALE) : null,
-    mean_absolute_deviation: count ? ratio(deviationsQuarterScale, BigInt(count) * 4n * SCALE) : null,
+    mean_absolute_deviation_from_median: count ? ratio(deviationsQuarterScale, BigInt(count) * 4n * SCALE) : null,
     cod_percent: count && median !== 0n ? ratio(deviationsQuarterScale * 100n, BigInt(count) * median) : null,
     exact_observation_sha256: first, report_update: 'none' });
   issuedResults.add(result); return result;

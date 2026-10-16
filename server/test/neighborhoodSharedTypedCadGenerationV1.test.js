@@ -10,6 +10,7 @@ import { getNeighborhoodFrozenTypedCadImprovementV1Profile as profile }
 const generationId = '12345678-1234-4234-8234-123456789012', stamp = '2026-10-09T00:00:00.000000Z';
 const kinds = ['primary','secondary'];
 const result = row => ({ rowCount: 1, rows: [structuredClone(row)] });
+/** Model bounded cache SQL acknowledgements and injected faults; this fixture is DATA, not native proof. */
 function fixture({ rowCount = 2, hook = () => null } = {}) {
   const calls = [], rows = []; let header = null;
   const source = { generation_id: generationId, format_version: 1, status: 'complete', source_snapshot: '1:2:',
@@ -49,6 +50,7 @@ function fixture({ rowCount = 2, hook = () => null } = {}) {
   } };
   return { client, calls, rows, source, tx, header: () => header, builder: o => create(client, { generationId, ...o }) };
 }
+/** Traverse fresh single-use builders until both synthetic CAD layers are complete. */
 async function complete(f, p = null) {
   let r; for (let n = 0; n < 30; n++) { r = await f.builder().step(p); p = r.progress; if (r.all_layers_typed) return r; }
   assert.fail('completion bound exceeded');
@@ -167,4 +169,3 @@ test('foreign original profiles, definitions, legacy progress and over-cap compa
   assert.match(SQL.page,/neighborhood_frozen_cad_improvement_rows/);
   assert.doesNotMatch(SQL.page,/neighborhood_frozen_source_rows/);
 });
-

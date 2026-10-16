@@ -3,6 +3,7 @@ import { types } from 'node:util';
 import { canonicalAssessmentJson } from './contract.js';
 import { prepareNeighborhoodCohortBlob } from './cohortEvidenceBlobRepository.js';
 
+/** Deep-freeze owned DATA definitions and receipts; not hostile-input admission. */
 const freeze=value=>{if(value&&typeof value==='object'&&!Object.isFrozen(value)){Object.values(value).forEach(freeze);Object.freeze(value);}return value;};
 export const NEIGHBORHOOD_FROZEN_CAD_IMPROVEMENT_LIMITS=Object.freeze({
   batch_size:250,rows_per_layer:2_000_000,row_utf8_bytes:1_000_000,page_utf8_bytes:32_000_000,
@@ -26,8 +27,11 @@ const DEFINITION=freeze({id:'neighborhood-frozen-CAD-improvement-originals-v1',r
 const definitionText=canonicalAssessmentJson(DEFINITION),definitionRef=prepareNeighborhoodCohortBlob(definitionText);
 const PROFILE=freeze({profile_ref:{id:DEFINITION.id,revision:DEFINITION.revision,content_sha256:definitionRef.content_sha256},
   definition_blob:{ref:definitionRef,canonical_json:definitionText}});
+/** Return the fixed immutable original-retention profile, without source authority. */
 export function getNeighborhoodFrozenCadImprovementProfile(){return PROFILE;}
+/** Refuse the whole companion operation with its namespaced protocol reason. */
 function fail(reason){throw new TypeError(`neighborhood_frozen_CAD_improvements_${reason}`);}
+/** Require one acknowledged SQL result row before interpreting its counters. */
 const one=r=>{if(r?.rowCount!==1||r.rows?.length!==1)fail('invalid_result');return r.rows[0];};
 const SNAPSHOT=`/* neighborhood-frozen-CAD:snapshot */ SELECT txid_current()::text AS transaction_id,
   pg_current_snapshot()::text AS source_snapshot,current_setting('transaction_isolation') AS isolation,
@@ -72,6 +76,7 @@ const COMPLETE=`/* neighborhood-frozen-CAD:complete */ UPDATE app.neighborhood_f
   SET status='complete',completed_at=clock_timestamp(),layer_counts=$2::jsonb,row_count=$3::bigint,payload_utf8_bytes=$4::bigint
   WHERE generation_id=$1::uuid AND status='building'`;
 export const NEIGHBORHOOD_FROZEN_CAD_IMPROVEMENT_SQL=freeze({snapshot:SNAPSHOT,source:SOURCE,counts:COUNTS,pages:PAGES,begin:BEGIN,complete:COMPLETE});
+/** Validate a writable RR/UTC snapshot receipt, preserving its exact timestamp. */
 function snapshot(result){
   const r=one(result);
   if(r.isolation!=='repeatable read'||r.read_only!=='off'||r.timezone!=='UTC'||!Number.isInteger(r.backend_pid)||r.backend_pid<1
@@ -80,6 +85,7 @@ function snapshot(result){
     ||!(/^[1-9][0-9]{0,19}$/).test(r.transaction_id??''))fail('caller_snapshot_required');
   return r;
 }
+/** Detach only supported own DATA options and enforce generation/time/page bounds. */
 function options(raw){
   if(!raw||types.isProxy(raw)||Object.getPrototypeOf(raw)!==Object.prototype)fail('invalid_input');
   const ds=Object.getOwnPropertyDescriptors(raw),keys=Reflect.ownKeys(ds);
@@ -100,8 +106,10 @@ function options(raw){
 export async function materializeNeighborhoodFrozenCadImprovements(client,rawOptions){
   if(typeof client?.query!=='function')fail('invalid_input');
   const o=options(rawOptions),deadline=performance.now()+o.maximumRuntimeMs;
+  /** Recheck cancellation and both owner/local budgets at each I/O boundary. */
   const check=()=>{if(o.signal?.aborted)fail('cancelled');o.checkBudget();if(o.signal?.aborted)fail('cancelled');
     if(performance.now()>=deadline)fail('runtime_limit');};
+  /** Await actual SQL settlement within the remaining timeout, then recheck budgets. */
   const query=async(text,values=[])=>{check();const r=await client.query({text,values,
     query_timeout:Math.max(1,Math.min(120000,Math.ceil(deadline-performance.now())))});check();return r;};
   const start=snapshot(await query(SNAPSHOT));

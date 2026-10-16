@@ -36,6 +36,25 @@ function plan(value){
       metric_row_reference:ref(member.metric_row_reference,4096),contribution_row_reference:ref(member.contribution_row_reference,4096)})});
 }
 
+function firstSeenMembership(value,p,check){
+  const m=data(value,['subject_account_id','subject_selected_union_member','associations','coverage',
+    'economic_property_membership','global_selected_native_deduplication']),a=m.associations;
+  if(!Array.isArray(a)||isProxy(a)||Object.getPrototypeOf(a)!==Array.prototype||a.length>250
+    ||Reflect.ownKeys(a).length!==a.length+1)fail();
+  const rows=[];
+  for(let i=0;i<a.length;i++){
+    check();
+    const d=Object.getOwnPropertyDescriptor(a,String(i));if(!d?.enumerable||!Object.hasOwn(d,'value'))fail();
+    rows.push(Object.freeze(data(d.value,['kind','row_key','account_id','source_record_id','stock_member','selected_union_member'])));
+  }
+  // A selected association in another package from this whole account is not
+  // evidence that this native FIRST package belongs to its first-seen account.
+  if(!rows.some(r=>r.account_id===p.selected_entry.account_id&&r.stock_member===true&&r.selected_union_member===true
+    &&(p.source.kind==='source_record'?r.source_record_id===p.source.native_key
+      :r.kind==='sales'&&r.source_record_id===null&&r.row_key===p.source.native_key)))fail();
+  return Object.freeze({...m,associations:Object.freeze(rows)});
+}
+
 /** Bounded DATA candidate, never a receipt, grant, cursor or phase-18 admission.
  * The closed original owner obtains/repeats this native FIRST plan itself and
  * supplies the entire reconciled package plus independent native membership.
@@ -47,8 +66,8 @@ function plan(value){
  */
 export function prepareNeighborhoodFirstSourceResolutionCandidateV3(...args){
   if(args.length!==4||typeof args[3]!=='function')fail();
-  const check=args[3];check();const p=plan(args[0]),
-    resolution=resolveNeighborhoodOriginalSourceResolutionV3(args[1],args[2],check);
+  const check=args[3];check();const p=plan(args[0]),membership=firstSeenMembership(args[2],p,check),
+    resolution=resolveNeighborhoodOriginalSourceResolutionV3(args[1],membership,check);
   if(resolution.kind!==p.source.kind||resolution.native_key!==p.source.native_key)fail();
   const candidate=Object.freeze({format:'cohort_first_source_resolution_candidate_v3',command_id:p.command_id,
     generation_id:p.generation_id,transaction_index_reference:p.index_reference,transaction_index_sequence:p.index_sequence,

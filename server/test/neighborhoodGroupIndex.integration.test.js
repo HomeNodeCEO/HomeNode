@@ -54,6 +54,8 @@ import { createCustomCohortV2ContinuationRepository }
   from '../src/services/neighborhoodAssessment/customCohortV2ContinuationRepository.js';
 import { createCustomCohortV2SelectionWaitRepository }
   from '../src/services/neighborhoodAssessment/customCohortV2SelectionWaitRepository.js';
+import { runNeighborhoodSelectionWaitStatusValidationV2DatabaseChecks }
+  from './helpers/neighborhoodSelectionWaitStatusValidationV2DatabaseChecks.js';
 import { CUSTOM_COHORT_ORIGINAL_ACCOUNT_OWNER_LIMITS as ORIGINAL_OWNER_LIMITS }
   from '../src/services/neighborhoodAssessment/customCohortOriginalAccountOwnerBudget.js';
 import { getNeighborhoodOriginalRecordedGroupV2Profile }
@@ -184,6 +186,7 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
       await runNeighborhoodOriginalTransactionPackageDatabaseChecks(policyClient);
       await runNeighborhoodOriginalCadAccountPackageDatabaseChecks(policyClient);
     }finally {policyClient.release();}
+    await runNeighborhoodSelectionWaitStatusValidationV2DatabaseChecks(pool);
     await pool.query(NEIGHBORHOOD_CACHED_SOURCE_SCHEMA);
     // The isolated UAD fixture has bedroom/bath and secondary rows but omits
     // the DCAD pool column. Add it only inside this throwaway child database.

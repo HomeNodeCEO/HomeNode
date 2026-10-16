@@ -1,5 +1,27 @@
 # Complete larger-area Custom neighborhood studies
 
+## Selection-wait deployment validation (2026-10-16, not released)
+
+The actual included review of a664fb2 identified the widened status CHECK's
+validation scan under ACCESS EXCLUSIVE. The production API is still manually
+pinned to c777de9, whose registered migrations end at 20261122; the new 20261123
+files have not been released. The installation now uses NOT VALID, so the
+superset CHECK immediately enforces every new or updated row without scanning
+old rows during installation. A separate registered validation migration runs
+after the installation file commits. The existing runner commits each file
+independently, releasing the installation lock before validation takes its
+SHARE UPDATE EXCLUSIVE lock. See the official
+[PostgreSQL ALTER TABLE notes](https://www.postgresql.org/docs/current/sql-altertable.html#SQL-ALTERTABLE-NOTES).
+
+An isolated native probe executes that exact validation file while another
+connection holds an actual ROW EXCLUSIVE jobs-table lock. It requires successful
+validation, a granted ShareUpdateExclusiveLock, no AccessExclusiveLock, and a
+validated CHECK. Both probe transactions roll back, with no job/evidence writes.
+Native cloud proof and a fresh included review of the corrected head remain
+required before a protected merge and release. All prior original reads,
+source-purpose decisions, actor/workspace fences, guards, failure histories,
+budgets, deadlines, waiting semantics and inactive stage routing are unchanged.
+
 ## Issued-catalog selection waiting boundary (2026-10-10, not activated)
 
 The actual bounded original owner now has a separate internal waiting stage.

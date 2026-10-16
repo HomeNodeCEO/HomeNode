@@ -251,8 +251,10 @@ export function createCustomCohortCaptureJobRepository(client) {
             updated_at=clock_timestamp()
           FROM expired WHERE job.operation_id=expired.operation_id`);
       const result = await client.query(`/* custom-cohort-job:claim */ WITH due AS (
-          SELECT operation_id FROM app.neighborhood_custom_cohort_capture_jobs
-          WHERE attempts<5 AND cancellation_requested_at IS NULL AND
+          SELECT operation_id FROM app.neighborhood_custom_cohort_capture_jobs job
+          WHERE attempts<5 AND cancellation_requested_at IS NULL
+            AND NOT EXISTS (SELECT 1 FROM app.neighborhood_custom_cohort_v2_continuations c
+              WHERE c.operation_id=job.operation_id AND c.consumed_claim_token IS NULL) AND
             ((status IN ('queued','retry') AND run_after<=clock_timestamp())
               OR (status='running' AND lease_expires_at<=clock_timestamp()))
           ORDER BY run_after,operation_id LIMIT $1 FOR UPDATE SKIP LOCKED

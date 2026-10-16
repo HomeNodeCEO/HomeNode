@@ -1,5 +1,73 @@
 # Complete larger-area Custom neighborhood studies
 
+## Issued-progress successful continuations (2026-10-10, not activated)
+
+The dormant traversal/recorded-partition `continueOriginalFrozenCaptureJob...ReferencesV2`
+methods extend the SAME bounded original-reconciling database owner. They run
+every original/cache read and BOTH-end current actor/assignment/private-draft/
+retained-subject/source-purpose/claim/pin/head/cache fence before releasing a
+success continuation in that SAME transaction. No caller supplies a checkpoint,
+phase, progress reference, count, DONE, retry count, token or source callback.
+
+Registered additive 20261120 retains a separate successful-continuation sequence
+and the actual independently issued native head/root checkpoint. A progress
+reference can yield only once; free/unissued checkpoints, orphan progress without
+job release, changed scope/study, duplicate DONE and attempts regression refuse.
+One bounded SKIP LOCKED consume installs a fresh native claim token without
+incrementing OR resetting attempts or clearing the prior error. Ordinary claims
+exclude pending successes. Actual failed/expired claims retain the five-attempt
+limit; no failure history is refunded. Pending cancellation remains effective.
+
+An internal DONE stage is NOT a succeeded context, coherent publication, accepted
+report or terminal pin transfer. All issued roots and pins remain retained. The
+existing legacy worker is NOT switched to this path: fixed V2 worker dispatch,
+the remaining original-backed catalog/selection/metric/publication stages and
+terminal retention handoff must be implemented and verified before activation.
+
+The original focused run passed 109 tests in 587.5861 ms, with zero failures
+or skips. It covered closed admission, fifth-attempt preservation, autocommit
+refusal before writes, fresh-token claims, unchanged profiles and registered
+native/deferred guards. The extended native fixture additionally asserts
+nonempty account progression: ending refusals roll back the new entry, blobs,
+head, checkpoint and release; lost COMMIT leaves one appended account and one
+pending continuation; stale claims refuse; the next fresh token preserves the
+attempt and resumes at a distinct terminal empty probe. Two distinct successes
+advance the continuation sequence without spending or refunding failure history.
+Other native assertions cover orphan-COMMIT refusal, concurrent single consume,
+duplicate DONE refusal, unchanged roots/pins and failed claims reaching five.
+
+This branch was retargeted to main before integrating the actual protected
+parent #1247 merge `dd513882`. Parent exact head `688e8c19` passed all 14 checks,
+with actual included review `61970e8b` and provider verification/resolution of
+its documentation fix. Parent native job 116893183654 passed 417 migration,
+1 subject, 8 prepared-index, 1 edge and 2 bootstrap tests, with zero failures,
+skips or cancellations. Its original-reconciled partition consumer marker ran
+at 2026-10-16T09:03:45.0337790Z. These parent results do not prove this newly
+integrated continuation stage: its fresh exact-head native/security/full-suite
+checks and actual included review remain required.
+
+After this integration, 92 serial focused continuation, job, owner and receipt
+checks passed in 1,220.3239 ms, with zero failures, cancellations or skips.
+
+That saved continuation head `44bb4772` subsequently passed all 16 checks.
+Its full native job 116898504469 passed 417 migration, 1 subject, 8 prepared-index,
+1 edge and 2 bootstrap tests, with zero failures, skips or cancellations. The
+actual issued-success marker ran at 2026-10-16T09:18:01.5566982Z.
+This branch also integrates the actual protected startup repair #1321 merge
+`ccc439bf`. That repair passed all 14 checks and included review `87619103`
+with no actionable findings; its native fixture proves catalog readiness under
+the same held reader lock that refuses the old unnecessary ALTER. The integrated
+continuation head still requires fresh security, native and full-suite checks
+and its own actual included review. Saved parent results do not prove it.
+
+Small protocol fixtures and SQL doubles do not establish licensed acquisition,
+complete selected semantics or production speed. The CAD companion, original-
+reconciled medians/COD/calendar quarters, coherent publication, terminal pins,
+licensed >50k/5-mile/10-mile/city/retrospective and Hardy live-speed acceptance
+remain unfinished. No default worker/route, source grant, appraiser choice,
+report Apply or pin transfer is activated. QA7 remains the only Apply target.
+No local heavy suite, acquisition worker or Indexer operation.
+
 ## Original-reconciled recorded-partition consumer (2026-10-10, not activated)
 
 `readOriginalFrozenCaptureJobRecordedPartitionAccountReferencesV2` accepts only
@@ -41,8 +109,11 @@ checkpoint/payload copies. Integrated consumer runtime head `c3d39e03` passed
 all 14 checks, including foundation run 38869765008. Its native job 116870842442
 passed 417 migration, 1 subject, 8 prepared-index, 1 edge and 2 bootstrap tests,
 with zero failures, skips or cancellations. The actual replayed-partition marker
-executed at 2026-10-16T08:01:04.5584699Z. This documentation correction still
-requires fresh exact-head cloud checks.
+executed at 2026-10-16T08:01:04.5584699Z. The documentation-corrected head
+`688e8c19` then passed all 14 fresh checks and the actual provider resolved its
+finding. Native job 116893183654 passed the same 417/1/8/1/2 test groups, with
+zero failures, skips or cancellations, and the consumer marker ran at
+2026-10-16T09:03:45.0337790Z. The protected merge is `dd513882`.
 
 Separately, the protected parent #1246 merged as `1b35afac` after all 16 checks
 on exact head `817e3163` passed, with an actual included review and its confirmed

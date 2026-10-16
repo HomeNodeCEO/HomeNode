@@ -3,9 +3,14 @@
 CREATE TABLE app.neighborhood_custom_cohort_neutral_cache_v2_heads (
   operation_id uuid PRIMARY KEY REFERENCES app.neighborhood_custom_cohort_capture_jobs(operation_id) ON DELETE RESTRICT ON UPDATE RESTRICT,
   organization_id uuid NOT NULL REFERENCES app_auth.organizations(id) ON DELETE RESTRICT,
-  source_reference jsonb NOT NULL,root_reference jsonb NOT NULL,graph_reference jsonb NOT NULL,
-  geographic_reference jsonb NOT NULL,identity_reference jsonb NOT NULL,stock_reference jsonb NOT NULL,
-  receipt_reference jsonb NOT NULL,sequence integer NOT NULL CHECK(sequence BETWEEN 1 AND 200000),
+  source_reference jsonb NOT NULL CHECK(octet_length(source_reference::text) BETWEEN 100 AND 256),
+  root_reference jsonb NOT NULL CHECK(octet_length(root_reference::text) BETWEEN 100 AND 256),
+  graph_reference jsonb NOT NULL CHECK(octet_length(graph_reference::text) BETWEEN 100 AND 256),
+  geographic_reference jsonb NOT NULL CHECK(octet_length(geographic_reference::text) BETWEEN 100 AND 256),
+  identity_reference jsonb NOT NULL CHECK(octet_length(identity_reference::text) BETWEEN 100 AND 256),
+  stock_reference jsonb NOT NULL CHECK(octet_length(stock_reference::text) BETWEEN 100 AND 256),
+  receipt_reference jsonb NOT NULL CHECK(octet_length(receipt_reference::text) BETWEEN 100 AND 256),
+  sequence integer NOT NULL CHECK(sequence BETWEEN 1 AND 200000),
   issued_transaction_id bigint NOT NULL DEFAULT txid_current(),
   issued_claim_token uuid NOT NULL,issued_attempts integer NOT NULL CHECK(issued_attempts BETWEEN 1 AND 5),
   receipt_sha256 text GENERATED ALWAYS AS (receipt_reference->>'content_sha256') STORED,
@@ -117,6 +122,8 @@ BEGIN
   IF receipt->'after' IS DISTINCT FROM expected_after OR (expected_after->>'row_count')::integer>14000000
     OR (expected_after->>'original_utf8_bytes')::bigint>8000000000
     OR next_typed_bytes<(before_state->>'typed_utf8_bytes')::bigint+(node->>'row_count')::integer
+    OR next_typed_bytes-(before_state->>'typed_utf8_bytes')::bigint>32000000
+    OR (node->>'row_count')::integer=0 AND next_typed_bytes<>(before_state->>'typed_utf8_bytes')::bigint
     OR next_typed_bytes>8000000000 THEN
     RAISE EXCEPTION 'neighborhood_neutral_cache_v2_prefix_conflict' USING ERRCODE='55000'; END IF;
   NEW.issued_transaction_id:=txid_current();NEW.issued_claim_token:=job.claim_token;NEW.issued_attempts:=job.attempts;RETURN NEW;

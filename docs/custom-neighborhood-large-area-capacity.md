@@ -13,12 +13,28 @@ independently, releasing the installation lock before validation takes its
 SHARE UPDATE EXCLUSIVE lock. See the official
 [PostgreSQL ALTER TABLE notes](https://www.postgresql.org/docs/current/sql-altertable.html#SQL-ALTERTABLE-NOTES).
 
-An isolated native probe executes that exact validation file while another
-connection holds an actual ROW EXCLUSIVE jobs-table lock. It requires successful
-validation, a granted ShareUpdateExclusiveLock, no AccessExclusiveLock, and a
-validated CHECK. Both probe transactions roll back, with no job/evidence writes.
-Native cloud proof and a fresh included review of the corrected head remain
-required before a protected merge and release. All prior original reads,
+Review of `41f53ff9` found that normal fixture bootstrap had already validated
+the CHECK, so its passing native probe established lock compatibility without
+exercising the first validation scan. The corrected test-only fixture replays
+the exact status-constraint DDL extracted from the registered installation file
+and commits it without validation. It refuses any database other than the
+independently created disposable CI child. The production migration runner and
+registered SQL are unchanged; no general partial-migration option is added.
+
+The native probe runs after a genuine fixture job has been enqueued and requires
+its complete job tuple to remain identical afterward. It requires
+`convalidated=false` after installation and again
+immediately before executing the exact registered validation SQL while an
+independent connection holds ROW EXCLUSIVE. It then requires
+`convalidated=true`, a granted ShareUpdateExclusiveLock and no
+AccessExclusiveLock. Successful validation commits, restoring the bootstrapped
+fixture's validated state; both clients are released, including refusal paths.
+No job/evidence rows are changed. Nine focused checks pass, including refusal
+of prevalidated fixtures, unexpected databases, exclusive validation locks and
+lost validation-COMMIT acknowledgments. Those doubles are protocol checks, not
+native scan proof. Fresh exact-head cloud native/full-suite checks and actual
+included review remain required before a protected merge and release.
+All prior original reads,
 source-purpose decisions, actor/workspace fences, guards, failure histories,
 budgets, deadlines, waiting semantics and inactive stage routing are unchanged.
 

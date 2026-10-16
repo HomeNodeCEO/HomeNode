@@ -186,7 +186,6 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
       await runNeighborhoodOriginalTransactionPackageDatabaseChecks(policyClient);
       await runNeighborhoodOriginalCadAccountPackageDatabaseChecks(policyClient);
     }finally {policyClient.release();}
-    await runNeighborhoodSelectionWaitStatusValidationV2DatabaseChecks(pool);
     await pool.query(NEIGHBORHOOD_CACHED_SOURCE_SCHEMA);
     // The isolated UAD fixture has bedroom/bath and secondary rows but omits
     // the DCAD pool column. Add it only inside this throwaway child database.
@@ -580,6 +579,14 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client)
       .enqueue({scope,actorUserId:actor,request:{operation_id:operation,
         observation_period:{start_date:'2024-01-01',end_date:'2025-12-31'}}}));
+    // Exercise the first CHECK validation scan over an actual enqueued job,
+    // after installation-only fixture DDL, and preserve its complete tuple.
+    const validationJobSql='SELECT to_jsonb(job) AS job FROM app.neighborhood_custom_cohort_capture_jobs job WHERE operation_id=$1::uuid',
+      beforeStatusValidation=(await pool.query(validationJobSql,[operation])).rows;
+    assert.equal(beforeStatusValidation.length,1);
+    await runNeighborhoodSelectionWaitStatusValidationV2DatabaseChecks(pool);
+    assert.deepEqual((await pool.query(validationJobSql,[operation])).rows,beforeStatusValidation);
+    console.info('[native-selection-wait-first-scan-job-preserved-v2]',{actual_enqueued_job:true,complete_tuple_unchanged:true});
     const claim=await withCustomCohortJobTransaction(pool,async client=>{
       const [job]=await createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900});
       assert.equal(job.operation_id,operation);

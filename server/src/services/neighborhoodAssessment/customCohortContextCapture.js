@@ -162,6 +162,8 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingCadPages: true, projectingCadAccounts: true, allowedPhases: ['frozen_identity_refs_v2'] },
   original_CAD_account_packages_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingCadPages: true, projectingCadAccounts: true, reconcilingCadAccounts: true, allowedPhases: ['frozen_identity_refs_v2'] },
+  original_CAD_amenity_evidence_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    readingCadPages: true, projectingCadAccounts: true, reconcilingCadAccounts: true, resolvingCadAmenities: true, allowedPhases: ['frozen_identity_refs_v2'] },
   shared_transaction_pages_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingTransactionPages: true, allowedPhases: ['frozen_identity_refs_v2'] },
   shared_transaction_temporal_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
@@ -1611,7 +1613,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       fail('frozen_source_representation_unsupported');
     const {referencesV2=false,verifying=false,stockVerifying=false,identityVerifying=false,
       typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,
-      readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,readingTransactionPages=false,projectingTransactionTemporal=false,
+      readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,
       resolvingStockAccountHousing=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     if(referencesV2){
@@ -1969,7 +1971,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const graph={root,layer_counts:Object.fromEntries(COHORT_ORIGINAL_SOURCE_CHAIN_V1_KINDS.map(key=>[key,prefix.layers[key].row_count]))};
         if(projectingCadAccounts){
           const accounts=createNeighborhoodSharedJobCadAccountPages(client,stockOptions,graph,context.effective_date);
-          stockMetricResult=await (reconcilingCadAccounts?accounts.originalAccountPackage(cadPage):accounts.page(cadPage));
+          stockMetricResult=await (resolvingCadAmenities?accounts.originalAmenityEvidence(cadPage)
+            :reconcilingCadAccounts?accounts.originalAccountPackage(cadPage):accounts.page(cadPage));
         }else stockMetricResult=await createNeighborhoodSharedJobCadImprovementPages(client,stockOptions,graph).page(cadPage);
       }
       if(readingTransactionPages){
@@ -2240,6 +2243,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * No dictionary, complete population, durable state or report is inferred. */
     readOriginalFrozenCaptureJobCadAccountPackagesReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_CAD_account_packages_refs_v2'),
+    /** Resolve retained local amenity evidence only after full original replay;
+     * no provider dictionary, verified presence, aggregate or live activation. */
+    readOriginalFrozenCaptureJobCadAmenityEvidenceReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'original_CAD_amenity_evidence_refs_v2'),
     /** Read one bounded all-date transaction-original page after actual issued
      * V2 prerequisites and both-end current authorization. This does not resolve
      * complete packages, verify transaction eligibility or publish selections. */

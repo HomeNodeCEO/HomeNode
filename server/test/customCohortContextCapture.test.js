@@ -257,6 +257,20 @@ test('CAD account owner obtains its date from retained context and accepts no ca
   assert.equal(connections,0);
 });
 
+test('native CAD coverage admits only a live claim and separate current policy, never a caller account or progress prefix',async()=>{
+  const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
+    claim={operation_id:base.operationId,claim_token:'70000000-0000-4000-8000-000000000002',attempts:1},
+    dependencies={pool:{connect(){assert.fail('must not connect');}},sourceMode:'combined-witness2-v1',authorizeMarketData:()=>assert.fail('policy')},
+    method='continueOriginalFrozenCaptureJobCadCacheCoverageReferencesV2';
+  await assert.rejects(createCustomCohortContextCapture(dependencies)[method](base,{captureJobClaim:claim}),/CAD_source_policy_required/);
+  const service=createCustomCohortContextCapture({...dependencies,authorizeCadImprovementData:()=>assert.fail('CAD policy')});
+  for(const key of ['cursor','account_id','cadAccountPackagePage','progress','head','receipt','rows','count','done','sourceGrant','readOriginal','phase','leaseSeconds'])
+    await assert.rejects(service[method](base,{captureJobClaim:claim,[key]:{}}),/invalid_options/);
+  await assert.rejects(service[method](base,{get captureJobClaim(){assert.fail('getter');}}),/invalid_options/);
+  const controller=new AbortController();controller.abort();
+  await assert.rejects(service[method](base,{captureJobClaim:claim,signal:controller.signal}),/cancelled/);
+});
+
 for(const method of ['readOriginalFrozenCaptureJobCadAccountPackagesReferencesV2','readOriginalFrozenCaptureJobCadAmenityEvidenceReferencesV2',
   'cacheOriginalFrozenCaptureJobCadAccountReferencesV2'])
 test(`${method} admits only a cursor and separate current CAD policy before any connection`,async()=>{

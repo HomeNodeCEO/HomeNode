@@ -135,6 +135,8 @@ import { runNeighborhoodOriginalCadAccountPackageDatabaseChecks }
   from './helpers/neighborhoodOriginalCadAccountPackageDatabaseChecks.js';
 import { NEIGHBORHOOD_SCOPED_CAD_ORIGINAL_ACCOUNT_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodScopedCadOriginalAccountV2.js';
+import { runNeighborhoodCadCacheCoverageV2DatabaseChecks }
+  from './helpers/neighborhoodCadCacheCoverageV2DatabaseChecks.js';
 import { runNeighborhoodSelectedPacketByteGateDatabaseChecks }
   from './helpers/neighborhoodSelectedPacketByteGateDatabaseChecks.js';
 import { createCustomNeighborhoodCadImprovementSourcePolicy,CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_RIGHTS_KEY as CAD_RIGHTS_KEY,
@@ -8319,6 +8321,8 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
     await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,operation));
     await assert.rejects(withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSourceClosurePages(client,
       frozenSpatialOptions({...options,claim})).page({kind:'source_records',cursor:''})),/claim_lost/);
+    if(selectionWaitFixture===false)await runNeighborhoodCadCacheCoverageV2DatabaseChecks({pool,input:sourceInput,scope,actor,
+      authorizeMarketData:fixturePolicy(),authorizeCadImprovementData:fixtureCadPolicy()});
   }finally{
     console.info('[native-original-protocol-prepared-CI-queries]',{fixture:selectionWaitFixture,...preparedCiQueries.snapshot()});
     console.info('[native-original-protocol-query-timings]',{fixture:selectionWaitFixture,session:protocolQueryOptions,

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { runNeighborhoodBatchRecordedEligibilityV3DatabaseChecks } from './neighborhoodBatchRecordedEligibilityV3DatabaseChecks.js';
+import { runNeighborhoodNativeClaimPair as pair } from './neighborhoodNativeClaimPair.js';
 import { randomUUID } from 'node:crypto';
 import { withCustomCohortJobTransaction as tx } from '../../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
 import { createCustomCohortCaptureJobRepository as jobs } from '../../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
@@ -54,6 +55,7 @@ export async function runNeighborhoodBatchSelectedWorkersV3DatabaseChecks({pool,
     assert.equal(originalReads(),beforeHeartbeatReads);assert.equal(readFault(),null);
     throw heartbeatRollback;
   }),error=>error===heartbeatRollback);await unchanged();
+  console.info('[native-batch-selected-worker-step-v3]',{step:'actual-held-heartbeat-refusal-and-rollback-passed'});
   // These are separate, deliberately rolled-back owner operations under the
   // genuine resumed claim. Run them before the worker starts: placing seven
   // owner transactions inside one callback artificially raced its 15s timer.
@@ -66,6 +68,15 @@ export async function runNeighborhoodBatchSelectedWorkersV3DatabaseChecks({pool,
     if(fault==='union_role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);
     await unchanged();
   }
+  console.info('[native-batch-selected-worker-step-v3]',{step:'all-ending-original-and-COMMIT-refusals-passed'});
+  const claimRollback=Error('rollback held native initial claim'),beforeClaimReads=originalReads();
+  await assert.rejects(tx(pool,async client=>{
+    const [adopted]=await initialClaims(client).claimDue({leaseSeconds:900});assert.deepEqual(adopted.claim,claim);
+    await assert.rejects(service[method](input,{captureJobClaim:claim}),error=>error.code==='55P03'
+      &&error.message==='could not obtain lock on row in relation "neighborhood_custom_cohort_capture_jobs"');
+    assert.equal(originalReads(),beforeClaimReads);throw claimRollback;
+  }),error=>error===claimRollback);await unchanged();
+  console.info('[native-batch-selected-worker-step-v3]',{step:'actual-held-native-claim-refusal-and-rollback-passed'});
   const firstArgs={...args,cohortService:{async [method](value,options){
     try{
       initialCalls++;assert.deepEqual(options.captureJobClaim,claim);ownedDispatch=await dispatches();
@@ -75,9 +86,10 @@ export async function runNeighborhoodBatchSelectedWorkersV3DatabaseChecks({pool,
       try{return await service[method](value,options);}finally{assert.equal(originalReads(),reads+1);}
     }catch(error){ownerError=error;throw error;}
   }}};
-  const first=await Promise.all([initial(firstArgs),initial(firstArgs)]);
+  const first=await pair(initial,firstArgs,method);
   if(ownerError&&!ownerError.outcome_unknown)throw ownerError;
   assert.deepEqual(first.map(r=>r.status).sort(),['idle','outcome_unknown']);assert.equal(initialCalls,1);assert.equal(readFault(),null);
+  console.info('[native-batch-selected-worker-step-v3]',{step:'actual-concurrent-initial-claims-and-first-original-lost-ACK-passed'});
   let state=await union();assert.equal(state.head[0].sequence,1);assert.deepEqual(state.rows.map(r=>r.account_id),['CLOSURE-A']);
   assert.deepEqual(await dispatches(),ownedDispatch);await immutable();
   const firstJob=await job(),firstParent=await parent(),firstBlobs=await blobs();
@@ -91,7 +103,7 @@ export async function runNeighborhoodBatchSelectedWorkersV3DatabaseChecks({pool,
         const reads=originalReads();result=await service[method](value,options);assert.equal(originalReads(),reads+1);return result;
       }catch(error){nextError=error;throw error;}
     }}};
-    const steps=await Promise.all([progress(stepArgs),progress(stepArgs)]);if(nextError)throw nextError;
+    const steps=await pair(progress,stepArgs,method);if(nextError)throw nextError;
     assert.deepEqual(steps.map(r=>r.status).sort(),['continuation_pending','idle']);assert.equal(calls,1);claim=nextClaim;
     assert.equal(result.complete_distinct_selected_stock_union,sequence===3);assert.equal(result.selected_stock_accounts,2);
     assert.equal(result.catalog_receipt_format,'cohort_recorded_catalog_batch_receipt_v3');state=await union();
@@ -123,6 +135,8 @@ export async function runNeighborhoodBatchSelectedWorkersV3DatabaseChecks({pool,
     changed_pending_target_not_claimed_and_real_orphan_initial_adoption_COMMIT_refused:true,
     actual_heartbeat_row_lock_refused_before_original_IO_and_complete_rollback:true,
     separate_ending_refusals_before_worker_timer_and_normal_15s_heartbeat_retained:true,
+    concurrent_native_claim_transactions_settled_before_positive_original_owner:true,
+    actual_held_initial_claim_also_refuses_before_original_IO_and_rolls_back:true,
     concurrent_initial_adoption_once_preserves_actual_human_resume_token_and_failure5:true,
     every_original_ENTIRE_cache_partition_and_current_ending_workspace_source_actor_count_fence:true,
     actual_orphan_yield_rollback_and_lost_first_COMMIT_ACK:true,concurrent_B_and_separate_fresh_EMPTY_fresh_native_tokens:true,

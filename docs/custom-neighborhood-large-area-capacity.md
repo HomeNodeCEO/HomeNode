@@ -1,3 +1,34 @@
+## Native selected progress recovery (2026-10-16, authored, inactive)
+
+Actual native run 38968850062 (job 117201958477) passed 417 migrations,
+subject persistence and both early-owner cases, then 20 source-prefix cases
+before graph 34 refused its test assertion. The real fourth progress claim
+correctly committed its consumed continuation token before source IO; the
+fixture incorrectly compared that parent with the pre-claim NULL token. The
+correction requires the exact native claim token and all other parent fields
+unchanged, then requires the failed source owner to preserve that consumed
+parent. No production guard, claim, failure history or deadline changes. Fresh
+native verification is required; this failed head is not rerun unchanged.
+
+A new thirty-fourth independent capture reserves one failure slot for
+the ordinary batch selected progress worker. Initial adoption and original A
+commit on their genuine fourth attempt, including a lost actual COMMIT ACK.
+The real progress worker reads B's whole original packet and then loses its
+ending actor permission. Its actual failure retains attempt four, the original
+A head, checkpoint, immutable initial dispatch, native parents and pins. After
+restoring only the disposable fixture role and making the normal retry due,
+the stale token refuses before original IO. The ordinary native recovery path
+must obtain a fresh fifth token, commit B and a separate fresh EMPTY, while
+retaining the original fourth-attempt initial dispatch without inserting a new
+one. All earlier thirty-three graphs, their failure history and deadlines are
+unchanged. Production workers, heartbeat timers and the five-failure ceiling
+are unchanged. Focused tests are not execution of this PostgreSQL graph; native
+cloud verification remains pending. The 64 focused tests passed with zero
+failures, cancellations or skips; nine JavaScript syntax checks and the diff
+check also passed. Later evidence/numeric/economic worker
+recovery, economic resolution, quarters, publication, terminal pin transfer,
+licensed large-area acquisition and live speed acceptance remain open.
+
 # Complete larger-area Custom neighborhood studies
 
 ## Independent selected-worker ordinary recovery fixture (2026-10-16)

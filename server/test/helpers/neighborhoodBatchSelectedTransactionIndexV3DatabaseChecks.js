@@ -44,7 +44,7 @@ export async function runNeighborhoodBatchSelectedTransactionIndexV3DatabaseChec
       calls++;firstClaim=options.captureJobClaim;assert.equal(firstClaim.attempts,5);owned=await job();ownedParent=await parent();
       await assert.rejects(service.progressCoveredOriginalFrozenCaptureJobSelectedTransactionIndexReferencesV2(value,options),/invalid_receipt/);await unchanged();
       for(const [fault,reason] of [['transaction_index_cache',/original_mismatch/],
-        ['transaction_index_orphan',e=>e.outcome_unknown===true&&e.code==='55000'&&e.message==='neighborhood_selected_transaction_index_v2_orphan_progress']]){
+        ['transaction_index_orphan',e=>e.outcome_unknown===true&&e.code==='55000'&&e.message==='neighborhood_selected_transaction_index_v2_orphan_child']]){
         const count=originalReads();setFault(fault);await assert.rejects(service[method](value,options),reason);assert.equal(readFault(),null);
         assert.equal(originalReads(),count+1);await unchanged();
       }

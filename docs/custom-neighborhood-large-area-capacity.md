@@ -40,7 +40,12 @@ the exact current actor/organization role read and the exact assignment's three
 fixed material sections under the existing 1,500,000-byte cap. Both-end reads
 remain mandatory. Focused regression tests refuse spoofed tags, changed SQL,
 additional aggregates, expanded sections/caps, foreign scope and missing end
-reads. Population/original aggregates and spatial/job-typed paths still refuse.
+reads. It also checks the independent exact SQL of the existing bounded
+whole-original transport for ONE server-chosen stock account, its exact retained
+operation/generation/profile and unchanged 250-row and byte caps. All array,
+JSON/JSONB, object, string and XML aggregates and ARRAY(SELECT...) constructors
+must match these fixed shapes. Population aggregates, widened original packets
+and spatial/job-typed paths still refuse; scalar counts/sums remain allowed.
 The saved catalog head `d8a16a06` passed all four foundation38043277652 jobs.
 Its native114187630890 passed417 migration,1 subject,8 prepared-index,1 edge
 and2 bootstrap tests with zero failures/skips. Its actual catalog marker at

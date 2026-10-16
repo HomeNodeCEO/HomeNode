@@ -4,6 +4,7 @@ import { randomUUID,createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { prepareNeighborhoodCiDatabase } from './helpers/neighborhoodCiDatabase.js';
 import { assertBoundedCohortAuthorityAggregates } from './helpers/boundedCohortAuthorityAggregateAssertions.js';
+import { getNeighborhoodFrozenTypedOriginalV2Profile } from '../src/services/neighborhoodAssessment/neighborhoodFrozenTypedOriginalV1.js';
 import { NEIGHBORHOOD_CACHED_SOURCE_SCHEMA } from './fixtures/neighborhoodCachedSourceSchemaFixture.js';
 import { runNeighborhoodGroupIndex,getPreparedNeighborhoodGroupSummary }
   from '../src/services/neighborhoodAssessment/neighborhoodGroupIndex.js';
@@ -3666,7 +3667,9 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql,sql.includes('$1')?[refsOperation]:[])),/immutable|transition_conflict|prefix_conflict/);
     const catalogQueries=refsCalls.slice(catalogFrom);
     assertBoundedCohortAuthorityAggregates(catalogQueries.map((text,index)=>({text,values:refsQueryParameters[catalogFrom+index]})),
-      {actorUserId:actor,organizationId:organization,assignmentFileId:assignment});
+      {actorUserId:actor,organizationId:organization,assignmentFileId:assignment,
+        originals:{operationId:refsOperation,generationId:refsBinding.generation_id,
+          profileSha256:getNeighborhoodFrozenTypedOriginalV2Profile().profile_ref.content_sha256}});
     console.info('[native-original-recorded-catalog-issued-owner-v2]',{accounts:2,assigned_groups:1,assigned_accounts:1,unassigned_accounts:1,
       all_whole_originals_entire_neutral_cache_and_entire_partition_entries_replayed:true,outside_conflicting_candidates_not_promoted:true,
       native_exact_next_ordinal_orphan_summary_and_head_without_root_refused:true,current_ending_authority_cache_counts_fences:true,

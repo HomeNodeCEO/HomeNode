@@ -1,5 +1,20 @@
 # Complete larger-area Custom neighborhood studies
 
+## Housing profile review corrections (2026-10-15)
+
+Included review `821f07bc-7a70-44cd-aa7a-4de394f407f3` inspected all seven
+changed files against current main and identified two valid profile-definition
+issues. The dormant housing profile now hashes the same frozen Dallas/Dallas
+County list used by resolution, and row admission reads the profile's declared
+250-original limit. This refreshes the unpublished profile hash; retained
+mapping/housing interpretations, classification meanings and source rights
+are unchanged.
+
+All four affected focused housing checks pass, including exact 250-row
+admission, one-over refusal before row work and county-policy hash coverage.
+JavaScript syntax and diff checks pass. Fresh full cloud/native checks are
+required for this correction; earlier integrated-head results are historical.
+
 ## Protected CAD merge integrated into bounded housing (2026-10-10)
 
 PR #1241 exact `291f287da655f7025ccde93c3d3abfb9c7e76616` passed all

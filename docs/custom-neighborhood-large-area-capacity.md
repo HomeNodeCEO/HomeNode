@@ -1,5 +1,33 @@
 # Complete larger-area Custom neighborhood studies
 
+## Whole-account batch partition candidate (2026-10-16, not activated)
+
+The separate V3 partition owner requires the independently issued complete V3
+stock traversal. One existing whole-account original-reader budget replays up to
+eight accounts, including outside originals, full recorded labels and ENTIRE
+neutral caches. Each derived immutable entry retains its actual account ordinal;
+all entries share one receipt, native CAS head, eight-reference checkpoint and
+continuation. The receipt sequence remains independent of account ordinal, and
+a separate fresh EMPTY run is mandatory. Current and ending source-purpose,
+actor, assignment, private draft, subject, workspace and native-parent fences
+remain. Every later semantic consumer must reopen the originals and compare the
+ENTIRE derived entry; metadata counts or hashes confer no membership authority.
+
+The row/head/deferred native guards remain development fixtures only. Their
+legacy V2 branches retain the existing single-account rules. The inactive V3
+worker routes only exact V3 stock DONE or incomplete V3 partition receipts and
+excludes partition DONE from success, recovery and expiry. No migration registry,
+default dispatcher, source grant, genuine choice or pin transfer is activated.
+
+A nineteenth independently captured native scenario is authored, preserving all
+eighteen earlier scenarios and deadlines. It requires actual original/cache
+reconciliation, ending permission/workspace refusal, skipped native ordinal and
+orphan row/yield rollback, lost nonempty and EMPTY COMMIT acknowledgments, unchanged
+failure5 history and preserved native parents/reports/pins. Focused checks pass
+(170 tests, zero failures/skips, 1512.5306ms); actual new-head native/full cloud
+execution remains pending. Coherent batch catalog and publication, generic
+dispatcher audit, licensed acquisition and live speed acceptance remain open.
+
 ## Whole-account batch traversal candidate (2026-10-16, not activated)
 
 The separate V3 traversal path reuses the current-authorized whole-account

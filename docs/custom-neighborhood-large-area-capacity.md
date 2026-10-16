@@ -8248,3 +8248,47 @@ execution or licensed large-area/current-authority speed acceptance. Runtime
 owners and migration registration are unchanged; automatic CAD success/lease
 handoff, complete selected semantics/statistics/calendar quarters, publication
 and terminal pin transfer remain open.
+
+## Automatic CAD cache success before stock adoption (2026-10-16, inactive)
+
+An unregistered continuation lane composes neutral DONE, a separate actual CAD
+account pass, and first-stock adoption. Only the actual native neutral success
+parent and head, original six-reference job checkpoint and frozen-originals
+request may enroll. The native CAD head still chooses each exact next whole
+stock account; the same owner reads every primary and secondary original and
+reconciles its entire cache under the existing32MB/256-query/60s budget. Both-end
+CAD and market rights, database actor/assignment/private draft/subject, source,
+all original parents, live claim and cancellation checks remain mandatory.
+
+One new native CAD head and its continuation are issued in the same transaction
+as claim release. Fresh successful claims preserve the failure attempt and
+error history; only genuine retry/expired-claim recovery increments it, below
+the unchanged five-attempt ceiling. Native guards refuse orphan issuance,
+reused tokens, skipped progress, checkpoint changes, history refunds and release
+without the real head. The actual original lease expiration is stamped in the
+continuation and checked again at deferred COMMIT after the job lease is cleared.
+CAD DONE requires its own final EMPTY and is excluded from all CAD recovery.
+
+The stock repository and an additional native adoption guard now require that
+independent CAD DONE and retain its immutable receipt through a foreign key.
+Neutral DONE, a partial CAD pass, or a free caller reference cannot adopt stock.
+Native manual CAD admission remains separate. The neutral-parent capability
+under the CAD nonce exposes only a read; it cannot issue E progress. Migration
+20261218 refuses composition over an already-enrolled stock stage rather than
+rewriting historical rows. It remains unregistered until the complete dependency
+chain and activation prerequisites have actual review and release evidence.
+
+The existing independent automatic fixture authors concurrent single-claim
+enrollment, orphan claim/yield rollback, ending CAD/actor refusals, actual COMMIT
+after a saved short lease expires, real lost ACK, fresh B and EMPTY, DONE idle,
+unchanged neutral/main parents and first-stock adoption of the exact CAD receipt.
+The old downstream failure-history assertions still reach attempt five.
+An additional independent job replays its actual parents, fails its first CAD
+claim, commits A under fresh attempt two, then fails B through attempt five
+without overwriting A or admitting stock. No old head or receipt is rebound.
+Full cloud/native execution is pending; focused DATA/SQL doubles are not native or
+licensed proof. No original fixture deadline, matrix, budget or failure ceiling
+is increased. This does not complete selected amenities/economic transactions,
+statistics/calendar quarters, coherent publication, terminal pins or licensed
+large-area/Hardy speed acceptance. No dispatcher/default worker, scheduler,
+route, grant, appraiser choice, Apply, publication or pin transfer is activated.

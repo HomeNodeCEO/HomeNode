@@ -59,6 +59,8 @@ test('first-stock native routing requires actual completed cache and bounded gen
   assert.deepEqual(await r.claimDue({leaseSeconds:300}),[row]);
   const existing=calls.find(c=>c.sql.includes(':claim-existing')).sql,initial=calls.find(c=>c.sql.includes(':claim-initial')).sql;
   assert.match(existing,/neighborhood_cache_stock_v2_matches/);assert.match(existing,/job\.attempts<5/);assert.match(initial,/kind_index'='7'/);
+  assert.match(initial,/neighborhood_custom_cohort_cad_success_v2_jobs/);assert.match(initial,/done'='true'/);
+  assert.match(initial,/cad_reference/);assert.match(initial,/job.attempts=d.issued_attempts/);
   for(const sql of [existing,initial]){assert.match(sql,/LIMIT 1 FOR UPDATE OF job SKIP LOCKED/);assert.doesNotMatch(sql,/ST_DWithin|checkpoint=|attempts=0/);}
 });
 test('closed bridge options and implicit autocommit cannot adopt first-stock ownership',async()=>{

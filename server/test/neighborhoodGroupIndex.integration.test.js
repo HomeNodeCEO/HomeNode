@@ -2450,10 +2450,18 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         for(const name of ['20261207_custom_cohort_selected_initial_worker_v2.sql',
           '20261212_custom_cohort_neutral_cache_v2_heads.sql','20261213_custom_cohort_neutral_cache_success_v2.sql',
           '20261214_custom_cohort_cache_stock_bridge_v2.sql','20261215_custom_cohort_covered_partition_success_v2.sql',
-          '20261216_custom_cohort_covered_catalog_success_v2.sql'])
+          '20261216_custom_cohort_covered_catalog_success_v2.sql','20261217_custom_cohort_cad_cache_v2_heads.sql',
+          '20261218_custom_cohort_cad_cache_success_v2.sql'])
           await client.query(readFileSync(new URL(`../migrations/${name}`,import.meta.url),'utf8'));
       });
-      await runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData:fixturePolicy()});
+      const cadNow=(await pool.query(`WITH t AS (SELECT clock_timestamp() AS now) SELECT
+        to_char((now-interval '1 minute') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS past,
+        to_char((now+interval '1 hour') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS future FROM t`)).rows[0];
+      await setCadFixtureGrant(pool,organization,{...fixtureGrant(organization),grant_id:'synthetic-automatic-CAD-companion',purpose_scope:CAD_PURPOSE,
+        dataset:{...fixtureGrant(organization).dataset,id:CAD_DATASET},valid_from:cadNow.past,expires_at:cadNow.future,
+        rights_basis:{...fixtureGrant(organization).rights_basis,approved_at:cadNow.past}});
+      await runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData:fixturePolicy(),
+        authorizeCadImprovementData:fixtureCadPolicy()});
       return;
     }
     const earlyCounts={frozen_verify_refs_v2:0,frozen_geo_verify_refs_v2:0,frozen_identity_refs_v2:0};

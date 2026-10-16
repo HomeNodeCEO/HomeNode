@@ -11,6 +11,10 @@ import { runCustomCohortNeutralCacheV2JobOnce as runCache } from '../../src/serv
 import { withCustomCohortJobTransaction as tx } from '../../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
 import { NEIGHBORHOOD_SHARED_TYPED_V2_SQL as SQL } from '../../src/services/neighborhoodAssessment/neighborhoodSharedTypedGeneration.js';
 import { createCustomCohortCacheStockV2BridgeRepository as bridgeClaims } from '../../src/services/neighborhoodAssessment/customCohortCacheStockV2BridgeRepository.js';
+import { createCustomCohortCadCacheV2ContinuationRepository as cadClaims } from '../../src/services/neighborhoodAssessment/customCohortCadCacheV2ContinuationRepository.js';
+import { runCustomCohortCadCacheV2JobOnce as runCad } from '../../src/services/neighborhoodAssessment/customCohortCadCacheV2JobWorker.js';
+import { NEIGHBORHOOD_SCOPED_CAD_ORIGINAL_ACCOUNT_V2_SQL as CAD_PACKET } from '../../src/services/neighborhoodAssessment/neighborhoodScopedCadOriginalAccountV2.js';
+import { CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_RIGHTS_KEY as CAD_RIGHTS } from '../../src/security/customNeighborhoodCadImprovementSourcePolicy.js';
 import { runCustomCohortCacheStockV2JobOnce as runBridge } from '../../src/services/neighborhoodAssessment/customCohortCacheStockV2JobWorker.js';
 import { runCustomCohortCoveredStockV2JobOnce as runStock } from '../../src/services/neighborhoodAssessment/customCohortCoveredStockV2JobWorker.js';
 import { createCustomCohortCoveredStockV2WorkerRepository as stockClaims } from '../../src/services/neighborhoodAssessment/customCohortCoveredStockV2WorkerRepository.js';
@@ -30,26 +34,37 @@ import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL as TRAN
 
 /** Independent disposable job; all acquisition owners, authorization, original
  * queries, native issuance, savepoint rollback and COMMITs are real. */
-export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData}){
+export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData}){
   const input={...sourceInput,operationId:randomUUID()},operation=input.operationId;let fault=null,stockReads=0;
   const observed={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
     const text=typeof c==='string'?c:c.text,originalPacket=text===STOCK_PACKET||text===PAIRED_STOCK_PACKET||text===TRANSACTION_PACKET,
       orphan=fault==='orphan'&&text.includes('custom-cohort-neutral-success-v2:yield')
+      ||fault==='cad_orphan'&&text.includes('custom-cohort-CAD-success-v2:yield')
       ||fault==='bridge_orphan'&&text.includes('custom-cohort-cache-stock-v2:complete')
       ||['partition_orphan','catalog_orphan','union_orphan','eligibility_orphan'].includes(fault)&&text.includes('custom-cohort-v2-continuation:yield');
     if(orphan)await raw.query('SAVEPOINT synthetic_neutral_yield');
+    if(fault==='cad_commit_expiry'&&text.includes('custom-cohort-CAD-success-v2:yield')){
+      await raw.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()+interval '2 seconds' WHERE operation_id=$1",[operation]);
+      fault='cad_commit_expiry_after_yield';
+    }
+    if(fault==='cad_commit_expiry_after_yield'&&text==='COMMIT'){fault=null;await raw.query('SELECT pg_sleep(2.1)');}
     if(fault==='wait_missing'&&text.includes('custom-cohort-group-workspace:read')){fault=null;
       await raw.query("DELETE FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'",[scope.assignment_file_id]);}
     const result=await raw.query(c);
+    if(fault==='cad_role'&&text===CAD_PACKET){fault=null;
+      await raw.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[scope.organization_id,actor]);}
+    if(fault==='cad_deny'&&text===CAD_PACKET){fault=null;
+      await raw.query(`UPDATE app_auth.organizations SET metadata=jsonb_set(metadata,ARRAY[$2::text,'revoked_at'],
+        to_jsonb(to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))) WHERE id=$1`,[scope.organization_id,CAD_RIGHTS]);}
     if(originalPacket)stockReads++;
     if(orphan){fault=null;await raw.query('ROLLBACK TO SAVEPOINT synthetic_neutral_yield');await raw.query('RELEASE SAVEPOINT synthetic_neutral_yield');}
     if(['wait_workspace','intent_workspace','union_workspace','transaction_workspace'].includes(fault)&&originalPacket){fault=null;await raw.query(`UPDATE app.custom_appraisal_workfile_sections
       SET section_value=jsonb_set(section_value,'{pending_capture,operation_id}',to_jsonb($2::text))
       WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`,[scope.assignment_file_id,randomUUID()]);}
     if(fault==='role'&&text===SQL.insert||['bridge_role','partition_role','catalog_role','wait_role','intent_role','union_role','transaction_role'].includes(fault)&&originalPacket){fault=null;await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[scope.organization_id,actor]);}
-    if(['ack','bridge_ack','partition_ack','catalog_ack','wait_ack','intent_ack','union_ack','eligibility_ack','transaction_ack'].includes(fault)&&text==='COMMIT'){fault=null;throw Error('lost actual original owner COMMIT ACK');}
+    if(['ack','cad_ack','bridge_ack','partition_ack','catalog_ack','wait_ack','intent_ack','union_ack','eligibility_ack','transaction_ack'].includes(fault)&&text==='COMMIT'){fault=null;throw Error('lost actual original owner COMMIT ACK');}
     return result;
-  }};}},service=createCustomCohortContextCapture({pool:observed,sourceMode:'combined-witness2-v1',authorizeMarketData}),
+  }};}},service=createCustomCohortContextCapture({pool:observed,sourceMode:'combined-witness2-v1',authorizeMarketData,authorizeCadImprovementData}),
     args={pool,cohortService:service,leaseSeconds:900},job=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[operation])).rows[0],
     cacheState=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_neutral_success_v2_jobs WHERE operation_id=$1',[operation])).rows[0],
     head=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_neutral_cache_v2_heads WHERE operation_id=$1',[operation])).rows[0],
@@ -119,9 +134,49 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   const stockHead=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_stock_traversal_v2_anchors WHERE operation_id=$1',[operation])).rows[0],
     bridgeState=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_cache_stock_v2_bridges WHERE operation_id=$1',[operation])).rows[0];
   assert.equal(await stockHead(),undefined);assert.equal(await bridgeState(),undefined);
+  assert.deepEqual(await tx(pool,client=>bridgeClaims(client).claimDue({leaseSeconds:900})),[],
+    'neutral DONE alone cannot adopt stock before independent CAD DONE');
+  const cadState=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_cad_success_v2_jobs WHERE operation_id=$1',[operation])).rows[0],
+    cadHead=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_cad_cache_v2_heads WHERE operation_id=$1',[operation])).rows[0];
+  const firstCadRows=(await Promise.all([1,2].map(()=>tx(pool,client=>cadClaims(client).claimDue({leaseSeconds:900}))))).flat();
+  assert.equal(firstCadRows.length,1);const firstCad=firstCadRows[0].claim;
+  assert.equal(firstCad.attempts,3);assert.notEqual(firstCad.claim_token,complete.issued_claim_token);
+  const initialCad=await cadState(),cadJob=await job();assert.equal(initialCad.sequence,0);assert.equal(await cadHead(),undefined);
+  await assert.rejects(tx(pool,async client=>{
+    await client.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);
+    await client.query('UPDATE app.neighborhood_custom_cohort_cad_success_v2_jobs SET consumed_claim_token=gen_random_uuid(),consumed_attempts=4 WHERE operation_id=$1',[operation]);
+  }),e=>e.code==='55000'&&/cad_success_v2_commit_conflict/.test(e.message));
+  assert.deepEqual(await cadState(),initialCad);assert.deepEqual(await job(),cadJob);
+  for(const [mode,reason] of [['cad_orphan',e=>e.outcome_unknown===true&&e.code==='55000'],
+    ['cad_role',/job_actor_access_revoked/],['cad_deny',/market_data_access_denied/],
+    ['cad_commit_expiry',e=>e.outcome_unknown===true&&e.code==='55000']]){
+    fault=mode;await assert.rejects(service.continueFrozenCaptureJobCadOriginalsReferencesV2(input,{captureJobClaim:firstCad}),reason);
+    assert.equal(fault,null);assert.equal(await cadHead(),undefined);assert.deepEqual(await cadState(),initialCad);
+    assert.deepEqual(await job(),cadJob);assert.deepEqual(await cacheState(),complete);assert.deepEqual(await head(),nativeHead);
+  }
+  fault='cad_ack';await assert.rejects(service.continueFrozenCaptureJobCadOriginalsReferencesV2(input,{captureJobClaim:firstCad}),e=>e.outcome_unknown===true);
+  assert.equal(fault,null);assert.equal((await cadState()).sequence,1);assert.equal((await job()).attempts,3);
+  assert.deepEqual(await tx(pool,client=>bridgeClaims(client).claimDue({leaseSeconds:900})),[],'partial CAD cannot adopt stock');
+  await assert.rejects(service.continueFrozenCaptureJobCadOriginalsReferencesV2(input,{captureJobClaim:firstCad}),/claim_lost/);
+  for(let i=0;i<2;i++)assert.equal((await runCad(args)).status,'continuation_pending');
+  const completedCad=await cadState(),completedCadHead=await cadHead(),completedCadJob=await job();
+  assert.equal(completedCad.sequence,3);assert.equal(completedCadHead.sequence,3);assert.equal(completedCad.consumed_claim_token,null);
+  const cadBody=JSON.parse((await pool.query('SELECT canonical_utf8 FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1 AND content_sha256=$2',
+    [scope.organization_id,completedCad.receipt_reference.content_sha256])).rows[0].canonical_utf8);
+  assert.equal(cadBody.after.done,true);assert.equal(cadBody.after.account_count,2);assert.equal(cadBody.after.original_count,5);
+  assert.equal(completedCadJob.attempts,3);assert.equal(completedCadJob.last_error_code,'access_revoked');
+  assert.deepEqual(completedCadJob.checkpoint,completedJob.checkpoint);assert.deepEqual(await cacheState(),complete);assert.deepEqual(await head(),nativeHead);
+  assert.deepEqual(await runCad(args),{status:'idle'});assert.deepEqual(await job(),completedCadJob);
+  console.info('[native-automatic-CAD-cache-success-handoff-v2]',{actual_accounts:2,actual_originals:5,
+    neutral_DONE_missing_or_partial_CAD_cannot_adopt_stock:true,concurrent_single_fresh_claim:true,
+    every_original_and_entire_cache_current_and_ending_CAD_actor_fences:true,orphan_claim_and_yield_refused:true,
+    actual_COMMIT_after_saved_lease_deadline_refused:true,lost_real_COMMIT_ACK_fresh_next_account:true,
+    separate_terminal_EMPTY_and_DONE_idle:true,success_preserves_failure_attempt:3,neutral_and_main_parent_unchanged:true,
+    automatic_schedule:false,licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
   const adopted=(await Promise.all([1,2].map(()=>tx(pool,client=>bridgeClaims(client).claimDue({leaseSeconds:900}))))).flat();
   assert.equal(adopted.length,1);const adoptedClaim=adopted[0].claim;
   assert.equal(adoptedClaim.attempts,3);assert.notEqual(adoptedClaim.claim_token,complete.issued_claim_token);
+  assert.deepEqual((await bridgeState()).cad_reference,completedCad.receipt_reference);assert.notEqual(adoptedClaim.claim_token,completedCad.issued_claim_token);
   assert.notEqual(adoptedClaim.claim_token,complete.initial_claim_token);assert.equal((await parent()).sequence,parentBefore.sequence);
   const adoptedState=await bridgeState(),adoptedJob=await job(),adoptedParent=await parent();
   await assert.rejects(tx(pool,async client=>{
@@ -582,7 +637,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     subject_housing_and_nonempty_first_eligibility_readonly_no_lease_extension:true,
     real_expired_cancelled_human_lease_native_claim_expiry_probe_rolled_back_without_revival:true,
     completed_workers_leave_later_owner_including_expired_cancelled_untouched:true,
-    global_header_still_building:true,nonempty_selected_metric_population:false,CAD_companion:false,
+    global_header_still_building:true,nonempty_selected_metric_population:false,selected_CAD_amenity_consumption:false,
     default_worker_activation:false,licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
   console.info('[native-covered-nonempty-recorded-comparisons-v2]',{
     actual_original_source_fixture_captured_before_roots_caches_and_heads:true,
@@ -593,7 +648,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     native_complete_counts:{reported_year_built:1,reported_residential_area:1,reported_site_area:2},
     separate_fresh_EMPTY_preserves_counts_without_addition_or_refund:true,
     currency_and_economic_unit_not_established:true,native_parents_pins_history_and_human_command_preserved:true,
-    nonempty_selected_metric_population:false,CAD_companion:false,complete_semantics:false,
+    nonempty_selected_metric_population:false,selected_CAD_amenity_consumption:false,complete_semantics:false,
     default_worker_activation:false,licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
   console.info('[native-covered-nonempty-selection-v2]',{explicit_fixture_assigned_and_unassigned_groups:2,
     actual_distinct_selected_stock_accounts:2,complete_native_union_rows_match_entire_fixture_stock:true,
@@ -601,14 +656,14 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     actual_worker_eligibility_originals_at_selected_ordinals_one_and_two_plus_fresh_EMPTY:true,
     native_eligibility_sequence_three_and_terminal_selected_ordinal_two:true,immutable_human_command_and_failure_history_preserved:true,
     original_native_parents_workspace_reports_and_pins_preserved:true,global_header_still_building:true,
-    nonempty_selected_metric_population:false,CAD_companion:false,complete_semantics:false,
+    nonempty_selected_metric_population:false,selected_CAD_amenity_consumption:false,complete_semantics:false,
     default_worker_activation:false,licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
   console.info('[native-covered-first-selected-transactions-v2]',{server_owned_first_native_selected_ordinal_one:true,
     actual_whole_stock_subject_all_date_transaction_originals_and_entire_cache_reopened:true,
     entire_partition_catalog_and_immutable_human_command_reconciled:true,native_packages_and_original_counts_retained_without_truncation:true,
     real_ending_workspace_and_role_refusal:true,lost_actual_readonly_COMMIT_ACK_fresh_reopen_identical:true,
     no_job_head_union_groups_intent_workspace_or_lease_mutation:true,one_existing_original_query_transport_and_runtime_budget:true,
-    global_header_still_building:true,separate_CAD_companion:false,economic_equivalence:false,
+    global_header_still_building:true,separate_selected_CAD_amenity_consumption:false,economic_equivalence:false,
     complete_selected_union_transactions:false,calendar_quarters:false,statistics:false,
     default_worker_activation:false,licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
   console.info('[native-covered-selected-initial-worker-v2]',{missing_human_command_idle_without_claim:true,
@@ -618,7 +673,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     orphan_union_yield_real_COMMIT_refused:true,lost_actual_union_COMMIT_ACK_not_downgraded:true,
     successful_first_union_at_failure_ceiling:5,error_history_native_parents_and_human_choice_preserved:true,
     adoption_exactly_once_and_later_selected_owner_including_expired_cancelled_untouched:true,
-    global_header_still_building:true,nonempty_selected_metric_population:false,CAD_companion:false,
+    global_header_still_building:true,nonempty_selected_metric_population:false,selected_CAD_amenity_consumption:false,
     default_worker_activation:false,licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
   console.info('[native-covered-selected-progress-worker-v2]',{actual_native_fresh_union_claim_for_each_original_and_EMPTY:true,
     concurrent_worker_idle_at_real_owner_live_lease:true,success_at_failure_ceiling:5,error_history_and_immutable_command_preserved:true,
@@ -626,7 +681,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     subject_and_first_eligibility_readonly_under_actual_worker_claim:true,orphan_eligibility_yield_actual_COMMIT_refused:true,
     lost_real_eligibility_COMMIT_ACK_not_downgraded:true,eligibility_DONE_repeated_idle:true,
     later_owner_including_expired_cancelled_claim_and_expiry_untouched:true,original_native_parents_and_pins_preserved:true,
-    global_header_still_building:true,nonempty_selected_metric_population:false,CAD_companion:false,
+    global_header_still_building:true,nonempty_selected_metric_population:false,selected_CAD_amenity_consumption:false,
     default_worker_activation:false,licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
   await tx(pool,client=>jobs(client).cancel(scope,operation));const cancelled=await job();
   assert.deepEqual(await runCache(args),{status:'idle'});assert.deepEqual(await job(),cancelled);
@@ -639,4 +694,36 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     generic_main_cannot_steal_identity_DONE:true,main_continuation_sequence_unchanged:true,cache_DONE_recovery_and_next_owner_claim_excluded:true,
     reports_and_pin_unchanged:true,assignment_unchanged_except_explicit_pending_command_timestamp:true,
     reader_handoff:false,licensed_large_area:false,production_speed:false,pin_transfer:false});
+  // A second independent actual job, never a cloned/rebound receipt or head.
+  // Its own original parents prove genuine CAD recovery and the terminal cap
+  // without removing any pre-existing downstream failure-history assertions.
+  const recoveryInput={...sourceInput,operationId:randomUUID()},recoveryOperation=recoveryInput.operationId,
+    recoveryJob=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[recoveryOperation])).rows[0],
+    recoveryHead=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_cad_cache_v2_heads WHERE operation_id=$1',[recoveryOperation])).rows[0];
+  await service.queueFrozenOriginalCaptureJobV2(recoveryInput);assert.equal((await runInitial(args)).status,'continuation_pending');
+  for(const [worker,limit] of [[runPrefix,12],[runEarly,100],[runCache,50]]){
+    let idle=false;for(let i=0;i<limit;i++){const r=await worker(args);if(r.status==='idle'){idle=true;break;}assert.equal(r.status,'continuation_pending');}
+    assert.equal(idle,true,'the independent recovery fixture must finish its actual parent lane');
+  }
+  const recoveryParent=(await recoveryJob()).checkpoint;
+  fault='cad_deny';assert.equal((await runCad(args)).reason,'capture_failed');assert.equal(fault,null);
+  assert.equal((await recoveryJob()).attempts,1);assert.equal(await recoveryHead(),undefined);
+  await pool.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET run_after=clock_timestamp() WHERE operation_id=$1',[recoveryOperation]);
+  assert.equal((await runCad(args)).status,'continuation_pending');const retainedRecoveryHead=await recoveryHead();
+  assert.equal(retainedRecoveryHead.sequence,1);assert.equal((await recoveryJob()).attempts,2);
+  assert.equal((await recoveryJob()).last_error_code,'capture_failed');
+  for(const attempt of [2,3,4,5]){
+    fault='cad_deny';const r=await runCad(args);assert.equal(r.reason,'capture_failed');assert.equal(fault,null);
+    assert.equal(r.status,attempt===5?'failed':'retry');assert.equal((await recoveryJob()).attempts,attempt);
+    assert.deepEqual(await recoveryHead(),retainedRecoveryHead,'failed B never refunds or overwrites committed A');
+    if(attempt<5)await pool.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET run_after=clock_timestamp() WHERE operation_id=$1',[recoveryOperation]);
+  }
+  const terminalRecovery=await recoveryJob();assert.equal(terminalRecovery.status,'failed');assert.equal(terminalRecovery.context_sha256,null);
+  assert.deepEqual(terminalRecovery.checkpoint,recoveryParent);assert.equal(terminalRecovery.last_error_code,'capture_failed');
+  assert.deepEqual(await runCad(args),{status:'idle'});assert.deepEqual(await tx(pool,client=>bridgeClaims(client).claimDue({leaseSeconds:900})),[]);
+  assert.deepEqual(await recoveryJob(),terminalRecovery);assert.deepEqual(await protectedRows(),protectedBefore);
+  console.info('[native-automatic-CAD-genuine-recovery-five-failure-v2]',{independent_original_job_and_native_parents:true,
+    first_failure_fresh_attempt2_and_real_A_success:true,committed_A_preserved_across_four_failed_B_claims:true,
+    unchanged_five_failure_terminal_and_error_history:true,no_CAD_DONE_stock_adoption_context_or_pin_transfer:true,
+    original_checkpoint_unchanged:true,licensed_large_area:false,production_speed:false});
 }

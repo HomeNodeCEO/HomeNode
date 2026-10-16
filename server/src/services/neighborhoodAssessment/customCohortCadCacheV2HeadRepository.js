@@ -9,9 +9,7 @@ const same=(a,b)=>json(a)===json(b),UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]
 const FENCE=`job.operation_id=$1::uuid AND job.claim_token=$2::uuid AND job.attempts=$3::integer
   AND job.organization_id=$4::uuid AND job.report_file_id=$5::uuid AND job.assignment_file_id=$6::bigint
   AND job.account_id=$7 AND job.actor_user_id=$8::uuid AND job.status='running'
-  AND job.lease_expires_at>clock_timestamp() AND job.cancellation_requested_at IS NULL
-  AND job.request_payload->>'execution_mode' IS NULL
-  AND NOT EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_v2_continuations c WHERE c.operation_id=job.operation_id)`;
+  AND job.lease_expires_at>clock_timestamp() AND job.cancellation_requested_at IS NULL`;
 function data(v,keys){if(!v||isProxy(v)||Object.getPrototypeOf(v)!==Object.prototype)fail('invalid_input');
   const ds=Object.getOwnPropertyDescriptors(v);if(Reflect.ownKeys(ds).length!==keys.length
     ||!keys.every(k=>ds[k]?.enumerable&&Object.hasOwn(ds[k],'value')))fail('invalid_input');return Object.fromEntries(keys.map(k=>[k,ds[k].value]));}
@@ -27,6 +25,12 @@ const one=r=>{if(r?.rowCount!==1||r.rows?.length!==1)fail('claim_lost');return r
  * owner still replays every original/whole cache and both-end source rights.
  * No automatic enrollment, claim release, job phase or pin transfer. */
 export function createCustomCohortCadCacheV2HeadRepository(raw){
+  return repository(raw,false);
+}
+export function createCustomCohortCadCacheV2AutomaticHeadRepository(raw){
+  return repository(raw,true);
+}
+function repository(raw,automatic){
   const o=data(raw,['client','claim','scope','actorUserId',...BINDINGS]),{client,actorUserId}=o,
     claim=prepareCustomCohortCaptureJobClaim(o.claim),scope=data(o.scope,['organization_id','report_file_id','assignment_file_id','account_id']);
   if(typeof client?.query!=='function'||![scope.organization_id,scope.report_file_id,actorUserId].every(v=>typeof v==='string'&&UUID.test(v))
@@ -34,11 +38,14 @@ export function createCustomCohortCadCacheV2HeadRepository(raw){
     ||typeof scope.account_id!=='string'||!scope.account_id||!scope.account_id.isWellFormed()||Buffer.byteLength(scope.account_id)>64
     ||scope.account_id!==scope.account_id.trim()||/[\u0000-\u001f\u007f]/.test(scope.account_id))fail('invalid_scope');
   const frozen=Object.fromEntries(BINDINGS.map(k=>[k,ref(o[k])])),values=[claim.operation_id,claim.claim_token,claim.attempts,
-    scope.organization_id,scope.report_file_id,scope.assignment_file_id,scope.account_id,actorUserId];
+    scope.organization_id,scope.report_file_id,scope.assignment_file_id,scope.account_id,actorUserId],
+    mode=automatic?'app.neighborhood_cad_success_v2_matches(job.operation_id,job.organization_id,job.claim_token,job.attempts)'
+      :"job.request_payload->>'execution_mode' IS NULL AND NOT EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_v2_continuations c WHERE c.operation_id=job.operation_id)",
+    fence=`${FENCE} AND ${mode}`;
   const read=async()=>{const row=one(await client.query(`/* custom-cohort-CAD-cache-v2:anchor-read */
     SELECT ${BINDINGS.map(k=>`h.${k}`).join(',')},h.receipt_reference,h.sequence
     FROM app.neighborhood_custom_cohort_capture_jobs job
-    LEFT JOIN app.neighborhood_custom_cohort_cad_cache_v2_heads h ON h.operation_id=job.operation_id WHERE ${FENCE}`,values));
+    LEFT JOIN app.neighborhood_custom_cohort_cad_cache_v2_heads h ON h.operation_id=job.operation_id WHERE ${fence}`,values));
     if([...BINDINGS,'receipt_reference','sequence'].every(k=>row[k]===null))return null;
     const h=anchor(row);if(!BINDINGS.every(k=>same(h[k],frozen[k])))fail('binding_changed');return h;};
   const tx=async()=>{const id=one(await client.query('/* custom-cohort-CAD-cache-v2:transaction */ SELECT txid_current()::text AS transaction_id')).transaction_id;
@@ -52,11 +59,11 @@ export function createCustomCohortCadCacheV2HeadRepository(raw){
       INSERT INTO app.neighborhood_custom_cohort_cad_cache_v2_heads
         (operation_id,organization_id,${BINDINGS.join(',')},receipt_reference,sequence)
       SELECT job.operation_id,job.organization_id,${BINDINGS.map((_,i)=>`$${i+9}::jsonb`).join(',')},$16::jsonb,1
-      FROM app.neighborhood_custom_cohort_capture_jobs job WHERE ${FENCE} ON CONFLICT(operation_id) DO NOTHING RETURNING sequence`,
+      FROM app.neighborhood_custom_cohort_capture_jobs job WHERE ${fence} ON CONFLICT(operation_id) DO NOTHING RETURNING sequence`,
     [...values,...bound,json(receipt)])
       :await client.query(`/* custom-cohort-CAD-cache-v2:anchor-advance */
         UPDATE app.neighborhood_custom_cohort_cad_cache_v2_heads h SET receipt_reference=$9::jsonb,sequence=$10::integer
-        FROM app.neighborhood_custom_cohort_capture_jobs job WHERE ${FENCE}
+        FROM app.neighborhood_custom_cohort_capture_jobs job WHERE ${fence}
           AND h.operation_id=job.operation_id AND h.organization_id=job.organization_id
           AND ${BINDINGS.map((k,i)=>`h.${k}=$${i+11}::jsonb`).join(' AND ')}
           AND h.receipt_reference=$18::jsonb AND h.sequence=$19::integer RETURNING h.sequence`,

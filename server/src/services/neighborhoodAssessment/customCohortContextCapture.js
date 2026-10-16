@@ -40,7 +40,8 @@ import { getNeighborhoodFrozenTypedOriginalV1Profile,getNeighborhoodFrozenTypedO
 import { createNeighborhoodSharedTypedOriginalPageV2,NEIGHBORHOOD_SHARED_TYPED_CAD_SQL,prepareNeighborhoodSharedTypedCadSource }
   from './neighborhoodSharedTypedGeneration.js';
 import { getNeighborhoodFrozenTypedCadImprovementV1Profile } from './neighborhoodFrozenTypedCadImprovementV1.js';
-import { createCustomCohortCadCacheV2HeadRepository } from './customCohortCadCacheV2HeadRepository.js';
+import { createCustomCohortCadCacheV2HeadRepository,createCustomCohortCadCacheV2AutomaticHeadRepository } from './customCohortCadCacheV2HeadRepository.js';
+import { createCustomCohortCadCacheV2ContinuationRepository } from './customCohortCadCacheV2ContinuationRepository.js';
 import { prepareCohortCadCacheCoverageReceiptV2,initialCohortCadCacheCoverageV2State } from './cohortCadCacheCoverageReceiptV2.js';
 import { createNeighborhoodFrozenJobStockMetricPages, createNeighborhoodSharedJobStockMetricPages,
   createNeighborhoodSharedJobStockMetricPagesV2, prepareNeighborhoodFrozenStockMetricPage }
@@ -71,7 +72,8 @@ import { createCustomCohortIdentityV2AnchorRepository } from './customCohortIden
 import { prepareCohortSourceIdentityReceiptV2 } from './cohortSourceIdentityReceiptV2.js';
 import { prepareCohortStockTraversalReceiptV2 } from './cohortStockTraversalReceiptV2.js';
 import { createCustomCohortStockTraversalV2AnchorRepository } from './customCohortStockTraversalV2AnchorRepository.js';
-import { createCustomCohortNeutralCacheV2HeadRepository,createCustomCohortNeutralCacheV2AutomaticHeadRepository } from './customCohortNeutralCacheV2HeadRepository.js';
+import { createCustomCohortNeutralCacheV2HeadRepository,createCustomCohortNeutralCacheV2AutomaticHeadRepository,
+  createCustomCohortNeutralCacheV2CadParentHeadRepository } from './customCohortNeutralCacheV2HeadRepository.js';
 import { createCustomCohortNeutralCacheV2ContinuationRepository } from './customCohortNeutralCacheV2ContinuationRepository.js';
 import { prepareCohortRecordedGroupPartitionReceiptV2 } from './cohortRecordedGroupPartitionReceiptV2.js';
 import { createCustomCohortRecordedPartitionV2Repository } from './customCohortRecordedPartitionV2Repository.js';
@@ -239,6 +241,8 @@ const FROZEN_SOURCE_STAGES = freeze({
     allowedPhases: ['frozen_identity_refs_v2'] },
   cache_CAD_coverage_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingCadPages: true, cachingCadCoverage: true, allowedPhases: ['frozen_identity_refs_v2'] },
+  continue_CAD_coverage_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    readingCadPages: true, cachingCadCoverage: true, yieldingCadProgress: true, allowedPhases: ['frozen_identity_refs_v2'] },
   covered_first_CAD_amenities_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingCadPages: true, cachingCadCoverage: true, readingCoveredCadAmenities: true, allowedPhases: ['frozen_identity_refs_v2'] },
   original_CAD_amenity_evidence_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
@@ -1871,7 +1875,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       fail('frozen_source_representation_unsupported');
     const {referencesV2=false,issuingSourcePrefix=false,yieldingSourcePrefix=false,verifying=false,stockVerifying=false,identityVerifying=false,yieldingEarlyProgress=false,
       typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,cachingNeutralOriginals=false,yieldingNeutralProgress=false,
-      readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,cachingCadOriginals=false,cachingCadCoverage=false,readingCoveredCadAmenities=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
+      readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,cachingCadOriginals=false,cachingCadCoverage=false,yieldingCadProgress=false,readingCoveredCadAmenities=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,coveredNeutralOriginals=false,cacheStockHandoff=false,
       resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,partitioningRecordedGroups=false,
       readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,readingSelectedUnionFirstEligibility=false,readingSelectedUnionFirstAmenities=false,readingSelectedUnionFirstTransactions=false,progressingSelectedEligibility=false,progressingSelectedEvidence=false,readingSelectedMetricSource=false,progressingSelectedMetrics=false,readingSelectedStatisticsSource=false,progressingSelectedStatistics=false,readingSelectedFrequencySource=false,readingSelectedNumericSource=false,progressingSelectedNumeric=false,readingSelectedRankCandidates=false,progressingSelectedSemantic=false,readingSelectedTransactionSource=false,preparingSelectedTransactionFirstCandidate=false,readingSelectedTransactionIndex=false,progressingSelectedTransactionIndex=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
@@ -1944,7 +1948,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(!sameFrozenRequest(await jobs.readRequest(claim,jobOptions),requested)) fail('operation_conflict');
       // This is one manual cache operation, not durable automatic coverage.
       // An enrolled job must wait for a separately guarded CAD success bridge.
-      const assertManualCadCache=async()=>{if(cachingCadCoverage||cachingCadOriginals){
+      const cadContinuation=yieldingCadProgress?createCustomCohortCadCacheV2ContinuationRepository(client):null;
+      const assertManualCadCache=async()=>{if((cachingCadCoverage||cachingCadOriginals)&&!yieldingCadProgress){
         const manualResult=await client.query(`/* custom-cohort-CAD-cache-account-v2:manual */
           SELECT job.request_payload->>'execution_mode' IS NULL
             AND NOT EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_v2_continuations c WHERE c.operation_id=job.operation_id) AS allowed
@@ -1958,6 +1963,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         if(manual.allowed!==true)fail('CAD_automatic_handoff_unavailable');
       }};
       await assertManualCadCache();
+      if(cadContinuation)await cadContinuation.assertClaim(claim,jobOptions);
       if(readingSelectionWorkspaceTarget||awaitingSelection||readingRetainedSelectionIntent||replayingSelectedUnion){
         if(readingRetainedSelectionIntent||replayingSelectedUnion)authorizePublicCadastralCatalogRead(input.auth,input.accountId,{workflows:['custom_appraisal'],
           permissionChecker:(auth,workflow,permission)=>hasApplicationPermission(auth,workflow,permission,scope.organization_id)});
@@ -2381,7 +2387,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           profile_reference:getNeighborhoodFrozenTypedOriginalV2Profile().definition_blob.ref};
         const refs={source_reference:reference,root_reference:root,graph_reference:verificationReference,
           geographic_reference:stockVerificationReference,identity_reference:identityVerificationReference,stock_reference:stockReference};
-        cadCoverageNeutralStore=createCustomCohortNeutralCacheV2HeadRepository({client,claim,scope,actorUserId:input.auth.userId,...refs});
+        const createCadNeutral=yieldingCadProgress?createCustomCohortNeutralCacheV2CadParentHeadRepository:createCustomCohortNeutralCacheV2HeadRepository;
+        cadCoverageNeutralStore=createCadNeutral({client,claim,scope,actorUserId:input.auth.userId,...refs});
         cadCoverageNeutralHead=await cadCoverageNeutralStore.read();if(!cadCoverageNeutralHead)fail('CAD_neutral_coverage_unavailable');
         const text=await blobs.get(cadCoverageNeutralHead.receipt_reference.content_sha256,cadCoverageNeutralHead.receipt_reference.canonical_utf8_bytes);
         if(text===null||Buffer.byteLength(text)>16000)fail('checkpoint_conflict');
@@ -2394,7 +2401,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         cadCoverageExpected={binding,...refs,neutral_reference:cadCoverageNeutralHead.receipt_reference,
           typed_profile_reference:getNeighborhoodFrozenTypedCadImprovementV1Profile().definition_blob.ref,
           cad_source_metadata:cadSource,cad_purpose:cadPurpose,cad_decision:cadDecision,stock_account_count:stock.population.account_count};
-        cadCoverageStore=createCustomCohortCadCacheV2HeadRepository({client,claim,scope,actorUserId:input.auth.userId,
+        const createCadHead=yieldingCadProgress?createCustomCohortCadCacheV2AutomaticHeadRepository:createCustomCohortCadCacheV2HeadRepository;
+        cadCoverageStore=createCadHead({client,claim,scope,actorUserId:input.auth.userId,
           ...refs,neutral_reference:cadCoverageNeutralHead.receipt_reference});
         cadCoverageHead=await cadCoverageStore.read();
         if(cadCoverageHead){
@@ -3267,6 +3275,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(readingCadSource&&!same(await boundedPolicy(authorizeCadImprovementData,client,input.auth,context,cadPurpose,budget),cadDecision))
         fail('CAD_source_policy_changed');
       await assertManualCadCache();
+      if(cadContinuation)await cadContinuation.assertClaim(claim,jobOptions);
       if(!sameFrozenRequest(await jobs.readRequest(claim,jobOptions),requested)||!same(await stockStore.read(),stock)) fail('checkpoint_conflict');
       if(!same((await chain.describe(root)).layers,prefix.layers)) fail('checkpoint_conflict');
       if(sourcePrefixStore&&!same(await sourcePrefixStore.read(),sourcePrefixHead))fail('checkpoint_conflict');
@@ -3302,13 +3311,17 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           if(Buffer.byteLength(JSON.stringify(result))>16_000)fail('byte_limit');budget.check();return freeze(result);
         }
         if(cadCoveragePlan){const ref=await blobs.put(canonicalAssessmentJson(cadCoveragePlan));cadCoverageHead=await cadCoverageStore.advance(cadCoverageHead,ref);}
-        budget.check();return freeze({status:'current_authorized_CAD_cache_coverage_progress_v2',operation_id:input.operationId,
+        if(yieldingCadProgress&&!cadCoveragePlan)fail('CAD_coverage_changed');
+        const continuation=yieldingCadProgress?await cadContinuation.yieldIssued(claim,jobOptions):null;
+        const result={status:'current_authorized_CAD_cache_coverage_progress_v2',operation_id:input.operationId,
           advanced:cadCoveragePlan!==null,cache_coverage_reference:cadCoverageHead.receipt_reference,
           neutral_reference:cadCoverageNeutralHead.receipt_reference,progress:(cadCoveragePlan??cadCoverageIssued).after,
           reconciled_rows:cadCoverageResult.reconciled_rows,inserted_rows:cadCoverageResult.inserted_rows,
           CAD_source_authorization:{purpose:cadPurpose,decision:cadDecision},
+          ...(yieldingCadProgress?{automatic_CAD_cache_success:true,continuation}:{}),
           global_progress_advanced:false,automatic_handoff:false,context_complete:false,pin_transfer:false,source_acquisition:'not_established',
-          publication:'not_established',report_update:'none'});
+          publication:'not_established',report_update:'none'};
+        if(Buffer.byteLength(JSON.stringify(result))>16000)fail('byte_limit');budget.check();return freeze(result);
       }
       if(cachingNeutralOriginals){
         // Every actual actor/assignment/draft/subject/source/claim/stock/root
@@ -3978,6 +3991,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * Explicit manual operation until the separate automatic success bridge. */
     continueOriginalFrozenCaptureJobCadCacheCoverageReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'cache_CAD_coverage_refs_v2'),
+    /** Dormant actual whole-original CAD owner with native same-TX success,
+     * saved lease deadline and fresh single-consume continuation. */
+    continueFrozenCaptureJobCadOriginalsReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'continue_CAD_coverage_refs_v2'),
     /** Fixed first stock account, only after independently issued CAD+E DONE.
      * Replays originals/entire cache; no cursor, writes or selected completeness. */
     readCoveredOriginalFrozenCaptureJobFirstCadAmenityEvidenceReferencesV2: (value, options = {}) =>

@@ -2535,6 +2535,12 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         createCustomCohortSourcePrefixV2ContinuationRepository(client).claimDue({leaseSeconds:900}))))).flat();
       assert.equal(claims.length,1);assert.equal(claims[0].claim.attempts,3);assert.notEqual(claims[0].claim.claim_token,refsClaim.claim_token);
       Object.assign(refsClaim,claims[0].claim);
+      const beforeExpiredReplay=await prefixState();
+      await assert.rejects(withCustomCohortJobTransaction(pool,async client=>{
+        await client.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[refsOperation]);
+        await client.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()+interval '900 seconds' WHERE operation_id=$1",[refsOperation]);
+      }),error=>error.code==='55000'&&/prefix_success_v2_claim_conflict/.test(error.message));
+      assert.deepEqual(await prefixState(),beforeExpiredReplay,'an expired running token requires native fresh recovery too');
       refsFault='commit';await assert.rejects(service.continueFrozenCaptureJobSourcePrefixReferencesV2Page(refsInput,refsOptions),error=>error.outcome_unknown===true);
       assert.equal((await prefixState()).heads[0].sequence,2);assert.equal((await job()).attempts,3);
       let successfulSteps=0;
@@ -2554,7 +2560,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
         actual_original_owners:true,orphan_real_yield_savepoint_and_COMMIT_refusal:true,lost_real_owner_COMMIT_ACKs:2,
         concurrent_single_fresh_recovery:true,ordinary_failure_attempt:3,preserved_failure_history:true,
         current_actor_and_both_end_source_subject_claim_cancel_refusal:true,generic_claim_cannot_steal_success:true,
-        old_consumed_token_replay_refused:true,
+        old_consumed_token_replay_refused:true,expired_running_token_revival_refused:true,
         next_graph_lane_idle:true,reports_assignment_and_pins_unchanged:true,initial_queue_dispatch:false,
         neutral_cache_handoff:false,licensed_large_area:false,production_speed:false,pin_transfer:false});
       return;

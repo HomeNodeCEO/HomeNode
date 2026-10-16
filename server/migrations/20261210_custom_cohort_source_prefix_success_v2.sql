@@ -155,7 +155,7 @@ BEGIN
       OR NEW.request_sha256<>OLD.request_sha256 OR NEW.request_payload IS DISTINCT FROM OLD.request_payload OR NEW.attempts<OLD.attempts) THEN
     RAISE EXCEPTION 'neighborhood_prefix_success_v2_binding_conflict' USING ERRCODE='55000'; END IF;
   IF OLD.checkpoint->>'phase'='frozen_source_refs_v2' AND NEW.status='running'
-    AND (OLD.status<>'running' OR NEW.claim_token IS DISTINCT FROM OLD.claim_token)
+    AND (OLD.status<>'running' OR OLD.lease_expires_at<=clock_timestamp() OR NEW.claim_token IS DISTINCT FROM OLD.claim_token)
     AND EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_prefix_success_v2_jobs e WHERE e.operation_id=NEW.operation_id)
     AND NOT EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_prefix_success_v2 c WHERE c.operation_id=NEW.operation_id
       AND c.organization_id=NEW.organization_id AND c.consumed_claim_token=NEW.claim_token AND c.consumed_attempts=NEW.attempts

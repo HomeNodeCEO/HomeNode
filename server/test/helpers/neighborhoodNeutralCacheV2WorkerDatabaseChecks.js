@@ -328,6 +328,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
 
   let selectionWaitOwner,waitOptions,beforeWait,beforeWaitParent,ownerCalls=0;
   const waitArgs={...args,cohortService:{async [waitMethod](value,options){
+    try{
     ownerCalls++;selectionWaitOwner={claim:options.captureJobClaim};waitOptions={captureJobClaim:selectionWaitOwner.claim};
     assert.equal(selectionWaitOwner.claim.operation_id,operation);assert.equal(selectionWaitOwner.claim.attempts,5);
 
@@ -404,7 +405,17 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     if(probe==='wait_role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);
   }
 
-    fault='wait_ack';return service[waitMethod](value,options);
+    fault='wait_ack';return await service[waitMethod](value,options);
+    }catch(error){
+      // The real worker intentionally maps assertion/owner failures to a finite
+      // failure code. Keep the original cause visible in this disposable native
+      // fixture without dumping original observations, SQL values or payloads.
+      console.info('[native-selection-wait-probe-failure]',{fixture:coveredTransactionIndexFixture?'transaction-index':'initial-dispatch',
+        fault,code:error?.code??null,type:error?.name??null,
+        message:String(error?.message??'').split('\n')[0].slice(0,240),
+        at:String(error?.stack??'').split('\n').filter(line=>line.includes('neighborhoodNeutralCacheV2WorkerDatabaseChecks.js')).slice(0,2)});
+      throw error;
+    }
   }}};
   const waitResults=await Promise.all([runWait(waitArgs),runWait(waitArgs)]);
   assert.deepEqual(waitResults.map(r=>r.status).sort(),['idle','outcome_unknown']);

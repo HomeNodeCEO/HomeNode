@@ -28,12 +28,18 @@ their six-reference checkpoints remain unchanged and cannot silently resume
 this new phase as an old read-only stage.
 
 152 focused tests passed, zero failures/skips (1,413.2143 ms), including
-migration registration and existing issued-head regressions. Native actual-owner tests are authored for
+migration registration and existing issued-head regressions. Native actual-owner tests passed for
 two accounts/three parcel/two account originals, independent next-key/free-DONE
 refusal, original/full-cache forgeries, current and ending rights/claim/subject/
 cache/cancellation, partial/unissued/corrupt prerequisites, same-TX rollback,
 lost-COMMIT continuation, terminal/reopen probes and zero original copies.
-NEW native/full cloud execution is pending, not established by SQL doubles.
+Reviewed implementation head `37ea19fe0b59d3068cbe77dab9fccc14dcacd5c2`
+passed all 16 checks, including foundation run `38848464040` and complete native
+job `116804176291`. Its actual
+`[native-original-stock-traversal-issued-owner-v2]` marker ran at
+`2026-10-16T04:11:59.1084886Z`. The complete native job passed 417 migration,
+one subject, eight prepared-owner, one edge-neighbor and two bootstrap checks,
+with zero failures, cancellations or skips.
 
 This is durable traversal of the ORIGINAL stock, not a complete selected-union
 cell/ordinal index, selector, statistic, licensed acquisition or source grant.

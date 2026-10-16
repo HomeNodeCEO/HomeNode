@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
 import { prepareNeighborhoodCiDatabase } from './helpers/neighborhoodCiDatabase.js';
 import { runNeighborhoodInitialV2DispatchDatabaseChecks } from './helpers/neighborhoodInitialV2DispatchDatabaseChecks.js';
+import { runSharedTypedReconciliationDatabaseChecks } from './helpers/neighborhoodSharedTypedReconciliationDatabaseChecks.js';
 import { observeNeighborhoodCiPreparedQueries, NEIGHBORHOOD_CI_PROTOCOL_SESSION_OPTIONS } from './helpers/neighborhoodCiPreparedQueries.js';
 import { runNeighborhoodSelectedNumericIndexV2DatabaseChecks } from './helpers/neighborhoodSelectedNumericIndexV2DatabaseChecks.js';
 import { runNeighborhoodSelectedNumericPopulationV2DatabaseChecks } from './helpers/neighborhoodSelectedNumericPopulationV2DatabaseChecks.js';
@@ -342,13 +343,19 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     await assert.rejects(sharedTypedCadStep(cadEndingFault,first.generationId),/synthetic CAD cache ending failure/);
     for(const table of ['neighborhood_frozen_typed_cad_generations','neighborhood_frozen_typed_cad_rows','neighborhood_frozen_typed_cad_totals'])
       assert.equal((await pool.query(`SELECT count(*)::int AS n FROM app.${table} WHERE generation_id=$1`,[first.generationId])).rows[0].n,0);
-    let cadLoseAck=true;
+    let cadLoseAck=true,cadWrittenValues=null;
     const cadLostAck={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
+      if(c.text===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.insert){
+        cadWrittenValues=structuredClone(c.values);const first=JSON.parse(c.values[3]).slice(0,1);
+        const seed=(await raw.query({...c,values:[...c.values.slice(0,3),JSON.stringify(first)]})).rows[0];
+        assert.equal(seed.inserted_count,1);assert.equal(seed.reconciled_count,1);
+      }
       const r=await raw.query(c);if(c.text==='COMMIT'&&cadLoseAck){cadLoseAck=false;throw Error('synthetic CAD committed ACK loss');}return r;
     }};}};
     await assert.rejects(sharedTypedCadStep(cadLostAck,first.generationId),e=>e.outcome_unknown===true);
     const cadOpened=await sharedTypedCadStep(pool,first.generationId);assert.equal(cadOpened.advanced,false);
     assert.equal(cadOpened.progress.kind_index,1);assert.equal(cadOpened.progress.typed_rows,'3');
+    await runSharedTypedReconciliationDatabaseChecks(pool,NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.insert,cadWrittenValues,true);
     const cadChangedText={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
       const r=await raw.query(c);if(c.text===NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.page&&r.rows[0].page_count){
         const page=JSON.parse(r.rows[0].page_json),value=JSON.parse(page[0].payload_text);value.sec_imp_type='FORGED';
@@ -510,8 +517,13 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     await assert.rejects(sharedTypedV2Step(endingTypedFault,first.generationId),/synthetic V2 ending refusal/);
     for(const table of ['neighborhood_frozen_typed_v2_generations','neighborhood_frozen_typed_v2_rows','neighborhood_frozen_typed_v2_totals'])
       assert.equal((await pool.query(`SELECT count(*)::int AS n FROM app.${table} WHERE generation_id=$1`,[first.generationId])).rows[0].n,0);
-    let neutralLoseAck=true;
+    let neutralLoseAck=true,neutralWrittenValues=null;
     const neutralLostAck={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
+      if(c.text===NEIGHBORHOOD_SHARED_TYPED_V2_SQL.insert){
+        neutralWrittenValues=structuredClone(c.values);const first=JSON.parse(c.values[3]).slice(0,1);
+        const seed=(await raw.query({...c,values:[...c.values.slice(0,3),JSON.stringify(first)]})).rows[0];
+        assert.equal(seed.inserted_count,1);assert.equal(seed.reconciled_count,1);
+      }
       const r=await raw.query(c);if(c.text==='COMMIT'&&neutralLoseAck){neutralLoseAck=false;throw Error('synthetic V2 committed ACK loss');}return r;
     }};}};
     await assert.rejects(sharedTypedV2Step(neutralLostAck,first.generationId),error=>error.outcome_unknown===true);
@@ -519,6 +531,7 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     assert.equal(neutralOpened.advanced,false);assert.equal(neutralOpened.progress.typed_rows,'5');
     assert.equal(Object.hasOwn(neutralOpened,'effective_date'),false);
     assert.equal((await pool.query("SELECT row_count::text AS n FROM app.neighborhood_frozen_typed_v2_totals WHERE generation_id=$1 AND kind='parcels'",[first.generationId])).rows[0].n,'5');
+    await runSharedTypedReconciliationDatabaseChecks(pool,NEIGHBORHOOD_SHARED_TYPED_V2_SQL.insert,neutralWrittenValues);
     // Independently rendered originals must match exact text/hash/identity;
     // changing a page's payload cannot leave rows or advance the cache header.
     const changedNeutralOriginal={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){

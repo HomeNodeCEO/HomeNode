@@ -7554,3 +7554,31 @@ composition before admitting this execution mode. Complete neutral-cache
 handoff, later semantic owners/publication/terminal pin handoff and licensed
 large-area/live speed acceptance remain open. No route, schedule, source grant,
 report publication, Apply or pin transfer is enabled here.
+
+### Neutral shared-cache reconciliation prerequisite (2026-10-16)
+
+The V2 seven-layer and separate CAD storage builders can reconcile rows already
+inserted under the same generation/profile. Every page still reads and compiles
+each complete original. The fixed bounded INSERT matches actual original text,
+native identity and original hash, then compares the entire existing typed JSON
+and identity with that fresh compilation. A conflict never updates or repairs
+an immutable row. Both newly inserted and fully matching existing rows count
+toward this builder's page progress; database INSERT-transition totals count
+only genuinely new rows. Original V1 date-keyed behavior remains unchanged.
+
+The native fixture now prepopulates one actually compiled row before each real
+V2/CAD builder INSERT, requiring mixed new/reused admission with exact totals
+after a lost real COMMIT acknowledgment. Separate real transactions replay the
+complete page with zero insertions, then try unchanged-original-hash typed JSON,
+original text and identity forgeries. Each mismatch must refuse and leave the
+whole cache/header/totals state unchanged. Focused V2/CAD/V1 checks pass; native
+execution at this new head is still pending.
+
+This prepares coexistence for an actual authorized job-scoped neutral owner.
+It does not authorize a job to run the whole-generation offline builder: the
+current job purpose remains its exact frozen stock and all-date one-hop source
+scope, with no additional cadastral accounts. The independent native per-job
+cache coverage/continuation, all current/ending actor/subject/source fences,
+completed reader handoff and lease ownership still need implementation. No
+global header is declared complete from a job count, no new source grant is
+created, and no route, scheduler, worker, publication or pin transfer activates.

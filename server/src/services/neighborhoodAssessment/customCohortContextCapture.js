@@ -1945,13 +1945,16 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       // This is one manual cache operation, not durable automatic coverage.
       // An enrolled job must wait for a separately guarded CAD success bridge.
       const assertManualCadCache=async()=>{if(cachingCadCoverage||cachingCadOriginals){
-        const manual=one(await client.query(`/* custom-cohort-CAD-cache-account-v2:manual */
+        const manualResult=await client.query(`/* custom-cohort-CAD-cache-account-v2:manual */
           SELECT job.request_payload->>'execution_mode' IS NULL
             AND NOT EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_v2_continuations c WHERE c.operation_id=job.operation_id) AS allowed
           FROM app.neighborhood_custom_cohort_capture_jobs job WHERE job.operation_id=$1::uuid
             AND job.claim_token=$2::uuid AND job.attempts=$3::integer AND job.status='running'
             AND job.lease_expires_at>clock_timestamp() AND job.cancellation_requested_at IS NULL`,
-        [claim.operation_id,claim.claim_token,claim.attempts]));
+        [claim.operation_id,claim.claim_token,claim.attempts]);
+        if(manualResult?.rowCount!==1||!Array.isArray(manualResult.rows)||manualResult.rows.length!==1)
+          throw new TypeError('custom_cohort_capture_job_claim_lost');
+        const manual=manualResult.rows[0];
         if(manual.allowed!==true)fail('CAD_automatic_handoff_unavailable');
       }};
       await assertManualCadCache();

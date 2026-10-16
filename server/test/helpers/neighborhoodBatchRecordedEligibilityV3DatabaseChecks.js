@@ -11,7 +11,7 @@ import { runCustomCohortBatchSelectedProgressV3JobOnce as unionProgress } from '
 /** Twenty-sixth independently captured graph, after actual worker-issued union
  * DONE. This is the recorded-comparison pass, not full semantic eligibility. */
 export async function runNeighborhoodBatchRecordedEligibilityV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
-  catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedEvidenceFixture=false}){
+  catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedEvidenceFixture=false,batchSelectedMetricsFixture=false}){
   const operation=input.operationId,method='progressCoveredOriginalFrozenCaptureJobBatchSelectedRecordedEligibilityReferencesV3',
     subjectMethod='readCoveredOriginalFrozenCaptureJobBatchSelectedUnionSubjectHousingReferencesV3',
     head=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_eligibility_v2_heads WHERE operation_id=$1',[operation])).rows[0],
@@ -106,7 +106,7 @@ export async function runNeighborhoodBatchRecordedEligibilityV3DatabaseChecks({p
   assert.deepEqual(await job(),terminal.job);assert.deepEqual(await parent(),terminal.parent);assert.deepEqual(await blobs(),terminal.blobs);assert.deepEqual(await head(),terminal.head);await immutable();
   if(batchSelectedEvidenceFixture){
     await runNeighborhoodBatchSelectedEvidenceV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
-      catalogHead,groups,assertParents,setFault,readFault,originalReads,command});return;
+      catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedMetricsFixture});return;
   }
   console.info('[native-batch-recorded-eligibility-v3]',{independent_actual_worker_issued_V3_catalog_command_union_DONE:true,
     read_only_subject_precedence_and_original_CAD_fallback_preserved:true,subject_fallback:subject.fallback.status,

@@ -48,7 +48,9 @@ import { runCustomCohortCoveredSelectedProgressV2JobOnce as runSelectedProgress 
 import { NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL as STOCK_PACKET,
   NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL as PAIRED_STOCK_PACKET,
   NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_ELIGIBILITY_PACKAGE_V2_SQL as ELIGIBILITY_PACKET } from '../../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
-import { NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL as METRIC_PACKET,
+import { NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL as STATISTICS_PACKET,
+  NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL as FIRST_STATISTICS_PACKET,
+  NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL as METRIC_PACKET,
   NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL as FIRST_METRIC_PACKET,
   NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL as EVIDENCE_PACKET }
   from '../../src/services/neighborhoodAssessment/neighborhoodSelectedTransactionOriginalPackageV2.js';
@@ -57,10 +59,10 @@ import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL as TRAN
 
 /** Independent disposable job; all acquisition owners, authorization, original
  * queries, native issuance, savepoint rollback and COMMITs are real. */
-export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData,coveredTransactionIndexFixture=false,stockBatchFixture=false,partitionBatchFixture=false,catalogBatchFixture=false,catalogBatchReplayFixture=false,batchSelectionWaitFixture=false,batchSelectionIntentFixture=false,batchSelectedUnionFixture=false,batchSelectedWorkersFixture=false,batchRecordedEligibilityFixture=false,batchSelectedEvidenceFixture=false,batchSelectedMetricsFixture=false}){
+export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData,coveredTransactionIndexFixture=false,stockBatchFixture=false,partitionBatchFixture=false,catalogBatchFixture=false,catalogBatchReplayFixture=false,batchSelectionWaitFixture=false,batchSelectionIntentFixture=false,batchSelectedUnionFixture=false,batchSelectedWorkersFixture=false,batchRecordedEligibilityFixture=false,batchSelectedEvidenceFixture=false,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false}){
   const input={...sourceInput,operationId:randomUUID()},operation=input.operationId;let fault=null,stockReads=0;
   const observed={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
-    const text=typeof c==='string'?c:c.text,originalPacket=text===BATCH_PACKET||text===STOCK_PACKET||text===PAIRED_STOCK_PACKET||text===TRANSACTION_PACKET||text===AMENITY_PACKET||(batchRecordedEligibilityFixture&&text===ELIGIBILITY_PACKET)||(batchSelectedEvidenceFixture&&text===EVIDENCE_PACKET)||(batchSelectedMetricsFixture&&[METRIC_PACKET,FIRST_METRIC_PACKET].includes(text)),
+    const text=typeof c==='string'?c:c.text,originalPacket=text===BATCH_PACKET||text===STOCK_PACKET||text===PAIRED_STOCK_PACKET||text===TRANSACTION_PACKET||text===AMENITY_PACKET||(batchRecordedEligibilityFixture&&text===ELIGIBILITY_PACKET)||(batchSelectedEvidenceFixture&&text===EVIDENCE_PACKET)||(batchSelectedMetricsFixture&&[METRIC_PACKET,FIRST_METRIC_PACKET].includes(text))||(batchSelectedStatisticsFixture&&[STATISTICS_PACKET,FIRST_STATISTICS_PACKET].includes(text)),
       orphan=fault==='orphan'&&text.includes('custom-cohort-neutral-success-v2:yield')
       ||fault==='cad_orphan'&&text.includes('custom-cohort-CAD-success-v2:yield')
       ||fault==='bridge_orphan'&&text.includes('custom-cohort-cache-stock-v2:complete')
@@ -68,7 +70,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
       ||fault==='catalog_batch_orphan_group'&&text.includes('custom-cohort-recorded-catalog-batch-v3:contribute')
       ||fault==='batch_wait_orphan_release'&&text.includes('custom-cohort-batch-selection-wait-v3:release')
       ||fault==='batch_intent_orphan_resume'&&text.includes('custom-cohort-v2-selection-intent:resume')
-      ||['partition_orphan','catalog_orphan','union_orphan','eligibility_orphan','evidence_orphan','metrics_orphan'].includes(fault)&&text.includes('custom-cohort-v2-continuation:yield');
+      ||['partition_orphan','catalog_orphan','union_orphan','eligibility_orphan','evidence_orphan','metrics_orphan','statistics_orphan'].includes(fault)&&text.includes('custom-cohort-v2-continuation:yield');
     if(orphan)await raw.query('SAVEPOINT synthetic_neutral_yield');
     if(fault==='batch_wait_expiry'&&text.includes('custom-cohort-batch-selection-wait-v3:release')){
       fault=null;await raw.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);
@@ -108,21 +110,21 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     if(fault==='catalog_batch_counts_ending'&&text.includes('custom-cohort-recorded-catalog-batch-v3:counts')){
       fault=null;return {...result,rows:[{...result.rows[0],assigned_accounts:result.rows[0].assigned_accounts+1}]};
     }
-    if((text===AMENITY_PACKET||batchSelectedEvidenceFixture&&text===EVIDENCE_PACKET||batchSelectedMetricsFixture&&[METRIC_PACKET,FIRST_METRIC_PACKET].includes(text))&&['selected_CAD_header','selected_CAD_coverage'].includes(fault))fault+='_ending';
+    if((text===AMENITY_PACKET||batchSelectedEvidenceFixture&&text===EVIDENCE_PACKET||batchSelectedMetricsFixture&&[METRIC_PACKET,FIRST_METRIC_PACKET].includes(text)||batchSelectedStatisticsFixture&&[STATISTICS_PACKET,FIRST_STATISTICS_PACKET].includes(text))&&['selected_CAD_header','selected_CAD_coverage'].includes(fault))fault+='_ending';
     if(text===CAD_SQL.read&&fault==='selected_CAD_header_ending'){fault=null;
       return {...result,rows:[{...result.rows[0],binding_sha256:'0'.repeat(64)}]};}
     if(text===CAD_COVERAGE&&fault==='selected_CAD_coverage_ending'){fault=null;
       return {...result,rows:[{...result.rows[0],sequence:result.rows[0].sequence+1}]};}
     if(fault==='cad_role'&&text===CAD_PACKET){fault=null;
       await raw.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[scope.organization_id,actor]);}
-    if((fault==='cad_deny'&&text===CAD_PACKET)||(fault==='selected_CAD_deny'&&(text===AMENITY_PACKET||batchSelectedEvidenceFixture&&text===EVIDENCE_PACKET||batchSelectedMetricsFixture&&[METRIC_PACKET,FIRST_METRIC_PACKET].includes(text)))){fault=null;
+    if((fault==='cad_deny'&&text===CAD_PACKET)||(fault==='selected_CAD_deny'&&(text===AMENITY_PACKET||batchSelectedEvidenceFixture&&text===EVIDENCE_PACKET||batchSelectedMetricsFixture&&[METRIC_PACKET,FIRST_METRIC_PACKET].includes(text)||batchSelectedStatisticsFixture&&[STATISTICS_PACKET,FIRST_STATISTICS_PACKET].includes(text)))){fault=null;
       await raw.query(`UPDATE app_auth.organizations SET metadata=jsonb_set(metadata,ARRAY[$2::text,'revoked_at'],
         to_jsonb(to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))) WHERE id=$1`,[scope.organization_id,CAD_RIGHTS]);}
     if(text===BATCH_PACKET&&fault==='batch_rights'||originalPacket&&fault==='catalog_replay_rights'){fault=null;
       await raw.query(`UPDATE app_auth.organizations SET metadata=jsonb_set(metadata,ARRAY[$2::text,'revoked_at'],
         to_jsonb(to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))) WHERE id=$1`,[scope.organization_id,SOURCE_RIGHTS]);}
-    if(text===BATCH_PACKET&&fault==='batch_cache'||text===PAIRED_STOCK_PACKET&&fault==='union_cache'||batchRecordedEligibilityFixture&&text===ELIGIBILITY_PACKET&&fault==='eligibility_cache'||batchSelectedEvidenceFixture&&text===EVIDENCE_PACKET&&fault==='evidence_cache'||batchSelectedMetricsFixture&&text===METRIC_PACKET&&fault==='metrics_cache'){
-      if(fault==='union_cache'||fault==='eligibility_cache'||fault==='evidence_cache'||fault==='metrics_cache')stockReads++;fault=null;
+    if(text===BATCH_PACKET&&fault==='batch_cache'||text===PAIRED_STOCK_PACKET&&fault==='union_cache'||batchRecordedEligibilityFixture&&text===ELIGIBILITY_PACKET&&fault==='eligibility_cache'||batchSelectedEvidenceFixture&&text===EVIDENCE_PACKET&&fault==='evidence_cache'||batchSelectedMetricsFixture&&text===METRIC_PACKET&&fault==='metrics_cache'||batchSelectedStatisticsFixture&&text===STATISTICS_PACKET&&fault==='statistics_cache'){
+      if(fault==='union_cache'||fault==='eligibility_cache'||fault==='evidence_cache'||fault==='metrics_cache'||fault==='statistics_cache')stockReads++;fault=null;
       const envelope=JSON.parse(result.rows[0].page_json);envelope[0].typed.original.payload_utf8_bytes++;
       return {...result,rows:[{...result.rows[0],page_json:JSON.stringify(envelope)}]};}
     if(originalPacket)stockReads++;
@@ -131,7 +133,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
       SET section_value=jsonb_set(section_value,'{pending_capture,operation_id}',to_jsonb($2::text))
       WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`,[scope.assignment_file_id,randomUUID()]);}
     if(fault==='role'&&text===SQL.insert||['batch_role','bridge_role','partition_role','catalog_role','wait_role','intent_role','union_role','transaction_role','selected_CAD_role'].includes(fault)&&originalPacket){fault=null;await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[scope.organization_id,actor]);}
-    if(['batch_ack','ack','cad_ack','bridge_ack','partition_ack','catalog_ack','wait_ack','intent_ack','union_ack','eligibility_ack','evidence_ack','metrics_ack','transaction_ack','selected_CAD_ack'].includes(fault)&&text==='COMMIT'){fault=null;throw Error('lost actual original owner COMMIT ACK');}
+    if(['batch_ack','ack','cad_ack','bridge_ack','partition_ack','catalog_ack','wait_ack','intent_ack','union_ack','eligibility_ack','evidence_ack','metrics_ack','statistics_ack','transaction_ack','selected_CAD_ack'].includes(fault)&&text==='COMMIT'){fault=null;throw Error('lost actual original owner COMMIT ACK');}
     return result;
   }};}},service=createCustomCohortContextCapture({pool:observed,sourceMode:'combined-witness2-v1',authorizeMarketData,authorizeCadImprovementData}),
     args={pool,cohortService:service,leaseSeconds:900},job=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[operation])).rows[0],
@@ -413,7 +415,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
         await runNeighborhoodCatalogBatchV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,
           setFault:value=>{fault=value;},readFault:()=>fault,packet,readBody,stockHead,partitionHead,partitionRows,
           bridgeState,cacheState,head,cadState,cadHead,protectedRows,protectedBefore,pin,batchPendingWorkspace,
-          catalogBatchReplayFixture,batchSelectionWaitFixture,batchSelectionIntentFixture,batchSelectedUnionFixture,batchSelectedWorkersFixture,batchRecordedEligibilityFixture,batchSelectedEvidenceFixture,batchSelectedMetricsFixture,originalReads:()=>stockReads});
+          catalogBatchReplayFixture,batchSelectionWaitFixture,batchSelectionIntentFixture,batchSelectedUnionFixture,batchSelectedWorkersFixture,batchRecordedEligibilityFixture,batchSelectedEvidenceFixture,batchSelectedMetricsFixture,batchSelectedStatisticsFixture,originalReads:()=>stockReads});
         return;
       }
       const [next]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));assert.equal(next.claim.attempts,5);

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { runNeighborhoodBatchSelectedStatisticsV3DatabaseChecks } from './neighborhoodBatchSelectedStatisticsV3DatabaseChecks.js';
 import { withCustomCohortJobTransaction as tx } from '../../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
 import { createCustomCohortCaptureJobRepository as jobs } from '../../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
 import { createCustomCohortV2ContinuationRepository as continuations } from '../../src/services/neighborhoodAssessment/customCohortV2ContinuationRepository.js';
@@ -10,7 +11,7 @@ import { runCustomCohortBatchSelectedEligibilityV3JobOnce as eligibility } from 
 /** Twenty-eighth independent graph. The real V3 evidence worker has issued its
  * own fresh terminal EMPTY; this call never copies or rebinds a native parent. */
 export async function runNeighborhoodBatchSelectedMetricsV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
-  catalogHead,groups,assertParents,setFault,readFault,originalReads,command}){
+  catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedStatisticsFixture=false}){
   const operation=input.operationId,method='progressCoveredOriginalFrozenCaptureJobBatchSelectedMetricReferencesV3',
     readMethod='readCoveredOriginalFrozenCaptureJobBatchFirstSelectedMetricReferencesV3',
     head=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_metrics_v2_heads WHERE operation_id=$1',[operation])).rows[0],
@@ -108,6 +109,10 @@ export async function runNeighborhoodBatchSelectedMetricsV3DatabaseChecks({pool,
     assert.deepEqual((await client.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[operation])).rows,saved);throw rollback;
   }),e=>e===rollback);
   assert.deepEqual(await job(),terminal.job);assert.deepEqual(await parent(),terminal.parent);assert.deepEqual(await blobs(),terminal.blobs);assert.deepEqual(await head(),terminal.head);assert.deepEqual(await rows(),terminal.rows);await immutable();
+  if(batchSelectedStatisticsFixture){
+    await runNeighborhoodBatchSelectedStatisticsV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
+      catalogHead,groups,assertParents,setFault,readFault,originalReads,command});return;
+  }
   console.info('[native-batch-selected-metrics-v3]',{independent_actual_V3_evidence_worker_fresh_EMPTY:true,
     read_only_first_original_candidate_and_lost_read_ACK_no_progress_or_lease_extension:true,
     every_metric_row_built_from_fresh_whole_original_ENTIRE_neutral_CAD_cache_and_partition_replay:true,

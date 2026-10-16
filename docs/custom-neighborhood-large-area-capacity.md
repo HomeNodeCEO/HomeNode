@@ -8787,3 +8787,29 @@ is increased. This does not complete selected amenities/economic transactions,
 statistics/calendar quarters, coherent publication, terminal pins or licensed
 large-area/Hardy speed acceptance. No dispatcher/default worker, scheduler,
 route, grant, appraiser choice, Apply, publication or pin transfer is activated.
+
+## Selected union over a completed batch catalog (2026-10-16, inactive)
+
+A separate closed V3 owner continues the original-reconciled union after actual
+V3 stock, partition and catalog DONE and an immutable explicit selection command.
+It replays one whole account with the required subject in one shared original
+packet. Every original, ENTIRE neutral cache and immutable partition entry is
+reconciled before native group/member contribution. Current and ending source
+purpose, database actor/assignment/private draft/subject, exact pending workspace,
+all native parents, immutable command and complete counts remain fenced. The
+unchanged 24-key single-account union receipt binds the actual V3 catalog parent;
+the legacy V2 entry still rejects that parent's incompatible receipt format.
+
+The development-only native head guard admits only the actual 22-key V3 catalog
+terminal EMPTY and completed native V3 stock/partition parents. Original union
+prefix, member, group denominator, terminal EMPTY and deferred COMMIT guards
+remain intact. A twenty-fourth independently captured fixture preserves all
+twenty-three previous scenarios and deadlines. It requires real A/B/EMPTY,
+ending refusals, orphan-yield rollback, a lost actual COMMIT acknowledgment,
+fresh native continuation tokens and unchanged history, reports and source pins
+at attempt five. Cloud/native execution of this new scenario is pending.
+
+This adds no automatic union worker, migration registration, default dispatcher,
+selection choice, metric population, publication or terminal pin transfer.
+Complete V3 downstream composition and licensed large-area/live speed acceptance
+remain open. Small fixture success does not establish those acceptance criteria.

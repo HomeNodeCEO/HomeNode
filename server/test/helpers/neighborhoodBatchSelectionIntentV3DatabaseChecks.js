@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { runNeighborhoodBatchSelectedUnionV3DatabaseChecks } from './neighborhoodBatchSelectedUnionV3DatabaseChecks.js';
 import { randomUUID } from 'node:crypto';
 import { CUSTOM_NEIGHBORHOOD_WITNESS2_SOURCE_RIGHTS_KEY as RIGHTS } from '../../src/security/customNeighborhoodWitness2SourcePolicy.js';
 import { withCustomCohortJobTransaction as tx } from '../../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
@@ -11,7 +12,7 @@ import { createCustomCohortCatalogBatchV3WorkerRepository as catalogClaims } fro
 /** Explicit disposable-fixture choice ONLY, after an independently captured
  * actual batch waiting boundary. No production/appraiser choice is inferred. */
 export async function runNeighborhoodBatchSelectionIntentV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,blobs,
-  catalogHead,groups,assertParents,setFault,readFault,originalReads}){
+  catalogHead,groups,assertParents,setFault,readFault,originalReads,batchSelectedUnionFixture=false}){
   const operation=input.operationId,method='resumeCoveredOriginalFrozenCaptureJobBatchSelectionIntentReferencesV3',
     readMethod='readCoveredOriginalFrozenCaptureJobRetainedBatchSelectionIntentReferencesV3',
     intents=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_v2_selection_intents WHERE operation_id=$1',[operation])).rows,
@@ -74,6 +75,10 @@ export async function runNeighborhoodBatchSelectionIntentV3DatabaseChecks({pool,
     for(const repository of [waitClaims,stockClaims,partitionClaims,catalogClaims])assert.deepEqual(await repository(client).claimDue({leaseSeconds:900}),[]);
     assert.deepEqual((await client.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[operation])).rows,snapshot);throw rollback;
   }),e=>e===rollback);await assertResumed();
+  if(batchSelectedUnionFixture){
+    await runNeighborhoodBatchSelectedUnionV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
+      catalogHead,groups,assertParents,setFault,readFault,originalReads,claim:resumed.claim,command});return;
+  }
   console.info('[native-batch-selection-intent-v3]',{independent_actual_initial_source_cache_stock_partition_catalog_and_waiting:true,
     explicit_fixture_new_study_command_only_no_worker_choice_or_prior_carryover:true,
     revoked_source_unknown_ID_refused_before_known_group_lookup_and_original_IO:true,

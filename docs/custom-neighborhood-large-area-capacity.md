@@ -1,5 +1,83 @@
 # Complete larger-area Custom neighborhood studies
 
+## Original-reconciled bounded recorded catalog (2026-10-10, not activated)
+
+`advanceOriginalFrozenCaptureJobRecordedCatalogReferencesV2` is a new fixed
+actual database-owner stage, not a caller callback or a loop over per-account
+public helpers. It requires the independently issued DONE graph, geography,
+identity, traversal and recorded partition. Its own native head chooses ONE
+next account. The single-use original-cell reader has its existing32MB,
+128-query,60s and5s-query subbudget. Other owner and persistence SQL uses the
+transaction client under the existing150s outer capture deadline and SQL
+timeout; this stage has no shared owner byte/query counter.
+Every complete original account (including outside parts), ENTIRE neutral cache
+and ENTIRE immutable partition entry is reconciled again before any catalog DML.
+
+Registered additive 20261121 retains only bounded normalized group identities
+and exact account counts, plus an independently issued linked receipt/head and
+nine-reference retention checkpoint in the SAME transaction. All unassigned
+accounts remain an explicit denominator; their conflicting candidate groups
+never become memberships. Every raw label/county variant, reason and partial
+observation remains in the complete original/partition lineage, not duplicated
+or truncated into this summary. Native guards enforce the exact next immutable
+partition ordinal, one count increment, stable normalized identity, at most 2048
+assigned groups (whole-step refusal, not truncation), a distinct terminal empty
+probe and refusal of orphan summaries/heads without the root checkpoint.
+
+Both-end current database actor/assignment/private-draft/subject/source-purpose/
+claim/pin/prerequisite-head/cache fences, an exact ending partition-entry reread,
+and ending catalog head/count equality remain mandatory. Lost COMMIT must
+resume at the next account, not duplicate a contribution. Completed reopen must
+still perform fresh original/cache and partition empty probes. No dense account
+roster, original payload copy, job-typed copy, selected union, statistic,
+publication, worker activation, pin transfer, accepted report or Apply mutation.
+Future semantic consumers still must reopen originals and reconcile the whole
+catalog/selection lineage; matching counts, hashes or DONE are not authority.
+
+The focused query-shape assertion independently checks the ENTIRE SQL and bound
+values of the ONLY two permitted authority aggregates:
+the exact current actor/organization role read and the exact assignment's three
+fixed material sections under the existing 1,500,000-byte cap. Both-end reads
+remain mandatory. Focused regression tests refuse spoofed tags, changed SQL,
+additional aggregates, expanded sections/caps, foreign scope and missing end
+reads. It also checks the independent exact SQL of the existing bounded
+whole-original transport for ONE server-chosen stock account, its exact retained
+operation/generation/profile and unchanged 250-row and byte caps. All array,
+JSON/JSONB, object, string and XML aggregates and ARRAY(SELECT...) constructors
+must match these fixed shapes. Population aggregates, widened original packets
+and spatial/job-typed paths still refuse; scalar counts/sums remain allowed.
+The saved catalog head `d8a16a06` passed all four foundation38043277652 jobs.
+Its native114187630890 passed417 migration,1 subject,8 prepared-index,1 edge
+and2 bootstrap tests with zero failures/skips. Its actual catalog marker at
+10:06:52Z confirms whole-original/entire-cache/entire-partition replay,
+outside-conflict denominator preservation, native next-ordinal/orphan/root
+refusal, all current/ending fences, lost COMMIT NEXT and fresh completed dual
+EMPTY. These are saved component results, not the new integrated head's proof.
+
+This catalog branch was retargeted to main before integrating the actual
+protected continuation#1248 merge `326e1053`. Reviewed parent `1a1c35f` passed
+all16 checks and actual included review `8509a4ad` of all9 changed files with no
+actionable findings. Parent native116918247804 passed417 migration,1 subject,
+1 account-quality,8 prepared-index,1 edge and2 bootstrap tests with zero
+failures/cancellations/skips; its nonempty issued-success marker ran at
+2026-10-16T10:11:05.4355129Z. The parent merge and reviewed head have the same
+tree. Fresh security/native/full-suite checks and this catalog's own actual
+included review are required on its integrated exact head before merge.
+
+After that protected-parent integration,165 serial focused catalog/partition/
+continuation/job/current-owner/original checks passed in2,688.6593ms with zero
+failures/cancellations/skips. Six syntax checks and the diff against actual main
+pass. New integrated-head native/security/full-suite execution is pending.
+No local database or full suite was run and no deadline/budget was increased.
+
+The small two-account fixture does not
+execute the 2048-group boundary, repeated assigned-group updates, licensed
+>50k/5-mile/10-mile/city/retrospective acquisition or production latency. These
+remain acceptance work, as do genuine current-authenticated selection, exact
+distinct selected-union metric ordinals, exact statistics/calendar quarters,
+coherent publication, fixed finite workers and terminal retention handoff.
+Internal stages remain inactive; QA assignment 7 only for future Apply tests.
+
 ## Issued-progress successful continuations (2026-10-10, not activated)
 
 The dormant traversal/recorded-partition `continueOriginalFrozenCaptureJob...ReferencesV2`

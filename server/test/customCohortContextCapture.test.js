@@ -296,6 +296,7 @@ test('stock original cells owner accepts no caller originals, dates, selection, 
 });
 
 for(const method of ['advanceOriginalFrozenCaptureJobStockTraversalReferencesV2','advanceOriginalFrozenCaptureJobRecordedPartitionReferencesV2',
+  'advanceOriginalFrozenCaptureJobRecordedCatalogReferencesV2',
   'continueOriginalFrozenCaptureJobStockTraversalReferencesV2','continueOriginalFrozenCaptureJobRecordedPartitionReferencesV2'])
 test(`${method} admits only the live claim and bounded operation, not caller continuation`,async()=>{
   const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},

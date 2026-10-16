@@ -1,5 +1,24 @@
 # Complete larger-area Custom neighborhood studies
 
+## Native positive-claim fixture separation (2026-10-16)
+
+Actual semantic-head native CI reached an older evidence-worker assertion
+while an idle concurrent claim transaction still held the job row. PostgreSQL
+correctly refused NOWAIT with55P03 before original reconciliation, so the
+fixture could not treat that overlap as a successful source-read assertion.
+The five batch waiting/eligibility/evidence/metric/contribution positive
+fixtures now use the same real-claim barrier as union/numeric/semantic owners:
+two actual native worker claims run concurrently, and the one original owner
+waits for its idle contender's transaction to finish. A caught claim failure,
+two owners or zero owners fails closed instead of inventing positive proof.
+The independent actual-held heartbeat and native-claim55P03 refusal proofs
+remain unchanged. No lock refusal is retried or accepted as source success.
+Production owners, claims, NOWAIT locks, normal15s heartbeat, all originals,
+ending fences, failure ceilings, budgets and deadlines remain unchanged.
+49 focused tests pass (902.7532ms; zero failures/cancellations/skips), seven
+changed JS syntax checks and diff checks pass. Fresh exact-head native/full
+checks are required; this fixture correction is not new native execution,
+large-area acquisition, publication or production-speed evidence.
 ## Batch original-backed recorded statistics (2026-10-16, not activated)
 
 A closed V3 semantic progress entry and separate inactive worker continue from

@@ -33,3 +33,15 @@ test('two owners are rejected before a second original call, and zero owners are
   assert.equal(originals,0);
   await assert.rejects(pair(async()=>({status:'idle'}),args,'original'),/exactly one original owner/);
 });
+
+test('a caught native claim failure settles the barrier and refuses positive originals',async()=>{
+  for(const status of ['outcome_unknown','retry','failed']){
+    let calls=0,originals=0;
+    const args={cohortService:{async original(){originals++;return {status:'continuation_pending'};}}};
+    await assert.rejects(pair(async value=>{
+      if(++calls===1)return value.cohortService.original();
+      return {status};
+    },args,'original'),/claim contender did not settle idle/);
+    assert.equal(originals,0);
+  }
+});

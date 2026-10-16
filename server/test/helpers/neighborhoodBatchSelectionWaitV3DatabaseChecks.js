@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { runNeighborhoodNativeClaimPair as pair } from './neighborhoodNativeClaimPair.js';
 import { withCustomCohortJobTransaction as tx } from '../../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
 import { createCustomCohortCaptureJobRepository as jobs } from '../../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
 import { runCustomCohortBatchSelectionWaitV3JobOnce as run } from '../../src/services/neighborhoodAssessment/customCohortBatchSelectionWaitV3JobWorker.js';
@@ -47,7 +48,7 @@ export async function runNeighborhoodBatchSelectionWaitV3DatabaseChecks({pool,in
       setFault('wait_ack');return await service[method](value,options);
     }catch(error){ownerError=error;throw error;}
   }}};
-  const results=await Promise.all([run(workerArgs),run(workerArgs)]);
+  const results=await pair(run,workerArgs,method);
   if(ownerError&&!ownerError.outcome_unknown)throw ownerError;
   assert.deepEqual(results.map(r=>r.status).sort(),['idle','outcome_unknown']);assert.equal(ownerCalls,1);assert.equal(readFault(),null);
   const waiting=await job();assert.equal(waiting.status,'awaiting_selection');assert.equal(waiting.claim_token,null);assert.equal(waiting.lease_expires_at,null);

@@ -39,6 +39,18 @@ report/Apply/publication/pin activation is added.
 
 ## Covered selected indexed-population worker (2026-10-16, not activated)
 
+The first numeric preflight exceeded the unchanged 180-second fixture deadline;
+its later marker is not acceptance. The positive worker job now captures its
+OWN new generation from the live disposable source tables with a compact legal
+description. The earlier large-payload byte-boundary fixture and its complete
+frozen original remain intact and are independently reread for equality.
+Every new job parent is genuinely issued and every worker still reads ALL of
+its new generation's whole originals and ENTIRE caches. No original, head or
+cache is cloned/rebound; no assertion, query, owner budget, failure ceiling or
+180-second deadline is removed or widened. This compact protocol fixture is
+explicitly not large-source byte-capacity, licensed acquisition or speed proof.
+New exact-head native execution is required after this fixture correction.
+
 `progressCoveredOriginalFrozenCaptureJobSelectedNumericReferencesV2` composes
 the existing ninth original owner with the actual adopted neutral and CAD DONE
 coverage. Each native next selected ordinal reopens every stock, CAD, all-date

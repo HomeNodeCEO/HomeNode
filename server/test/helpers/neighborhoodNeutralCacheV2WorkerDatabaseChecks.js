@@ -22,6 +22,7 @@ import { runCustomCohortCoveredSelectionWaitV2JobOnce as runWait } from '../../s
 import { createCustomCohortCoveredSelectionWaitV2WorkerRepository as waitClaims } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectionWaitV2WorkerRepository.js';
 import { runCustomCohortCoveredSelectedInitialV2JobOnce as runSelectedInitial } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectedInitialV2JobWorker.js';
 import { createCustomCohortCoveredSelectedInitialV2WorkerRepository as selectedInitialClaims } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectedInitialV2WorkerRepository.js';
+import { runCustomCohortCoveredSelectedProgressV2JobOnce as runSelectedProgress } from '../../src/services/neighborhoodAssessment/customCohortCoveredSelectedProgressV2JobWorker.js';
 import { NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL as STOCK_PACKET,
   NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL as PAIRED_STOCK_PACKET } from '../../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
 
@@ -360,18 +361,37 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   assert.equal(fault,null);assert.equal((await unionHead()).sequence,1);
   assert.deepEqual(await runSelectedInitial(args),{status:'idle'});
   for(let i=0;i<2;i++){
-    const [next]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));
-    assert.equal(next.claim.attempts,5);const progress=await service[unionMethod](input,{captureJobClaim:next.claim});
+    let enter,release;
+    const entered=new Promise(resolve=>{enter=resolve;}),held=new Promise(resolve=>{release=resolve;});
+    const progressArgs={...args,cohortService:{...service,async [unionMethod](value,options){
+    assert.equal(options.captureJobClaim.attempts,5);assert.notEqual(options.captureJobClaim.claim_token,resumed.claim.claim_token);
+    enter();await held;
+    const progress=await service[unionMethod](value,options);
     assert.equal(progress.covered_neutral_originals,true);assert.equal(progress.complete_catalog_original_replay,i===1);
     assert.equal(progress.complete_distinct_selected_stock_union,i===1);assert.equal(progress.selected_stock_accounts,0);
     assert.equal(progress.context_complete,false);assert.equal(progress.pin_transfer,false);
     assert.equal((await job()).last_error_code,'access_revoked');
+    return progress;
+    }}};
+    const running=runSelectedProgress(progressArgs);
+    // The real worker has committed its fresh native claim and reached the
+    // original owner. A concurrent real worker must be idle at that live lease.
+    try{
+      await Promise.race([entered,running.then(()=>{throw Error('covered selected owner was not entered');})]);
+      const active=await job();assert.deepEqual(await runSelectedProgress(args),{status:'idle'});
+      assert.deepEqual(await job(),active);
+    }finally{release();}
+    assert.equal((await running).status,'continuation_pending');
   }
   assert.equal((await unionHead()).sequence,3);assert.deepEqual(await unionRows(),[],'the explicit empty command remains empty');
   assert.deepEqual(await unionGroups(),(await catalogGroups()).map(({group_id,member_count,last_ordinal})=>({group_id,member_count,last_ordinal})));
-  const [eligibilityOwner]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));
-  const eligibilityBefore=await job(),unionBefore=await unionHead(),nativeGroupsBefore=await unionGroups(),
+  const eligibilityMethod='progressCoveredOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2',
     eligibilityHead=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_eligibility_v2_heads WHERE operation_id=$1',[operation])).rows[0];
+  let eligibilityCalls=0;
+  const eligibilityArgs={...args,cohortService:{...service,async [eligibilityMethod](value,options){
+  eligibilityCalls++;assert.equal(options.captureJobClaim.attempts,5);
+  const eligibilityBefore=await job(),unionBefore=await unionHead(),nativeGroupsBefore=await unionGroups(),
+    eligibilityOwner={claim:options.captureJobClaim};
   for(const method of ['readCoveredOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2','readCoveredOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2']){
     const read=await service[method](input,{captureJobClaim:eligibilityOwner.claim});
     assert.equal(read.covered_neutral_originals,true);assert.equal(read.read_only,true);assert.equal(read.lease_extended,false);
@@ -379,16 +399,19 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     assert.deepEqual(await job(),eligibilityBefore);assert.deepEqual(await unionHead(),unionBefore);
     assert.deepEqual(await unionGroups(),nativeGroupsBefore);assert.deepEqual(await intents(),humanOwnedIntents);
   }
-  const eligibilityMethod='progressCoveredOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2';
   fault='eligibility_orphan';await assert.rejects(service[eligibilityMethod](input,{captureJobClaim:eligibilityOwner.claim}),
     error=>error.outcome_unknown===true&&error.code==='55000');assert.equal(fault,null);
   assert.equal(await eligibilityHead(),undefined);assert.deepEqual(await job(),eligibilityBefore);
-  fault='eligibility_ack';await assert.rejects(service[eligibilityMethod](input,{captureJobClaim:eligibilityOwner.claim}),error=>error.outcome_unknown===true);
+  fault='eligibility_ack';return service[eligibilityMethod](value,options);
+  }}};
+  assert.equal((await runSelectedProgress(eligibilityArgs)).status,'outcome_unknown');assert.equal(eligibilityCalls,1);
   assert.equal(fault,null);assert.equal((await eligibilityHead()).sequence,1);assert.equal((await job()).attempts,5);
   assert.equal((await job()).last_error_code,'access_revoked');assert.deepEqual(await intents(),humanOwnedIntents);
+  const eligibilityDone=await job();assert.deepEqual(await runSelectedProgress(args),{status:'idle'});
+  assert.deepEqual(await runSelectedProgress(args),{status:'idle'});assert.deepEqual(await job(),eligibilityDone);
   const [laterOwner]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));
   assert.equal(laterOwner.claim.operation_id,operation);assert.equal(laterOwner.claim.attempts,5);
-  const laterOwnedJob=await job();for(const worker of [runStock,runPartition,runCatalog,runWait,runSelectedInitial])assert.deepEqual(await worker(args),{status:'idle'});
+  const laterOwnedJob=await job();for(const worker of [runStock,runPartition,runCatalog,runWait,runSelectedInitial,runSelectedProgress])assert.deepEqual(await worker(args),{status:'idle'});
   assert.deepEqual(await job(),laterOwnedJob);
   await pool.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);
   await tx(pool,client=>jobs(client).cancel(scope,operation));const nextOwnerPending=await job();
@@ -403,6 +426,8 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   assert.deepEqual(await runSelectedInitial(args),{status:'idle'});assert.deepEqual(await job(),nextOwnerPending,
     'covered initial adoption AND expiry leave every later selected continuation untouched');
   assert.deepEqual(await initialDispatches(),dispatches,'the real human token was adopted exactly once');
+  assert.deepEqual(await runSelectedProgress(args),{status:'idle'});assert.deepEqual(await job(),nextOwnerPending,
+    'completed eligibility excludes every claim and expiry lane even after next-owner expiry/cancellation');
   assert.deepEqual(await workspace(),pendingWorkspace);assert.deepEqual(await intents(),humanOwnedIntents);
   const sourceGeneration=(await pool.query('SELECT generation_id FROM app.neighborhood_custom_cohort_job_stocks WHERE operation_id=$1',[operation])).rows[0].generation_id;
   const cacheHeader=(await pool.query(SQL.read,[sourceGeneration,JSON.parse((await pool.query(
@@ -464,6 +489,14 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     orphan_union_yield_real_COMMIT_refused:true,lost_actual_union_COMMIT_ACK_not_downgraded:true,
     successful_first_union_at_failure_ceiling:5,error_history_native_parents_and_human_choice_preserved:true,
     adoption_exactly_once_and_later_selected_owner_including_expired_cancelled_untouched:true,
+    global_header_still_building:true,nonempty_selected_metric_population:false,CAD_companion:false,
+    default_worker_activation:false,licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
+  console.info('[native-covered-selected-progress-worker-v2]',{actual_native_fresh_union_claim_for_each_original_and_EMPTY:true,
+    concurrent_worker_idle_at_real_owner_live_lease:true,success_at_failure_ceiling:5,error_history_and_immutable_command_preserved:true,
+    complete_original_cache_partition_catalog_reconciliation:true,union_DONE_routes_actual_recorded_eligibility_owner:true,
+    subject_and_first_eligibility_readonly_under_actual_worker_claim:true,orphan_eligibility_yield_actual_COMMIT_refused:true,
+    lost_real_eligibility_COMMIT_ACK_not_downgraded:true,eligibility_DONE_repeated_idle:true,
+    later_owner_including_expired_cancelled_claim_and_expiry_untouched:true,original_native_parents_and_pins_preserved:true,
     global_header_still_building:true,nonempty_selected_metric_population:false,CAD_companion:false,
     default_worker_activation:false,licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
   await tx(pool,client=>jobs(client).cancel(scope,operation));const cancelled=await job();

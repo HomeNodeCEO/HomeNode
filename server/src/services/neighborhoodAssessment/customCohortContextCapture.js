@@ -479,6 +479,20 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingSelectedUnionFirstAmenities:true,readingSelectedUnionFirstTransactions:true,readingSelectedMetricSource:true,
     readingSelectedStatisticsSource:true,progressingSelectedStatistics:true,coveredNeutralOriginals:true,
     allowedPhases:['frozen_selected_metrics_refs_v2','frozen_selected_statistics_refs_v2'] },
+  covered_batch_selected_first_indexed_refs_v3: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,
+    readingSelectedUnionSubjectHousing:true,readingSelectedUnionFirstEligibility:true,
+    readingSelectedUnionFirstAmenities:true,readingSelectedUnionFirstTransactions:true,readingSelectedMetricSource:true,
+    readingSelectedStatisticsSource:true,readingSelectedFrequencySource:true,readingSelectedNumericSource:true,
+    coveredNeutralOriginals:true,catalogBatchLineage:true,
+    allowedPhases:['frozen_selected_statistics_refs_v2'] },
+  covered_batch_selected_numeric_progress_refs_v3: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,
+    readingSelectedUnionSubjectHousing:true,readingSelectedUnionFirstEligibility:true,
+    readingSelectedUnionFirstAmenities:true,readingSelectedUnionFirstTransactions:true,readingSelectedMetricSource:true,
+    readingSelectedStatisticsSource:true,readingSelectedFrequencySource:true,readingSelectedNumericSource:true,
+    progressingSelectedNumeric:true,coveredNeutralOriginals:true,catalogBatchLineage:true,
+    allowedPhases:['frozen_selected_statistics_refs_v2','frozen_selected_numeric_refs_v2'] },
   original_selected_first_frequency_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
     readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true,
@@ -3701,6 +3715,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           const continuation=await createCustomCohortV2ContinuationRepository(client).yieldIssued(claim,jobOptions);
           const {statistics_contribution_candidate,metric_row_candidate,reported_comparison,selected_entry,...presentation}=subjectHousingResult;
           const result={...presentation,status:'original_selected_numeric_progress_retained',numeric_reference:receiptReference,
+            ...(catalogBatchLineage?{catalog_receipt_format:'cohort_recorded_catalog_batch_receipt_v3'}:{}),
             ...(coveredNeutralOriginals?{covered_neutral_originals:true,covered_CAD_originals:true}:{}),
             contribution_row_reference:firstSelectedEntry?.contribution_row_reference??null,progress:plan.after,
             coverage:'one_native_selected_ordinal_or_fresh_terminal_empty_probe',empty_selected_union:unionCounts.selected_count===0,
@@ -3714,6 +3729,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         if(readingSelectedFrequencySource){
           const {statistics_contribution_candidate,metric_row_candidate,reported_comparison,...presentation}=subjectHousingResult;
           const result={...presentation,status:'current_authorized_first_selected_frequency_originals_reconciled',
+            ...(catalogBatchLineage?{catalog_receipt_format:'cohort_recorded_catalog_batch_receipt_v3'}:{}),
+            ...(coveredNeutralOriginals?{covered_neutral_originals:true,covered_CAD_originals:true}:{}),
             contribution_reference:statisticsAnchor.receipt_reference,
             contribution_row_reference:firstSelectedEntry?.contribution_row_reference??null,
             retained_contribution_reconciled:firstSelectedEntry!==null,
@@ -4521,6 +4538,14 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     async progressCoveredOriginalFrozenCaptureJobSelectedTransactionIndexReferencesV2(...args){
       if(args.length!==2)fail('invalid_options');
       return frozenCaptureJobSourceStage(args[0],args[1], 'covered_selected_transaction_index_progress_refs_v2');
+    },
+    readCoveredOriginalFrozenCaptureJobBatchFirstSelectedNumericReferencesV3(...args){
+      if(args.length!==2)fail('invalid_options');
+      return frozenCaptureJobSourceStage(args[0],args[1],'covered_batch_selected_first_indexed_refs_v3');
+    },
+    progressCoveredOriginalFrozenCaptureJobBatchSelectedNumericReferencesV3(...args){
+      if(args.length!==2)fail('invalid_options');
+      return frozenCaptureJobSourceStage(args[0],args[1],'covered_batch_selected_numeric_progress_refs_v3');
     },
     // Inactive ninth population owner; no route/worker/default activation.
     progressOriginalFrozenCaptureJobSelectedNumericReferencesV2: (value, options = {}) =>

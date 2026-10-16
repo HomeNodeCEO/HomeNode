@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { runNeighborhoodBatchSelectedNumericV3DatabaseChecks } from './neighborhoodBatchSelectedNumericV3DatabaseChecks.js';
 import { withCustomCohortJobTransaction as tx } from '../../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
 import { createCustomCohortCaptureJobRepository as jobs } from '../../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
 import { createCustomCohortV2ContinuationRepository as continuations } from '../../src/services/neighborhoodAssessment/customCohortV2ContinuationRepository.js';
@@ -9,7 +10,7 @@ import { runCustomCohortBatchSelectedMetricsV3JobOnce as metrics } from '../../s
 /** Twenty-ninth independent graph, after the actual V3 metrics fresh EMPTY.
  * Contributions are source-backed account cells, not economic statistics. */
 export async function runNeighborhoodBatchSelectedStatisticsV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
-  catalogHead,groups,assertParents,setFault,readFault,originalReads,command}){
+  catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedNumericFixture=false}){
   const operation=input.operationId,method='progressCoveredOriginalFrozenCaptureJobBatchSelectedStatisticsReferencesV3',
     readMethod='readCoveredOriginalFrozenCaptureJobBatchFirstSelectedStatisticsReferencesV3',
     head=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_statistics_v2_heads WHERE operation_id=$1',[operation])).rows[0],
@@ -113,6 +114,10 @@ export async function runNeighborhoodBatchSelectedStatisticsV3DatabaseChecks({po
     assert.deepEqual((await client.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[operation])).rows,saved);throw rollback;
   }),e=>e===rollback);
   assert.deepEqual(await job(),terminal.job);assert.deepEqual(await parent(),terminal.parent);assert.deepEqual(await blobs(),terminal.blobs);assert.deepEqual(await head(),terminal.head);assert.deepEqual(await rows(),terminal.rows);await immutable();
+  if(batchSelectedNumericFixture){
+    await runNeighborhoodBatchSelectedNumericV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
+      catalogHead,groups,assertParents,setFault,readFault,originalReads,command});return;
+  }
   console.info('[native-batch-selected-statistics-v3]',{independent_actual_V3_metrics_worker_fresh_EMPTY:true,
     read_only_first_contribution_every_retained_metric_row_field_reconciled_to_fresh_originals:true,
     whole_original_ENTIRE_neutral_CAD_cache_refusal_and_actual_deferred_orphan_COMMIT_rollback:true,

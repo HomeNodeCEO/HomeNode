@@ -8182,3 +8182,38 @@ admission, default worker, scheduler, grant, publication, report Apply or pin
 transfer is activated. Complete amenities/economic/transaction semantics,
 selected-union statistics/calendar quarters, coherent publication, terminal
 pins and licensed large-area/saved Hardy speed acceptance remain required.
+
+## First covered CAD amenity original read (2026-10-16, inactive)
+
+A separate manual read-only entry point requires the actual independent CAD
+coverage head to be DONE, including its fresh EMPTY, and the actual neutral
+DONE head plus original source/root/graph/geography/identity/stock lineage.
+It accepts only the live claim and operation budget. The server selects the
+first complete stock account, reopens every primary and secondary original,
+recompiles each against its entire cached JSON, and derives the existing bounded
+local amenity evidence. An incomplete or absent coverage head refuses before
+the account packet. All current and ending separate CAD/market rights, database
+actor/assignment/private-draft/subject, native heads, source/cache and claim
+checks remain under one32MB input/result,256 SQL call and60s owner budget.
+
+Only this independently covered lane admits a coherent building global cache
+header. Its metadata, fixed profile and global scan progress must still match
+the actual retained source; no global completion is asserted. Existing legacy
+complete-cache consumers keep their original admission. The final entire result
+has a16KB cap and includes no original payload copies. No cache/head/checkpoint/
+lease/blob/report writes are made by this reader. Reported native pool booleans
+remain local observations; duplicate secondary native IDs are preserved and
+garage/outbuilding type dictionaries remain unsupported.
+
+The authored native case exercises actual complete coverage, first-account
+original/entire-cache replay, missing/partial/pre-EMPTY refusal, current ending
+rights/actor/assignment/draft/subject/claim/cancellation, text forgery, the shared
+byte ceiling, changed ending cache header, real read-only lost COMMIT ACK and
+identical reopen with unchanged job/parents/pins/heads/blobs. This native fixture
+uses a complete global cache; building-header admission currently has DATA/unit
+coverage only. New-head native execution remains pending. This first-account
+read does not establish complete selected amenities, economic/transaction
+semantics, statistics/calendar quarters, automatic success handoff, coherent
+publication, terminal pins or licensed large-area/Hardy production speed.
+No migration registration, route/default worker, scheduler, grant, appraiser
+choice, Apply, publication or pin transfer is activated.

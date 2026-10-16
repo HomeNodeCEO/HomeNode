@@ -29,7 +29,10 @@ import { createNeighborhoodFrozenJobSourceIdentity } from './neighborhoodFrozenJ
 import { createNeighborhoodSharedJobCadImprovementPages,prepareNeighborhoodSharedJobCadPage,
   createNeighborhoodSharedJobCadAccountPages,prepareNeighborhoodSharedJobCadAccountPage }
   from './neighborhoodSharedJobCadImprovementPages.js';
-import { prepareNeighborhoodOriginalCadAccountPackagePageV2 } from './neighborhoodOriginalCadAccountPackagesV2.js';
+import { prepareNeighborhoodOriginalCadAccountPackagePageV2,NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL,
+  NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_LIMITS,reconcileNeighborhoodOriginalCadAccountPackageV2 } from './neighborhoodOriginalCadAccountPackagesV2.js';
+import { resolveNeighborhoodOriginalCadAmenityEvidenceV2 } from './neighborhoodOriginalCadAmenityEvidenceV2.js';
+import { prepareNeighborhoodCoveredCadCacheHeaderV2 } from './neighborhoodCoveredCadCacheHeaderV2.js';
 import { createNeighborhoodScopedCadOriginalAccountV2 } from './neighborhoodScopedCadOriginalAccountV2.js';
 import { describeNeighborhoodCadImprovementPurpose } from '../../security/customNeighborhoodCadImprovementSourcePolicy.js';
 import { createNeighborhoodFrozenJobTypedOriginals } from './neighborhoodFrozenJobTypedOriginals.js';
@@ -236,6 +239,8 @@ const FROZEN_SOURCE_STAGES = freeze({
     allowedPhases: ['frozen_identity_refs_v2'] },
   cache_CAD_coverage_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingCadPages: true, cachingCadCoverage: true, allowedPhases: ['frozen_identity_refs_v2'] },
+  covered_first_CAD_amenities_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
+    readingCadPages: true, cachingCadCoverage: true, readingCoveredCadAmenities: true, allowedPhases: ['frozen_identity_refs_v2'] },
   original_CAD_amenity_evidence_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     readingCadPages: true, projectingCadAccounts: true, reconcilingCadAccounts: true, resolvingCadAmenities: true, allowedPhases: ['frozen_identity_refs_v2'] },
   shared_transaction_pages_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
@@ -1866,7 +1871,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       fail('frozen_source_representation_unsupported');
     const {referencesV2=false,issuingSourcePrefix=false,yieldingSourcePrefix=false,verifying=false,stockVerifying=false,identityVerifying=false,yieldingEarlyProgress=false,
       typing=false,readingStockMetrics=false,readingSharedStockMetrics=false,neutralSharedMetrics=false,cachingNeutralOriginals=false,yieldingNeutralProgress=false,
-      readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,cachingCadOriginals=false,cachingCadCoverage=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
+      readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,cachingCadOriginals=false,cachingCadCoverage=false,readingCoveredCadAmenities=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,coveredNeutralOriginals=false,cacheStockHandoff=false,
       resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,partitioningRecordedGroups=false,
       readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,readingSelectedUnionFirstEligibility=false,readingSelectedUnionFirstAmenities=false,readingSelectedUnionFirstTransactions=false,progressingSelectedEligibility=false,progressingSelectedEvidence=false,readingSelectedMetricSource=false,progressingSelectedMetrics=false,readingSelectedStatisticsSource=false,progressingSelectedStatistics=false,readingSelectedFrequencySource=false,readingSelectedNumericSource=false,progressingSelectedNumeric=false,readingSelectedRankCandidates=false,progressingSelectedSemantic=false,readingSelectedTransactionSource=false,preparingSelectedTransactionFirstCandidate=false,readingSelectedTransactionIndex=false,progressingSelectedTransactionIndex=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
@@ -1940,13 +1945,16 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       // This is one manual cache operation, not durable automatic coverage.
       // An enrolled job must wait for a separately guarded CAD success bridge.
       const assertManualCadCache=async()=>{if(cachingCadCoverage||cachingCadOriginals){
-        const manual=one(await client.query(`/* custom-cohort-CAD-cache-account-v2:manual */
+        const manualResult=await client.query(`/* custom-cohort-CAD-cache-account-v2:manual */
           SELECT job.request_payload->>'execution_mode' IS NULL
             AND NOT EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_v2_continuations c WHERE c.operation_id=job.operation_id) AS allowed
           FROM app.neighborhood_custom_cohort_capture_jobs job WHERE job.operation_id=$1::uuid
             AND job.claim_token=$2::uuid AND job.attempts=$3::integer AND job.status='running'
             AND job.lease_expires_at>clock_timestamp() AND job.cancellation_requested_at IS NULL`,
-        [claim.operation_id,claim.claim_token,claim.attempts]));
+        [claim.operation_id,claim.claim_token,claim.attempts]);
+        if(manualResult?.rowCount!==1||!Array.isArray(manualResult.rows)||manualResult.rows.length!==1)
+          throw new TypeError('custom_cohort_capture_job_claim_lost');
+        const manual=manualResult.rows[0];
         if(manual.allowed!==true)fail('CAD_automatic_handoff_unavailable');
       }};
       await assertManualCadCache();
@@ -2366,7 +2374,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         stockMetricResult=await reader(client,stockOptions,graph,context.effective_date).page(metricPage);
       }
       let cadCoverageStore=null,cadCoverageHead=null,cadCoverageNeutralStore=null,cadCoverageNeutralHead=null,
-        cadCoverageExpected=null,cadCoverageIssued=null,cadCoveragePlan=null,cadCoverageResult=null;
+        cadCoverageExpected=null,cadCoverageIssued=null,cadCoveragePlan=null,cadCoverageResult=null,cadCoveredHeader=null,cadCoveredAmenities=null;
       if(cachingCadCoverage){
         const neutralExpected={binding,source_reference:reference,root,graph_reference:verificationReference,
           geographic_reference:stockVerificationReference,identity_reference:identityVerificationReference,stock_reference:stockReference,
@@ -2396,6 +2404,23 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           cadCoverageIssued=prepareCohortCadCacheCoverageReceiptV2(body,cadCoverageExpected);
           if(cadCoverageIssued.sequence!==cadCoverageHead.sequence)fail('checkpoint_conflict');
         }
+        if(readingCoveredCadAmenities){
+          if(!cadCoverageIssued?.after.done)fail('CAD_complete_coverage_required');
+          const header=one(await client.query(NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read,
+            [stock.generation_id,cadCoverageExpected.typed_profile_reference.content_sha256]));
+          cadCoveredHeader=prepareNeighborhoodCoveredCadCacheHeaderV2(header,cadCoverageExpected.cad_source_metadata);
+          const bounds=NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_LIMITS;
+          const packet=reconcileNeighborhoodOriginalCadAccountPackageV2(one(await client.query({
+            text:NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL,values:[stock.operation_id,stock.generation_id,
+              cadCoverageExpected.typed_profile_reference.content_sha256,'',bounds.rows,bounds.packet_utf8_bytes,
+              bounds.row_utf8_bytes,bounds.original_utf8_bytes,bounds.output_utf8_bytes],query_timeout:5000})),
+          {cursor:''},context.effective_date,budget.check);
+          if(packet.end_of_accounts||packet.rows.length!==1)fail('CAD_coverage_changed');
+          const account=packet.rows[0];
+          cadCoveredAmenities={account_id:account.account_id,geographic_parcel_count:account.geographic_parcel_count,
+            original_counts:{primary:Number(account.primary_original_count),secondary:Number(account.secondary_original_count)},
+            amenity_evidence:resolveNeighborhoodOriginalCadAmenityEvidenceV2(account,budget.check)};
+        }else{
         const before=cadCoverageIssued?.after??initialCohortCadCacheCoverageV2State();
         cadCoverageResult=await createNeighborhoodScopedCadOriginalAccountV2(client,stockOptions).reconcile({cursor:before.after_account});
         if(before.done&&!cadCoverageResult.end_of_accounts)fail('CAD_coverage_changed');
@@ -2407,6 +2432,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             after:{after_account:r.next_cursor,account_count:before.account_count+Number(entry!==null),
               original_count:before.original_count+r.reconciled_rows,typed_utf8_bytes:String(BigInt(before.typed_utf8_bytes)+BigInt(r.typed_utf8_bytes)),
               done:r.end_of_accounts}},cadCoverageExpected);
+        }
         }
       }
       if(readingCadPages&&!cachingCadCoverage){
@@ -3252,6 +3278,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         if(!same(await cadCoverageStore.read(),cadCoverageHead)||!same(await cadCoverageNeutralStore.read(),cadCoverageNeutralHead))fail('CAD_coverage_changed');
         if(!same(prepareNeighborhoodSharedTypedCadSource(await client.query(NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.source,
           [stock.generation_id]),stock.generation_id),cadCoverageExpected.cad_source_metadata))fail('CAD_source_changed');
+        if(readingCoveredCadAmenities&&!same(prepareNeighborhoodCoveredCadCacheHeaderV2(one(await client.query(
+          NEIGHBORHOOD_SHARED_TYPED_CAD_SQL.read,[stock.generation_id,cadCoverageExpected.typed_profile_reference.content_sha256])),
+        cadCoverageExpected.cad_source_metadata),cadCoveredHeader))fail('CAD_source_changed');
       }
       if(traversalAnchorStore&&!same(await traversalAnchorStore.read(),traversalAnchor))fail('checkpoint_conflict');
       if(partitionStore&&!same(await partitionStore.read(),partitionAnchor))fail('checkpoint_conflict');
@@ -3262,6 +3291,16 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         client,input,scopeJson:canonicalAssessmentJson(scope),checkBudget:budget.check}),selectionWorkspaceTarget))fail('workspace_target_changed');
       budget.check();
       if(cachingCadCoverage){
+        if(readingCoveredCadAmenities){
+          const result={status:'covered_first_original_CAD_amenity_evidence_v2',operation_id:input.operationId,
+            ...cadCoveredAmenities,cache_coverage_reference:cadCoverageHead.receipt_reference,neutral_reference:cadCoverageNeutralHead.receipt_reference,
+            effective_date:context.effective_date,coverage:'one_complete_first_stock_account_only',
+            original_reconciliation:'every_original_and_entire_cache_before_projection',
+            CAD_source_authorization:{purpose:cadPurpose,decision:cadDecision},
+            global_generation_complete:'not_established',automatic_handoff:false,selected_union:'not_established',
+            context_complete:false,pin_transfer:false,source_acquisition:'not_established',report_update:'none'};
+          if(Buffer.byteLength(JSON.stringify(result))>16_000)fail('byte_limit');budget.check();return freeze(result);
+        }
         if(cadCoveragePlan){const ref=await blobs.put(canonicalAssessmentJson(cadCoveragePlan));cadCoverageHead=await cadCoverageStore.advance(cadCoverageHead,ref);}
         budget.check();return freeze({status:'current_authorized_CAD_cache_coverage_progress_v2',operation_id:input.operationId,
           advanced:cadCoveragePlan!==null,cache_coverage_reference:cadCoverageHead.receipt_reference,
@@ -3939,6 +3978,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
      * Explicit manual operation until the separate automatic success bridge. */
     continueOriginalFrozenCaptureJobCadCacheCoverageReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'cache_CAD_coverage_refs_v2'),
+    /** Fixed first stock account, only after independently issued CAD+E DONE.
+     * Replays originals/entire cache; no cursor, writes or selected completeness. */
+    readCoveredOriginalFrozenCaptureJobFirstCadAmenityEvidenceReferencesV2: (value, options = {}) =>
+      frozenCaptureJobSourceStage(value, options, 'covered_first_CAD_amenities_refs_v2'),
     /** Resolve retained local amenity evidence only after full original replay;
      * no provider dictionary, verified presence, aggregate or live activation. */
     readOriginalFrozenCaptureJobCadAmenityEvidenceReferencesV2: (value, options = {}) =>

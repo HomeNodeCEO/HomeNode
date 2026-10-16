@@ -36,12 +36,21 @@ tests passed,0fail0skip,1422.8168ms. Tests cover512-byte multibyte literals beyo
 128-byte markers, exact old IDs, missing county/parts/placeholders/invalid values,
 outside conflicts, malformed originals, hostile DATA, whole bounds, unchanged
 hash-count/cache forgeries, fresh empty probes and single-use/ending fences.
-Actual native owner tests are AUTHORED for two accounts/three parcel/two account
+Actual native owner tests passed for two accounts/three parcel/two account
 originals,512-byte original labels with oversize neutral markers, outside-part
 conflict, all original/cache replay, both-end rights/role/claim/subject/cache/
 cancel, partial/unissued/corrupt heads, lost-COMMIT reopen and zero payload/job
-copies/checkpoint/head writes. NEW native/full cloud execution is PENDING.
-SQL doubles and pure DATA helpers do not establish current source authority.
+copies/checkpoint/head writes. On integrated implementation head
+`481f48875b90225a5a496b6f596dfce3e4410c56`, foundation run38856066266 and actual
+native job116827693945 passed:417 migration checks,1 subject-persistence,8
+prepared-index,1 edge-neighbor and2 bootstrap tests, with zero failures,
+cancellations or skips. The actual recorded-group owner marker at
+2026-10-16T05:37:17.8380868Z confirms every original/entire-cache replay,
+512-byte original labels, outside conflicts, no fabricated county, both-end
+authority/forgery refusal, lost-ACK reopen, fresh empty and zero copies/writes.
+This small native fixture does not establish licensed large-area acquisition
+or production speed. SQL doubles and pure DATA helpers do not establish current
+source authority.
 
 This is ONE original-reconciled account's recorded-label resolution, NOT a
 complete catalog partition, durable group index, server-owned selected union,

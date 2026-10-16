@@ -1,5 +1,38 @@
 # Complete larger-area Custom neighborhood studies
 
+## Batch selected contribution owner (2026-10-16, not activated)
+
+Two separate closed V3 entries reopen the first read-only contribution and
+advance one original-reconciled selected contribution after actual metric DONE.
+The complete original packet and ENTIRE neutral/CAD cache, partition entry,
+catalog literals and every retained metric-row field are reconciled under both
+current and ending source-purpose/actor/assignment/draft/subject/workspace/native
+parent fences. The existing contribution policy, sixteen-key receipt, native
+account membership, row/head/deferred COMMIT guards and numeric-index hook are
+unchanged. Account denominators, reported value states, source-part totals and
+overlapping exclusion reasons remain distinct; unsupported currency contributes
+no numeric value. These contributions do not establish medians, CODs, economic
+transaction equivalence or calendar-quarter applicability.
+
+The separate inactive worker requires actual completed V3 stock/partition/catalog
+parents and independent neutral/CAD success. Only metric DONE or incomplete
+contributions enter its claim/recovery/expiry lanes; contribution DONE remains
+for the unfinished numeric owner. Normal heartbeats, failure history and all
+query/original/byte/runtime budgets remain. Nothing registers or activates.
+
+A twenty-ninth independent native graph preserves all twenty-eight older cases
+and deadlines, runs their actual parent workers through fresh metric EMPTY,
+and authors first read-only/full-row equality, complete-cache refusal, actual
+orphan COMMIT rollback, lost first write acknowledgment, concurrent A/B/fresh
+EMPTY, exact native contribution/metric-row links and terminal lane exclusion.
+The new contribution callback does not separately inject every ending authority
+fault already covered by the independent prior stages. Ordinary V3 recovery
+below five still needs a fresh graph with reserved failure capacity. 197 serial
+focused checks pass, zero failures/cancellations/skips (5989.163ms); eighteen
+changed JavaScript syntax checks and diff checks pass. New-head cloud native/full
+execution remains pending. Complete numeric/semantic/economic statistics,
+publication/pins and licensed large-area/live-speed acceptance remain open.
+
 ## Native selected-worker heartbeat contention (2026-10-16, not activated)
 
 The independent batch selected-worker fixture previously ran six ending-refusal

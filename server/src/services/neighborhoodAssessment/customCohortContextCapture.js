@@ -450,6 +450,18 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingSelectedUnionFirstAmenities:true,readingSelectedUnionFirstTransactions:true,readingSelectedMetricSource:true,
     progressingSelectedMetrics:true,coveredNeutralOriginals:true,
     allowedPhases:['frozen_selected_evidence_refs_v2','frozen_selected_metrics_refs_v2'] },
+  covered_batch_selected_first_statistics_refs_v3: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,
+    readingSelectedUnionSubjectHousing:true,readingSelectedUnionFirstEligibility:true,
+    readingSelectedUnionFirstAmenities:true,readingSelectedUnionFirstTransactions:true,readingSelectedMetricSource:true,
+    readingSelectedStatisticsSource:true,coveredNeutralOriginals:true,catalogBatchLineage:true,
+    allowedPhases:['frozen_selected_metrics_refs_v2'] },
+  covered_batch_selected_statistics_progress_refs_v3: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,
+    readingSelectedUnionSubjectHousing:true,readingSelectedUnionFirstEligibility:true,
+    readingSelectedUnionFirstAmenities:true,readingSelectedUnionFirstTransactions:true,readingSelectedMetricSource:true,
+    readingSelectedStatisticsSource:true,progressingSelectedStatistics:true,coveredNeutralOriginals:true,catalogBatchLineage:true,
+    allowedPhases:['frozen_selected_metrics_refs_v2','frozen_selected_statistics_refs_v2'] },
   original_selected_first_statistics_refs_v2: { referencesV2: true, verifying: true, stockVerifying: true, identityVerifying: true,
     catalogingRecordedGroups: true, readingRecordedCatalog: true, replayingSelectedUnion: true,
     readingSelectedUnionSubjectHousing: true, readingSelectedUnionFirstEligibility: true,
@@ -3745,6 +3757,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           const continuation=await createCustomCohortV2ContinuationRepository(client).yieldIssued(claim,jobOptions);
           const {statistics_contribution_candidate,metric_row_candidate,reported_comparison,...presentation}=subjectHousingResult;
           const result={...presentation,status:'original_selected_statistics_contribution_progress_retained',
+            ...(catalogBatchLineage?{catalog_receipt_format:'cohort_recorded_catalog_batch_receipt_v3'}:{}),
             ...(coveredNeutralOriginals?{covered_neutral_originals:true,covered_CAD_originals:true}:{}),
             statistics_contribution_reference:receiptReference,statistics_contribution_row_reference:rowReference,
             statistics_contribution_retained:rowReference!==null,progress:plan.after,contribution_counts:afterCounts,read_only:false,
@@ -4454,6 +4467,14 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       frozenCaptureJobSourceStage(value, options, 'covered_selected_metrics_progress_refs_v2'),
     // Inactive, read-only statistics-source boundary; fixed first only. Fresh
     // originals and field reconciliation, NOT complete statistics/publication.
+    readCoveredOriginalFrozenCaptureJobBatchFirstSelectedStatisticsReferencesV3(...args){
+      if(args.length!==2)fail('invalid_options');
+      return frozenCaptureJobSourceStage(args[0],args[1],'covered_batch_selected_first_statistics_refs_v3');
+    },
+    progressCoveredOriginalFrozenCaptureJobBatchSelectedStatisticsReferencesV3(...args){
+      if(args.length!==2)fail('invalid_options');
+      return frozenCaptureJobSourceStage(args[0],args[1],'covered_batch_selected_statistics_progress_refs_v3');
+    },
     readOriginalFrozenCaptureJobFirstSelectedStatisticsReferencesV2: (value, options = {}) =>
       frozenCaptureJobSourceStage(value, options, 'original_selected_first_statistics_refs_v2'),
     progressOriginalFrozenCaptureJobSelectedStatisticsReferencesV2: (value, options = {}) =>

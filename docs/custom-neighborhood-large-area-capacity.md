@@ -7519,3 +7519,38 @@ Migration `20261210_custom_cohort_source_prefix_success_v2.sql` is unregistered.
 Initial queue/stock dispatch, generic-worker routing coordination and complete
 neutral-cache preparation remain activation prerequisites. No route, schedule,
 source grant, publication, Apply or pin transfer is enabled by this candidate.
+
+### Dormant native initial dispatch candidate (2026-10-16)
+
+`queueFrozenOriginalCaptureJobV2` is an explicit internal admission path. It
+reloads the current database actor and checks the exact assignment and private
+draft at both ends. Its immutable request retains `frozen-originals-v2` routing
+DATA, never caller source authority. A pristine queued request and its native
+scope/actor/request enrollment must commit together; existing stock checkpoints
+and free source prefixes cannot be adopted. Ordinary queue semantics are kept.
+
+`runCustomCohortInitialV2JobOnce` obtains one fresh transaction-stamped native
+claim, reloads the real actor/request, invokes the actual frozen-stock owner,
+then invokes one actual prefix-success owner. A crash after stock commits
+reopens the same immutable pinned stock on an ordinary failed recovery. The
+prefix owner alone retains and releases the first native prefix success.
+Initial claims spend only the existing five-attempt failure budget; successful
+prefix/graph pages keep their independently bounded success sequences and
+failure history. No numerical or original query is replaced with routing DATA.
+
+Both generic claiming and generic expiry exclude the explicit execution mode
+through every later native phase. Native initial claims/expiry stop at the
+stock boundary. The new independent disposable fixture requires actual orphan
+queue and claim COMMIT refusals, current/ending actor rollback, concurrent
+single claim, old-token refusal, lost real queue/stock acknowledgments, immutable
+stock reuse, actual prefix/graph handoff, and no retirement of an expired
+cancelled next-owner claim. Reports, assignments and retained pins stay intact.
+
+Seven focused new dispatcher/request/claim checks and affected existing checks
+pass; the new native fixture still needs actual cloud execution at this head.
+Migration `20261211_custom_cohort_initial_dispatch_v2.sql` is unregistered.
+Activation requires the complete migration chain and coordinated deployed worker
+composition before admitting this execution mode. Complete neutral-cache
+handoff, later semantic owners/publication/terminal pin handoff and licensed
+large-area/live speed acceptance remain open. No route, schedule, source grant,
+report publication, Apply or pin transfer is enabled here.

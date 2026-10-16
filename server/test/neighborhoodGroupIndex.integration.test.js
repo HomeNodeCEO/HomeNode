@@ -4,6 +4,7 @@ import { randomUUID,createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
 import { prepareNeighborhoodCiDatabase } from './helpers/neighborhoodCiDatabase.js';
+import { runNeighborhoodInitialV2DispatchDatabaseChecks } from './helpers/neighborhoodInitialV2DispatchDatabaseChecks.js';
 import { observeNeighborhoodCiPreparedQueries, NEIGHBORHOOD_CI_PROTOCOL_SESSION_OPTIONS } from './helpers/neighborhoodCiPreparedQueries.js';
 import { runNeighborhoodSelectedNumericIndexV2DatabaseChecks } from './helpers/neighborhoodSelectedNumericIndexV2DatabaseChecks.js';
 import { runNeighborhoodSelectedNumericPopulationV2DatabaseChecks } from './helpers/neighborhoodSelectedNumericPopulationV2DatabaseChecks.js';
@@ -1421,8 +1422,8 @@ test('isolated PostgreSQL: freezes a complete 60001-account original source popu
 // Independent real-native captures: preserve the original five-failure terminal
 // test, and build an entirely new issued graph for the waiting boundary. Never
 // clone/rebind job roots, summaries, original payloads or caller DONE metadata.
-for(const selectionWaitFixture of [false,true,'intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner','union-worker','early-continuations','early-worker','prefix-native','prefix-worker']) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
-  +(selectionWaitFixture==='prefix-worker'?' with native source-prefix success worker':selectionWaitFixture==='prefix-native'?' with native source-prefix issuance':['early-continuations','early-worker'].includes(selectionWaitFixture)?` with early original-owner ${selectionWaitFixture}`:['intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner','union-worker'].includes(selectionWaitFixture)?` with explicit new-study selection ${selectionWaitFixture}`:selectionWaitFixture?' with issued selection waiting':''),{
+for(const selectionWaitFixture of [false,true,'intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner','union-worker','early-continuations','early-worker','prefix-native','prefix-worker','initial-dispatch']) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
+  +(selectionWaitFixture==='initial-dispatch'?' with native source-prefix initial dispatch':selectionWaitFixture==='prefix-worker'?' with native source-prefix success worker':selectionWaitFixture==='prefix-native'?' with native source-prefix issuance':['early-continuations','early-worker'].includes(selectionWaitFixture)?` with early original-owner ${selectionWaitFixture}`:['intent','union','union-empty','union-all','union-all-site-positive','union-all-semantic-recovery','union-all-shared-transaction','union-all-transaction-index-owner','union-worker'].includes(selectionWaitFixture)?` with explicit new-study selection ${selectionWaitFixture}`:selectionWaitFixture?' with issued selection waiting':''),{
   // The tenth graph replays every real parent before its own A/B/EMPTY owner
   // proof. Keep all nine pre-existing paths at their original 180-second
   // deadline; reserve extra fixture time only for that new graph. This does
@@ -1430,6 +1431,7 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
   skip:!process.env.DATABASE_URL,timeout:selectionWaitFixture==='union-all-transaction-index-owner'?240_000:180_000,
 },async()=>{
   const transactionIndexOwnerFixture=selectionWaitFixture==='union-all-transaction-index-owner',
+    initialDispatchFixture=selectionWaitFixture==='initial-dispatch',
     prefixNativeFixture=selectionWaitFixture==='prefix-native',
     prefixWorkerFixture=selectionWaitFixture==='prefix-worker',
     earlyContinuationFixture=selectionWaitFixture==='early-continuations',
@@ -2377,15 +2379,21 @@ for(const selectionWaitFixture of [false,true,'intent','union','union-empty','un
       report:(await pool.query('SELECT to_jsonb(r) AS body FROM app.report_files r WHERE id=$1',[scope.report_file_id])).rows,
       assignment:(await pool.query('SELECT to_jsonb(a) AS body FROM app.assignment_files a WHERE id=$1',[assignment])).rows});
     const earlyProtected=earlyContinuationFixture||earlyWorkerFixture||prefixNativeFixture||prefixWorkerFixture?await readEarlyProtected():null;
-    if(earlyContinuationFixture||earlyWorkerFixture||prefixWorkerFixture)await withCustomCohortJobTransaction(pool,async client=>{
+    if(earlyContinuationFixture||earlyWorkerFixture||prefixWorkerFixture||initialDispatchFixture)await withCustomCohortJobTransaction(pool,async client=>{
       for(const name of ['20261206_custom_cohort_selected_transaction_index_owner_v2.sql',
         '20261208_custom_cohort_early_continuations_v2.sql'])
         await client.query(readFileSync(new URL(`../migrations/${name}`,import.meta.url),'utf8'));
     });
-    if(prefixNativeFixture||prefixWorkerFixture)await withCustomCohortJobTransaction(pool,client=>client.query(readFileSync(
+    if(prefixNativeFixture||prefixWorkerFixture||initialDispatchFixture)await withCustomCohortJobTransaction(pool,client=>client.query(readFileSync(
       new URL('../migrations/20261209_custom_cohort_source_prefix_v2.sql',import.meta.url),'utf8')));
-    if(prefixWorkerFixture)await withCustomCohortJobTransaction(pool,client=>client.query(readFileSync(
+    if(prefixWorkerFixture||initialDispatchFixture)await withCustomCohortJobTransaction(pool,client=>client.query(readFileSync(
       new URL('../migrations/20261210_custom_cohort_source_prefix_success_v2.sql',import.meta.url),'utf8')));
+    if(initialDispatchFixture){
+      await withCustomCohortJobTransaction(pool,client=>client.query(readFileSync(
+        new URL('../migrations/20261211_custom_cohort_initial_dispatch_v2.sql',import.meta.url),'utf8')));
+      await runNeighborhoodInitialV2DispatchDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData:fixturePolicy()});
+      return;
+    }
     const earlyCounts={frozen_verify_refs_v2:0,frozen_geo_verify_refs_v2:0,frozen_identity_refs_v2:0};
     const createRefsOwner=()=>{
       const service=createCustomCohortContextCapture({pool:refsPool,sourceMode:'combined-witness2-v1',authorizeMarketData:fixturePolicy()});

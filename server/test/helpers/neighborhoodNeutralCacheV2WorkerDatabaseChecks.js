@@ -357,7 +357,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
       }
       fault='batch_ack';await assert.rejects(batchRead(),e=>e.outcome_unknown===true);assert.equal(fault,null);await assertUnchanged();
       const packet=await batchRead();assert.equal(packet.account_count,2);assert.equal(packet.end_of_accounts,false);assert.equal(packet.native_progress,'not_issued');
-      assert.deepEqual(packet.accounts.map(p=>p.account_id),[input.accountId,'INDEX-B']);
+      assert.deepEqual(packet.accounts.map(p=>p.account_id),[input.accountId,'CLOSURE-B']);
       assert.equal(packet.original_count,packet.accounts.reduce((n,a)=>n+a.rows.length,0));
       assert.ok(packet.accounts.every(a=>a.rows.length>=1&&a.original_counts.parcels>=1));
       assert.equal(packet.accounts[0].original_counts.parcels,2,'the complete outside part is reread in the batch');

@@ -1,5 +1,25 @@
 # Complete larger-area Custom neighborhood studies
 
+## Native selected-worker heartbeat contention (2026-10-16, not activated)
+
+The independent batch selected-worker fixture previously ran six ending-refusal
+owner transactions before its real owner, all inside one worker callback. A
+normal 15-second heartbeat could therefore overlap a later probe's initial
+`FOR SHARE NOWAIT` job fence. One actual child run refused with PostgreSQL
+`55P03` before original IO; that failed head is not accepted or rerun unchanged.
+
+The fixture now performs those same original-backed ending/COMMIT rollback
+probes under the genuine resumed claim before starting the worker. It also
+holds the actual repository heartbeat UPDATE in a native transaction, requires
+that precise NOWAIT refusal before any original read, then rolls it back and
+compares the entire job, dispatch, union, blobs and immutable native parents.
+The concurrent initial workers still adopt the actual command once and perform
+the real first original owner with lost COMMIT acknowledgment; B/fresh EMPTY,
+terminal lane exclusion and failure-five history remain. No owner or worker
+production behavior, 15-second timer, fence, deadline, budget or failure ceiling
+changes. New exact-head native/full cloud execution is required before this
+correction or any integrated descendant is accepted.
+
 ## Explicit batch selection intent (2026-10-16, not activated)
 
 The separate closed V3 resume owner accepts only an explicit NEW-study command:

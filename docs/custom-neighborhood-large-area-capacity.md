@@ -8809,7 +8809,33 @@ ending refusals, orphan-yield rollback, a lost actual COMMIT acknowledgment,
 fresh native continuation tokens and unchanged history, reports and source pins
 at attempt five. Cloud/native execution of this new scenario is pending.
 
-This adds no automatic union worker, migration registration, default dispatcher,
-selection choice, metric population, publication or terminal pin transfer.
+That original-owner boundary adds no automatic scheduling, migration
+registration, default dispatcher, selection choice, metric population,
+publication or terminal pin transfer. Separate inactive worker lanes follow.
 Complete V3 downstream composition and licensed large-area/live speed acceptance
 remain open. Small fixture success does not establish those acceptance criteria.
+
+## Batch-catalog selected-union workers (2026-10-16, inactive)
+
+Separate V3 initial and progress worker lanes now compose the actual bounded
+original-union owner. Initial adoption records the authenticated command's real
+resume token once; ordinary failed or expired claims alone increment the existing
+failure attempt below five. Progress consumes an actual native continuation with
+a fresh token without refunding or charging failure history. Every success,
+recovery and expiry path requires the exact V3 stock/partition/catalog parents
+and current matching pending workspace. Progress requires union-incomplete;
+union DONE is excluded from all three lanes and belongs to a separate next owner.
+Neither worker supplies group IDs, source authority, originals or membership.
+The original owner repeats its complete current and ending fences. Both workers
+retain normal heartbeats and require exact V3-parent result metadata.
+
+A twenty-fifth independent native scenario preserves all twenty-four earlier
+scenarios and deadlines. It requires changed-target exclusion, real deferred
+orphan-adoption refusal, concurrent single adoption, original/ENTIRE-cache/entry
+and ending refusals, lost actual first COMMIT acknowledgment, concurrent B and
+fresh EMPTY, terminal claim/recovery/expiry exclusion and immutable history,
+reports and source pins at attempt five. Execution is pending; ordinary native
+recovery below five is not established by this new scenario. No default worker,
+schedule, route, migration registration, grant, appraiser choice, publication,
+Apply or pin transfer is activated. Large-area acquisition, downstream semantics
+and real production speed acceptance remain unfinished.

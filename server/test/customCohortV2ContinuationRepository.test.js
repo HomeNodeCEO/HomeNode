@@ -168,4 +168,8 @@ test('early native candidate keeps original guards, same-TX issuance and deferre
     'continueFrozenCaptureJobSourceIdentityReferencesV2','[native-early-original-success-continuations-v2]',
     'early_orphan_commit','synthetic_early_recovery','previous_TX_head_cannot_reissue'])
     assert.ok(fixture.includes(name)||owner.includes(name),name);
+  assert.ok(fixture.includes("!fault?.startsWith('early_')"));
+  assert.ok(fixture.includes('earlyOrphanYieldSeen,seenBefore+1'));
+  assert.ok(fixture.includes('const ownerAttempts=refsClaim.attempts;'));
+  assert.ok(fixture.includes('assert.equal(result.continuation.attempts,ownerAttempts);'));
 });

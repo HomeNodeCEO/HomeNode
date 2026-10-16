@@ -97,7 +97,17 @@ export async function runNeighborhoodBatchSelectedStatisticsV3DatabaseChecks({po
     if(sequence===3){assert.equal(receipt.selected_entry,null);assert.equal(receipt.row_reference,null);
       assert.deepEqual(receipt.after_counts,receipt.before_counts);
       for(const [key,c] of Object.entries(receipt.after_counts)){
-        assert.equal(c.eligible_count,completedMetrics.after_counts[key]);assert.equal(c.eligible_count+c.excluded_count,2);
+        // The three supported numeric metrics have seventh-row eligibility
+        // denominators. Currency is a separate contribution-only exclusion;
+        // it must never become an eligible numeric market-value population.
+        if(key==='reported_market_value'){
+          assert.equal(c.eligible_count,0);assert.equal(c.excluded_count,2);
+          assert.equal(c.exclusion_reason_counts.currency_not_established,2);
+        }else{
+          assert.equal(Object.hasOwn(completedMetrics.after_counts,key),true);
+          assert.equal(c.eligible_count,completedMetrics.after_counts[key]);
+        }
+        assert.equal(c.eligible_count+c.excluded_count,2);
         assert.equal(Object.values(c.value_states).reduce((a,b)=>a+b,0),2);
       }
     }

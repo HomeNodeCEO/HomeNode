@@ -9,10 +9,10 @@ const scope={organization_id:id(1),report_file_id:id(2),assignment_file_id:'7',a
   reference={content_sha256:'a'.repeat(64),canonical_utf8_bytes:'123'};
 // SQL doubles verify detached mechanics only; native issuance/source/current
 // rights and failure-history preservation require the cloud PostgreSQL fixture.
-function setup({auto=false,bad=false,empty=false}={}){let tx=30;const calls=[];
+function setup({auto=false,bad=false,empty=false,sequence=100001,phase='frozen_recorded_partition_refs_v2'}={}){let tx=30;const calls=[];
   return {calls,owner:repository({async query(sql,values){calls.push({sql,values});
     if(sql.includes(':transaction'))return {rowCount:1,rows:[{transaction_id:String(auto?++tx:tx)}]};
-    if(sql.includes(':yield'))return {rowCount:1,rows:[{sequence:100001,phase:'frozen_recorded_partition_refs_v2',progress_reference:reference,attempts:bad?4:5}]};
+    if(sql.includes(':yield'))return {rowCount:1,rows:[{sequence,phase,progress_reference:reference,attempts:bad?4:5}]};
     if(sql.includes(':claim'))return {rowCount:empty?0:1,rows:empty?[]:[{...scope,...claim,claim_token:id(6),actor_user_id:id(5)}]};assert.fail(sql);}})};}
 
 test('issued success continuation preserves fifth attempt, current exact claim and actual native checkpoint',async()=>{
@@ -60,4 +60,26 @@ test('registered native continuation guards actual heads, root checkpoint, singl
     'stock_traversal_v2_anchors','recorded_partition_v2_heads','BEFORE TRUNCATE','ON DELETE RESTRICT'])assert.ok(sql.includes(s),s);
   assert.match(jobs,/AND NOT EXISTS \(SELECT 1 FROM app\.neighborhood_custom_cohort_v2_continuations/);
   assert.doesNotMatch(sql,/DISABLE TRIGGER|DROP TABLE|ST_DWithin|UPDATE app\.report_files|DELETE FROM/);
+});
+test('catalog continuation admits only the actual native catalog phase within the finite three-pass ceiling',async()=>{
+  const phase='frozen_recorded_catalog_refs_v2',result=await setup({phase,sequence:6000003}).owner.yieldIssued(claim,options);
+  assert.equal(result.phase,phase);assert.equal(result.continuation_sequence,6000003);assert.equal(result.attempts,5);
+  for(const sequence of [0,6000004,1.5])await assert.rejects(setup({phase,sequence}).owner.yieldIssued(claim,options),/corrupt/);
+  await assert.rejects(setup({phase:'frozen_selected_union_refs_v2'}).owner.yieldIssued(claim,options),/corrupt/);
+  const {owner,calls}=setup({phase});
+  for(const key of ['phase','progress_reference','done','continuation_sequence','retry_count','catalog_head','readOriginal'])
+    await assert.rejects(owner.yieldIssued(claim,{...options,[key]:true}),/invalid_/);
+  assert.equal(calls.length,0);
+});
+test('additive catalog continuation keeps existing atomic guards and refuses backward phase transitions',()=>{
+  const name='20261122_custom_cohort_catalog_continuations_v2.sql',registry=readFileSync(new URL('../src/database/mobileMigrations.js',import.meta.url),'utf8'),
+    sql=readFileSync(new URL(`../migrations/${name}`,import.meta.url),'utf8');
+  assert.ok(registry.indexOf(name)>registry.indexOf('20261121_custom_cohort_recorded_catalog_v2.sql'));
+  for(const s of ['CHECK(sequence BETWEEN 1 AND 6000003)','CREATE OR REPLACE FUNCTION app.guard_neighborhood_cohort_v2_continuation()',
+    'recorded_catalog_v2_heads',"jsonb_array_length(job.checkpoint->'evidence_refs')<>9",
+    "NEW.progress_reference IS DISTINCT FROM actual_reference",'OLD.consumed_claim_token IS NULL',
+    'NEW.issued_attempts<OLD.issued_attempts',"OLD.phase='frozen_recorded_catalog_refs_v2' AND NEW.phase<>'frozen_recorded_catalog_refs_v2'",
+    "OLD.phase='frozen_recorded_partition_refs_v2' AND NEW.phase='frozen_stock_traversal_refs_v2'"])
+    assert.ok(sql.includes(s),s);
+  assert.doesNotMatch(sql,/DISABLE TRIGGER|DROP TRIGGER|DROP TABLE|DELETE FROM|UPDATE app\.|ST_DWithin|SET attempts|attempts=0/);
 });

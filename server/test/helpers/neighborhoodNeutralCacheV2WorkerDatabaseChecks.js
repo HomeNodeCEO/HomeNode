@@ -52,7 +52,7 @@ import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL as TRAN
 
 /** Independent disposable job; all acquisition owners, authorization, original
  * queries, native issuance, savepoint rollback and COMMITs are real. */
-export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData,coveredTransactionIndexFixture=false,stockBatchFixture=false,partitionBatchFixture=false,catalogBatchFixture=false}){
+export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData,coveredTransactionIndexFixture=false,stockBatchFixture=false,partitionBatchFixture=false,catalogBatchFixture=false,catalogBatchReplayFixture=false}){
   const input={...sourceInput,operationId:randomUUID()},operation=input.operationId;let fault=null,stockReads=0;
   const observed={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
     const text=typeof c==='string'?c:c.text,originalPacket=text===BATCH_PACKET||text===STOCK_PACKET||text===PAIRED_STOCK_PACKET||text===TRANSACTION_PACKET||text===AMENITY_PACKET,
@@ -79,6 +79,18 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
       return raw.query({...c,text:text.replace(selected,'job.organization_id,$9,$10,$11,1,($12::integer+1)')});
     }
     const result=await raw.query(c);
+    if(fault==='catalog_replay_entry'&&text.includes('custom-cohort-recorded-partition-batch-v3:entry-read'))fault+='_ending';
+    else if(fault==='catalog_replay_entry_ending'&&text.includes('custom-cohort-recorded-partition-batch-v3:entry-read')){
+      fault=null;return {...result,rows:[{...result.rows[0],ordinal:result.rows[0].ordinal+1}]};
+    }
+    if(fault==='catalog_replay_group'&&text.includes('custom-cohort-recorded-catalog-batch-v3:group-read'))fault+='_ending';
+    else if(fault==='catalog_replay_group_ending'&&text.includes('custom-cohort-recorded-catalog-batch-v3:group-read')){
+      fault=null;return {...result,rows:[{...result.rows[0],normalized_label:'changed '+result.rows[0].normalized_label.slice(8)}]};
+    }
+    if(fault==='catalog_replay_counts'&&text.includes('custom-cohort-recorded-catalog-batch-v3:counts'))fault+='_ending';
+    else if(fault==='catalog_replay_counts_ending'&&text.includes('custom-cohort-recorded-catalog-batch-v3:counts')){
+      fault=null;return {...result,rows:[{...result.rows[0],assigned_accounts:result.rows[0].assigned_accounts+1}]};
+    }
     if(['catalog_batch_entry','catalog_batch_counts'].includes(fault)&&text.includes('custom-cohort-recorded-catalog-batch-v3:anchor-insert'))fault+='_ending';
     if(fault==='catalog_batch_entry_ending'&&text.includes('custom-cohort-recorded-partition-batch-v3:entry-read')){
       fault=null;return {...result,rows:[{...result.rows[0],ordinal:result.rows[0].ordinal+1}]};
@@ -96,7 +108,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     if((fault==='cad_deny'&&text===CAD_PACKET)||(fault==='selected_CAD_deny'&&text===AMENITY_PACKET)){fault=null;
       await raw.query(`UPDATE app_auth.organizations SET metadata=jsonb_set(metadata,ARRAY[$2::text,'revoked_at'],
         to_jsonb(to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))) WHERE id=$1`,[scope.organization_id,CAD_RIGHTS]);}
-    if(text===BATCH_PACKET&&fault==='batch_rights'){fault=null;
+    if(text===BATCH_PACKET&&fault==='batch_rights'||originalPacket&&fault==='catalog_replay_rights'){fault=null;
       await raw.query(`UPDATE app_auth.organizations SET metadata=jsonb_set(metadata,ARRAY[$2::text,'revoked_at'],
         to_jsonb(to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))) WHERE id=$1`,[scope.organization_id,SOURCE_RIGHTS]);}
     if(text===BATCH_PACKET&&fault==='batch_cache'){fault=null;
@@ -386,7 +398,8 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
       if(catalogBatchFixture){
         await runNeighborhoodCatalogBatchV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,
           setFault:value=>{fault=value;},readFault:()=>fault,packet,readBody,stockHead,partitionHead,partitionRows,
-          bridgeState,cacheState,head,cadState,cadHead,protectedRows,protectedBefore,pin,batchPendingWorkspace});
+          bridgeState,cacheState,head,cadState,cadHead,protectedRows,protectedBefore,pin,batchPendingWorkspace,
+          catalogBatchReplayFixture,originalReads:()=>stockReads});
         return;
       }
       const [next]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));assert.equal(next.claim.attempts,5);

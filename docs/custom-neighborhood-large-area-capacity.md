@@ -1,5 +1,28 @@
 # Complete larger-area Custom neighborhood studies
 
+## Completed batch catalog original replay (2026-10-16, not activated)
+
+The closed `readCoveredOriginalFrozenCaptureJobRecordedCatalogBatchAccountReferencesV3`
+read owner admits only an existing claim and native next-account cursor after
+independently issued V3 stock, partition and catalog DONE. It reopens ONE whole
+original account and ENTIRE neutral cache, compares the ENTIRE partition entry,
+and reconciles the exact native group's normalized literals. Retained-date
+observations and housing facts come from the same original packet. Current and
+ending source-purpose, actor/assignment/draft/subject, exact pending workspace,
+native parents, entry, group and counts remain fenced under the same aggregate
+budget. V2 readers retain their exact grammar and refuse V3 reinterpretation.
+
+A twenty-first independently captured native scenario is authored, preserving
+all twenty earlier variants and deadlines. It requires actual A/B/fresh-EMPTY
+reads, whole-original/cache/entry/housing/date equality, current and ending
+workspace/source/actor/entry/group/count refusal, lost read-only COMMIT ACK and
+fresh reopen, with all rows, heads, blobs, jobs, continuations, reports, workspace
+and pins unchanged. 157 serial focused checks pass, zero failures/cancellations/
+skips (1985.4142ms); changed JS syntax and diff checks pass. Actual new-head
+native/full cloud execution remains pending. This single-account replay is not
+complete catalog semantic authority, human intent, selected-union statistics,
+publication, activation, licensed capacity or live speed acceptance.
+
 ## Whole-account batch catalog candidate (2026-10-16, not activated)
 
 The separate V3 catalog owner requires independently issued complete V3 stock

@@ -6,6 +6,7 @@ import { createNeighborhoodFrozenJobStock } from './neighborhoodFrozenJobStock.j
 import { compileNeighborhoodFrozenTypedOriginalV2, getNeighborhoodFrozenTypedOriginalV2Profile }
   from './neighborhoodFrozenTypedOriginalV1.js';
 import { NEIGHBORHOOD_SHARED_TYPED_V2_SQL, prepareNeighborhoodSharedTypedSource } from './neighborhoodSharedTypedGeneration.js';
+import { resolveNeighborhoodOriginalAccountHousingV2 } from './neighborhoodOriginalAccountHousingV2.js';
 
 export const NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_LIMITS = Object.freeze({ rows:250,
   original_utf8_bytes:1000000, row_utf8_bytes:2100000, page_utf8_bytes:8000000,
@@ -257,6 +258,48 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
     check();return {kind:row.kind,row_key:row.row_key,account_id:row.account_id,
       original_payload_sha256:replay.original.payload_sha256,typed:replay,retained_observations:observations};
   }
+  /** Same original-count, whole-payload and lifetime SQL budgets for both
+   * consumers. Housing cannot reopen a page under a reset per-method budget. */
+  async function accountPackage(rawPage,housing){
+      const page=prepareNeighborhoodStockAccountPackagePageV2(rawPage),context=await open(),{stock,source}=context;
+      const result=one(await execute(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL,[stock.operation_id,stock.generation_id,
+        TYPED.profile_ref.content_sha256,page.cursor,L.rows,L.page_utf8_bytes,L.row_utf8_bytes,L.original_utf8_bytes,L.output_utf8_bytes]));
+      const counts=data(result.original_counts,KINDS);
+      if(!Object.values(counts).every(n=>Number.isInteger(n)&&n>=0&&n<=L.rows+1)
+        ||!Number.isInteger(result.page_count)||result.page_count<0||result.invalid_count!==0
+        ||typeof result.packet_oversize!=='boolean'||typeof result.page_json!=='string')fail('invalid_result');
+      const total=counts.parcels+counts.accounts;
+      if(total>L.rows){if(result.page_count!==0||result.page_json!=='[]')fail('invalid_result');fail('account_package_row_limit');}
+      if(result.packet_oversize)fail('account_package_byte_limit');
+      if(result.page_count!==total||counts.parcels>layers.parcels||counts.accounts>layers.accounts
+        ||Buffer.byteLength(result.page_json)>L.page_utf8_bytes)fail('invalid_result');
+      const present=result.account_id!==null;
+      if(present){cursor(result.account_id,'accounts');
+        if(!result.account_id||Buffer.compare(Buffer.from(result.account_id),Buffer.from(page.cursor))<=0
+          ||!count(result.geographic_parcel_count,2000000)||result.geographic_parcel_count==='0'
+          ||BigInt(result.geographic_parcel_count)>BigInt(counts.parcels)||counts.accounts>1)fail('invalid_result');
+      }else if(total!==0||result.geographic_parcel_count!==null)fail('invalid_result');
+      let rows;try{rows=JSON.parse(result.page_json);}catch{fail('invalid_result');}
+      if(!Array.isArray(rows)||rows.length!==total)fail('invalid_result');
+      let previous=null;const seen={parcels:0,accounts:0};
+      rows=rows.map(value=>{const row=reconcile(value),key=`${row.kind}\u0000${row.row_key}`;
+        if(row.account_id!==result.account_id||previous!==null&&Buffer.compare(Buffer.from(key),Buffer.from(previous))<=0)fail('invalid_original');
+        seen[row.kind]++;previous=key;return row;});
+      if(!same(seen,counts))fail('invalid_result');
+      const observations=present?resolveAccount(rows):null;
+      const recordedHousing=housing&&present?resolveNeighborhoodOriginalAccountHousingV2(rows,check):null;
+      if(Buffer.byteLength(JSON.stringify({rows,observations,...(housing?{recorded_housing:recordedHousing}:{})}))>L.output_utf8_bytes)fail('byte_limit');
+      await context.finish();
+      return freeze({page_version:2,status:housing?'reconciled_stock_account_recorded_housing':'reconciled_stock_account_original_package',authority:'not_established',
+        coverage:'one_complete_account_package_only',graph,stock,source_metadata:source,typed_profile:TYPED,
+        package_profile:PACKAGE_PROFILE,effective_date:effective,cursor:page.cursor,account_id:result.account_id,
+        geographic_parcel_count:result.geographic_parcel_count,original_counts:counts,rows,observations,
+        ...(housing?{recorded_housing:recordedHousing}:{}),
+        account_original_state:present?counts.accounts===1?'present':'absent':'not_applicable',
+        next_cursor:result.account_id??page.cursor,end_of_accounts:!present,
+        original_reconciliation:'every_package_original_recompiled',selected_union:'not_established',
+        source_acquisition:'not_established',report_update:'none'});
+  }
   return Object.freeze({
     /** Reconcile one original-key prefix; a page end proves no earlier traversal. */
     async page(rawPage){
@@ -292,43 +335,8 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
         source_acquisition:'not_established',report_update:'none'});
     },
     /** All retained originals for ONE server-picked account, or complete refusal. */
-    async accountPackage(rawPage){
-      const page=prepareNeighborhoodStockAccountPackagePageV2(rawPage),context=await open(),{stock,source}=context;
-      const result=one(await execute(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL,[stock.operation_id,stock.generation_id,
-        TYPED.profile_ref.content_sha256,page.cursor,L.rows,L.page_utf8_bytes,L.row_utf8_bytes,L.original_utf8_bytes,L.output_utf8_bytes]));
-      const counts=data(result.original_counts,KINDS);
-      if(!Object.values(counts).every(n=>Number.isInteger(n)&&n>=0&&n<=L.rows+1)
-        ||!Number.isInteger(result.page_count)||result.page_count<0||result.invalid_count!==0
-        ||typeof result.packet_oversize!=='boolean'||typeof result.page_json!=='string')fail('invalid_result');
-      const total=counts.parcels+counts.accounts;
-      if(total>L.rows){if(result.page_count!==0||result.page_json!=='[]')fail('invalid_result');fail('account_package_row_limit');}
-      if(result.packet_oversize)fail('account_package_byte_limit');
-      if(result.page_count!==total||counts.parcels>layers.parcels||counts.accounts>layers.accounts
-        ||Buffer.byteLength(result.page_json)>L.page_utf8_bytes)fail('invalid_result');
-      const present=result.account_id!==null;
-      if(present){cursor(result.account_id,'accounts');
-        if(!result.account_id||Buffer.compare(Buffer.from(result.account_id),Buffer.from(page.cursor))<=0
-          ||!count(result.geographic_parcel_count,2000000)||result.geographic_parcel_count==='0'
-          ||BigInt(result.geographic_parcel_count)>BigInt(counts.parcels)||counts.accounts>1)fail('invalid_result');
-      }else if(total!==0||result.geographic_parcel_count!==null)fail('invalid_result');
-      let rows;try{rows=JSON.parse(result.page_json);}catch{fail('invalid_result');}
-      if(!Array.isArray(rows)||rows.length!==total)fail('invalid_result');
-      let previous=null;const seen={parcels:0,accounts:0};
-      rows=rows.map(value=>{const row=reconcile(value),key=`${row.kind}\u0000${row.row_key}`;
-        if(row.account_id!==result.account_id||previous!==null&&Buffer.compare(Buffer.from(key),Buffer.from(previous))<=0)fail('invalid_original');
-        seen[row.kind]++;previous=key;return row;});
-      if(!same(seen,counts))fail('invalid_result');
-      const observations=present?resolveAccount(rows):null;
-      if(Buffer.byteLength(JSON.stringify({rows,observations}))>L.output_utf8_bytes)fail('byte_limit');
-      await context.finish();
-      return freeze({page_version:2,status:'reconciled_stock_account_original_package',authority:'not_established',
-        coverage:'one_complete_account_package_only',graph,stock,source_metadata:source,typed_profile:TYPED,
-        package_profile:PACKAGE_PROFILE,effective_date:effective,cursor:page.cursor,account_id:result.account_id,
-        geographic_parcel_count:result.geographic_parcel_count,original_counts:counts,rows,observations,
-        account_original_state:present?counts.accounts===1?'present':'absent':'not_applicable',
-        next_cursor:result.account_id??page.cursor,end_of_accounts:!present,
-        original_reconciliation:'every_package_original_recompiled',selected_union:'not_established',
-        source_acquisition:'not_established',report_update:'none'});
-    },
+    accountPackage:rawPage=>accountPackage(rawPage,false),
+    /** Distinct dormant bounded consumer; legacy package bytes stay unchanged. */
+    housingAccountPackage:rawPage=>accountPackage(rawPage,true),
   });
 }

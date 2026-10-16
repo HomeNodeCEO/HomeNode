@@ -295,10 +295,10 @@ test('stock original cells owner accepts no caller originals, dates, selection, 
   await assert.rejects(service[method]({...base,operationId:claim.claim_token},opts),/operation_conflict/);
 });
 
-test('durable original stock traversal admits only the live claim and bounded operation, not caller continuation',async()=>{
+for(const method of ['advanceOriginalFrozenCaptureJobStockTraversalReferencesV2','advanceOriginalFrozenCaptureJobRecordedPartitionReferencesV2'])
+test(`${method} admits only the live claim and bounded operation, not caller continuation`,async()=>{
   const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
     claim={operation_id:base.operationId,claim_token:'70000000-0000-4000-8000-000000000002',attempts:1};
-  const method='advanceOriginalFrozenCaptureJobStockTraversalReferencesV2';
   const service=createCustomCohortContextCapture({pool:{connect(){assert.fail('must not connect');}},sourceMode:'combined-witness2-v1',
     authorizeMarketData:()=>assert.fail('must not authorize')});
   for(const key of ['cursor','stockAccountPackagePage','count','done','rows','observations','originalCellAtOrdinal','issuedHead',

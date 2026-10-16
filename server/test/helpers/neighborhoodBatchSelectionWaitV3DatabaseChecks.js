@@ -13,7 +13,8 @@ import { runNeighborhoodBatchSelectionIntentV3DatabaseChecks } from './neighborh
 /** Twenty-second independent real capture. Source/current/ending/COMMIT work
  * stays real; a missing appraiser command is never supplied by this worker. */
 export async function runNeighborhoodBatchSelectionWaitV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,blobs,
-  catalogHead,groups,assertParents,setFault,readFault,originalReads,batchSelectionIntentFixture=false,batchSelectedUnionFixture=false,batchSelectedWorkersFixture=false,batchRecordedEligibilityFixture=false,batchSelectedEvidenceFixture=false,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false,batchSelectedTransactionIndexFixture=false}){
+  catalogHead,groups,assertParents,setFault,readFault,originalReads,batchSelectionIntentFixture=false,batchSelectedUnionFixture=false,batchSelectedWorkersFixture=false,batchRecordedEligibilityFixture=false,batchSelectedEvidenceFixture=false,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false,batchSelectedTransactionIndexFixture=false,batchSelectedRecoveryFixture=false}){
+  const expectedAttempts=batchSelectedRecoveryFixture?4:5,expectedError=batchSelectedRecoveryFixture?'capture_failed':'access_revoked';
   const operation=input.operationId,method='awaitCoveredOriginalFrozenCaptureJobBatchSelectionReferencesV3',
     before={catalog:await catalogHead(),groups:await groups(),blobs:await blobs()},
     intents=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_v2_selection_intents WHERE operation_id=$1',[operation])).rows;
@@ -30,7 +31,7 @@ export async function runNeighborhoodBatchSelectionWaitV3DatabaseChecks({pool,in
   };
   const workerArgs={...args,cohortService:{async [method](value,options){
     try{
-      ownerCalls++;ownedClaim=options.captureJobClaim;assert.equal(ownedClaim.attempts,5);
+      ownerCalls++;ownedClaim=options.captureJobClaim;assert.equal(ownedClaim.attempts,expectedAttempts);
       owned=await job();ownedParent=await parent();
       assert.deepEqual(await intents(),[]);
       const missingReads=originalReads();setFault('wait_missing');
@@ -52,7 +53,7 @@ export async function runNeighborhoodBatchSelectionWaitV3DatabaseChecks({pool,in
   if(ownerError&&!ownerError.outcome_unknown)throw ownerError;
   assert.deepEqual(results.map(r=>r.status).sort(),['idle','outcome_unknown']);assert.equal(ownerCalls,1);assert.equal(readFault(),null);
   const waiting=await job();assert.equal(waiting.status,'awaiting_selection');assert.equal(waiting.claim_token,null);assert.equal(waiting.lease_expires_at,null);
-  assert.equal(waiting.attempts,5);assert.equal(waiting.last_error_code,'access_revoked');assert.equal(waiting.context_sha256,null);
+  assert.equal(waiting.attempts,expectedAttempts);assert.equal(waiting.last_error_code,expectedError);assert.equal(waiting.context_sha256,null);
   assert.deepEqual(waiting.checkpoint,owned.checkpoint);assert.equal(waiting.run_after.getTime(),owned.run_after.getTime());
   assert.deepEqual(await parent(),ownedParent);assert.deepEqual(await catalogHead(),before.catalog);assert.deepEqual(await groups(),before.groups);
   assert.deepEqual(await blobs(),before.blobs);assert.deepEqual(await intents(),[]);await assertParents();
@@ -65,7 +66,7 @@ export async function runNeighborhoodBatchSelectionWaitV3DatabaseChecks({pool,in
   }
   if(batchSelectionIntentFixture){
     await runNeighborhoodBatchSelectionIntentV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,blobs,
-      catalogHead,groups,assertParents,setFault,readFault,originalReads,batchSelectedUnionFixture,batchSelectedWorkersFixture,batchRecordedEligibilityFixture,batchSelectedEvidenceFixture,batchSelectedMetricsFixture,batchSelectedStatisticsFixture,batchSelectedNumericFixture,batchSelectedSemanticFixture,batchSelectedTransactionIndexFixture});
+      catalogHead,groups,assertParents,setFault,readFault,originalReads,batchSelectedUnionFixture,batchSelectedWorkersFixture,batchRecordedEligibilityFixture,batchSelectedEvidenceFixture,batchSelectedMetricsFixture,batchSelectedStatisticsFixture,batchSelectedNumericFixture,batchSelectedSemanticFixture,batchSelectedTransactionIndexFixture,batchSelectedRecoveryFixture});
     return;
   }
   await tx(pool,c=>jobs(c).cancel(scope,operation));const cancelled=await job();assert.equal(cancelled.status,'cancelled');

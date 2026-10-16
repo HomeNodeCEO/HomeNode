@@ -21,7 +21,8 @@ import { runNeighborhoodBatchSelectionWaitV3DatabaseChecks } from './neighborhoo
  * authority, capacity, activation or complete selected-union semantics. */
 export async function runNeighborhoodCatalogBatchV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,
   setFault,readFault,packet,readBody,stockHead,partitionHead,partitionRows,bridgeState,cacheState,head,cadState,cadHead,
-  protectedRows,protectedBefore,pin,batchPendingWorkspace,catalogBatchReplayFixture=false,batchSelectionWaitFixture=false,batchSelectionIntentFixture=false,batchSelectedUnionFixture=false,batchSelectedWorkersFixture=false,batchRecordedEligibilityFixture=false,batchSelectedEvidenceFixture=false,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false,batchSelectedTransactionIndexFixture=false,originalReads}){
+  protectedRows,protectedBefore,pin,batchPendingWorkspace,catalogBatchReplayFixture=false,batchSelectionWaitFixture=false,batchSelectionIntentFixture=false,batchSelectedUnionFixture=false,batchSelectedWorkersFixture=false,batchRecordedEligibilityFixture=false,batchSelectedEvidenceFixture=false,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false,batchSelectedTransactionIndexFixture=false,batchSelectedRecoveryFixture=false,originalReads}){
+  const expectedAttempts=batchSelectedRecoveryFixture?4:5,expectedError=batchSelectedRecoveryFixture?'capture_failed':'access_revoked';
   const operation=input.operationId,method='continueCoveredOriginalFrozenCaptureJobRecordedCatalogBatchReferencesV3',
     catalogHead=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_recorded_catalog_v2_heads WHERE operation_id=$1',[operation])).rows[0],
     groups=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_recorded_catalog_v2_groups WHERE operation_id=$1 ORDER BY group_id',[operation])).rows,
@@ -38,7 +39,7 @@ export async function runNeighborhoodCatalogBatchV3DatabaseChecks({pool,input,sc
     assert.deepEqual(await protectedRows(),protectedBefore);assert.deepEqual(await pins(),pin);assert.deepEqual(await workspace(),batchPendingWorkspace);
   };
   const adoption=(await Promise.all([1,2].map(()=>tx(pool,client=>catalogClaims(client).claimDue({leaseSeconds:900}))))).flat();
-  assert.equal(adoption.length,1);const owned=adoption[0];assert.equal(owned.claim.attempts,5);assert.equal(owned.progress_done,true);
+  assert.equal(adoption.length,1);const owned=adoption[0];assert.equal(owned.claim.attempts,expectedAttempts);assert.equal(owned.progress_done,true);
   const ownedJob=await job(),ownedParent=await parent(),ownedBlobs=await blobs();
   const assertNoProgress=async()=>{
     assert.equal(await catalogHead(),undefined);assert.deepEqual(await groups(),[]);assert.deepEqual(await job(),ownedJob);
@@ -106,15 +107,15 @@ export async function runNeighborhoodCatalogBatchV3DatabaseChecks({pool,input,sc
   assert.deepEqual(terminalBody.after,{...firstBody.after,done:true});assert.deepEqual(terminalBody.accounts,[]);assert.deepEqual(terminalBody.entries,[]);
   assert.equal(terminalBody.original_count,0);assert.deepEqual(terminalBody.before_counts,expectedCounts);assert.deepEqual(terminalBody.after_counts,expectedCounts);
   assert.deepEqual(terminalBody.previous,first.receipt_reference);assert.deepEqual(await groups(),firstGroups);
-  assert.equal(terminalJob.attempts,5);assert.equal(terminalJob.last_error_code,'access_revoked');assert.equal(terminalJob.context_sha256,null);
+  assert.equal(terminalJob.attempts,expectedAttempts);assert.equal(terminalJob.last_error_code,expectedError);assert.equal(terminalJob.context_sha256,null);
   assert.equal((await parent()).sequence,ownedParent.sequence+2);for(const worker of [run,legacyRun,legacyWait])assert.deepEqual(await worker(args),{status:'idle'});
   assert.deepEqual(await job(),terminalJob);await assertParents();
   if(batchSelectionWaitFixture){
     await runNeighborhoodBatchSelectionWaitV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,blobs,
-      catalogHead,groups,assertParents,setFault,readFault,originalReads,batchSelectionIntentFixture,batchSelectedUnionFixture,batchSelectedWorkersFixture,batchRecordedEligibilityFixture,batchSelectedEvidenceFixture,batchSelectedMetricsFixture,batchSelectedStatisticsFixture,batchSelectedNumericFixture,batchSelectedSemanticFixture,batchSelectedTransactionIndexFixture});
+      catalogHead,groups,assertParents,setFault,readFault,originalReads,batchSelectionIntentFixture,batchSelectedUnionFixture,batchSelectedWorkersFixture,batchRecordedEligibilityFixture,batchSelectedEvidenceFixture,batchSelectedMetricsFixture,batchSelectedStatisticsFixture,batchSelectedNumericFixture,batchSelectedSemanticFixture,batchSelectedTransactionIndexFixture,batchSelectedRecoveryFixture});
     return;
   }
-  const [next]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));assert.equal(next.claim.attempts,5);
+  const [next]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));assert.equal(next.claim.attempts,expectedAttempts);
   if(catalogBatchReplayFixture)await runNeighborhoodCatalogBatchOriginalReplayV3DatabaseChecks({pool,input,scope,actor,service,
     claim:next.claim,packet,catalogHead,groups,job,parent,blobs,assertParents,setFault,readFault,originalReads});
   const nextJob=await job(),nextParent=await parent(),rollback=Error('rollback catalog batch next-owner probe');

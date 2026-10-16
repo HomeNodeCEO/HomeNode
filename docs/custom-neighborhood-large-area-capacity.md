@@ -1,5 +1,35 @@
 # Complete larger-area Custom neighborhood studies
 
+## Independent selected-worker ordinary recovery fixture (2026-10-16)
+
+The thirty-third disposable native capture reserves one failure before the
+waiting boundary. All32 older captures keep their existing attempt values,
+role failures, source inputs and finite deadlines. Only this new graph skips
+the extra bridge-worker failure, so real source-prefix, neutral/CAD cache,
+whole-account stock/partition/catalog, waiting and explicit new-study command
+reach the selected initial worker at attempt4 with their actual failure
+history intact. No attempt, claim, native head or source permission is reset.
+
+The actual initial worker then adopts the genuine fourth-attempt human token,
+reopens its originals and encounters a real ending actor revocation. Native
+failure handling must retain the empty union, first dispatch, all parents,
+command, blobs and pins. After restoring only this disposable role and making
+the existing retry due, ordinary recovery must issue a new fifth native token
+and a second immutable dispatch. Lost first original COMMIT acknowledgment,
+fresh B and separate EMPTY, stale fourth/fifth claims, terminal next-owner
+exclusion and unchanged failure history remain required. The actual-held
+heartbeat and native-claim NOWAIT refusal tests remain separate and unchanged.
+This exercises initial-worker recovery only; progress/evidence/numeric/etc.
+ordinary recovery below5 remains separate work.
+
+These are authored native requirements, not execution proof.91 focused tests
+pass (2228.271ms; zero failures/cancellations/skips); nine changed JS syntax and
+diff checks pass. No production source/worker/guard/schema/default, source
+grant, appraiser choice or report changes. The new native case remains inside
+the existing180s fixture deadline; the old240s case is unchanged. No heavy
+local suite or database ran. Native/full CI must independently execute the
+fresh graph. No licensed large-area, economic, quarter, publication, terminal
+pin retirement or production-speed acceptance follows from this fixture.
 ## Original-reconciled batch transaction index (2026-10-16, inactive)
 
 The V3 batch lineage now has a closed two-argument transaction-index progress

@@ -63,7 +63,8 @@ import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL as TRAN
 
 /** Independent disposable job; all acquisition owners, authorization, original
  * queries, native issuance, savepoint rollback and COMMITs are real. */
-export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData,coveredTransactionIndexFixture=false,stockBatchFixture=false,partitionBatchFixture=false,catalogBatchFixture=false,catalogBatchReplayFixture=false,batchSelectionWaitFixture=false,batchSelectionIntentFixture=false,batchSelectedUnionFixture=false,batchSelectedWorkersFixture=false,batchRecordedEligibilityFixture=false,batchSelectedEvidenceFixture=false,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false,batchSelectedTransactionIndexFixture=false}){
+export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData,coveredTransactionIndexFixture=false,stockBatchFixture=false,partitionBatchFixture=false,catalogBatchFixture=false,catalogBatchReplayFixture=false,batchSelectionWaitFixture=false,batchSelectionIntentFixture=false,batchSelectedUnionFixture=false,batchSelectedWorkersFixture=false,batchRecordedEligibilityFixture=false,batchSelectedEvidenceFixture=false,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false,batchSelectedTransactionIndexFixture=false,batchSelectedRecoveryFixture=false}){
+  const batchFailureAttempt=batchSelectedRecoveryFixture?4:5,batchFailureCode=batchSelectedRecoveryFixture?'capture_failed':'access_revoked';
   const input={...sourceInput,operationId:randomUUID()},operation=input.operationId;let fault=null,stockReads=0;
   const observed={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
     const text=typeof c==='string'?c:c.text,originalPacket=text===BATCH_PACKET||text===STOCK_PACKET||text===PAIRED_STOCK_PACKET||text===TRANSACTION_PACKET||text===AMENITY_PACKET||(batchRecordedEligibilityFixture&&text===ELIGIBILITY_PACKET)||(batchSelectedEvidenceFixture&&text===EVIDENCE_PACKET)||(batchSelectedMetricsFixture&&[METRIC_PACKET,FIRST_METRIC_PACKET].includes(text))||(batchSelectedStatisticsFixture&&[STATISTICS_PACKET,FIRST_STATISTICS_PACKET].includes(text))||(batchSelectedNumericFixture&&[NUMERIC_PACKET,FIRST_NUMERIC_PACKET].includes(text))||(batchSelectedSemanticFixture&&text===SEMANTIC_PACKET)||(batchSelectedTransactionIndexFixture&&text===TRANSACTION_INDEX_PACKET),
@@ -309,15 +310,19 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   assert.equal((await parent()).sequence,parentBefore.sequence);assert.deepEqual(await bridgeState(),adoptedState);
   await tx(pool,client=>jobs(client).failClaim(adoptedClaim,'capture_failed',{retrySeconds:1}));
   await pool.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET run_after=clock_timestamp() WHERE operation_id=$1',[operation]);
+  // This NEW independent graph reserves one real failure for the selected
+  // initial worker. Older graphs still execute this bridge role failure.
+  if(!batchSelectedRecoveryFixture){
   fault='bridge_role';assert.equal((await bridgeWorker(args)).reason,'access_revoked');assert.equal(fault,null);
   assert.equal(await stockHead(),undefined);assert.equal((await job()).attempts,4);
   await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);
   await pool.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET run_after=clock_timestamp() WHERE operation_id=$1',[operation]);
+  }
   fault='bridge_ack';assert.equal((await bridgeWorker(args)).status,'outcome_unknown');assert.equal(fault,null);
   const firstStock=await stockHead(),issuedBridge=await bridgeState();
   assert.equal(firstStock.sequence,1);assert.deepEqual(issuedBridge.completed_reference,firstStock.receipt_reference);
   assert.equal((await parent()).sequence,parentBefore.sequence+1);assert.equal((await parent()).phase,'frozen_stock_traversal_refs_v2');
-  assert.equal((await job()).attempts,5);assert.equal((await job()).last_error_code,'access_revoked');
+  assert.equal((await job()).attempts,batchFailureAttempt);assert.equal((await job()).last_error_code,batchFailureCode);
   assert.deepEqual(await cacheState(),complete);assert.deepEqual(await head(),nativeHead);
   assert.deepEqual(await runBridge(args),{status:'idle'});assert.deepEqual(await runCache(args),{status:'idle'});
   if(stockBatchFixture){
@@ -334,7 +339,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     let batchOwnerCalls=0,batchOwnerError;
     const emptyArgs={...args,cohortService:{async [stockContinuation](value,options){
       try{
-      batchOwnerCalls++;assert.equal(options.captureJobClaim.attempts,5);
+      batchOwnerCalls++;assert.equal(options.captureJobClaim.attempts,batchFailureAttempt);
       const beforeEmpty=await job(),beforeContinuation=await parent();
       // Deliberately forged metadata probes use this real live native claim.
       // Every rejected transaction rolls back its forged blob and head DML.
@@ -364,7 +369,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     assert.equal(finalHead.sequence,2);assert.equal(finalBody.sequence,2);assert.deepEqual(finalBody.before,firstBody.after);
     assert.deepEqual(finalBody.accounts,[]);assert.equal(finalBody.original_count,0);assert.equal(finalBody.after.done,true);assert.equal(finalBody.after.account_count,2);
     assert.deepEqual(finalBody.previous,firstStock.receipt_reference);assert.equal(finalParent.sequence,parentBefore.sequence+2);
-    assert.equal(finalJob.attempts,5);assert.equal(finalJob.last_error_code,'access_revoked');assert.equal(finalJob.context_sha256,null);
+    assert.equal(finalJob.attempts,batchFailureAttempt);assert.equal(finalJob.last_error_code,batchFailureCode);assert.equal(finalJob.context_sha256,null);
     for(const worker of [runBatchStock,runStock,runBatchBridge,runBridge,runCache,runCad])assert.deepEqual(await worker(args),{status:'idle'});
     assert.deepEqual(await job(),finalJob);
     if(partitionBatchFixture){
@@ -372,7 +377,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
         partitionRows=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_recorded_partition_v2_rows WHERE operation_id=$1 ORDER BY ordinal',[operation])).rows;
       const adoption=(await Promise.all([1,2].map(()=>tx(pool,client=>batchPartitionClaims(client).claimDue({leaseSeconds:900}))))).flat();
       assert.equal(adoption.length,1);const owned=adoption[0],method='continueCoveredOriginalFrozenCaptureJobRecordedPartitionBatchReferencesV3';
-      assert.equal(owned.claim.attempts,5);assert.equal(owned.progress_done,true);
+      assert.equal(owned.claim.attempts,batchFailureAttempt);assert.equal(owned.progress_done,true);
       const ownedJob=await job(),ownedParent=await parent(),ownedBlobs=(await pool.query('SELECT count(*)::integer AS n FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1',[scope.organization_id])).rows,
         packet=await service.readCoveredFrozenCaptureJobWholeAccountBatchReferencesV2(input,
         {captureJobClaim:owned.claim,stockAccountPackagePage:{cursor:''}});
@@ -412,17 +417,17 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
       assert.equal(terminalPartition.sequence,2);assert.equal(terminalBody.after.done,true);assert.equal(terminalBody.after.account_count,2);
       assert.deepEqual(terminalBody.entries,[]);assert.deepEqual(terminalBody.accounts,[]);assert.equal(terminalBody.original_count,0);
       assert.deepEqual(terminalBody.previous,firstPartition.receipt_reference);assert.deepEqual(await partitionRows(),firstPartitionRows);
-      assert.equal((await parent()).sequence,parentBefore.sequence+4);assert.equal(terminalJob.attempts,5);assert.equal(terminalJob.last_error_code,'access_revoked');
+      assert.equal((await parent()).sequence,parentBefore.sequence+4);assert.equal(terminalJob.attempts,batchFailureAttempt);assert.equal(terminalJob.last_error_code,batchFailureCode);
       for(const worker of [runBatchStock,runStock,runBatchPartition,runPartition,runCatalog])assert.deepEqual(await worker(args),{status:'idle'});
       assert.deepEqual(await job(),terminalJob);
       if(catalogBatchFixture){
         await runNeighborhoodCatalogBatchV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,
           setFault:value=>{fault=value;},readFault:()=>fault,packet,readBody,stockHead,partitionHead,partitionRows,
           bridgeState,cacheState,head,cadState,cadHead,protectedRows,protectedBefore,pin,batchPendingWorkspace,
-          catalogBatchReplayFixture,batchSelectionWaitFixture,batchSelectionIntentFixture,batchSelectedUnionFixture,batchSelectedWorkersFixture,batchRecordedEligibilityFixture,batchSelectedEvidenceFixture,batchSelectedMetricsFixture,batchSelectedStatisticsFixture,batchSelectedNumericFixture,batchSelectedSemanticFixture,batchSelectedTransactionIndexFixture,originalReads:()=>stockReads});
+          catalogBatchReplayFixture,batchSelectionWaitFixture,batchSelectionIntentFixture,batchSelectedUnionFixture,batchSelectedWorkersFixture,batchRecordedEligibilityFixture,batchSelectedEvidenceFixture,batchSelectedMetricsFixture,batchSelectedStatisticsFixture,batchSelectedNumericFixture,batchSelectedSemanticFixture,batchSelectedTransactionIndexFixture,batchSelectedRecoveryFixture,originalReads:()=>stockReads});
         return;
       }
-      const [next]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));assert.equal(next.claim.attempts,5);
+      const [next]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));assert.equal(next.claim.attempts,batchFailureAttempt);
       const nextJob=await job(),nextParent=await parent(),rollback=Error('rollback partition batch next-owner probe');
       await assert.rejects(tx(pool,async client=>{
         await client.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);
@@ -453,7 +458,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     // Generic explicit next-owner adoption is a disposable probe only. Both
     // stock formats must leave DONE untouched in success/recovery/expiry lanes.
     const [nextOwner]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));
-    assert.equal(nextOwner.claim.attempts,5);const nextOwnedJob=await job(),nextOwnedParent=await parent();
+    assert.equal(nextOwner.claim.attempts,batchFailureAttempt);const nextOwnedJob=await job(),nextOwnedParent=await parent();
     const rollback=Error('rollback batch native next-owner probe');
     await assert.rejects(tx(pool,async client=>{
       await client.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);
@@ -483,7 +488,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   }
   for(let i=0;i<2;i++){
     const result=await runStock(args);assert.equal(result.status,'continuation_pending');assert.equal(result.operation_id,operation);
-    assert.equal((await job()).attempts,5);assert.equal((await job()).last_error_code,'access_revoked');
+    assert.equal((await job()).attempts,batchFailureAttempt);assert.equal((await job()).last_error_code,batchFailureCode);
     const currentHead=await stockHead(),body=JSON.parse((await pool.query(
       'SELECT canonical_utf8 FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1 AND content_sha256=$2',
       [scope.organization_id,currentHead.receipt_reference.content_sha256])).rows[0].canonical_utf8);
@@ -495,7 +500,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     partitionRows=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_recorded_partition_v2_rows WHERE operation_id=$1 ORDER BY ordinal',[operation])).rows;
   const partitionAdoption=(await Promise.all([1,2].map(()=>tx(pool,client=>partitionClaims(client).claimDue({leaseSeconds:900}))))).flat();
   assert.equal(partitionAdoption.length,1);const partitionClaim=partitionAdoption[0].claim;
-  assert.equal(partitionClaim.attempts,5);assert.equal(partitionAdoption[0].progress_done,true);
+  assert.equal(partitionClaim.attempts,batchFailureAttempt);assert.equal(partitionAdoption[0].progress_done,true);
   const partitionJob=await job(),partitionParent=await parent();
   fault='partition_role';await assert.rejects(service.continueCoveredOriginalFrozenCaptureJobRecordedPartitionReferencesV2(input,{captureJobClaim:partitionClaim}),
     /custom_cohort_job_actor_access_revoked/);assert.equal(fault,null);
@@ -513,7 +518,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     'unfinished partition cannot enroll a covered catalog claim');
   for(let i=0;i<2;i++){
     assert.equal((await runPartition(args)).status,'continuation_pending');
-    assert.equal((await job()).attempts,5);assert.equal((await job()).last_error_code,'access_revoked');
+    assert.equal((await job()).attempts,batchFailureAttempt);assert.equal((await job()).last_error_code,batchFailureCode);
   }
   assert.equal((await partitionHead()).sequence,3);assert.equal((await partitionRows()).length,2);
   assert.equal((await parent()).sequence,parentBefore.sequence+6);
@@ -522,7 +527,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   assert.deepEqual(await cacheState(),complete);assert.deepEqual(await head(),nativeHead);
   const catalogAdoption=(await Promise.all([1,2].map(()=>tx(pool,client=>catalogClaims(client).claimDue({leaseSeconds:900}))))).flat();
   assert.equal(catalogAdoption.length,1);const nextOwner=catalogAdoption[0];assert.equal(nextOwner.claim.operation_id,operation);
-  assert.equal(nextOwner.claim.attempts,5);assert.equal(nextOwner.progress_done,true);
+  assert.equal(nextOwner.claim.attempts,batchFailureAttempt);assert.equal(nextOwner.progress_done,true);
   let partitionCursor='';const originals=[];
   for(let i=0;i<3;i++){
     const packet=await service.readCoveredOriginalFrozenCaptureJobRecordedPartitionAccountReferencesV2(input,
@@ -556,7 +561,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   assert.deepEqual(await job(),unfinishedCatalogJob,'an unfinished native catalog cannot enter selection-wait');
   for(let i=0;i<2;i++){
     assert.equal((await runCatalog(args)).status,'continuation_pending');
-    assert.equal((await job()).attempts,5);assert.equal((await job()).last_error_code,'access_revoked');
+    assert.equal((await job()).attempts,batchFailureAttempt);assert.equal((await job()).last_error_code,batchFailureCode);
   }
   assert.equal((await catalogHead()).sequence,3);assert.equal((await parent()).sequence,parentBefore.sequence+9);
   const terminalCatalog=await job();assert.deepEqual(await runCatalog(args),{status:'idle'});assert.deepEqual(await job(),terminalCatalog);
@@ -585,7 +590,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   const waitArgs={...args,cohortService:{async [waitMethod](value,options){
     try{
     ownerCalls++;selectionWaitOwner={claim:options.captureJobClaim};waitOptions={captureJobClaim:selectionWaitOwner.claim};
-    assert.equal(selectionWaitOwner.claim.operation_id,operation);assert.equal(selectionWaitOwner.claim.attempts,5);
+    assert.equal(selectionWaitOwner.claim.operation_id,operation);assert.equal(selectionWaitOwner.claim.attempts,batchFailureAttempt);
 
     let batchReconciledAccounts=null;
     if(coveredTransactionIndexFixture){
@@ -676,7 +681,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   assert.deepEqual(waitResults.map(r=>r.status).sort(),['idle','outcome_unknown']);
   assert.equal(ownerCalls,1);assert.equal(fault,null);
   const waiting=await job();assert.equal(waiting.status,'awaiting_selection');assert.equal(waiting.claim_token,null);assert.equal(waiting.lease_expires_at,null);
-  assert.equal(waiting.attempts,5);assert.equal(waiting.last_error_code,'access_revoked');assert.deepEqual(waiting.checkpoint,beforeWait.checkpoint);
+  assert.equal(waiting.attempts,batchFailureAttempt);assert.equal(waiting.last_error_code,batchFailureCode);assert.deepEqual(waiting.checkpoint,beforeWait.checkpoint);
   assert.deepEqual(await workspace(),pendingWorkspace);assert.deepEqual(await parent(),beforeWaitParent);
   const staleReads=stockReads;await assert.rejects(service[waitMethod](input,waitOptions),/claim_lost/);assert.equal(stockReads,staleReads);
   for(const worker of [runStock,runPartition,runCatalog,runWait])assert.deepEqual(await worker(args),{status:'idle'});
@@ -700,7 +705,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   fault='intent_ack';await assert.rejects(service[intentMethod](input,{selectionIntent}),error=>error.outcome_unknown===true);assert.equal(fault,null);
   assert.equal((await intents()).length,1);const command=(await intents())[0],resumed=await service[intentMethod](input,{selectionIntent});
   assert.deepEqual(resumed.included_recorded_group_ids,selectedGroupIds);assert.equal(resumed.command_id,selectionIntent.command_id);
-  assert.equal(resumed.claim.claim_token,command.resume_claim_token);assert.equal(resumed.claim.attempts,5);
+  assert.equal(resumed.claim.claim_token,command.resume_claim_token);assert.equal(resumed.claim.attempts,batchFailureAttempt);
   const humanOwnedJob=await job(),humanOwnedIntents=await intents();assert.equal(humanOwnedJob.status,'running');
   const reopened=await service.readCoveredOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2(input,{captureJobClaim:resumed.claim});
   assert.deepEqual(reopened.included_recorded_group_ids,selectedGroupIds);assert.equal(reopened.command_id,selectionIntent.command_id);
@@ -756,7 +761,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   const initialResults=await Promise.all([runSelectedInitial(initialArgs),runSelectedInitial(initialArgs)]);
   assert.deepEqual(initialResults.map(r=>r.status).sort(),['idle','outcome_unknown']);assert.equal(initialOwnerCalls,1);
   const dispatches=await initialDispatches();assert.equal(dispatches.length,1);
-  assert.equal(dispatches[0].claim_token,resumed.claim.claim_token);assert.equal(dispatches[0].attempts,5);
+  assert.equal(dispatches[0].claim_token,resumed.claim.claim_token);assert.equal(dispatches[0].attempts,batchFailureAttempt);
   assert.equal(dispatches[0].command_id,selectionIntent.command_id);assert.equal(dispatches[0].actor_user_id,actor);
   assert.equal(fault,null);assert.equal((await unionHead()).sequence,1);
   assert.deepEqual(await runSelectedInitial(args),{status:'idle'});
@@ -764,13 +769,13 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     let enter,release;
     const entered=new Promise(resolve=>{enter=resolve;}),held=new Promise(resolve=>{release=resolve;});
     const progressArgs={...args,cohortService:{...service,async [unionMethod](value,options){
-    assert.equal(options.captureJobClaim.attempts,5);assert.notEqual(options.captureJobClaim.claim_token,resumed.claim.claim_token);
+    assert.equal(options.captureJobClaim.attempts,batchFailureAttempt);assert.notEqual(options.captureJobClaim.claim_token,resumed.claim.claim_token);
     enter();await held;
     const progress=await service[unionMethod](value,options);
     assert.equal(progress.covered_neutral_originals,true);assert.equal(progress.complete_catalog_original_replay,i===1);
     assert.equal(progress.complete_distinct_selected_stock_union,i===1);assert.equal(progress.selected_stock_accounts,2);
     assert.equal(progress.context_complete,false);assert.equal(progress.pin_transfer,false);
-    assert.equal((await job()).last_error_code,'access_revoked');
+    assert.equal((await job()).last_error_code,batchFailureCode);
     return progress;
     }}};
     const running=runSelectedProgress(progressArgs);
@@ -793,7 +798,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     eligibilityHead=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_eligibility_v2_heads WHERE operation_id=$1',[operation])).rows[0];
   let eligibilityCalls=0;
   const eligibilityArgs={...args,cohortService:{...service,async [eligibilityMethod](value,options){
-  eligibilityCalls++;assert.equal(options.captureJobClaim.attempts,5);
+  eligibilityCalls++;assert.equal(options.captureJobClaim.attempts,batchFailureAttempt);
   const eligibilityBefore=await job(),unionBefore=await unionHead(),nativeGroupsBefore=await unionGroups(),
     eligibilityOwner={claim:options.captureJobClaim};
   if(eligibilityCalls===1){
@@ -890,8 +895,8 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   fault='eligibility_ack';return service[eligibilityMethod](value,options);
   }}};
   assert.equal((await runSelectedProgress(eligibilityArgs)).status,'outcome_unknown');assert.equal(eligibilityCalls,1);
-  assert.equal(fault,null);assert.equal((await eligibilityHead()).sequence,1);assert.equal((await job()).attempts,5);
-  assert.equal((await job()).last_error_code,'access_revoked');assert.deepEqual(await intents(),humanOwnedIntents);
+  assert.equal(fault,null);assert.equal((await eligibilityHead()).sequence,1);assert.equal((await job()).attempts,batchFailureAttempt);
+  assert.equal((await job()).last_error_code,batchFailureCode);assert.deepEqual(await intents(),humanOwnedIntents);
   const readEligibilityReceipt=async()=>JSON.parse((await pool.query(`SELECT canonical_utf8 FROM app.neighborhood_cohort_evidence_blobs
     WHERE organization_id=$1 AND content_sha256=$2 AND canonical_utf8_bytes<=16000`,
     [scope.organization_id,(await eligibilityHead()).receipt_reference.content_sha256])).rows[0].canonical_utf8);
@@ -922,7 +927,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
       assert.equal(actualOwnerResult.selected_entry,null);assert.equal(actualOwnerResult.decision,null);
       assert.equal(actualOwnerResult.complete_selected_recorded_comparison_pass,true);
     }
-    assert.equal((await job()).attempts,5);assert.equal((await job()).last_error_code,'access_revoked');
+    assert.equal((await job()).attempts,batchFailureAttempt);assert.equal((await job()).last_error_code,batchFailureCode);
     assert.deepEqual(await intents(),humanOwnedIntents);
   }
   const completedEligibility=await eligibilityHead();assert.equal(completedEligibility.sequence,3);
@@ -936,7 +941,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   const eligibilityDone=await job();assert.deepEqual(await runSelectedProgress(args),{status:'idle'});
   assert.deepEqual(await runSelectedProgress(args),{status:'idle'});assert.deepEqual(await job(),eligibilityDone);
   const [laterOwner]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));
-  assert.equal(laterOwner.claim.operation_id,operation);assert.equal(laterOwner.claim.attempts,5);
+  assert.equal(laterOwner.claim.operation_id,operation);assert.equal(laterOwner.claim.attempts,batchFailureAttempt);
   const laterOwnedJob=await job();for(const worker of [runStock,runPartition,runCatalog,runWait,runSelectedInitial,runSelectedProgress])assert.deepEqual(await worker(args),{status:'idle'});
   assert.deepEqual(await job(),laterOwnedJob);
   await pool.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);

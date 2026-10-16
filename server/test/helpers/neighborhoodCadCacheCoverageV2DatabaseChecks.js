@@ -8,7 +8,10 @@ import { canonicalAssessmentJson as json } from '../../src/services/neighborhood
 import { withCustomCohortJobTransaction as tx } from '../../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
 import { NEIGHBORHOOD_SCOPED_CAD_ORIGINAL_ACCOUNT_V2_SQL as PAGE } from '../../src/services/neighborhoodAssessment/neighborhoodScopedCadOriginalAccountV2.js';
 import { NEIGHBORHOOD_SHARED_TYPED_CAD_SQL as CAD } from '../../src/services/neighborhoodAssessment/neighborhoodSharedTypedGeneration.js';
+import { NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL as AMENITY_PACKET }
+  from '../../src/services/neighborhoodAssessment/neighborhoodOriginalCadAccountPackagesV2.js';
 import { CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_RIGHTS_KEY as RIGHTS } from '../../src/security/customNeighborhoodCadImprovementSourcePolicy.js';
+import { CUSTOM_NEIGHBORHOOD_WITNESS2_SOURCE_RIGHTS_KEY as MARKET_RIGHTS } from '../../src/security/customNeighborhoodWitness2SourcePolicy.js';
 
 /** Independent disposable manual job. Every original, source policy, actor,
  * native parent/head and COMMIT is real; no callback supplies source results. */
@@ -21,23 +24,29 @@ export async function runNeighborhoodCadCacheCoverageV2DatabaseChecks({pool,inpu
     if(text==='COMMIT'&&fault==='expire_commit'){fault=null;await raw.query(
       "UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);}
     const result=await raw.query(config,values);
-    if(text===PAGE&&fault==='text'){fault=null;const row=structuredClone(result.rows[0]),packet=JSON.parse(row.packet_json);
-      packet[0].payload_text+=' ';row.packet_json=JSON.stringify(packet);return {...result,rows:[row]};}
-    if(text===PAGE&&['cad_deny','cad_revision','role','assignment','draft','subject','cancel'].includes(fault)){
+    if((text===PAGE||text===AMENITY_PACKET)&&fault==='text'){fault=null;const row=structuredClone(result.rows[0]),packet=JSON.parse(row.packet_json);
+      packet[0][text===PAGE?'payload_text':'original_text']+=' ';row.packet_json=JSON.stringify(packet);return {...result,rows:[row]};}
+    if((text===PAGE||text===AMENITY_PACKET)&&['cad_deny','cad_revision','market_deny','role','assignment','draft','subject','claim','cancel'].includes(fault)){
       const mode=fault;fault=null;
       if(mode==='cad_deny')await raw.query(`UPDATE app_auth.organizations SET metadata=jsonb_set(metadata,ARRAY[$2::text,'revoked_at'],
         to_jsonb(to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))) WHERE id=$1`,[scope.organization_id,RIGHTS]);
       if(mode==='cad_revision')await raw.query(`UPDATE app_auth.organizations SET metadata=jsonb_set(metadata,
         ARRAY[$2::text,'rights_basis','basis_reference'],'"changed native CAD coverage probe"'::jsonb) WHERE id=$1`,[scope.organization_id,RIGHTS]);
+      if(mode==='market_deny')await raw.query(`UPDATE app_auth.organizations SET metadata=jsonb_set(metadata,ARRAY[$2::text,'revoked_at'],
+        to_jsonb(to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))) WHERE id=$1`,[scope.organization_id,MARKET_RIGHTS]);
       if(mode==='role')await raw.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[scope.organization_id,actor]);
       if(mode==='assignment')await raw.query('UPDATE app.assignment_files SET assigned_appraiser_user_id=NULL WHERE id=$1',[scope.assignment_file_id]);
       if(mode==='draft')await raw.query("UPDATE app.custom_appraisal_workfiles SET status='archived' WHERE assignment_file_id=$1",[scope.assignment_file_id]);
       if(mode==='subject')await raw.query(`UPDATE app.appraisal_subject_snapshots SET subject_data=jsonb_set(subject_data,
         '{custom_property_snapshot,improvement,living_area_sqft}','2000')
         WHERE id=(SELECT subject_snapshot_id FROM app.report_files WHERE id=$1)`,[scope.report_file_id]);
+      if(mode==='claim')await raw.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET claim_token=gen_random_uuid() WHERE operation_id=$1',[operation]);
       if(mode==='cancel')controller.abort();
     }
     if(text===CAD.insert&&fault==='bytes'){fault=null;return {...result,rows:result.rows.map(r=>({...r,padding:'x'.repeat(32000001)}))};}
+    if(text===AMENITY_PACKET&&fault==='covered_bytes'){fault=null;return {...result,rows:result.rows.map(r=>({...r,padding:'x'.repeat(32000001)}))};}
+    if(text===AMENITY_PACKET&&fault==='covered_header')fault='covered_header_ending';
+    if(text===CAD.read&&fault==='covered_header_ending'){fault=null;return {...result,rows:result.rows.map(r=>({...r,definition_json:r.definition_json+' '}))};}
     if(text==='COMMIT'&&fault==='ack'){fault=null;throw Error('lost real CAD coverage COMMIT acknowledgement');}
     return result;
   }};}},service=createCustomCohortContextCapture({pool:observed,sourceMode:'combined-witness2-v1',authorizeMarketData,authorizeCadImprovementData});
@@ -46,6 +55,7 @@ export async function runNeighborhoodCadCacheCoverageV2DatabaseChecks({pool,inpu
   const claim=await tx(pool,async client=>{const [row]=await jobs(client).claimDue({leaseSeconds:900});assert.equal(row.operation_id,operation);
     return {operation_id:operation,claim_token:row.claim_token,attempts:row.attempts};});
   const options={captureJobClaim:claim},step=()=>service.continueOriginalFrozenCaptureJobCadCacheCoverageReferencesV2(input,
+    {...options,...(controller?{signal:controller.signal}:{})}),amenity=()=>service.readCoveredOriginalFrozenCaptureJobFirstCadAmenityEvidenceReferencesV2(input,
     {...options,...(controller?{signal:controller.signal}:{})});
   const drive=async(method,key)=>{let result;for(let i=0;i<30;i++){result=await service[method](input,options);if(result[key]===true)return result;}
     assert.fail(`${method} did not complete its small actual original fixture`);};
@@ -55,10 +65,12 @@ export async function runNeighborhoodCadCacheCoverageV2DatabaseChecks({pool,inpu
   await drive('verifyFrozenCaptureJobStockOriginalReferencesV2','all_parcels_verified');
   await drive('verifyFrozenCaptureJobSourceIdentityReferencesV2','all_layers_verified');
   let from=calls.length;await assert.rejects(step(),/CAD_neutral_coverage_unavailable/);
+  await assert.rejects(amenity(),/CAD_neutral_coverage_unavailable/);
   assert.ok(!calls.slice(from).includes(PAGE));
   await service.reconcileFrozenCaptureJobNeutralOriginalsReferencesV2(input,options);
   from=calls.length;await assert.rejects(step(),/CAD_neutral_coverage_unavailable/);assert.ok(!calls.slice(from).includes(PAGE));
   await drive('reconcileFrozenCaptureJobNeutralOriginalsReferencesV2','all_issued_source_pages_reconciled');
+  from=calls.length;await assert.rejects(amenity(),/CAD_complete_coverage_required/);assert.ok(!calls.slice(from).includes(AMENITY_PACKET));
   const head=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_cad_cache_v2_heads WHERE operation_id=$1',[operation])).rows[0]??null,
     job=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[operation])).rows[0],
     blobCount=async()=>(await pool.query('SELECT count(*)::integer AS n FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1',[scope.organization_id])).rows[0].n,
@@ -68,9 +80,9 @@ export async function runNeighborhoodCadCacheCoverageV2DatabaseChecks({pool,inpu
       identity:(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_identity_v2_anchors WHERE operation_id=$1',[operation])).rows,
       pins:(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_prepared_generation_pins WHERE operation_id=$1',[operation])).rows});
   const before=await parents(),blobs=await blobCount();assert.equal(await head(),null);
-  for(const [mode,reason] of [['cad_deny',/market_data_access_denied/],['cad_revision',/CAD_source_policy_changed/],
+  for(const [mode,reason] of [['cad_deny',/market_data_access_denied/],['cad_revision',/CAD_source_policy_changed/],['market_deny',/market_data_access_denied/],
     ['role',/job_actor_access_revoked/],['assignment',/assignment_access_denied/],['draft',/private_source_read_only/],
-    ['subject',/subject_changed/],['cancel',/cancelled/],['text',/original_mismatch/],['bytes',/owner_byte_limit/]]){
+    ['subject',/subject_changed/],['claim',/claim_lost/],['cancel',/cancelled/],['text',/original_mismatch/],['bytes',/owner_byte_limit/]]){
     fault=mode;controller=new AbortController();await assert.rejects(step(),reason);assert.equal(fault,null);controller=null;
     assert.equal(await head(),null);assert.equal(await blobCount(),blobs);assert.deepEqual(await parents(),before);
   }
@@ -81,6 +93,7 @@ export async function runNeighborhoodCadCacheCoverageV2DatabaseChecks({pool,inpu
   const body=JSON.parse((await pool.query('SELECT canonical_utf8 FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1 AND content_sha256=$2',
     [scope.organization_id,first.receipt_reference.content_sha256])).rows[0].canonical_utf8);
   assert.equal(body.after.after_account,'CLOSURE-A');assert.equal(body.after.original_count,3);assert.equal(body.after.done,false);
+  from=calls.length;await assert.rejects(amenity(),/CAD_complete_coverage_required/);assert.ok(!calls.slice(from).includes(AMENITY_PACKET));
   await assert.rejects(tx(pool,async client=>{
     const forged={...body,sequence:2,previous:first.receipt_reference,before:body.after,entry:null,after:{...body.after,done:true}};
     const ref=await createNeighborhoodCohortBlobRepository(client,scope.organization_id).put(json(forged));
@@ -103,6 +116,7 @@ export async function runNeighborhoodCadCacheCoverageV2DatabaseChecks({pool,inpu
   await assert.rejects(step(),/claim_lost/);Object.assign(claim,{claim_token:next.claim_token,attempts:next.attempts});
   const second=await step();assert.equal(second.progress.after_account,'CLOSURE-B');assert.equal(second.progress.account_count,2);
   assert.equal(second.progress.original_count,5);assert.equal(second.progress.done,false);assert.equal((await head()).sequence,2);
+  from=calls.length;await assert.rejects(amenity(),/CAD_complete_coverage_required/);assert.ok(!calls.slice(from).includes(AMENITY_PACKET));
   const terminal=await step();assert.equal(terminal.progress.done,true);assert.equal(terminal.progress.original_count,5);assert.equal((await head()).sequence,3);
   const complete=await head(),finalBlobs=await blobCount(),reopened=await step();assert.equal(reopened.advanced,false);
   assert.equal(reopened.progress.done,true);assert.deepEqual(await head(),complete);assert.equal(await blobCount(),finalBlobs);
@@ -110,6 +124,31 @@ export async function runNeighborhoodCadCacheCoverageV2DatabaseChecks({pool,inpu
   assert.deepEqual(after.geography,before.geography);assert.deepEqual(after.identity,before.identity);assert.deepEqual(after.pins,before.pins);
   assert.deepEqual(after.job.checkpoint,before.job.checkpoint);assert.equal(after.job.attempts,2);assert.equal(after.job.last_error_code,'synthetic_CAD_retry');
   for(const r of [second,terminal,reopened]){assert.equal(r.automatic_handoff,false);assert.equal(r.context_complete,false);assert.equal(r.pin_transfer,false);}
+  const coveredFrom=calls.length,covered=await amenity();assert.equal(covered.account_id,'CLOSURE-A');
+  assert.deepEqual(covered.original_counts,{primary:1,secondary:2});assert.equal(covered.coverage,'one_complete_first_stock_account_only');
+  assert.deepEqual(covered.amenity_evidence.secondary_inventory.rows.map(r=>r.row_key),['1','3']);
+  assert.equal(covered.amenity_evidence.reported_pool.state,'observed');assert.equal(covered.amenity_evidence.reported_pool.exact_value,true);
+  assert.ok(covered.amenity_evidence.secondary_inventory.rows.every(r=>r.semantic_type==='unsupported'));
+  assert.ok(Buffer.byteLength(JSON.stringify(covered))<=16000);assert.ok(calls.slice(coveredFrom).includes(AMENITY_PACKET));
+  const protectedState=await parents();
+  for(const [mode,reason] of [['cad_deny',/market_data_access_denied/],['cad_revision',/CAD_source_policy_changed/],['market_deny',/market_data_access_denied/],
+    ['role',/job_actor_access_revoked/],['assignment',/assignment_access_denied/],['draft',/private_source_read_only/],
+    ['subject',/subject_changed/],['claim',/claim_lost/],['cancel',/cancelled/],['text',/original_mismatch/],['covered_bytes',/owner_byte_limit/],
+    ['covered_header',/cache_unavailable/]]){
+    fault=mode;controller=new AbortController();await assert.rejects(amenity(),reason);assert.equal(fault,null);controller=null;
+    assert.deepEqual(await head(),complete);assert.deepEqual(await parents(),protectedState);assert.equal(await blobCount(),finalBlobs);
+  }
+  fault='ack';await assert.rejects(amenity(),e=>e.outcome_unknown===true);assert.equal(fault,null);
+  assert.deepEqual(await amenity(),covered);assert.deepEqual(await head(),complete);assert.equal(await blobCount(),finalBlobs);
+  assert.deepEqual(await parents(),protectedState);
+  assert.ok(!calls.slice(coveredFrom).some(sql=>sql===CAD.insert||/anchor-(insert|advance)|checkpoint-save/.test(sql)));
+  console.info('[native-covered-first-CAD-amenity-original-owner-v2]',{actual_first_stock_account:'CLOSURE-A',actual_CAD_originals:3,
+    missing_partial_and_pre_EMPTY_coverage_refused_before_originals:true,actual_complete_CAD_and_neutral_native_heads:true,
+    every_original_and_entire_cache_replayed:true,duplicate_native_secondary_numbers_not_deduplicated:true,
+    both_end_current_CAD_actor_assignment_draft_subject_claim_cache_cancel:true,same_aggregate_byte_ceiling:true,
+    real_read_only_lost_COMMIT_ACK_identical_reopen:true,all_heads_job_parents_pins_and_blobs_unchanged:true,
+    global_cache_fixture:'complete',building_global_native_proof:false,full_amenity_dictionary:false,
+    selected_union:false,automatic_handoff:false,licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
   console.info('[native-issued-current-authorized-CAD-cache-coverage-v2]',{actual_accounts:2,actual_complete_originals:5,
     missing_and_partial_E_refused_before_originals:true,independent_native_parents_and_same_snapshot_CAD:true,
     every_original_and_ENTIRE_cache_reconciled_under_one_budget:true,all_ending_authority_refusals_atomic:true,

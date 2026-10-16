@@ -4,6 +4,7 @@ import { randomUUID,createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { prepareNeighborhoodCiDatabase } from './helpers/neighborhoodCiDatabase.js';
 import { assertBoundedCohortAuthorityAggregates } from './helpers/boundedCohortAuthorityAggregateAssertions.js';
+import { getNeighborhoodFrozenTypedOriginalV2Profile } from '../src/services/neighborhoodAssessment/neighborhoodFrozenTypedOriginalV1.js';
 import { NEIGHBORHOOD_CACHED_SOURCE_SCHEMA } from './fixtures/neighborhoodCachedSourceSchemaFixture.js';
 import { runNeighborhoodGroupIndex,getPreparedNeighborhoodGroupSummary }
   from '../src/services/neighborhoodAssessment/neighborhoodGroupIndex.js';
@@ -102,6 +103,8 @@ import { NEIGHBORHOOD_ORIGINAL_TRANSACTION_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodOriginalTransactionPackagesV2.js';
 import { NEIGHBORHOOD_ORIGINAL_CAD_ACCOUNT_PACKAGE_V2_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodOriginalCadAccountPackagesV2.js';
+import { runNeighborhoodTransactionPackageDatabaseChecks }
+  from './helpers/neighborhoodTransactionPackageDatabaseChecks.js';
 
 // Disposable native fixture only, never production rights provisioning. The
 // real evaluator reads current organization metadata/time on every admission.
@@ -116,10 +119,13 @@ const fixtureGrant=organization=>({policy_version:1,organization_id:organization
   retention:'immutable_originals_without_automated_deletion',exposures:{none:true,report_observation_summary:false,
     report_observation_members:false,report_observation_catalog:false}});
 const fixturePolicy=()=>createCustomNeighborhoodWitness2SourcePolicy({datasetRevision:'synthetic-original-1',providerRevisions:fixtureProviders});
+/** Replace only the disposable legacy fixture namespace, preserving separate CAD metadata. */
 const setFixtureGrant=(pool,organization,grant)=>pool.query('UPDATE app_auth.organizations SET metadata=jsonb_set(coalesce(metadata,\'{}\'::jsonb),ARRAY[$1::text],$2::jsonb) WHERE id=$3',
   [CUSTOM_NEIGHBORHOOD_WITNESS2_SOURCE_RIGHTS_KEY,JSON.stringify(grant),organization]);
+/** Install synthetic CAD rights only in the disposable test organization's separate namespace. */
 const setCadFixtureGrant=(pool,organization,grant)=>pool.query('UPDATE app_auth.organizations SET metadata=jsonb_set(coalesce(metadata,\'{}\'::jsonb),ARRAY[$1::text],$2::jsonb) WHERE id=$3',
   [CAD_RIGHTS_KEY,JSON.stringify(grant),organization]);
+/** Use the real CAD evaluator with synthetic fixture provenance, never a production grant. */
 const fixtureCadPolicy=()=>createCustomNeighborhoodCadImprovementSourcePolicy({datasetRevision:'synthetic-original-1',providerRevisions:fixtureProviders});
 
 const frozenSpatialOptions = options => ({...options,
@@ -169,6 +175,7 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     const policyClient=await pool.connect();
     try {
       await runCustomNeighborhoodCadImprovementPolicyDatabaseChecks(policyClient);
+      await runNeighborhoodTransactionPackageDatabaseChecks(policyClient);
       await runNeighborhoodStockOriginalCellDatabaseChecks(policyClient);
       await runNeighborhoodOriginalTransactionPackageDatabaseChecks(policyClient);
       await runNeighborhoodOriginalCadAccountPackageDatabaseChecks(policyClient);
@@ -1844,6 +1851,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       dataset:{...fixtureGrant(organization).dataset,id:CAD_DATASET},valid_from:cadClock.past,expires_at:cadClock.future,
       rights_basis:{...fixtureGrant(organization).rights_basis,approved_at:cadClock.past}};
     await setCadFixtureGrant(pool,organization,cadGrant);
+    /** Reopen the internal owner with both actual current-rights evaluators for this fixture. */
     const cadOwner=()=>createCustomCohortContextCapture({pool:refsPool,sourceMode:'combined-witness2-v1',
       authorizeMarketData:fixturePolicy(),authorizeCadImprovementData:fixtureCadPolicy()});
     const cadOwnerMethod='readSharedFrozenCaptureJobCadImprovementsReferencesV2',cadOwnerOptions={...refsOptions,
@@ -3061,6 +3069,7 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
       assert.deepEqual(result.identity_verification_reference,identityCommitted.evidence_refs[5]);
       assert.equal(result.source_acquisition,'not_established');assert.equal(result.report_update,'none');
     }
+    /** Assert CAD reads leave the durable checkpoint, issued heads and retained blob count unchanged. */
     const assertCadUnchanged=async()=>{assert.deepEqual(await readRefsCheckpoint(),identityCommitted);
       assert.deepEqual(await readRefsAnchor(),finalAnchor);assert.deepEqual(await readGeoAnchor(),geoIssued);
       assert.deepEqual(await readIdentityAnchor(),identityIssued);assert.equal(await refsBlobCount(),cadBeforeBlobs);};
@@ -3767,7 +3776,9 @@ test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages 
         await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql,sql.includes('$1')?[refsOperation]:[])),/immutable|transition_conflict|prefix_conflict/);
     const catalogQueries=refsCalls.slice(catalogFrom);
     assertBoundedCohortAuthorityAggregates(catalogQueries.map((text,index)=>({text,values:refsQueryParameters[catalogFrom+index]})),
-      {actorUserId:actor,organizationId:organization,assignmentFileId:assignment});
+      {actorUserId:actor,organizationId:organization,assignmentFileId:assignment,
+        originals:{operationId:refsOperation,generationId:refsBinding.generation_id,
+          profileSha256:getNeighborhoodFrozenTypedOriginalV2Profile().profile_ref.content_sha256}});
     console.info('[native-original-recorded-catalog-issued-owner-v2]',{accounts:2,assigned_groups:1,assigned_accounts:1,unassigned_accounts:1,
       all_whole_originals_entire_neutral_cache_and_entire_partition_entries_replayed:true,outside_conflicting_candidates_not_promoted:true,
       native_exact_next_ordinal_orphan_summary_and_head_without_root_refused:true,current_ending_authority_cache_counts_fences:true,
@@ -4219,6 +4230,7 @@ test('isolated PostgreSQL: current CAD account pages preserve missing primary me
     assert.equal(stock.population.account_count,'2');
     const graph={root:{content_sha256:'d'.repeat(64),canonical_utf8_bytes:'100'},
       layer_counts:Object.fromEntries(Object.entries(stock.original.layer_counts).map(([k,v])=>[k,Number(v.row_count)]))};
+    /** Reopen one bounded disposable SQL DATA page; date variants do not authorize an actual owner. */
     const queries=[],read=(cursor='',rowLimit=250,date='2026-10-07')=>withCustomCohortJobTransaction(pool,client=>
       createNeighborhoodSharedJobCadAccountPages({async query(config){queries.push(config.text);return client.query(config);}},pageOptions,graph,date).page({cursor,rowLimit}));
     const first=await read('',1);assert.equal(first.end_of_accounts,false);assert.equal(first.rows[0].account_id,'CAD-A');

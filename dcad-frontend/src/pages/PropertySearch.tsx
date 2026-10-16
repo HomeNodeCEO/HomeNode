@@ -1,5 +1,6 @@
 // src/pages/PropertySearch.tsx (resilient to different api.ts versions)
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import * as api from "@/lib/api"; // we'll safely probe for functions at runtime
 import SalesReconciliationQueue from "@/components/SalesReconciliationQueue";
 import ReportTypeChooser, {
@@ -189,6 +190,7 @@ export default function PropertySearchPage() {
         />
         <div className="hn-eyebrow text-xs">HomeNode workspace</div>
         <h1 style={{ margin: "4px 0 0" }}>Property Search</h1>
+        <Link to="/academy/commercial" className="hn-action-primary btn" style={{ display: 'inline-flex', marginTop: 12, padding: '9px 14px', borderRadius: 8, fontSize: 13 }}>Commercial Academy · Learn & practice →</Link>
       </header>
 
       {/* Query + Filters */}

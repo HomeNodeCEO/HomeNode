@@ -7,6 +7,7 @@ import { createCustomCohortBatchSelectedTransactionIndexV3WorkerRepository as cl
 import { runCustomCohortBatchSelectedTransactionIndexV3JobOnce as run } from '../../src/services/neighborhoodAssessment/customCohortBatchSelectedTransactionIndexV3JobWorker.js';
 import { runCustomCohortBatchSelectedSemanticV3JobOnce as semantic } from '../../src/services/neighborhoodAssessment/customCohortBatchSelectedSemanticV3JobWorker.js';
 import { createCustomCohortCompletedIndexFirstSourceV3Repository as completedSource } from '../../src/services/neighborhoodAssessment/customCohortCompletedIndexFirstSourceV3Repository.js';
+import { runNeighborhoodCompletedIndexFirstSourceV3DatabaseChecks } from './neighborhoodCompletedIndexFirstSourceV3DatabaseChecks.js';
 
 /** Thirty-second independent capture. The actual shared native package is
  * frozen before capture, then reopened for EACH selected account and EMPTY.
@@ -53,6 +54,9 @@ export async function runNeighborhoodBatchSelectedTransactionIndexV3DatabaseChec
     try{
       calls++;firstClaim=options.captureJobClaim;assert.equal(firstClaim.attempts,5);owned=await job();ownedParent=await parent();
       await assert.rejects(service.progressCoveredOriginalFrozenCaptureJobSelectedTransactionIndexReferencesV2(value,options),/invalid_receipt/);await unchanged();
+      const admissionReads=originalReads();
+      await assert.rejects(service.readCoveredOriginalFrozenCaptureJobCompletedIndexFirstSourceReferencesV3(value,options),/checkpoint_conflict/);
+      assert.equal(originalReads(),admissionReads);await unchanged();
       for(const [fault,reason] of [['transaction_index_cache',/original_mismatch/],
         ['transaction_index_orphan',e=>e.outcome_unknown===true&&e.code==='55000'&&e.message==='neighborhood_selected_transaction_index_v2_orphan_child']]){
         const count=originalReads();setFault(fault);await assert.rejects(service[method](value,options),reason);assert.equal(readFault(),null);
@@ -123,6 +127,8 @@ export async function runNeighborhoodBatchSelectedTransactionIndexV3DatabaseChec
     assert.deepEqual((await client.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[operation])).rows,saved);throw rollback;
   }),e=>e===rollback);
   assert.deepEqual(await job(),terminal.job);assert.deepEqual(await parent(),terminal.parent);assert.deepEqual(await blobs(),terminal.blobs);assert.deepEqual(await snapshot(),terminal.index);await immutable();
+  await runNeighborhoodCompletedIndexFirstSourceV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
+    snapshot,immutable,setFault,readFault,originalReads});
   console.info('[native-batch-selected-transaction-index-v3]',{independent_actual_V3_semantic_worker_fresh_EMPTY:true,
     every_selected_complete_original_ENTIRE_cache_and_every_prior_native_member_reconciled_again:true,
     real_shared_source_replayed_per_selected_account_exact_namespaced_keys_edges_and_first_seen:true,

@@ -22,7 +22,7 @@ test('all twelve previous original SQL constants stay byte-identical, including 
     NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL:'3abdca68742b24b75321ca88e7fd979ed6b9afa7c0636dc8f121adcf1c60a7b3',
     NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL:'ac0740fb66f30a6c3b8496f35e2816b5ec13a73b0d5ff76c61a1534a00695894',
   };
-  assert.equal(Object.keys(plans).length,13);
+  assert.equal(Object.keys(plans).length,14);
   for(const [key,sha] of Object.entries(expected))assert.equal(createHash('sha256').update(plans[key]).digest('hex'),sha,key);
 });
 
@@ -86,7 +86,7 @@ test('source child connects only inactive original NEXT owners; owner migration 
   const capture=source('customCohortContextCapture'),registry=readFileSync(new URL('../src/database/mobileMigrations.js',import.meta.url),'utf8'),
     installed=readFileSync(new URL('../migrations/20261205_custom_cohort_selected_transaction_index_v2.sql',import.meta.url),'utf8');
   assert.match(capture,/readingSelectedTransactionIndex\?'subjectAndNextSelectedTransactionIndexAccountPackage'/);
-  assert.match(capture,/selectedTransactionIndexStore=createCustomCohortSelectedTransactionIndexV2Repository/);
+  assert.match(capture,/:createCustomCohortSelectedTransactionIndexV2Repository/);
   const atomic=capture.indexOf('if(progressingSelectedTransactionIndex){'),readOnly=capture.indexOf('if(readingSelectedTransactionSource){',atomic);
   assert.equal((capture.match(/selectedTransactionIndexStore\.advance\(/g)||[]).length,1);
   assert.ok(capture.indexOf('selectedTransactionIndexStore.advance(',atomic)<readOnly);

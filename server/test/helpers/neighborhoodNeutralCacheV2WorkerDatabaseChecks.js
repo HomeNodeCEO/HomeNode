@@ -13,6 +13,8 @@ import { NEIGHBORHOOD_SHARED_TYPED_V2_SQL as SQL } from '../../src/services/neig
 import { createCustomCohortCacheStockV2BridgeRepository as bridgeClaims } from '../../src/services/neighborhoodAssessment/customCohortCacheStockV2BridgeRepository.js';
 import { runCustomCohortCacheStockV2JobOnce as runBridge } from '../../src/services/neighborhoodAssessment/customCohortCacheStockV2JobWorker.js';
 import { runCustomCohortCoveredStockV2JobOnce as runStock } from '../../src/services/neighborhoodAssessment/customCohortCoveredStockV2JobWorker.js';
+import { runCustomCohortCoveredPartitionV2JobOnce as runPartition } from '../../src/services/neighborhoodAssessment/customCohortCoveredPartitionV2JobWorker.js';
+import { createCustomCohortCoveredPartitionV2WorkerRepository as partitionClaims } from '../../src/services/neighborhoodAssessment/customCohortCoveredPartitionV2WorkerRepository.js';
 import { NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL as STOCK_PACKET } from '../../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
 
 /** Independent disposable job; all acquisition owners, authorization, original
@@ -21,12 +23,13 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   const input={...sourceInput,operationId:randomUUID()},operation=input.operationId;let fault=null;
   const observed={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
     const text=typeof c==='string'?c:c.text,orphan=fault==='orphan'&&text.includes('custom-cohort-neutral-success-v2:yield')
-      ||fault==='bridge_orphan'&&text.includes('custom-cohort-cache-stock-v2:complete');
+      ||fault==='bridge_orphan'&&text.includes('custom-cohort-cache-stock-v2:complete')
+      ||fault==='partition_orphan'&&text.includes('custom-cohort-v2-continuation:yield');
     if(orphan)await raw.query('SAVEPOINT synthetic_neutral_yield');
     const result=await raw.query(c);
     if(orphan){fault=null;await raw.query('ROLLBACK TO SAVEPOINT synthetic_neutral_yield');await raw.query('RELEASE SAVEPOINT synthetic_neutral_yield');}
-    if(fault==='role'&&text===SQL.insert||fault==='bridge_role'&&text===STOCK_PACKET){fault=null;await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[scope.organization_id,actor]);}
-    if(['ack','bridge_ack'].includes(fault)&&text==='COMMIT'){fault=null;throw Error('lost actual original owner COMMIT ACK');}
+    if(fault==='role'&&text===SQL.insert||['bridge_role','partition_role'].includes(fault)&&text===STOCK_PACKET){fault=null;await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[scope.organization_id,actor]);}
+    if(['ack','bridge_ack','partition_ack'].includes(fault)&&text==='COMMIT'){fault=null;throw Error('lost actual original owner COMMIT ACK');}
     return result;
   }};}},service=createCustomCohortContextCapture({pool:observed,sourceMode:'combined-witness2-v1',authorizeMarketData}),
     args={pool,cohortService:service,leaseSeconds:900},job=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[operation])).rows[0],
@@ -131,11 +134,54 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   }
   assert.equal((await stockHead()).sequence,3);assert.equal((await parent()).sequence,parentBefore.sequence+3);
   const terminalStock=await job();assert.deepEqual(await runStock(args),{status:'idle'});assert.deepEqual(await job(),terminalStock);
+  const partitionHead=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_recorded_partition_v2_heads WHERE operation_id=$1',[operation])).rows[0],
+    partitionRows=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_recorded_partition_v2_rows WHERE operation_id=$1 ORDER BY ordinal',[operation])).rows;
+  const partitionAdoption=(await Promise.all([1,2].map(()=>tx(pool,client=>partitionClaims(client).claimDue({leaseSeconds:900}))))).flat();
+  assert.equal(partitionAdoption.length,1);const partitionClaim=partitionAdoption[0].claim;
+  assert.equal(partitionClaim.attempts,5);assert.equal(partitionAdoption[0].progress_done,true);
+  const partitionJob=await job(),partitionParent=await parent();
+  fault='partition_role';await assert.rejects(service.continueCoveredOriginalFrozenCaptureJobRecordedPartitionReferencesV2(input,{captureJobClaim:partitionClaim}),
+    /custom_cohort_job_actor_access_revoked/);assert.equal(fault,null);
+  assert.equal(await partitionHead(),undefined);assert.deepEqual(await partitionRows(),[]);
+  assert.deepEqual(await job(),partitionJob);assert.deepEqual(await parent(),partitionParent);
+  await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);
+  fault='partition_orphan';await assert.rejects(service.continueCoveredOriginalFrozenCaptureJobRecordedPartitionReferencesV2(input,{captureJobClaim:partitionClaim}),
+    error=>error.outcome_unknown===true&&error.code==='55000');assert.equal(fault,null);
+  assert.equal(await partitionHead(),undefined);assert.deepEqual(await partitionRows(),[]);
+  assert.deepEqual(await job(),partitionJob);assert.deepEqual(await parent(),partitionParent);
+  fault='partition_ack';await assert.rejects(service.continueCoveredOriginalFrozenCaptureJobRecordedPartitionReferencesV2(input,{captureJobClaim:partitionClaim}),
+    error=>error.outcome_unknown===true);assert.equal(fault,null);
+  assert.equal((await partitionHead()).sequence,1);assert.equal((await partitionRows()).length,1);
+  for(let i=0;i<2;i++){
+    assert.equal((await runPartition(args)).status,'continuation_pending');
+    assert.equal((await job()).attempts,5);assert.equal((await job()).last_error_code,'access_revoked');
+  }
+  assert.equal((await partitionHead()).sequence,3);assert.equal((await partitionRows()).length,2);
+  assert.equal((await parent()).sequence,parentBefore.sequence+6);
+  const terminalPartition=await job();assert.deepEqual(await runPartition(args),{status:'idle'});
+  assert.deepEqual(await job(),terminalPartition);assert.deepEqual(await bridgeState(),issuedBridge);
+  assert.deepEqual(await cacheState(),complete);assert.deepEqual(await head(),nativeHead);
   const [nextOwner]=await tx(pool,client=>mainClaims(client).claimDue({limit:1,leaseSeconds:900}));assert.equal(nextOwner.claim.operation_id,operation);
+  let partitionCursor='';const originals=[];
+  for(let i=0;i<3;i++){
+    const packet=await service.readCoveredOriginalFrozenCaptureJobRecordedPartitionAccountReferencesV2(input,
+      {captureJobClaim:nextOwner.claim,stockAccountPackagePage:{cursor:partitionCursor}});
+    assert.equal(packet.end_of_accounts,i===2);assert.equal(packet.original_reconciliation,'every_package_original_recompiled');
+    if(packet.account_id!==null){
+      const entry=(await partitionRows())[i],text=(await pool.query('SELECT canonical_utf8 FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1 AND content_sha256=$2',
+        [scope.organization_id,entry.entry_reference.content_sha256])).rows[0].canonical_utf8;
+      assert.deepEqual(JSON.parse(text),{format:'cohort_recorded_group_partition_entry_v2',account_id:packet.account_id,ordinal:i+1,recorded_group:packet.recorded_group});
+      originals.push(packet.account_id);
+    }
+    partitionCursor=packet.next_cursor;
+  }
+  assert.equal(new Set(originals).size,2);
   await pool.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);
   await tx(pool,client=>jobs(client).cancel(scope,operation));const nextOwnerPending=await job();
   assert.deepEqual(await runStock(args),{status:'idle'});assert.deepEqual(await job(),nextOwnerPending,
     'stock DONE next-owner expired/cancelled claim is untouched by incomplete-stock claim AND expiry');
+  assert.deepEqual(await runPartition(args),{status:'idle'});assert.deepEqual(await job(),nextOwnerPending,
+    'partition DONE next-owner expired/cancelled claim is untouched by covered-partition claim AND expiry');
   const sourceGeneration=(await pool.query('SELECT generation_id FROM app.neighborhood_custom_cohort_job_stocks WHERE operation_id=$1',[operation])).rows[0].generation_id;
   const cacheHeader=(await pool.query(SQL.read,[sourceGeneration,JSON.parse((await pool.query(
     'SELECT canonical_utf8 FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1 AND content_sha256=$2',
@@ -150,6 +196,13 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     successful_pages_at_failure_ceiling:5,error_history_preserved:true,fresh_main_claim_each_step:true,
     completed_stock_repeated_idle:true,expired_cancelled_next_owner_claim_untouched:true,
     same_global_building_cache_and_native_parents:true,default_worker_activation:false,licensed_large_area:false,production_speed:false,pin_transfer:false});
+  console.info('[native-covered-partition-success-worker-v2]',{concurrent_single_fresh_stock_DONE_adoption:true,
+    actual_two_accounts_and_fresh_EMPTY:true,whole_original_cache_and_entire_partition_entries_reconciled:true,
+    ending_role_rolls_back_rows_head_checkpoint_and_continuation:true,orphan_success_real_COMMIT_refused:true,
+    lost_actual_first_partition_COMMIT_ACK:true,successful_pages_at_failure_ceiling:5,error_history_preserved:true,
+    fresh_main_claim_each_step:true,partition_DONE_idle_and_expired_cancelled_catalog_claim_untouched:true,
+    native_cache_bridge_and_original_parents_unchanged:true,global_header_still_building:true,
+    default_worker_activation:false,licensed_large_area:false,production_speed:false,pin_transfer:false});
   await tx(pool,client=>jobs(client).cancel(scope,operation));const cancelled=await job();
   assert.deepEqual(await runCache(args),{status:'idle'});assert.deepEqual(await job(),cancelled);
   assert.deepEqual((await pool.query('SELECT * FROM app.neighborhood_custom_cohort_prepared_generation_pins WHERE operation_id=$1',[operation])).rows,pin);

@@ -7760,3 +7760,43 @@ error history, repeated terminal idle and untouched expired/cancelled next-owner
 state. Eight focused worker/claim checks passed serially105.2602ms; syntax/diff
 checks pass. Actual cloud execution remains pending, with no local database or
 full suite run. Licensed large-area acquisition and production speed remain open.
+
+## Covered-cache original partition worker (2026-10-16, not activated)
+
+The explicit covered partition continuation and account reader use actual native
+job-cache DONE coverage around every whole-original/entire-cache replay, under
+the same current and ending actor, assignment, private draft, subject, purpose,
+issued-parent, stock, claim and aggregate byte/query/runtime fences. The global
+shared cache may remain building with its global progress unchanged. Legacy
+complete-cache readers retain their admission and never query the new tables.
+
+The dormant worker adopts only actual stock DONE, then advances only an
+unfinished recorded partition. Fixed joins reopen the completed native first
+stock bridge, immutable cache-success parent, cache head, stock and partition
+heads, exact job/actor/request scope and bounded routing receipt. Each successful
+step consumes one fresh native continuation without spending another failure
+attempt, including success at attempt five. Genuine failed/expired recovery
+retains the five-failure ceiling. Partition DONE is excluded from every claim
+and expiry path, including an expired or cancelled next catalog-owner claim.
+
+Unregistered additive `20261215_custom_cohort_covered_partition_success_v2.sql`
+requires each actual partition head/checkpoint for an enrolled native-cache job
+to commit with its exact continuation and lease release. The unchanged native
+partition guard still issues the exact next account/ordinal and fresh empty
+terminal probe. Rolling back only the success-yield statement cannot commit
+an orphan partition. Manual unenrolled partitions retain their contract.
+
+210 serial focused worker/current-owner/partition/original-reader checks passed
+with zero failures, cancellations or skips in3,130.0318ms. Actual database
+assertions are authored in the existing isolated fixture: concurrent single
+stock-DONE adoption, two original accounts and fresh EMPTY at failure ceiling,
+ending-role rollback, orphan-yield real COMMIT refusal, lost actual first-owner
+COMMIT ACK, every entire retained entry compared with newly replayed originals,
+and completed-partition next-owner exclusion. Native/cloud execution of this new
+head is still pending. No new matrix or deadline increase was introduced.
+
+No registry, HTTP route, default worker, source grant, scheduler, human selection,
+publication, report Apply or terminal pin transfer is activated. Covered catalog
+handoff, the separate authorized CAD companion, complete semantics/publication,
+licensed large-area acquisition and saved Hardy live-speed acceptance remain
+open. This protocol work is not licensed or production-speed proof.

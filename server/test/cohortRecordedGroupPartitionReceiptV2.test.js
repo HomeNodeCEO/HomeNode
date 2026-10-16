@@ -34,13 +34,14 @@ test('partition DATA refuses callbacks, free DONE, altered roots/profile, bad co
 });
 
 /** SQL doubles cover mechanics ONLY, never independent native/source authority. */
-function setup({autocommit=false,conflict=false}={}){
+function setup({autocommit=false,conflict=false,storedEntry=null}={}){
   let current=null,tx=40;const calls=[];
   const frozen={source_reference:ref(1),root_reference:ref(2),graph_reference:ref(3),geographic_reference:ref(4),identity_reference:ref(5),
     stock_reference:ref(6),traversal_reference:ref(7),profile_reference:expected.profile_reference};
   const client={async query(sql,values){calls.push({sql,values});
     if(sql.includes(':transaction'))return {rowCount:1,rows:[{transaction_id:String(autocommit?++tx:tx)}]};
     if(sql.includes(':anchor-read'))return {rowCount:1,rows:[current??Object.fromEntries([...Object.keys(frozen),'receipt_reference','sequence'].map(k=>[k,null]))]};
+    if(sql.includes(':entry-read'))return {rowCount:1,rows:[storedEntry??Object.fromEntries(['account_id','ordinal','entry_reference','state','assigned_group_id'].map(k=>[k,null]))]};
     if(sql.includes(':entry-insert'))return {rowCount:1,rows:[{ordinal:values[9]}]};
     if(sql.includes(':anchor-insert')){current={...frozen,receipt_reference:JSON.parse(values[16]),sequence:1};return {rowCount:1,rows:[{sequence:1}]};}
     if(sql.includes(':anchor-advance')){if(conflict)return {rowCount:0,rows:[]};current={...frozen,receipt_reference:JSON.parse(values[8]),sequence:values[9]};
@@ -66,6 +67,16 @@ test('partition repository refuses autocommit, ordinal jumps, forged row state a
     await assert.rejects(normal.owner.advance(null,ref(8),e),/binding_changed|invalid_entry|invalid_input/);
   const conflict=setup({conflict:true}),a=await conflict.owner.advance(null,ref(8),entry());
   await assert.rejects(conflict.owner.advance(a,ref(9),entry('B',2)),/claim_lost/);
+});
+test('partition prefix repository reads one exact indexed immutable row under the same claim, never a dense roster',async()=>{
+  const found=setup({storedEntry:entry()});assert.deepEqual(await found.owner.readNextEntry(''),entry());
+  assert.equal(await setup().owner.readNextEntry('B'),null);
+  const query=found.calls[0];assert.ok(query.sql.includes('ORDER BY account_id LIMIT 1'));assert.equal(query.values[8],'');
+  assert.ok(query.sql.includes('job.actor_user_id=$8::uuid')&&query.sql.includes('job.claim_token=$2::uuid'));
+  for(const value of [null,{},new String(''),new Proxy({},{}),' A','A\u0000','\ud800','a'.repeat(65)])
+    await assert.rejects(found.owner.readNextEntry(value),/invalid_cursor/);
+  await assert.rejects(setup({storedEntry:{...entry(),ordinal:0}}).owner.readNextEntry(''),/invalid_entry/);
+  await assert.rejects(setup({storedEntry:{...entry(),state:'assigned',assigned_group_id:null}}).owner.readNextEntry(''),/invalid_entry/);
 });
 test('registered additive native partition enforces exact next keys, immutable rows and same-TX head/checkpoint commit',()=>{
   const name='20261119_custom_cohort_recorded_partition_v2.sql',registry=readFileSync(new URL('../src/database/mobileMigrations.js',import.meta.url),'utf8'),

@@ -1,5 +1,68 @@
 # Complete larger-area Custom neighborhood studies
 
+## Original-reconciled recorded-partition consumer (2026-10-10, not activated)
+
+`readOriginalFrozenCaptureJobRecordedPartitionAccountReferencesV2` accepts only
+the live claim/budget and a closed account cursor. The cursor is a one-account
+page locator, NOT a verified earlier prefix or a selected-member roster. The
+actual owner reopens all independently issued DONE graph/geography/identity/
+stock-traversal/partition heads, retained stock/date and current source purpose.
+An unfinished or free/unissued/corrupt partition cannot begin original reads.
+
+Before touching derived membership, the existing single-use whole-account
+reader recompiles EVERY original/ENTIRE neutral cache row (including outside
+parts) and derives the fixed512-byte recorded-label result. One indexed native
+partition row must match that exact next stock account, and its authenticated
+bounded blob must equal the ENTIRE newly original-reconciled result, not merely
+its ID/count/hash. Missing, swapped, corrupt, forged-state/ordinal and changed
+ending rows refuse the whole result. A separate native partition empty probe
+must agree with the fresh original/cache empty probe. Current DB actor/assignment/
+private draft/subject/source-purpose/claim/pin/heads/cache fences and an exact
+ending row reread remain mandatory. The original-cell reader has ONE single-use
+32MB/128-query/60s/5s-query subbudget. Other owner/repository SQL uses the
+transaction client under the outer deadline and SQL timeout; this stage has no
+shared owner query counter.
+
+No head/row/checkpoint/blob/cache is written or repaired. The output is only
+ONE original-reconciled partition account (or explicit empty probe), preserving
+all unassigned/candidate/variant/partial evidence; it establishes neither a
+complete selected union nor current authority for previously returned accounts.
+A caller cursor/DATA loop cannot reset the future selected-union owner's total
+budget or substitute this per-account result for complete original reconciliation.
+No source acquisition, metric/eligibility/historical inference or report readiness.
+
+209 focused consumer tests passed in 1,466.8196 ms, with zero failures or skips;
+source/native syntax and diff checks pass. Native assertions cover two
+original-backed accounts (one assigned and one conflicting), 512-byte labels,
+entire derived/original equality, native metadata/ending-row/blob/original-cache
+forgeries, all current/ending authority/cache/cancel fences, partial/unissued/
+corrupt heads, fresh dual empty probes, lost-ACK reopen and zero row/head/
+checkpoint/payload copies. Integrated consumer runtime head `c3d39e03` passed
+all 14 checks, including foundation run 38869765008. Its native job 116870842442
+passed 417 migration, 1 subject, 8 prepared-index, 1 edge and 2 bootstrap tests,
+with zero failures, skips or cancellations. The actual replayed-partition marker
+executed at 2026-10-16T08:01:04.5584699Z. This documentation correction still
+requires fresh exact-head cloud checks.
+
+Separately, the protected parent #1246 merged as `1b35afac` after all 16 checks
+on exact head `817e3163` passed, with an actual included review and its confirmed
+documentation fix. Parent native job 116867488884 passed 417 migration, 1 subject,
+8 prepared-index, 1 edge and 2 bootstrap tests, with zero failures, skips or
+cancellations. Its partition marker executed at 2026-10-16T07:47:32.2133205Z.
+These parent native results are distinct from this consumer's 209 focused tests
+and integrated runtime proof. This branch was retargeted to main before
+integrating the actual parent merge. No heavy local suite or Indexer operation.
+
+Bounded complete catalog grouping, server-owned exact distinct selected union/
+metric ordinals, original-reconciled medians/COD/calendar quarters, economic/
+amenity/transaction completeness, coherent publication, durable finite workers,
+terminal retention handoff and licensed/live acceptance remain OPEN. No dense50k
+legacy-selector change, HTTP/default/worker/scheduler/selection/report/Hardy/Apply/
+production activation. QA7 only future Apply. Actual protected-parent integration
+in dependency order/main retarget BEFORE push/fresh required security/native/full
+CI/ACTUAL included exact-head review remain mandatory, without paid/forced quota
+or required-check bypass. Automatic skipped review is not an actual review.
+
 ## Durable original-backed recorded-label partition (2026-10-10, not activated)
 
 `advanceOriginalFrozenCaptureJobRecordedPartitionReferencesV2` accepts ONLY an

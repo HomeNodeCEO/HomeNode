@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { runNeighborhoodOwnedSourceLastRetryV3DatabaseChecks } from './neighborhoodOwnedSourceLastRetryV3DatabaseChecks.js';
 import { runNeighborhoodOwnedSourceTerminalFailureV3DatabaseChecks } from './neighborhoodOwnedSourceTerminalFailureV3DatabaseChecks.js';
+import { runNeighborhoodCompletedIndexNextSourceV3DatabaseChecks } from './neighborhoodCompletedIndexNextSourceV3DatabaseChecks.js';
 
 // No copied graph or fixture substitute: each independent capture has REALLY
 // committed birth17/FIRST18 and its distinct fresh18 claim, preserving the
@@ -52,6 +53,10 @@ export async function runNeighborhoodOwnedFirstSourceOriginalV3DatabaseChecks({s
     entire_job_claim_birth_parents_blobs_history_report_choices_workspace_and_pins_unchanged:true,
     existing_aggregate_256queries_32MB_60s_and_stricter_single_use_child_250_limits_unchanged:true,
     recovery:false,NEXT_or_EMPTY:false,publication:false,activation:false,licensed_large_area:false,production_speed:false});
+  // Same independently born real18, still live and unchanged. All FIRST owner
+  // original reads above and the original4/5 failure/terminal graph below stay.
+  await runNeighborhoodCompletedIndexNextSourceV3DatabaseChecks({ownedSource:true,pool,input,scope,actor,service,claim,
+    originalReads,laterFirstSource,setFault,readFault,unchanged});
   if(sourceRecoveryFixture)await runNeighborhoodOwnedSourceLastRetryV3DatabaseChecks({sourceRecoveryFixture,pool,input,scope,actor,service,claim,
     originalReads,laterFirstSource,setFault,readFault});
   else await runNeighborhoodOwnedSourceTerminalFailureV3DatabaseChecks({pool,input,scope,actor,service,claim,

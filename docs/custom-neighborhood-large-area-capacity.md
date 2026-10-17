@@ -10143,3 +10143,34 @@ Focused structural checks pass; this new PostgreSQL graph's cloud execution is
 pending. It establishes no source NEXT/EMPTY economic progress, eligible
 transaction/quarter population, publication, terminal pin transfer, licensed
 large-area capacity or production-speed proof.
+## Actual owned18 NEXT original owner (2026-10-17, native validation pending)
+
+The new inactive read-only entry point opens NEXT under an actual fresh
+eighteen-root source claim. Its independent selectors reopen the entire native
+seventeen-root birth, preclaim18, current claim, FIRST/member/edge and complete
+index. They select the next source ID as BIGINT, then legacy keys in C text
+order. No caller cursor, source key, account, ordinal or projected18-as17 input
+can choose the account. The actual native checkpoint and complete next-member
+packet are repeated after all ending fences.
+
+The original child preserves every original, all outside associations, ENTIRE
+neutral/CAD caches, required subject and bidirectional native key/member
+reconciliation under the same aggregate250 child and256 SQL/32MB/60s owner.
+The immutable FIRST candidate supplies a native parent binding; its semantic
+conclusion is not reused or claimed to be reproduced from NEXT's account.
+No source cursor, receipt, checkpoint, lease, failure attempt, schedule or pin
+changes. Missing NEXT refuses; it is not a fresh terminal EMPTY proof.
+
+Forty-one focused checks pass with zero failures/cancellations/skips. Native
+coverage appends this owner after the existing whole-original FIRST proof on
+each independent A/B capture, before their unchanged attempt4/5 retry/recovery
+and terminal proofs. It retains actual before-I/O actor/assignment/draft
+revocation, eleven ending faults, lost real read-only COMMIT acknowledgment
+and exact preservation of parents, job history, blobs, reports, genuine choices
+and pins. Full cloud validation is pending; all existing leases, aggregate
+budgets and original case deadlines remain unchanged.
+
+This is an owned-next prerequisite. Durable all-source traversal, fresh EMPTY,
+lower-attempt recovery, economic selected-union statistics, coherent publication,
+terminal pin transfer/retirement, licensed large-area and live-speed acceptance
+remain unfinished. No route, worker, scheduler or native migration is activated.

@@ -1,3 +1,26 @@
+## Actual fourth source claim (2026-10-17, inactive)
+
+A separate native claim consumes committed failure3 only after its genuine
+schedule is due, spending attempt four once with a fresh bounded token and
+lease. It reopens every actual original17, birth18, owned1, failure1, second2,
+failure2, third3, failure3 and FIRST/member parent. This normal fourth claim
+cannot borrow the separate historical initial-fourth source recovery graph.
+All old guard bodies, eighteen deferred events, failure ceiling, aggregate
+budgets, original cases and deadlines remain intact.
+
+The existing independent A/B lineage adds real orphan COMMIT/full rollback,
+complete tentative rollback, competing claimers and B lost acknowledgment
+after the actual winning COMMIT. Full claim-plus-job DML reusing any older
+second, first or birth token must reach deferred COMMIT and roll back. Exact
+whole native parent/FIRST reopen, immutable history, duplicate and old queue
+refusal, stale prior readers and the old initial-fourth original reader all
+remain fenced before original I/O. No prior failure or checkpoint is rewritten.
+
+Fresh complete cloud/native validation is pending. Fourth claim issuance
+establishes no current source authority, fourth original replay, all-source
+cursor/EMPTY, complete economics, publication, terminal pins, licensed capacity
+or live-speed proof. No migration, route, worker or scheduler is activated.
+
 ## Actual third source failure ledger (2026-10-17, inactive)
 
 A closed, unregistered attempt-three failure owner retains the entire actual

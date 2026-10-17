@@ -1,3 +1,33 @@
+## Native second source claim (2026-10-17, unregistered)
+
+The closed second-claim repository and additive unregistered
+`20270103_custom_cohort_source_second_claim_v3.sql` consume only the actual
+committed initial failure, after its native schedule becomes due. They spend
+attempt two once, issue a distinct native token and bounded lease, and retain
+the ENTIRE retry-one job and actual failure transaction. Original17, birth18,
+initial owned-one/null-error claim, complete FIRST, selected member/edge and all
+independent index, stock, pin, generation and continuation parents are reconciled
+again. The old error, schedule, checkpoint, roots and every other job field are
+identical. No original-read authority is established by this structural claim.
+
+All four latest complete guard bodies remain after one exact second-claim
+branch. All thirteen earlier deferred events stay enabled; a fourteenth requires
+the actual paired claim COMMIT. The existing independently issued clean A/B
+graphs require complete forged tuple/transaction/attempt/lease refusals, a real
+orphan COMMIT with full rollback, explicit complete tentative rollback, competing
+claimers with one winner, and B's lost acknowledgment only after real COMMIT.
+Every prior row, original blob, source grant, role, report, assignment, private
+workfile, subject, manual/workspace choice and pin is preserved. Duplicate,
+generic, initial and old-continuation adoption and both unimplemented original
+read routes refuse without original I/O. Every earlier case and deadline remains.
+
+The native assertions are authored and require fresh exact-head cloud execution
+of the early clean pair and both complete matrices. Detached repository boundary
+checks establish only argument/transaction/result validation. This slice does not
+replay originals under attempt two, implement repeated2/3 failure or expiry,
+advance source NEXT, prove fresh EMPTY, resolve economic values, publish, transfer
+pins, register or activate a stage, or prove licensed acquisition/live speed.
+
 ## Initial owned source failure at one (2026-10-17, unregistered; validation pending)
 
 An additive closed repository and unregistered

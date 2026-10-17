@@ -2,6 +2,28 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { customCohortReadDiagnostic } from '../src/services/neighborhoodAssessment/customCohortReadDiagnostics.js';
 
+test('viewport interruptions expose only fixed refusal labels and preserve other action admission', () => {
+  for (const action of ['viewport', 'selection-viewport']) {
+    for (const [code, check] of [
+      ['55P03', 'lock_unavailable'], ['57014', 'query_cancelled'],
+      ['40001', 'serialization_failure'], ['40P01', 'deadlock_detected'],
+      ['custom_cohort_execution_busy', 'admission_busy'],
+      ['custom_cohort_execution_interrupted', 'admission_interrupted'],
+    ]) {
+      const error = Object.assign(new Error('PRIVATE SQL account credential'), { code, detail: 'PRIVATE' });
+      assert.deepEqual(customCohortReadDiagnostic(action, error), { action, family: 'interrupted', check });
+      assert.equal(customCohortReadDiagnostic('reported-apply', error), null);
+    }
+    for (const reason of ['cancelled', 'deadline_exceeded', 'connection_timeout', 'policy_timeout'])
+      assert.deepEqual(customCohortReadDiagnostic(action, Object.assign(new Error('PRIVATE'), { reason })),
+        { action, family: 'interrupted', check: reason });
+    for (const error of [Object.assign(new Error('PRIVATE'), { code: 'PRIVATE', reason: 'PRIVATE' }),
+      Object.assign(new Error('PRIVATE'), { code: '55P03 PRIVATE' }), { code: '55P03' }])
+      assert.equal(customCohortReadDiagnostic(action, error), null);
+  }
+  assert.equal(customCohortReadDiagnostic('catalog', Object.assign(new Error('PRIVATE'), { code: '55P03' })), null);
+});
+
 test('read diagnostics expose only closed action, family and check labels', () => {
   for (const action of ['catalog', 'preview', 'members']) {
     assert.deepEqual(customCohortReadDiagnostic(action, new TypeError('custom_cohort_observation_preview_source_routing')),

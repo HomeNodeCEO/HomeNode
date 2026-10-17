@@ -122,6 +122,18 @@ SELECT (SELECT account_id FROM chosen) AS account_id,(SELECT parcel_count::text 
     THEN coalesce('['||string_agg(encoded,',' ORDER BY kind COLLATE "C",row_key COLLATE "C")||']','[]') ELSE '[]' END AS page_json
 FROM sized`;
 
+// The exact subject comes from the fenced job, not a caller cursor/account or
+// the first C-sorted stock member. CAD fallback is available ONLY when that
+// subject belongs to this issued stock (and hence its complete original graph).
+// Missing stock membership refuses; it is never fabricated as missing housing.
+// Everything after chosen is byte-identical: BOTH original counters, whole
+// package admission, every outside part, entire cache replay and shared budget.
+export const NEIGHBORHOOD_STOCK_SUBJECT_HOUSING_PACKAGE_V2_SQL=NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL
+  .replace('/* neighborhood-stock-account-original-package-v2 */','/* neighborhood-stock-subject-housing-original-package-v2 */')
+  .replace('account_id>$4::text COLLATE "C" ORDER BY account_id LIMIT 1',
+    `account_id=(SELECT job.account_id FROM app.neighborhood_custom_cohort_capture_jobs job
+      WHERE job.operation_id=$1::uuid AND job.account_id=$4::text) LIMIT 1`);
+
 const METRICS=Object.freeze({reported_year_built:'year',reported_residential_area:'reported_sqft',reported_site_area:'reported_sqft',reported_market_value:null});
 /** Compare canonical exact decimal literals; never round economic values. */
 function decimal(value){const [whole,fraction='']=value.split('.');return BigInt(whole)*1000000000000n+BigInt(fraction.padEnd(12,'0'));}
@@ -269,9 +281,10 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
   }
   /** Same original-count, whole-payload and lifetime SQL budgets for all
    * consumers. Combined facts never reopen under a reset per-method budget. */
-  async function accountPackage(rawPage,housing,recordedGroup=false){
-      const page=prepareNeighborhoodStockAccountPackagePageV2(rawPage),context=await open(),{stock,source}=context;
-      const result=one(await execute(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL,[stock.operation_id,stock.generation_id,
+  async function accountPackage(rawPage,housing,recordedGroup=false,subjectHousing=false){
+      const page=subjectHousing?{cursor:options.scope.account_id}:prepareNeighborhoodStockAccountPackagePageV2(rawPage),
+        context=await open(),{stock,source}=context;
+      const result=one(await execute(subjectHousing?NEIGHBORHOOD_STOCK_SUBJECT_HOUSING_PACKAGE_V2_SQL:NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL,[stock.operation_id,stock.generation_id,
         TYPED.profile_ref.content_sha256,page.cursor,L.rows,L.page_utf8_bytes,L.row_utf8_bytes,L.original_utf8_bytes,L.output_utf8_bytes]));
       const counts=data(result.original_counts,KINDS);
       if(!Object.values(counts).every(n=>Number.isInteger(n)&&n>=0&&n<=L.rows+1)
@@ -284,10 +297,12 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
         ||Buffer.byteLength(result.page_json)>L.page_utf8_bytes)fail('invalid_result');
       const present=result.account_id!==null;
       if(present){cursor(result.account_id,'accounts');
-        if(!result.account_id||Buffer.compare(Buffer.from(result.account_id),Buffer.from(page.cursor))<=0
+        if(!result.account_id||(subjectHousing?result.account_id!==options.scope.account_id
+          :Buffer.compare(Buffer.from(result.account_id),Buffer.from(page.cursor))<=0)
           ||!count(result.geographic_parcel_count,2000000)||result.geographic_parcel_count==='0'
           ||BigInt(result.geographic_parcel_count)>BigInt(counts.parcels)||counts.accounts>1)fail('invalid_result');
       }else if(total!==0||result.geographic_parcel_count!==null)fail('invalid_result');
+      if(subjectHousing&&!present)fail('subject_not_in_issued_stock');
       let rows;try{rows=JSON.parse(result.page_json);}catch{fail('invalid_result');}
       if(!Array.isArray(rows)||rows.length!==total)fail('invalid_result');
       let previous=null;const seen={parcels:0,accounts:0};
@@ -301,7 +316,8 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
       if(Buffer.byteLength(JSON.stringify({rows,observations,...(housing?{recorded_housing:recordedHousing}:{}),
         ...(recordedGroup?{recorded_group:group}:{})}))>L.output_utf8_bytes)fail('byte_limit');
       await context.finish();
-      return freeze({page_version:2,status:recordedGroup&&housing?'reconciled_stock_account_recorded_group_and_housing'
+      return freeze({page_version:2,status:subjectHousing?'reconciled_exact_subject_original_housing'
+        :recordedGroup&&housing?'reconciled_stock_account_recorded_group_and_housing'
         :recordedGroup?'reconciled_stock_account_recorded_group'
         :housing?'reconciled_stock_account_recorded_housing':'reconciled_stock_account_original_package',authority:'not_established',
         coverage:'one_complete_account_package_only',graph,stock,source_metadata:source,typed_profile:TYPED,
@@ -359,5 +375,8 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
      * retained-date metric cells together; never a second reader/budget. The
      * original single-purpose consumers above retain their exact shapes. */
     recordedGroupAndHousingAccountPackage:rawPage=>accountPackage(rawPage,true,true),
+    /** Exact native job subject only; absent stock refuses, never substitutes
+     * the first member. No caller account, cursor, reader or reset budget. */
+    subjectHousingAccountPackage(...args){if(args.length)fail('invalid_input');return accountPackage(null,true,false,true);},
   });
 }

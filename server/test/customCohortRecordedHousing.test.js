@@ -7,6 +7,7 @@ import { buildCustomCohortObservationPreview } from '../src/services/neighborhoo
 import { buildCachedSourceCaptures } from '../src/services/neighborhoodAssessment/cachedSourceCaptures.js';
 import { mapCadEvidenceParcelRow, mapCadEvidenceAccountRow } from '../src/services/neighborhoodAssessment/cachedRowMappingsV4.js';
 import { projectCustomNeighborhoodMaterialInputs } from '../src/services/neighborhoodAssessment/customMaterialInputs.js';
+import { resolveCustomCohortRetainedSubjectHousing } from '../src/services/neighborhoodAssessment/customCohortRetainedSubjectHousing.js';
 import { inputs, setPublic, setSection, argumentsOf } from './fixtures/neighborhoodCustomMaterialInputsFixture.js';
 import { cadEvidenceFixture } from './fixtures/customCohortCadEvidenceFixture.js';
 import { decisionEvidenceFixture } from './fixtures/customCohortDecisionEvidenceFixture.js';
@@ -80,6 +81,18 @@ function counts(result) {
   assert.equal(result.pockets.reduce((sum, row) => sum + row.account_count, 0), result.accounts.length);
   for (const row of [result.subject, ...result.accounts]) assert.equal(row.category !== null, row.state === 'observed');
 }
+
+test('bounded subject precedence agrees with existing dense housing on actual retained material projections',async()=>{
+  for(const [manual,publicHousing] of [[undefined,undefined],[undefined,null],[null,{housing_type:'Townhouse'}],
+    [{housing_type:'Townhouse'},{housing_type:'Duplex'}],[{housing_type:'Single Family',attachment_type:'Detached'},undefined],
+    [{housing_type:'Single Family'},undefined],[{housing_type:'not mapped',structural_style:'Townhouse'},undefined],
+    [{housing_type:'Townhouse',attachment_type:'Detached'},undefined],[{}, {housing_type:'Manufactured Home'}],
+    [{housing_type:'Mobile Home'},undefined],[{housing_type:'Townhouse',structural_style:'CONDO/TOWNHOME'},undefined]]){
+    const args=await fixture({manual,publicHousing}),subject=args.retained_inputs.subject,prior=build(args).subject,
+      next=resolveCustomCohortRetainedSubjectHousing(subject.material,subject.target);
+    if(next===null)assert.equal(prior.origin,'current_subject_cad');else assert.deepEqual(next,prior);
+  }
+});
 
 test('installed profile is fixed and dictionary meanings are observation-only', () => {
   assert.deepEqual(PROFILE, { id: 'custom-recorded-housing-v1', revision: 1,

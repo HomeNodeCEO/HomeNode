@@ -5,6 +5,7 @@ import { LEGACY,CAD_DESCRIPTIONS,LABELS,ALTERNATIVES,CUSTOM_COHORT_RECORDED_HOUS
   getCustomCohortRecordedHousingInterpretation } from './customCohortRecordedHousingProfiles.js';
 
 const HOUSING=getCustomCohortRecordedHousingInterpretation(5,2),STATES=CUSTOM_COHORT_RECORDED_HOUSING_STATES;
+const ACCEPTED_COUNTIES=Object.freeze(['DALLAS','DALLAS COUNTY']);
 /** Refuse without exposing retained private literals. */
 const fail=r=>{throw new TypeError(`neighborhood_original_account_housing_v2_${r}`);};
 /** Freeze only detached owned DATA, not an authorization capability. */
@@ -13,7 +14,7 @@ function freeze(v){if(v&&typeof v==='object'&&!Object.isFrozen(v)){Object.values
 function own(v,k){if(!v||isProxy(v)||Object.getPrototypeOf(v)!==Object.prototype)fail('invalid_input');
   const d=Object.getOwnPropertyDescriptor(v,k);if(!d?.enumerable||!Object.hasOwn(d,'value'))fail('invalid_input');return d.value;}
 const definition=freeze({id:'neighborhood-original-account-recorded-housing-v2',revision:'1',
-  retained_interpretation:HOUSING,limit_original_rows:250,
+  retained_interpretation:HOUSING,limit_original_rows:250,accepted_counties:ACCEPTED_COUNTIES,
   population:'one_server_chosen_complete_stock_account_including_all_outside_geometry_parcel_parts',
   prerequisites:'actual_owner_replays_every_original_and_entire_neutral_cache_before_this_DATA_resolution',
   county:'one_original_account_DALLAS_or_DALLAS_COUNTY_only_no_missing_county_fabrication',
@@ -43,7 +44,7 @@ const resolution=(state,category=null)=>({state,category:state==='observed'?cate
  * authenticates no originals, county, population, source rights or selection.
  * It preserves every parcel reason and never mutates neutral bytes or reports. */
 export function resolveNeighborhoodOriginalAccountHousingV2(rows,check){
-  if(!Array.isArray(rows)||isProxy(rows)||Object.getPrototypeOf(rows)!==Array.prototype||rows.length>250
+  if(!Array.isArray(rows)||isProxy(rows)||Object.getPrototypeOf(rows)!==Array.prototype||rows.length>definition.limit_original_rows
     ||typeof check!=='function')fail('invalid_input');check();
   const parts=[],accounts=[];let accountId=null;
   for(let i=0;i<rows.length;i++){const d=Object.getOwnPropertyDescriptor(rows,String(i));
@@ -65,7 +66,7 @@ export function resolveNeighborhoodOriginalAccountHousingV2(rows,check){
   }
   if(accounts.length>1||!parts.length)fail('incomplete_account');
   const county=accounts[0]??null,countyState=!county||county.unavailable?'unknown':!county.value?'missing'
-    :['DALLAS','DALLAS COUNTY'].includes(county.value)?'observed':'unknown';
+    :ACCEPTED_COUNTIES.includes(county.value)?'observed':'unknown';
   const counts=Object.fromEntries(STATES.map(s=>[s,'0'])),categories=new Set();
   for(const part of parts){check();if(countyState!=='observed')Object.assign(part,resolution('unknown'));
     counts[part.state]=String(Number(counts[part.state])+1);if(part.state==='observed')categories.add(part.category);}

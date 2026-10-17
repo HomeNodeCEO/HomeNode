@@ -30,10 +30,12 @@ RETURNS boolean LANGUAGE sql STABLE SET search_path=pg_catalog,app AS $$
     WHERE tgrelid='app.custom_appraisal_sections'::regclass
       AND tgname='custom_cohort_subject_material_parent_fence_v1'
       AND tgfoid='app.custom_cohort_subject_parent_write_fence_v1()'::regprocedure
-      AND tgtype=23 AND NOT tgisinternal AND NOT tgdeferrable AND tgenabled IN ('O','A'))
+      AND tgtype=23 AND tgqual IS NULL AND tgattr=''::int2vector AND tgnargs=0
+      AND NOT tgisinternal AND NOT tgdeferrable AND tgenabled IN ('O','A'))
     AND EXISTS(SELECT 1 FROM pg_trigger
     WHERE tgrelid='app.custom_appraisal_signed_snapshots'::regclass
       AND tgname='custom_cohort_subject_signature_parent_fence_v1'
       AND tgfoid='app.custom_cohort_subject_parent_write_fence_v1()'::regprocedure
-      AND tgtype=7 AND NOT tgisinternal AND NOT tgdeferrable AND tgenabled IN ('O','A'));
+      AND tgtype=7 AND tgqual IS NULL AND tgattr=''::int2vector AND tgnargs=0
+      AND NOT tgisinternal AND NOT tgdeferrable AND tgenabled IN ('O','A'));
 $$;

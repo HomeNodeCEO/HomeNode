@@ -1,5 +1,53 @@
 import assert from 'node:assert/strict';
 import { createCustomCohortContextCapture } from '../../src/services/neighborhoodAssessment/customCohortContextCapture.js';
+import { createCustomCohortSubjectRepository } from '../../src/services/neighborhoodAssessment/customCohortSubjectRepository.js';
+
+async function checkSharedReadTriggerPrerequisites(pool,scope){
+  assert.match((await pool.query('SELECT current_database() AS name')).rows[0].name,/^neighborhood_[a-f0-9]{32}_test$/);
+  const variants=[
+    ['custom_cohort_subject_material_parent_fence_v1','app.custom_appraisal_sections',
+      'BEFORE INSERT OR UPDATE','WHEN (false)'],
+    ['custom_cohort_subject_material_parent_fence_v1','app.custom_appraisal_sections',
+      'BEFORE INSERT OR UPDATE OF section_value',''],
+    ['custom_cohort_subject_signature_parent_fence_v1','app.custom_appraisal_signed_snapshots',
+      'BEFORE INSERT','WHEN (false)'],
+    ['custom_cohort_subject_material_parent_fence_v1','app.custom_appraisal_sections',
+      'BEFORE INSERT OR UPDATE','', "'unexpected'"],
+  ];
+  for(const [name,table,event,condition,args='']of variants){
+    const client=await pool.connect(),calls=[];
+    const observed={async query(...values){
+      calls.push(typeof values[0]==='string'?values[0]:values[0].text);
+      return client.query(...values);
+    }};
+    try{
+      await client.query('BEGIN');
+      // Capture the complete real current subject before changing the native
+      // prerequisite. Every retained blob and all DDL roll back together.
+      const subject=createCustomCohortSubjectRepository(observed,JSON.stringify(scope));
+      const reference=await subject.capture();
+      assert.equal((await client.query('SELECT app.custom_cohort_subject_shared_fences_v1_ready() AS ready')).rows[0].ready,true);
+      await client.query(`DROP TRIGGER ${name} ON ${table}`);
+      await client.query(`CREATE TRIGGER ${name} ${event} ON ${table}
+        FOR EACH ROW ${condition} EXECUTE FUNCTION app.custom_cohort_subject_parent_write_fence_v1(${args})`);
+      // The name/function/type/enabled state alone still match. A conditional,
+      // column-limited or otherwise nonexact trigger cannot enable delivery.
+      assert.equal((await client.query('SELECT app.custom_cohort_subject_shared_fences_v1_ready() AS ready')).rows[0].ready,false);
+      calls.length=0;
+      await assert.rejects(subject.compareCurrentReadOnly(reference),/shared_read_fences_unavailable/);
+      assert.equal(calls.length,1);
+      assert.match(calls[0],/custom-cohort-subject:transaction/);
+    }finally{await client.query('ROLLBACK');client.release();}
+    assert.equal((await pool.query('SELECT app.custom_cohort_subject_shared_fences_v1_ready() AS ready')).rows[0].ready,true);
+  }
+  console.info('[native-custom-read-rollout-prerequisites]',{
+    actual_same_name_function_type_enabled_but_conditional_material_or_signature_guard_refused:true,
+    actual_column_limited_material_guard_and_unexpected_arguments_refused:true,
+    shared_comparison_refused_before_parent_or_original_reads:true,
+    real_subject_capture_all_retained_blobs_and_every_trigger_DDL_rolled_back:true,
+    original_unconditional_guards_ready_after_every_rollback:true,
+    activation:false,production_speed:false,licensed_capacity:false});
+}
 
 // Disposable migrated native database only. Hold an actual completed assignment
 // fence open; no callback replaces SQL, source observations or authorization.
@@ -18,6 +66,9 @@ export async function runCustomCohortReadFenceConcurrencyDatabaseChecks({pool,au
     blobs:(await pool.query('SELECT to_jsonb(r) AS body FROM app.neighborhood_cohort_evidence_blobs r WHERE organization_id=$1 ORDER BY content_sha256',[scope.organization_id])).rows
   });
   const before=await snapshot();
+  await checkSharedReadTriggerPrerequisites(pool,{organization_id:scope.organization_id,
+    report_file_id:scope.report_file_id,assignment_file_id:String(scope.assignment_file_id),account_id:request.accountId});
+  assert.deepEqual(await snapshot(),before);
   const materialInsert=`INSERT INTO app.custom_appraisal_sections(assignment_file_id,section_key,section_value)
     VALUES($1,'report.land_details','{}') RETURNING assignment_file_id`;
   // Disposable schema-valid INSERT only, using actual workfile/user parents and

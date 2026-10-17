@@ -11,6 +11,13 @@ parent exclusively, retaining protection against new rows and incoming section
 key moves. Capture and the existing write comparison keep exclusive parents.
 The additive registered migration precedes runtime activation; a missing native
 readiness function or either disabled/mismatched trigger refuses the shared read.
+Readiness also requires unconditional, all-column, zero-argument triggers;
+matching a name, function, event mask and enabled flag is insufficient for a
+conditional or column-limited guard. Four native disposable variants replace
+the actual trigger in a transaction, require readiness and the shared comparison
+to refuse before parent/original reads, then roll back all DDL and the complete
+subject capture. Each rollback must restore the real ready guards and every
+prior row/blob. These additional cases require fresh full cloud validation.
 The raw viewport loader returns to its prior two-request ceiling; its separate
 checked-port owner remains one lane. The complete-map, per-response, caller
 signal, deadline and settlement limits are unchanged.

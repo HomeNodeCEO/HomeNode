@@ -15,8 +15,9 @@ const jobTable='app.neighborhood_custom_cohort_capture_jobs',claimTable='app.nei
 // Only the independently acquired disposable native graphs reach this helper,
 // AFTER every previous refusal and real birth COMMIT/lost-ACK assertion. No
 // original, attempt, clock, claim lease, parent, grant or pin is rewritten.
-export async function runNeighborhoodFirstSourceOwnedClaimV3DatabaseChecks({pool,input,scope,actor,service,
+export async function runNeighborhoodFirstSourceOwnedClaimV3DatabaseChecks({sourceRecoveryFixture=false,pool,input,scope,actor,service,
   claim:oldClaim,originalReads,laterFirstSource,setFault,readFault}){
+  const sourceFailureAttempt=sourceRecoveryFixture?4:5,sourceFailureCode=sourceRecoveryFixture?'capture_failed':'access_revoked';
   const op=input.operationId,read=async table=>(await pool.query(`SELECT to_jsonb(r) AS body FROM app.${table} r
     WHERE operation_id=$1 ORDER BY to_jsonb(r)::text COLLATE "C"`,[op])).rows,
     job=async()=>(await read('neighborhood_custom_cohort_capture_jobs'))[0].body;
@@ -51,8 +52,8 @@ export async function runNeighborhoodFirstSourceOwnedClaimV3DatabaseChecks({pool
     parent=await read('neighborhood_custom_cohort_source_resolution_v3_parents'),
     first=await read('neighborhood_custom_cohort_source_resolution_v3_first'),
     handoff=(await read('neighborhood_custom_cohort_source_resolution_v3_handoffs'))[0].body;
-  assert.equal(before.job.status,'retry');assert.equal(before.job.attempts,5);
-  assert.equal(before.job.last_error_code,'access_revoked');assert.equal(before.job.checkpoint.evidence_refs.length,18);
+  assert.equal(before.job.status,'retry');assert.equal(before.job.attempts,sourceFailureAttempt);
+  assert.equal(before.job.last_error_code,sourceFailureCode);assert.equal(before.job.checkpoint.evidence_refs.length,18);
   assert.deepEqual(await read('neighborhood_custom_cohort_source_resolution_v3_claims'),[]);
   const unchanged=async()=>{assert.deepEqual(await job(),before.job);assert.deepEqual(await immutable(),before.immutable);
     assert.deepEqual(await read('neighborhood_custom_cohort_source_resolution_v3_claims'),[]);};
@@ -68,7 +69,7 @@ export async function runNeighborhoodFirstSourceOwnedClaimV3DatabaseChecks({pool
       WHERE job.operation_id=$1::uuid AND job.organization_id=$2::uuid`;
   // Native insert guards derive the actual entire preclaim and FIRST again.
   for(const change of [{preclaim_job:"jsonb_set(to_jsonb(job),'{last_error_code}','\"forged\"')"},
-    {attempts:'4'},{claim_token:'h.issued_claim_token'},{birth_transaction_id:'h.issued_transaction_id+1'},
+    {attempts:String(sourceFailureAttempt-1)},{claim_token:'h.issued_claim_token'},{birth_transaction_id:'h.issued_transaction_id+1'},
     {issued_transaction_id:'h.issued_transaction_id'},{organization_id:'gen_random_uuid()'}]){
     await assert.rejects(transaction(pool,c=>c.query(orphan(change),[op,scope.organization_id])),
       /actual_first_claim_required/);await unchanged();
@@ -93,34 +94,35 @@ export async function runNeighborhoodFirstSourceOwnedClaimV3DatabaseChecks({pool
   });
   if(laterFirstSource){await assert.rejects(consume(),e=>e.outcome_unknown===true&&/real_COMMIT_ack_lost/.test(e.message));assert.equal(actualCommit,true);}
   else assert.deepEqual(await consume(),[winner]);
-  assert.equal(winner.authority,'not_established');assert.equal(winner.claim.attempts,5);
+  assert.equal(winner.authority,'not_established');assert.equal(winner.claim.attempts,sourceFailureAttempt);
   assert.equal(winner.actor_user_id,actor);assert.deepEqual(winner.scope,scope);
   assert.notEqual(winner.claim.claim_token,oldClaim.claim_token);assert.notEqual(winner.claim.claim_token,handoff.issued_claim_token);
   const owned=await job(),issued=(await read('neighborhood_custom_cohort_source_resolution_v3_claims'))[0].body;
   assert.deepEqual(issued.preclaim_job,before.job);assert.equal(issued.birth_transaction_id,handoff.issued_transaction_id);
-  assert.notEqual(issued.issued_transaction_id,issued.birth_transaction_id);assert.equal(issued.attempts,5);
+  assert.notEqual(issued.issued_transaction_id,issued.birth_transaction_id);assert.equal(issued.attempts,sourceFailureAttempt);
   assert.equal(owned.status,'running');assert.equal(owned.claim_token,issued.claim_token);
   assert.equal(owned.lease_expires_at,issued.lease_expires_at);assert.equal(owned.updated_at,issued.issued_at);
   const nonClaim=j=>Object.fromEntries(Object.entries(j).filter(([k])=>!['status','claim_token','lease_expires_at','updated_at'].includes(k)));
   assert.deepEqual(nonClaim(owned),nonClaim(before.job));assert.deepEqual(await immutable(),before.immutable);
-  const ownedRead=(fn,org=scope.organization_id,token=winner.claim.claim_token,attempt=5)=>transaction(pool,c=>c.query(
+  const ownedRead=(fn,org=scope.organization_id,token=winner.claim.claim_token,attempt=sourceFailureAttempt)=>transaction(pool,c=>c.query(
     `SELECT to_jsonb(p) AS body FROM app.neighborhood_source_resolution_v3_${fn}($1,$2,$3,$4) p`,[op,org,token,attempt]));
   for(const [fn,expected]of [['owned_first_parent',parent],['owned_first',first]]){
     assert.deepEqual((await ownedRead(fn)).rows,expected);
     for(const args of [[randomUUID()],[scope.organization_id,oldClaim.claim_token],[scope.organization_id,randomUUID()],
-      [scope.organization_id,winner.claim.claim_token,4]])assert.deepEqual((await ownedRead(fn,...args)).rows,[]);
+      [scope.organization_id,winner.claim.claim_token,sourceFailureAttempt-1]])assert.deepEqual((await ownedRead(fn,...args)).rows,[]);
   }
   for(const fn of ['retained_parent_after_handoff','retained_first_after_handoff'])assert.equal(
     (await transaction(pool,c=>c.query(`SELECT * FROM app.neighborhood_source_resolution_v3_${fn}($1,$2)`,[op,scope.organization_id]))).rowCount,0);
   const preserved=async()=>{assert.deepEqual(await job(),owned);assert.deepEqual(await immutable(),before.immutable);
     assert.deepEqual(await read('neighborhood_custom_cohort_source_resolution_v3_claims'),[{body:issued}]);};
-  for(const set of ['checkpoint=checkpoint','attempts=4',"last_error_code='reset'","run_after=clock_timestamp()+interval '1 hour'",
+  const refund=`attempts=${sourceFailureAttempt-1}`;
+  for(const set of ['checkpoint=checkpoint',refund,"last_error_code='reset'","run_after=clock_timestamp()+interval '1 hour'",
     "lease_expires_at=clock_timestamp()+interval '120 seconds'","status='retry',claim_token=NULL,lease_expires_at=NULL",
     "checkpoint=jsonb_set(checkpoint,'{phase}','\"frozen_selected_transaction_index_refs_v2\"')"]){
     // The independent earlier CAD success guard rejects an attempt refund
     // before a source trigger can run. Require that EXACT native refusal for
     // this one mutation; preserve every guard and all whole-row assertions.
-    const reason=set==='attempts=4'?e=>e.code==='55000'&&e.message==='neighborhood_cad_success_v2_binding_conflict'
+    const reason=set===refund?e=>e.code==='55000'&&e.message==='neighborhood_cad_success_v2_binding_conflict'
       :/actual_checkpoint_transition_required|provisional_checkpoint_immutable|continuation_attempt_history_conflict/;
     await assert.rejects(transaction(pool,c=>c.query(`UPDATE ${jobTable} SET ${set} WHERE operation_id=$1`,[op])),reason);await preserved();
   }
@@ -137,7 +139,8 @@ export async function runNeighborhoodFirstSourceOwnedClaimV3DatabaseChecks({pool
   console.info('[native-first-source-single-consume-owned18-claim-v3]',{
     independent_capture:laterFirstSource?'B_ordinal2_after_empty_A':'A_ordinal1',
     actual_committed_birth17_and_ENTIRE_preclaim18_never_rebound_to_new_token_or_transaction:true,
-    same_fifth_attempt_error_schedule_roots_scope_actor_assignment_context_and_all_native_parents_preserved:true,
+    same_fifth_attempt_error_schedule_roots_scope_actor_assignment_context_and_all_native_parents_preserved:!sourceRecoveryFixture,
+    preserved_failure_attempt:sourceFailureAttempt,whole_error_schedule_roots_scope_actor_assignment_context_and_all_native_parents_preserved:true,
     actual_overlapping_claimers_one_winner_and_single_consume_after_COMMIT:true,
     genuine_orphan_COMMIT_refusal_full_rollback_and_forged_native_metadata_refusal:true,
     actual_lost_winning_COMMIT_ACK:!!laterFirstSource,
@@ -146,6 +149,6 @@ export async function runNeighborhoodFirstSourceOwnedClaimV3DatabaseChecks({pool
     immutable_claim_and_owned_job_renewal_failure_refund_checkpoint_reset_refuse:true,
     original_owner_reopened_under_new18:false,source_authority:'not_established',recovery:false,
     NEXT_or_EMPTY:false,activation:false,licensed_large_area:false,production_speed:false});
-  await runNeighborhoodOwnedFirstSourceOriginalV3DatabaseChecks({pool,input,scope,actor,service,claim:winner.claim,
+  await runNeighborhoodOwnedFirstSourceOriginalV3DatabaseChecks({sourceRecoveryFixture,pool,input,scope,actor,service,claim:winner.claim,
     originalReads,laterFirstSource,setFault,readFault,unchanged:preserved,originalBirthTransaction:String(handoff.issued_transaction_id)});
 }

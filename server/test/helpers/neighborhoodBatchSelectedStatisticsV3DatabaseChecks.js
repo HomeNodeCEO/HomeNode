@@ -10,8 +10,9 @@ import { runCustomCohortBatchSelectedMetricsV3JobOnce as metrics } from '../../s
 
 /** Twenty-ninth independent graph, after the actual V3 metrics fresh EMPTY.
  * Contributions are source-backed account cells, not economic statistics. */
-export async function runNeighborhoodBatchSelectedStatisticsV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
+export async function runNeighborhoodBatchSelectedStatisticsV3DatabaseChecks({sourceRecoveryFixture=false,pool,input,scope,actor,service,job,parent,blobs,
   catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false,batchSelectedTransactionIndexFixture=false}){
+  const sourceFailureAttempt=sourceRecoveryFixture?4:5,sourceFailureCode=sourceRecoveryFixture?'capture_failed':'access_revoked';
   const operation=input.operationId,method='progressCoveredOriginalFrozenCaptureJobBatchSelectedStatisticsReferencesV3',
     readMethod='readCoveredOriginalFrozenCaptureJobBatchFirstSelectedStatisticsReferencesV3',
     head=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_statistics_v2_heads WHERE operation_id=$1',[operation])).rows[0],
@@ -39,7 +40,7 @@ export async function runNeighborhoodBatchSelectedStatisticsV3DatabaseChecks({po
   };
   const firstArgs={...args,cohortService:{async [method](value,options){
     try{
-      calls++;firstClaim=options.captureJobClaim;assert.equal(firstClaim.attempts,5);owned=await job();ownedParent=await parent();
+      calls++;firstClaim=options.captureJobClaim;assert.equal(firstClaim.attempts,sourceFailureAttempt);owned=await job();ownedParent=await parent();
       await assert.rejects(service.progressCoveredOriginalFrozenCaptureJobSelectedStatisticsReferencesV2(value,options),/invalid_receipt/);await unchanged();
       const reads=originalReads();firstRead=await service[readMethod](value,options);assert.equal(originalReads(),reads+1);
       assert.equal(firstRead.status,'current_authorized_first_selected_statistics_originals_reconciled');
@@ -76,7 +77,7 @@ export async function runNeighborhoodBatchSelectedStatisticsV3DatabaseChecks({po
   for(const sequence of [2,3]){
     let count=0,result,nextError,nextClaim;
     const stepArgs={...args,cohortService:{async [method](value,options){
-      try{count++;nextClaim=options.captureJobClaim;assert.equal(nextClaim.attempts,5);assert.notEqual(nextClaim.claim_token,firstClaim.claim_token);
+      try{count++;nextClaim=options.captureJobClaim;assert.equal(nextClaim.attempts,sourceFailureAttempt);assert.notEqual(nextClaim.claim_token,firstClaim.claim_token);
         const reads=originalReads();result=await service[method](value,options);assert.equal(originalReads(),reads+1);return result;
       }catch(error){nextError=error;throw error;}
     }}};
@@ -112,7 +113,7 @@ export async function runNeighborhoodBatchSelectedStatisticsV3DatabaseChecks({po
         assert.equal(Object.values(c.value_states).reduce((a,b)=>a+b,0),2);
       }
     }
-    assert.equal((await job()).attempts,5);assert.equal((await job()).last_error_code,'access_revoked');assert.equal((await job()).checkpoint.evidence_refs.length,14);await immutable();
+    assert.equal((await job()).attempts,sourceFailureAttempt);assert.equal((await job()).last_error_code,sourceFailureCode);assert.equal((await job()).checkpoint.evidence_refs.length,14);await immutable();
   }
   const terminal={job:await job(),parent:await parent(),blobs:await blobs(),head:await head(),rows:await rows()};
   for(const worker of [run,metrics])assert.deepEqual(await worker(args),{status:'idle'});
@@ -126,7 +127,7 @@ export async function runNeighborhoodBatchSelectedStatisticsV3DatabaseChecks({po
   }),e=>e===rollback);
   assert.deepEqual(await job(),terminal.job);assert.deepEqual(await parent(),terminal.parent);assert.deepEqual(await blobs(),terminal.blobs);assert.deepEqual(await head(),terminal.head);assert.deepEqual(await rows(),terminal.rows);await immutable();
   if(batchSelectedNumericFixture){
-    await runNeighborhoodBatchSelectedNumericV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
+    await runNeighborhoodBatchSelectedNumericV3DatabaseChecks({sourceRecoveryFixture,pool,input,scope,actor,service,job,parent,blobs,
       catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedSemanticFixture,batchSelectedTransactionIndexFixture});return;
   }
   console.info('[native-batch-selected-statistics-v3]',{independent_actual_V3_metrics_worker_fresh_EMPTY:true,

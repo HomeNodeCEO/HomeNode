@@ -8,18 +8,19 @@ const read=name=>readFileSync(new URL(name,import.meta.url),'utf8'),fixture=read
 
 // Fixture structure only; actual PostgreSQL/original authority is proved by
 // the independent new capture in cloud CI, never by these source assertions.
-test('new independent35 appends after all34 cases and shares the unchanged real native worker stack',()=>{
+test('independent35 and the additional reserved-attempt captures append after the original34 without changing their native stack',()=>{
   const variants=fixture.match(/for\(const selectionWaitFixture of \[([^\]]+)\]\)/)[1].split(',');
-  assert.equal(variants.length,35);assert.equal(variants[31],"'initial-dispatch-batch-selected-transaction-index'");
+  assert.equal(variants.length,37);assert.equal(variants[31],"'initial-dispatch-batch-selected-transaction-index'");
   assert.equal(variants[32],"'initial-dispatch-batch-selected-recovery'");assert.equal(variants[33],"'initial-dispatch-batch-selected-progress-recovery'");
   assert.equal(variants[34],"'initial-dispatch-batch-first-source-later-account'");
-  assert.ok(fixture.includes("batchSelectedTransactionIndexFixture=selectionWaitFixture==='initial-dispatch-batch-first-source-later-account'?'later-first-source':selectionWaitFixture==='initial-dispatch-batch-selected-transaction-index'"));
+  assert.deepEqual(variants.slice(35),["'initial-dispatch-batch-source-last-retry'","'initial-dispatch-batch-source-last-retry-later-account'"]);
+  assert.ok(fixture.includes("batchSelectedTransactionIndexFixture=['initial-dispatch-batch-first-source-later-account','initial-dispatch-batch-source-last-retry-later-account'].includes(selectionWaitFixture)?'later-first-source':['initial-dispatch-batch-selected-transaction-index','initial-dispatch-batch-source-last-retry'].includes(selectionWaitFixture)"));
   const semantic=read('./helpers/neighborhoodBatchSelectedSemanticV3DatabaseChecks.js');
   assert.ok(semantic.includes("laterFirstSource:batchSelectedTransactionIndexFixture==='later-first-source'"));
   for(const limit of ['timeout:180_000','max:2,statement_timeout:120_000'])assert.ok(fixture.includes(limit),limit);
 });
 
-test('only new35 changes two LIVE associations before genuine capture, preserving stock/CAD and retained evidence',()=>{
+test('only later-account captures change two LIVE associations before genuine capture, preserving stock/CAD and retained evidence',()=>{
   const start=fixture.indexOf("if(batchSelectedTransactionIndexFixture==='later-first-source'){"),
     end=fixture.indexOf('    const run=randomUUID(),otherRun=randomUUID();',start),
     capture=fixture.indexOf('const frozen=await runNeighborhoodGroupIndex(pool',end),slice=fixture.slice(start,end);

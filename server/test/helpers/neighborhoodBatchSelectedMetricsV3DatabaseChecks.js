@@ -11,8 +11,9 @@ import { runCustomCohortBatchSelectedEligibilityV3JobOnce as eligibility } from 
 
 /** Twenty-eighth independent graph. The real V3 evidence worker has issued its
  * own fresh terminal EMPTY; this call never copies or rebinds a native parent. */
-export async function runNeighborhoodBatchSelectedMetricsV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
+export async function runNeighborhoodBatchSelectedMetricsV3DatabaseChecks({sourceRecoveryFixture=false,pool,input,scope,actor,service,job,parent,blobs,
   catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false,batchSelectedTransactionIndexFixture=false}){
+  const sourceFailureAttempt=sourceRecoveryFixture?4:5,sourceFailureCode=sourceRecoveryFixture?'capture_failed':'access_revoked';
   const operation=input.operationId,method='progressCoveredOriginalFrozenCaptureJobBatchSelectedMetricReferencesV3',
     readMethod='readCoveredOriginalFrozenCaptureJobBatchFirstSelectedMetricReferencesV3',
     head=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_metrics_v2_heads WHERE operation_id=$1',[operation])).rows[0],
@@ -39,7 +40,7 @@ export async function runNeighborhoodBatchSelectedMetricsV3DatabaseChecks({pool,
   };
   const firstArgs={...args,cohortService:{async [method](value,options){
     try{
-      calls++;firstClaim=options.captureJobClaim;assert.equal(firstClaim.attempts,5);owned=await job();ownedParent=await parent();
+      calls++;firstClaim=options.captureJobClaim;assert.equal(firstClaim.attempts,sourceFailureAttempt);owned=await job();ownedParent=await parent();
       await assert.rejects(service.progressCoveredOriginalFrozenCaptureJobSelectedMetricReferencesV2(value,options),/invalid_receipt/);await unchanged();
       let reads=originalReads();firstRead=await service[readMethod](value,options);assert.equal(originalReads(),reads+1);
       assert.equal(firstRead.status,'current_authorized_first_selected_metric_originals_reopened');
@@ -80,7 +81,7 @@ export async function runNeighborhoodBatchSelectedMetricsV3DatabaseChecks({pool,
   for(const sequence of [2,3]){
     let count=0,result,nextError,nextClaim;
     const stepArgs={...args,cohortService:{async [method](value,options){
-      try{count++;nextClaim=options.captureJobClaim;assert.equal(nextClaim.attempts,5);assert.notEqual(nextClaim.claim_token,firstClaim.claim_token);
+      try{count++;nextClaim=options.captureJobClaim;assert.equal(nextClaim.attempts,sourceFailureAttempt);assert.notEqual(nextClaim.claim_token,firstClaim.claim_token);
         const reads=originalReads();result=await service[method](value,options);assert.equal(originalReads(),reads+1);return result;
       }catch(error){nextError=error;throw error;}
     }}};
@@ -97,7 +98,7 @@ export async function runNeighborhoodBatchSelectedMetricsV3DatabaseChecks({pool,
       assert.deepEqual(nativeRows[1].entry_reference,before.parents.rows[1].entry_reference);}
     else{assert.equal(receipt.selected_entry,null);assert.equal(receipt.row_reference,null);assert.equal(result.metric_row_candidate,null);
       assert.deepEqual(receipt.after_counts,completedEligibility.after_counts);assert.deepEqual(receipt.after_counts,receipt.before_counts);}
-    assert.equal((await job()).attempts,5);assert.equal((await job()).last_error_code,'access_revoked');assert.equal((await job()).checkpoint.evidence_refs.length,13);await immutable();
+    assert.equal((await job()).attempts,sourceFailureAttempt);assert.equal((await job()).last_error_code,sourceFailureCode);assert.equal((await job()).checkpoint.evidence_refs.length,13);await immutable();
   }
   const terminal={job:await job(),parent:await parent(),blobs:await blobs(),head:await head(),rows:await rows()};
   for(const worker of [run,evidence,eligibility])assert.deepEqual(await worker(args),{status:'idle'});
@@ -111,7 +112,7 @@ export async function runNeighborhoodBatchSelectedMetricsV3DatabaseChecks({pool,
   }),e=>e===rollback);
   assert.deepEqual(await job(),terminal.job);assert.deepEqual(await parent(),terminal.parent);assert.deepEqual(await blobs(),terminal.blobs);assert.deepEqual(await head(),terminal.head);assert.deepEqual(await rows(),terminal.rows);await immutable();
   if(batchSelectedStatisticsFixture){
-    await runNeighborhoodBatchSelectedStatisticsV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
+    await runNeighborhoodBatchSelectedStatisticsV3DatabaseChecks({sourceRecoveryFixture,pool,input,scope,actor,service,job,parent,blobs,
       catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedNumericFixture,batchSelectedSemanticFixture,batchSelectedTransactionIndexFixture});return;
   }
   console.info('[native-batch-selected-metrics-v3]',{independent_actual_V3_evidence_worker_fresh_EMPTY:true,

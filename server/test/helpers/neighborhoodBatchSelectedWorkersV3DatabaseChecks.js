@@ -14,8 +14,9 @@ import { runCustomCohortCoveredSelectedProgressV2JobOnce as legacyProgress } fro
 
 /** Twenty-fifth independent real capture. Workers supply no group IDs, source
  * adapter, progress, counts or membership. The real original owner does all IO. */
-export async function runNeighborhoodBatchSelectedWorkersV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
+export async function runNeighborhoodBatchSelectedWorkersV3DatabaseChecks({sourceRecoveryFixture=false,pool,input,scope,actor,service,job,parent,blobs,
   catalogHead,groups,assertParents,setFault,readFault,originalReads,claim,command,batchRecordedEligibilityFixture=false,batchSelectedEvidenceFixture=false,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false,batchSelectedTransactionIndexFixture=false,batchSelectedRecoveryFixture=false,batchSelectedProgressRecoveryFixture=false}){
+  const sourceFailureAttempt=sourceRecoveryFixture?4:5,sourceFailureCode=sourceRecoveryFixture?'capture_failed':'access_revoked';
   const operation=input.operationId,method='continueCoveredOriginalFrozenCaptureJobBatchSelectedStockUnionReferencesV3',
     before={job:await job(),parent:await parent(),catalog:await catalogHead(),groups:await groups(),blobs:await blobs()},
     dispatches=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_initial_dispatch_v2 WHERE operation_id=$1 ORDER BY attempts,claim_token',[operation])).rows,
@@ -90,7 +91,7 @@ export async function runNeighborhoodBatchSelectedWorkersV3DatabaseChecks({pool,
     }}});
     assert.equal(failed.status,'retry');assert.equal(failed.reason,'access_revoked');assert.equal(failures,1);
     assert.equal(readFault(),null);assert.equal(originalReads(),reads+1);
-    const retry=await job();assert.equal(retry.attempts,4);assert.equal(retry.last_error_code,'access_revoked');
+    const retry=await job();assert.equal(retry.attempts,4);assert.equal(retry.last_error_code,sourceFailureCode);
     assert.equal(retry.claim_token,null);assert.equal(retry.lease_expires_at,null);assert.deepEqual(retry.checkpoint,before.job.checkpoint);
     assert.deepEqual(await union(),{head:[],groups:[],rows:[]});assert.deepEqual(await blobs(),before.blobs);assert.deepEqual(await parent(),before.parent);
     failedFourthDispatch=await dispatches();assert.equal(failedFourthDispatch.length,1);
@@ -105,12 +106,12 @@ export async function runNeighborhoodBatchSelectedWorkersV3DatabaseChecks({pool,
     try{
       initialCalls++;
       if(batchSelectedRecoveryFixture){
-        assert.equal(options.captureJobClaim.attempts,5);assert.notEqual(options.captureJobClaim.claim_token,failedFourthClaim.claim_token);
+        assert.equal(options.captureJobClaim.attempts,sourceFailureAttempt);assert.notEqual(options.captureJobClaim.claim_token,failedFourthClaim.claim_token);
         claim=options.captureJobClaim;
       }else assert.deepEqual(options.captureJobClaim,claim);
       ownedDispatch=await dispatches();assert.equal(ownedDispatch.length,batchSelectedRecoveryFixture?2:1);
       const adopted=ownedDispatch.find(row=>row.claim_token===claim.claim_token);assert.ok(adopted);
-      assert.equal(adopted.attempts,batchSelectedProgressRecoveryFixture?4:5);assert.equal(adopted.command_id,command.command_id);
+      assert.equal(adopted.attempts,batchSelectedProgressRecoveryFixture||sourceRecoveryFixture?4:5);assert.equal(adopted.command_id,command.command_id);
       if(batchSelectedRecoveryFixture)assert.deepEqual(ownedDispatch.filter(row=>row.claim_token!==claim.claim_token),failedFourthDispatch);
       const reads=originalReads();setFault('union_ack');
       try{return await service[method](value,options);}finally{assert.equal(originalReads(),reads+1);}
@@ -120,7 +121,7 @@ export async function runNeighborhoodBatchSelectedWorkersV3DatabaseChecks({pool,
   if(ownerError&&!ownerError.outcome_unknown)throw ownerError;
   assert.deepEqual(first.map(r=>r.status).sort(),['idle','outcome_unknown']);assert.equal(initialCalls,1);assert.equal(readFault(),null);
   if(batchSelectedRecoveryFixture){
-    assert.equal((await job()).attempts,5);assert.equal((await job()).last_error_code,'access_revoked');
+    assert.equal((await job()).attempts,sourceFailureAttempt);assert.equal((await job()).last_error_code,sourceFailureCode);
     assert.deepEqual(await dispatches(),ownedDispatch);await immutable();
     console.info('[native-batch-selected-worker-recovery-v3]',{step:'real-fresh-fifth-native-recovery-and-first-original-lost-COMMIT-ACK'});
   }
@@ -148,7 +149,7 @@ export async function runNeighborhoodBatchSelectedWorkersV3DatabaseChecks({pool,
     }}});
     assert.equal(failed.status,'retry');assert.equal(failed.reason,'access_revoked');assert.equal(calls,1);
     assert.equal(readFault(),null);assert.equal(originalReads(),reads+1);
-    const retry=await job();assert.equal(retry.attempts,4);assert.equal(retry.last_error_code,'access_revoked');
+    const retry=await job();assert.equal(retry.attempts,4);assert.equal(retry.last_error_code,sourceFailureCode);
     assert.equal(retry.claim_token,null);assert.equal(retry.lease_expires_at,null);assert.deepEqual(retry.checkpoint,firstJob.checkpoint);
     assert.deepEqual(await union(),priorUnion);assert.deepEqual(await parent(),claimedParent);assert.deepEqual(await blobs(),firstBlobs);
     assert.deepEqual(await dispatches(),ownedDispatch);await immutable();
@@ -161,7 +162,7 @@ export async function runNeighborhoodBatchSelectedWorkersV3DatabaseChecks({pool,
   for(const sequence of [2,3]){
     let calls=0,result,nextError,nextClaim;
     const stepArgs={...args,cohortService:{async [method](value,options){
-      try{calls++;nextClaim=options.captureJobClaim;assert.equal(nextClaim.attempts,5);assert.notEqual(nextClaim.claim_token,claim.claim_token);
+      try{calls++;nextClaim=options.captureJobClaim;assert.equal(nextClaim.attempts,sourceFailureAttempt);assert.notEqual(nextClaim.claim_token,claim.claim_token);
         const reads=originalReads();result=await service[method](value,options);assert.equal(originalReads(),reads+1);return result;
       }catch(error){nextError=error;throw error;}
     }}};
@@ -175,7 +176,7 @@ export async function runNeighborhoodBatchSelectedWorkersV3DatabaseChecks({pool,
     assert.equal(receipt.after.done,sequence===3);assert.equal(receipt.after.account_count,2);assert.equal(receipt.after_selected_count,2);
     if(sequence===3){assert.equal(receipt.entry_reference,null);assert.deepEqual(receipt.after_counts,receipt.before_counts);}
     assert.deepEqual(state.rows.map(r=>[r.account_id,r.ordinal,r.partition_ordinal]),[['CLOSURE-A',1,1],['CLOSURE-B',2,2]]);
-    assert.deepEqual(await dispatches(),ownedDispatch);assert.equal((await job()).attempts,5);assert.equal((await job()).last_error_code,'access_revoked');await immutable();
+    assert.deepEqual(await dispatches(),ownedDispatch);assert.equal((await job()).attempts,sourceFailureAttempt);assert.equal((await job()).last_error_code,sourceFailureCode);await immutable();
     if(batchSelectedProgressRecoveryFixture&&sequence===2){
       assert.equal(ownedDispatch.length,1);assert.equal(ownedDispatch[0].attempts,4);
       assert.notEqual(nextClaim.claim_token,ownedDispatch[0].claim_token);
@@ -195,7 +196,7 @@ export async function runNeighborhoodBatchSelectedWorkersV3DatabaseChecks({pool,
   assert.deepEqual(await job(),terminal.job);assert.deepEqual(await parent(),terminal.parent);assert.deepEqual(await blobs(),terminal.blobs);
   assert.deepEqual(await union(),terminal.union);assert.deepEqual(await dispatches(),ownedDispatch);await immutable();
   if(batchRecordedEligibilityFixture){
-    await runNeighborhoodBatchRecordedEligibilityV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
+    await runNeighborhoodBatchRecordedEligibilityV3DatabaseChecks({sourceRecoveryFixture,pool,input,scope,actor,service,job,parent,blobs,
       catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedEvidenceFixture,batchSelectedMetricsFixture,batchSelectedStatisticsFixture,batchSelectedNumericFixture,batchSelectedSemanticFixture,batchSelectedTransactionIndexFixture,batchSelectedRecoveryFixture,batchSelectedProgressRecoveryFixture});return;
   }
   console.info('[native-batch-selected-workers-v3]',{independent_actual_initial_source_cache_stock_partition_catalog_wait_and_explicit_command:true,

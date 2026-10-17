@@ -10,8 +10,9 @@ import { runCustomCohortBatchSelectedNumericV3JobOnce as numeric } from '../../s
 
 /** Thirty-first independent graph. Every selected account is reopened after
  * numeric DONE; bounded provisional ranks alone are never source authority. */
-export async function runNeighborhoodBatchSelectedSemanticV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
+export async function runNeighborhoodBatchSelectedSemanticV3DatabaseChecks({sourceRecoveryFixture=false,pool,input,scope,actor,service,job,parent,blobs,
   catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedTransactionIndexFixture=false}){
+  const sourceFailureAttempt=sourceRecoveryFixture?4:5,sourceFailureCode=sourceRecoveryFixture?'capture_failed':'access_revoked';
   const operation=input.operationId,method='progressCoveredOriginalFrozenCaptureJobBatchSelectedSemanticReferencesV3',
     head=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_semantic_v2_heads WHERE operation_id=$1',[operation])).rows[0],
     rows=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_semantic_v2_rows WHERE operation_id=$1 ORDER BY ordinal',[operation])).rows,
@@ -42,7 +43,7 @@ export async function runNeighborhoodBatchSelectedSemanticV3DatabaseChecks({pool
   };
   const firstArgs={...args,cohortService:{async [method](value,options){
     try{
-      calls++;firstClaim=options.captureJobClaim;assert.equal(firstClaim.attempts,5);owned=await job();ownedParent=await parent();
+      calls++;firstClaim=options.captureJobClaim;assert.equal(firstClaim.attempts,sourceFailureAttempt);owned=await job();ownedParent=await parent();
       await assert.rejects(service.progressCoveredOriginalFrozenCaptureJobSelectedSemanticReferencesV2(value,options),/invalid_receipt/);await unchanged();
       for(const [fault,reason] of [['semantic_cache',/original_mismatch/],
         ['semantic_orphan',e=>e.outcome_unknown===true&&e.code==='55000'&&e.message==='neighborhood_selected_semantic_v2_orphan_progress']]){
@@ -64,7 +65,7 @@ export async function runNeighborhoodBatchSelectedSemanticV3DatabaseChecks({pool
   for(const sequence of [2,3]){
     let count=0,result,nextError,nextClaim;
     const stepArgs={...args,cohortService:{async [method](value,options){
-      try{count++;nextClaim=options.captureJobClaim;assert.equal(nextClaim.attempts,5);assert.notEqual(nextClaim.claim_token,firstClaim.claim_token);
+      try{count++;nextClaim=options.captureJobClaim;assert.equal(nextClaim.attempts,sourceFailureAttempt);assert.notEqual(nextClaim.claim_token,firstClaim.claim_token);
         const reads=originalReads();result=await service[method](value,options);assert.equal(originalReads(),reads+1);return result;
       }catch(error){nextError=error;throw error;}
     }}};
@@ -86,7 +87,7 @@ export async function runNeighborhoodBatchSelectedSemanticV3DatabaseChecks({pool
     if(sequence===3){assert.equal(receipt.selected_entry,null);assert.equal(receipt.contribution_row_reference,null);
       const summary=await body(receipt.after_summary_reference);assert.deepEqual(summary.counts,contributionReceipt.after_counts);
     }
-    assert.equal((await job()).attempts,5);assert.equal((await job()).last_error_code,'access_revoked');assert.equal((await job()).checkpoint.evidence_refs.length,16);await immutable();
+    assert.equal((await job()).attempts,sourceFailureAttempt);assert.equal((await job()).last_error_code,sourceFailureCode);assert.equal((await job()).checkpoint.evidence_refs.length,16);await immutable();
   }
   // Independent exact arithmetic over this disposable two-account expected
   // DATA, AFTER every actual semantic owner replayed its complete originals.
@@ -117,7 +118,7 @@ export async function runNeighborhoodBatchSelectedSemanticV3DatabaseChecks({pool
   }),e=>e===rollback);
   assert.deepEqual(await job(),terminal.job);assert.deepEqual(await parent(),terminal.parent);assert.deepEqual(await blobs(),terminal.blobs);assert.deepEqual(await head(),terminal.head);assert.deepEqual(await rows(),terminal.rows);await immutable();
   if(batchSelectedTransactionIndexFixture){
-    await runNeighborhoodBatchSelectedTransactionIndexV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
+    await runNeighborhoodBatchSelectedTransactionIndexV3DatabaseChecks({sourceRecoveryFixture,pool,input,scope,actor,service,job,parent,blobs,
       catalogHead,groups,assertParents,setFault,readFault,originalReads,command,laterFirstSource:batchSelectedTransactionIndexFixture==='later-first-source'});return;
   }
   console.info('[native-batch-selected-semantic-v3]',{independent_actual_V3_numeric_worker_fresh_EMPTY:true,

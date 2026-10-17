@@ -94,7 +94,7 @@ export async function observeNeighborhoodFirstSourceHandoffAfterSaveV3({raw,resu
   assert.deepEqual((await raw.query('SELECT * FROM app.neighborhood_custom_cohort_v2_continuations WHERE operation_id=$1',[op])).rows,continuation);
 }
 
-export async function runNeighborhoodFirstSourceHandoffV3DatabaseChecks({pool,input,scope,actor,service,claim,empty,setFault,readFault,originalReads,laterFirstSource}){
+export async function runNeighborhoodFirstSourceHandoffV3DatabaseChecks({sourceRecoveryFixture=false,pool,input,scope,actor,service,claim,empty,setFault,readFault,originalReads,laterFirstSource}){
   const ddls=['20261223_custom_cohort_source_first_handoff_v3.sql','20261224_custom_cohort_source_retained_birth_read_v3.sql']
     .map(name=>readFileSync(new URL(`../../migrations/${name}`,import.meta.url),'utf8')),setup=await pool.connect();
   let open=false,discard;
@@ -154,6 +154,6 @@ export async function runNeighborhoodFirstSourceHandoffV3DatabaseChecks({pool,in
     fresh_same_claim_repeat_and_all_rows_blobs_whole_job_workspace_choices_reports_pins_rollback:true,
     six_unconditional_COMMIT_refusals_unchanged:true,fresh18_claim:false,durable_issuance:false,
     recovery:false,NEXT_or_EMPTY:false,activation:false,licensed_large_area:false,production_speed:false});
-  await runNeighborhoodFirstSourceBirthCommitV3DatabaseChecks({pool,input,scope,actor,service,claim,
+  await runNeighborhoodFirstSourceBirthCommitV3DatabaseChecks({sourceRecoveryFixture,pool,input,scope,actor,service,claim,
     empty:unchanged,setFault,readFault,originalReads,laterFirstSource});
 }

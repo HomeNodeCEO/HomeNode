@@ -112,6 +112,13 @@ BEGIN
   IF NEW.attempts>OLD.attempts
     OR (NEW.claim_token IS DISTINCT FROM OLD.claim_token AND NEW.claim_token IS NOT NULL) THEN
     RAISE EXCEPTION 'neighborhood_v2_selection_intent_job_conflict_initial_claim' USING ERRCODE='55000'; END IF;
+  -- The one issued lease is fixed even while live. A heartbeat with the same
+  -- token/attempt/checkpoint must not extend it, shorten it or clear it.
+  IF NEW.lease_expires_at IS DISTINCT FROM OLD.lease_expires_at
+    AND NOT (OLD.cancellation_requested_at IS NOT NULL
+      AND NEW.status='cancelled' AND NEW.claim_token IS NULL
+      AND NEW.lease_expires_at IS NULL AND NEW.cancellation_requested_at IS NOT NULL) THEN
+    RAISE EXCEPTION 'neighborhood_v2_selection_intent_job_conflict_initial_claim' USING ERRCODE='55000'; END IF;
   -- Expiry grants no retry, renewal or exhaustion write. Admit only a scoped
   -- cancellation request; its ordinary cancellation cleanup may follow.
   IF OLD.lease_expires_at<=clock_timestamp() AND OLD.cancellation_requested_at IS NULL

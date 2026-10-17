@@ -3,11 +3,12 @@ import { withCustomCohortJobTransaction } from '../../src/services/neighborhoodA
 import { createCustomCohortCaptureJobRepository } from '../../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
 import { createCustomCohortV2SelectionIntentRepository } from '../../src/services/neighborhoodAssessment/customCohortV2SelectionIntentRepository.js';
 
-/** Exercise the real issued intent's expiry, native mutation guard and generic
- * worker selectors in a guarded disposable database. Roll back every probe;
- * no clock/attempt reset, fixture rebind, source grant or copied parent. */
-export async function runNeighborhoodSelectionIntentReclaimV2DatabaseChecks({ pool, scope, operationId, actorUserId, intent, workspaceTarget, expectedJob }) {
-  const operation = operationId, rollback = new Error('rollback actual expired-intent probes');
+/** Probe the actual issued claim both before and after its real expiry. The
+ * caller waits outside transactions; neither phase rewrites the lease/clock,
+ * resets attempts, rebinds fixtures, grants sources or copies native parents. */
+export async function runNeighborhoodSelectionIntentReclaimV2DatabaseChecks({ pool, scope, operationId, actorUserId, intent, workspaceTarget, expectedJob, expired }) {
+  assert.equal(typeof expired, 'boolean');
+  const operation = operationId, rollback = new Error('rollback actual issued-intent probes');
   let originalJob;
   const read = async client => (await client.query(
     'SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1', [operation])).rows[0];
@@ -18,34 +19,47 @@ export async function runNeighborhoodSelectionIntentReclaimV2DatabaseChecks({ po
     for (const [key, value] of Object.entries({ ...scope, operation_id: operation, actor_user_id: actorUserId }))
       assert.equal(originalJob[key], value);
     assert.deepEqual(Object.fromEntries(Object.keys(expectedJob).map(key => [key, originalJob[key]])), expectedJob);
-    await client.query(`UPDATE app.neighborhood_custom_cohort_capture_jobs
-      SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1`, [operation]);
-    const expired = await read(client);
-    assert.equal(expired.attempts, expectedJob.attempts); assert.equal(expired.claim_token, expectedJob.claim_token);
+    const isExpired = async () => (await client.query(`SELECT lease_expires_at<=clock_timestamp() AS expired
+      FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1`, [operation])).rows[0].expired;
+    assert.equal(await isExpired(), expired, 'probe runs on the actual original lease in the required lifetime phase');
     assert.deepEqual(await createCustomCohortCaptureJobRepository(client).claimDue({ limit: 1, leaseSeconds: 120 }), []);
-    assert.deepEqual(await read(client), expired, 'neither generic sweep nor claim changes the expired intent tuple');
+    assert.deepEqual(await read(client), originalJob, 'neither generic sweep nor claim changes the issued intent tuple');
     for (const set of ['attempts=attempts+1', 'claim_token=gen_random_uuid()',
       'attempts=attempts+1,claim_token=gen_random_uuid()',
       "status='failed',claim_token=NULL,lease_expires_at=NULL,last_error_code='attempts_exhausted'",
-      "lease_expires_at=clock_timestamp()+interval '120 seconds'"]) {
+      "lease_expires_at=clock_timestamp()+interval '120 seconds'",
+      "lease_expires_at=clock_timestamp()-interval '1 second'", 'lease_expires_at=NULL']) {
       await client.query('SAVEPOINT intent_reclaim_probe');
       await assert.rejects(client.query(`UPDATE app.neighborhood_custom_cohort_capture_jobs SET ${set}
         WHERE operation_id=$1`, [operation]), /selection_intent_job_conflict_initial_claim/);
       await client.query('ROLLBACK TO SAVEPOINT intent_reclaim_probe');
       await client.query('RELEASE SAVEPOINT intent_reclaim_probe');
-      assert.deepEqual(await read(client), expired);
+      assert.deepEqual(await read(client), originalJob);
     }
-    await assert.rejects(createCustomCohortV2SelectionIntentRepository(client).resume(operation,
-      { scope, actorUserId, intent, workspaceTarget }), /claim_lost/);
-    assert.deepEqual(await read(client), expired, 'expired exact replay cannot renew the retained claim');
+    const claim = { operation_id: operation, claim_token: originalJob.claim_token, attempts: originalJob.attempts };
+    if (expired) {
+      await assert.rejects(createCustomCohortV2SelectionIntentRepository(client).resume(operation,
+        { scope, actorUserId, intent, workspaceTarget }), /claim_lost/);
+      assert.deepEqual(await read(client), originalJob, 'expired exact replay cannot renew the retained claim');
+    } else {
+      await client.query('SAVEPOINT intent_heartbeat_probe');
+      assert.equal(await isExpired(), false, 'the actual heartbeat reaches a live claim, not a zero-row expiry refusal');
+      await assert.rejects(createCustomCohortCaptureJobRepository(client).heartbeat(claim),
+        /selection_intent_job_conflict_initial_claim/);
+      await client.query('ROLLBACK TO SAVEPOINT intent_heartbeat_probe');
+      await client.query('RELEASE SAVEPOINT intent_heartbeat_probe');
+      assert.deepEqual(await read(client), originalJob);
+    }
     assert.deepEqual(await createCustomCohortCaptureJobRepository(client).cancel(scope, operation), { status: 'running' });
-    assert.deepEqual(await createCustomCohortCaptureJobRepository(client).claimDue({ limit: 1, leaseSeconds: 120 }), []);
+    if (expired) assert.deepEqual(await createCustomCohortCaptureJobRepository(client).claimDue({ limit: 1, leaseSeconds: 120 }), []);
+    else assert.deepEqual(await createCustomCohortCaptureJobRepository(client).failClaim(claim, 'synthetic_cancel'), { status: 'cancelled' });
     const cancelled = await read(client);
     assert.equal(cancelled.status, 'cancelled'); assert.equal(cancelled.claim_token, null);
-    assert.equal(cancelled.lease_expires_at, null); assert.equal(cancelled.last_error_code, 'cancelled');
+    assert.equal(cancelled.lease_expires_at, null); assert.equal(cancelled.last_error_code, expired ? 'cancelled' : 'synthetic_cancel');
     const retained = row => Object.fromEntries(Object.entries(row).filter(([key]) =>
-      !['status', 'claim_token', 'lease_expires_at', 'last_error_code', 'cancellation_requested_at', 'updated_at'].includes(key)));
-    assert.deepEqual(retained(cancelled), retained(expired), 'scoped cancellation preserves attempts, roots, schedule and every target');
+      !['status', 'claim_token', 'lease_expires_at', 'last_error_code', 'cancellation_requested_at', 'updated_at',
+        ...(!expired ? ['run_after'] : [])].includes(key)));
+    assert.deepEqual(retained(cancelled), retained(originalJob), 'scoped cancellation preserves attempts, roots and every target');
     // Expected SQL refusals mark the transaction wrapper's connection for
     // discard. Execute a real ROLLBACK before its sentinel exits, so restoration
     // is proven by PostgreSQL rollback rather than merely closing that client.

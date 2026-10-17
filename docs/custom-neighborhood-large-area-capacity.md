@@ -107,6 +107,21 @@ Explicit expired-intent recovery and source dispatch still require a separate
 complete owner before activation; neither an automatic retry nor a new lease
 is added.
 
+Actual included review `9eba1a26` of `c944cc89` found that a live heartbeat
+could still change the initial lease without changing its token, attempt or
+checkpoint. The correction freezes every lease change while the actual issued
+nine-root command checkpoint remains, except its exact initial resume and
+scoped cancellation cleanup. Native probes now require a real pre-expiry
+heartbeat refusal, including shortening/clearing refusals, and restore the full
+job tuple with explicit PostgreSQL ROLLBACK. The expiry probe no longer rewrites
+the issued lease: a separate 180-second native lifetime test retains the same
+independently built graph and waits outside any transaction for real expiry.
+It performs the actual original read before expiry, requires the ending claim
+refusal within the unchanged query/owner budgets, then checks expired reclaim,
+renewal, replay and cancellation cleanup. Every previous graph assertion still
+runs; existing deadlines, source grants and native parents are unchanged.
+Fresh exact-head native/full-suite proof and actual included review are pending.
+
 Corrected implementation `d498ab57` passes 46 focused repository/worker checks,
 zero failures, cancellations or skips (5609.9087 ms), and changed JavaScript
 syntax/diff checks. All 16 checks passed on that exact head, including security,
@@ -115,7 +130,7 @@ CodeQL, full server/frontend and native PostgreSQL run `38993334702` / job
 1 subject, 1 account-quality, 10 prepared, 1 edge and 2 bootstrap checks without
 failures, cancellations or skips (prepared 422155.291698 ms).
 
-Those executed native probes expire the same issued claim in a guarded
+Those historical executed native probes expire the same issued claim in a guarded
 disposable transaction, require generic claim/sweep and direct mutation/renewal
 refusals with the whole tuple unchanged, refuse expired replay, exercise scoped
 cancellation cleanup, execute explicit PostgreSQL ROLLBACK and compare the

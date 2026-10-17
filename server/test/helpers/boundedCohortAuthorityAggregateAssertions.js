@@ -64,7 +64,7 @@ SELECT (SELECT account_id FROM chosen) AS account_id,(SELECT parcel_count::text 
     THEN coalesce('['||string_agg(encoded,',' ORDER BY kind COLLATE "C",row_key COLLATE "C")||']','[]') ELSE '[]' END AS page_json
 FROM sized`);
 
-export function assertBoundedCohortAuthorityAggregates(calls, { actorUserId, organizationId, assignmentFileId, originals }) {
+function validateShapes(calls, { actorUserId, organizationId, assignmentFileId, originals }) {
   let actors = 0, sections = 0;
   for (const { text, values } of calls) {
     assert.doesNotMatch(text, /ST_DWithin|job-typed:/, 'catalog must not use spatial/job-typed population paths');
@@ -88,6 +88,17 @@ export function assertBoundedCohortAuthorityAggregates(calls, { actorUserId, org
       assert.fail(`unexpected catalog aggregate SQL: ${sql.slice(0, 180)}`);
     }
   }
+  return { actors, sections };
+}
+
+// A rejected owner can stop before the ending subject/role reads. Validate
+// EVERY aggregate and parameter in that failed call without claiming delivery.
+export function assertBoundedCohortAuthorityAggregateShapes(calls, scope) {
+  validateShapes(calls, scope);
+}
+
+export function assertBoundedCohortAuthorityAggregates(calls, scope) {
+  const { actors, sections } = validateShapes(calls, scope);
   assert.ok(actors >= 2, 'both-end current actor role reads remain mandatory');
   assert.ok(sections >= 2, 'both-end current bounded subject-section reads remain mandatory');
 }

@@ -6,7 +6,7 @@ import { withCustomCohortJobTransaction as transaction } from '../../src/service
 // A separately built real native nine-root graph, retained for this bounded
 // consumer. No copied parent, clock/lease/attempt rewrite, or free source data.
 export async function runNeighborhoodInitialUnionRecoveryV2DatabaseChecks({pool,scope,operationId,originalClaim,
-  runStep,setFault,restoreFault,originalReads,queryCount,assertOwnerQueries}){
+  runStep,setFault,restoreFault,originalReads,queryCount,assertOwnerQueries,assertOwnerQueryShapes}){
   assert.match((await pool.query('SELECT current_database() AS name')).rows[0].name,/^neighborhood_[a-f0-9]{32}_test$/);
   const wholeJobSql='SELECT to_jsonb(j) AS body FROM app.neighborhood_custom_cohort_capture_jobs j WHERE operation_id=$1',
     job=async client=>(await client.query(wholeJobSql,[operationId])).rows[0].body,
@@ -83,7 +83,7 @@ export async function runNeighborhoodInitialUnionRecoveryV2DatabaseChecks({pool,
     setFault(fault);const from=queryCount();
     try{await assert.rejects(runStep(claim),reason);}
     finally{await restoreFault(fault);}
-    assertOwnerQueries(from);await unchanged();
+    assertOwnerQueryShapes(from);await unchanged();
   }
   const from=queryCount();setFault('commit');reads=originalReads();
   await assert.rejects(runStep(claim),e=>e.outcome_unknown===true);assert.equal(originalReads(),reads+1);assertOwnerQueries(from);

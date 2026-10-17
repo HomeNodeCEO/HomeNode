@@ -1,3 +1,25 @@
+## Initial9 native assertion correction (2026-10-17, fresh full validation pending)
+
+Exact head 7354 passed 417 migrations, subject and account-quality checks, then
+failed three of 15 prepared cases (12 passed, no cancellations or skips).
+Both live union fixtures inspected `request_payload` on a deliberately partial
+job projection that did not select it. The assertion now reads the actual
+scoped stored request and checks its operation ID and current field grammar.
+The independent recovery fixture reached its real original owner, but its
+early-refusal probes incorrectly required ending subject reads even when a
+current/ending fence had already refused delivery. Each rejected call now
+checks every exact aggregate/parameter shape and the unchanged query budget.
+The successful lost-actual-COMMIT-acknowledgment call still independently
+requires BOTH ending actor and bounded subject-section reads. The shared
+full-delivery assertion retains those requirements; a focused negative case
+also proves that early-refusal shape checks cannot claim delivery or admit
+widened section caps or population aggregates. No runtime, DDL, authority,
+source, lease, failure-ceiling, byte/query/runtime budget or deadline changes.
+Seventeen focused aggregate/recovery checks pass serially (466.6151 ms,
+zero failures/cancellations/skips); both changed native files pass syntax.
+The failed head is not rerun. A new exact head needs the full cloud native,
+security and suite results and genuine included review before merge.
+
 ## Initial9 recovery current-request correction (2026-10-17, native validation pending)
 
 The exact6e native run passed417 migration checks, subject and account quality,

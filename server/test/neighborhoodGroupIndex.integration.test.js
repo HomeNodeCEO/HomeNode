@@ -3,7 +3,7 @@ import test, { after } from 'node:test';
 import { randomUUID,createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { prepareNeighborhoodCiDatabase } from './helpers/neighborhoodCiDatabase.js';
-import { assertBoundedCohortAuthorityAggregates } from './helpers/boundedCohortAuthorityAggregateAssertions.js';
+import { assertBoundedCohortAuthorityAggregates, assertBoundedCohortAuthorityAggregateShapes } from './helpers/boundedCohortAuthorityAggregateAssertions.js';
 import { runNeighborhoodInitialUnionRecoveryV2DatabaseChecks } from './helpers/neighborhoodInitialUnionRecoveryV2DatabaseChecks.js';
 import { getNeighborhoodFrozenTypedOriginalV2Profile } from '../src/services/neighborhoodAssessment/neighborhoodFrozenTypedOriginalV1.js';
 import { NEIGHBORHOOD_CACHED_SOURCE_SCHEMA } from './fixtures/neighborhoodCachedSourceSchemaFixture.js';
@@ -4424,6 +4424,11 @@ for(const selectionWaitFixture of [false,true,'union','union-empty','union-initi
                 if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);},
               originalReads:()=>refsCalls.filter(sql=>sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,
               queryCount:()=>refsCalls.length,
+              assertOwnerQueryShapes(from){assert.equal(refsFault,null);assert.ok(refsCalls.length-from-3<=ORIGINAL_OWNER_LIMITS.sql_queries);
+                assertBoundedCohortAuthorityAggregateShapes(refsCalls.slice(from).map((text,index)=>({text,values:refsQueryParameters[from+index]})),
+                  {actorUserId:actor,organizationId:organization,assignmentFileId:assignment,
+                    originals:{operationId:refsOperation,generationId:refsBinding.generation_id,
+                      profileSha256:getNeighborhoodFrozenTypedOriginalV2Profile().profile_ref.content_sha256}});},
               assertOwnerQueries(from){assert.equal(refsFault,null);assert.ok(refsCalls.length-from-3<=ORIGINAL_OWNER_LIMITS.sql_queries);
                 assertBoundedCohortAuthorityAggregates(refsCalls.slice(from).map((text,index)=>({text,values:refsQueryParameters[from+index]})),
                   {actorUserId:actor,organizationId:organization,assignmentFileId:assignment,
@@ -4450,7 +4455,10 @@ for(const selectionWaitFixture of [false,true,'union','union-empty','union-initi
             createCustomCohortSelectedUnionV2RecoveryRepository(client).claimDue({limit:1,leaseSeconds:900})),[]);
           await unionUnchanged();
           let liveClaim=replayed.claim;
-          assert.equal(Object.hasOwn(resumedJob.request_payload,'execution_mode'),false,
+          const actualRequest=(await pool.query(`SELECT request_payload FROM app.neighborhood_custom_cohort_capture_jobs
+            WHERE operation_id=$1 AND organization_id=$2`,[refsOperation,organization])).rows[0].request_payload;
+          assert.equal(actualRequest.operation_id,refsOperation);
+          assert.equal(Object.hasOwn(actualRequest,'execution_mode'),false,
             'current protected native request must not need the future feature execution tag');
           assert.equal((await pool.query(`SELECT app.neighborhood_v2_initial_union_claim_bound(job) AS bound
             FROM app.neighborhood_custom_cohort_capture_jobs job WHERE operation_id=$1 AND organization_id=$2`,

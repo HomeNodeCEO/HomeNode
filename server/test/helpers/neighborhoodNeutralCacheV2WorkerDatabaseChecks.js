@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { canonicalAssessmentJson } from '../../src/services/neighborhoodAssessment/contract.js';
 import { createNeighborhoodCohortBlobRepository } from '../../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
 import { runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks } from './neighborhoodCoveredSelectedEvidenceV2DatabaseChecks.js';
+import { observeNeighborhoodFirstSourceResolutionRowV3 } from './neighborhoodFirstSourceResolutionRowV3DatabaseChecks.js';
 import { randomUUID } from 'node:crypto';
 import { createCustomCohortContextCapture } from '../../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { createCustomCohortCaptureJobRepository as jobs } from '../../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
@@ -97,6 +98,11 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
       return raw.query({...c,text:text.replace(selected,'job.organization_id,$9,$10,$11,1,($12::integer+1)')});
     }
     const result=await raw.query(c);
+    if(fault==='source_resolution_observe'&&text.includes('custom-cohort-source-resolution-parent-v3:head-insert */')){
+      await observeNeighborhoodFirstSourceResolutionRowV3({raw,result,scope,
+        expectedOrdinal:batchSelectedTransactionIndexFixture==='later-first-source'?2:1});
+      fault=null;
+    }
     if(fault==='catalog_replay_entry'&&text.includes('custom-cohort-recorded-partition-batch-v3:entry-read'))fault+='_ending';
     else if(fault==='catalog_replay_entry_ending'&&text.includes('custom-cohort-recorded-partition-batch-v3:entry-read')){
       fault=null;return {...result,rows:[{...result.rows[0],ordinal:result.rows[0].ordinal+1}]};

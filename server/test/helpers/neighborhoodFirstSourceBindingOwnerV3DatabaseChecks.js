@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { runNeighborhoodFirstSourceResolutionRowV3DatabaseChecks } from './neighborhoodFirstSourceResolutionRowV3DatabaseChecks.js';
 
 const parentTable='app.neighborhood_custom_cohort_source_resolution_v3_parents',
   firstTable='app.neighborhood_custom_cohort_source_resolution_v3_first',
-  ddls=['20261219_custom_cohort_source_resolution_parent_v3.sql','20261220_custom_cohort_source_native_first_v3.sql']
+  tables=[parentTable,firstTable,'app.neighborhood_custom_cohort_source_resolution_v3_rows','app.neighborhood_custom_cohort_source_resolution_v3_heads'],
+  ddls=['20261219_custom_cohort_source_resolution_parent_v3.sql','20261220_custom_cohort_source_native_first_v3.sql',
+    '20261221_custom_cohort_source_first_resolution_v3.sql']
     .map(name=>readFileSync(new URL(`../../migrations/${name}`,import.meta.url),'utf8'));
 
 // Install ONLY the exact unregistered definitions in this independently created
@@ -15,11 +18,16 @@ export async function runNeighborhoodFirstSourceBindingOwnerV3DatabaseChecks({po
   const setup=await pool.connect();let open=false,discard;
   try{
     assert.match((await setup.query('SELECT current_database() AS name')).rows[0].name,/^neighborhood_[a-f0-9]{32}_test$/);
-    for(const table of [parentTable,firstTable])assert.equal(
+    for(const table of tables)assert.equal(
       (await setup.query('SELECT to_regclass($1) AS relation',[table])).rows[0].relation,null);
     await setup.query('BEGIN');open=true;
     await setup.query("SET LOCAL statement_timeout='5000ms'; SET LOCAL lock_timeout='1000ms'");
     for(const ddl of ddls)await setup.query({text:ddl,query_timeout:6000});
+    for(const statement of [`TRUNCATE ${tables[3]}`,`TRUNCATE ${tables.slice(2).join(',')}`]){
+      await setup.query('SAVEPOINT source_truncate');
+      try{await assert.rejects(setup.query(statement),/custom_cohort_context_immutable/);}
+      finally{await setup.query('ROLLBACK TO SAVEPOINT source_truncate');await setup.query('RELEASE SAVEPOINT source_truncate');}
+    }
     await setup.query('COMMIT');open=false;
   }catch(error){discard=error;throw error;}
   finally{
@@ -29,7 +37,7 @@ export async function runNeighborhoodFirstSourceBindingOwnerV3DatabaseChecks({po
   const method='retainCoveredOriginalFrozenCaptureJobFirstSourceBindingReferencesV3',
     options={captureJobClaim:claim},bind=()=>service[method](input,options),
     empty=async()=>{
-      for(const table of [parentTable,firstTable])assert.equal(
+      for(const table of tables)assert.equal(
         (await pool.query(`SELECT count(*)::integer AS n FROM ${table}`)).rows[0].n,0,
         'actual failed COMMIT must roll back every provisional parent and FIRST row');
       await unchanged();
@@ -75,4 +83,6 @@ export async function runNeighborhoodFirstSourceBindingOwnerV3DatabaseChecks({po
     caller_source_candidate_binding_resolution_checkpoint_refused_before_original_IO:true,
     exact18_admission:false,source_resolution_issued:false,source_NEXT_or_EMPTY:false,
     economics:false,publication:false,activation:false,licensed_large_area:false,production_speed:false});
+  await runNeighborhoodFirstSourceResolutionRowV3DatabaseChecks({pool,input,scope,actor,service,claim,
+    empty,setFault,readFault,originalReads,laterFirstSource});
 }

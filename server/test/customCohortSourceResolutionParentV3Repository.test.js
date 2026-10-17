@@ -10,11 +10,15 @@ const id=n=>`70000000-0000-4000-8000-${String(n).padStart(12,'0')}`,ref=n=>({con
   first={operation_id:claim.operation_id,organization_id:scope.organization_id,generation_id:id(7),command_id:id(6),
     index_reference:ref(8),index_sequence:3,kind:'source_record',native_key:'501',first_selected_ordinal:2,
     selected_account_id:'SELECTED-B',partition_ordinal:2,entry_reference:ref(5),metric_row_reference:ref(6),
-    contribution_row_reference:ref(7),issued_transaction_id:'101'};
-function fixture({transactions=['101'],native=copy(row),inserted=copy(row),firstNative=copy(first),firstInserted=copy(first),raw}={}){
+    contribution_row_reference:ref(7),issued_transaction_id:'101'},
+  candidateRow={operation_id:claim.operation_id,organization_id:scope.organization_id,sequence:1,candidate_reference:ref(4),issued_transaction_id:'101'};
+function fixture({transactions=['101'],native=copy(row),inserted=copy(row),firstNative=copy(first),firstInserted=copy(first),
+  candidateInserted=copy(candidateRow),headNative=copy(candidateRow),headInserted=copy(candidateRow),raw}={}){
   let reads=0;const queries=[],client={async query(sql,values){queries.push({sql,values});
     if(sql.includes(':transaction */'))return {rowCount:1,rows:[{transaction_id:transactions[Math.min(reads++,transactions.length-1)]}]};
-    return raw??{rowCount:1,rows:[sql.includes(':first-insert */')?firstInserted:sql.includes(':first-native */')?firstNative:
+    return raw??{rowCount:1,rows:[sql.includes(':candidate-insert */')?candidateInserted:sql.includes(':head-native */')?headNative:
+      sql.includes(':head-insert */')?headInserted:sql.includes(':candidate-native */')?firstNative:
+      sql.includes(':first-insert */')?firstInserted:sql.includes(':first-native */')?firstNative:
       sql.includes(':insert */')?inserted:native]};}},input={client,claim,scope,actorUserId:id(5)};
   return {repo:create(input),input,queries};
 }
@@ -27,6 +31,44 @@ test('actual native parent is scoped and frozen; INSERT derives it again without
   for(const q of queries.filter(q=>!q.sql.includes(':transaction */'))){assert.deepEqual(q.values,expected);
     assert.match(q.sql,/p\.issued_claim_token=\$7::uuid AND p\.issued_attempts=\$8::integer/);assert.doesNotMatch(q.sql,/ON CONFLICT|jsonb_populate_record|VALUES\s*\(/i);}
   assert.equal(queries.filter(q=>q.sql.includes(':insert */')).length,1);
+});
+
+test('source candidate reference is representation only; row and head retain the same scoped native transaction without caller row or head',async()=>{
+  const {repo,queries}=fixture();assert.deepEqual(await repo.insertActualFirstSourceCandidate(ref(4)),candidateRow);
+  assert.deepEqual(await repo.insertActualFirstSourceHead(),candidateRow);
+  const writes=queries.filter(q=>/:(candidate|head)-insert \*\//.test(q.sql));assert.equal(writes.length,2);
+  assert.deepEqual(writes[0].values.slice(0,8),[id(1),id(3),id(4),'7','SUBJECT',id(5),id(2),5]);
+  assert.deepEqual(JSON.parse(writes[0].values[8]),ref(4));
+  assert.equal(writes[1].values.length,8);
+  for(const q of writes){assert.match(q.sql,/to_jsonb\(saved\)=to_jsonb\(b\)/);assert.match(q.sql,/p\.issued_claim_token=\$7::uuid AND p\.issued_attempts=\$8::integer/);
+    assert.doesNotMatch(q.sql,/ON CONFLICT|jsonb_populate_record|VALUES\s*\(/i);}
+  await assert.rejects(repo.insertActualFirstSourceCandidate(ref(4)),/invalid_input/);
+});
+
+test('source row and head refuse caller metadata, hostile references and missing row before SQL',async()=>{
+  const {repo,queries}=fixture();let touched=false;
+  const getter={content_sha256:'4'.repeat(64),get canonical_utf8_bytes(){touched=true;throw Error('getter');}};
+  for(const value of [getter,new Proxy(ref(4),{}),{...ref(4),source:'501'},{...ref(4),canonical_utf8_bytes:'12001'}])
+    await assert.rejects(repo.insertActualFirstSourceCandidate(value));
+  await assert.rejects(repo.insertActualFirstSourceCandidate(ref(4),{}));
+  await assert.rejects(repo.insertActualFirstSourceHead(),/candidate_row_required/);
+  assert.equal(touched,false);assert.equal(queries.length,0);
+});
+
+test('source row transaction loss or changed complete head binding refuses without adoption',async()=>{
+  for(const transactions of [['101','102'],['101','101','102']]){
+    const {repo,queries}=fixture({transactions});await assert.rejects(repo.insertActualFirstSourceCandidate(ref(4)),/caller_transaction_required/);
+    assert.ok(!queries.some(q=>q.sql.includes(':candidate-insert */')));
+  }
+  for(const mutate of [r=>r.operation_id=id(9),r=>r.organization_id=id(9),r=>r.sequence=2,
+    r=>r.issued_transaction_id='102',r=>r.candidate_reference=ref(5),r=>r.extra=true]){
+    const headNative=copy(candidateRow);mutate(headNative);const {repo,queries}=fixture({headNative});
+    await repo.insertActualFirstSourceCandidate(ref(4));await assert.rejects(repo.insertActualFirstSourceHead());
+    assert.ok(!queries.some(q=>q.sql.includes(':head-insert */')));
+  }
+  const changed=copy(candidateRow);changed.candidate_reference=ref(5);
+  const {repo}=fixture({headInserted:changed});await repo.insertActualFirstSourceCandidate(ref(4));
+  await assert.rejects(repo.insertActualFirstSourceHead(),/native_candidate_changed/);
 });
 test('autocommit or changing transaction refuses before any INSERT',async()=>{
   for(const transactions of [['101','102'],['101','101','102']]){

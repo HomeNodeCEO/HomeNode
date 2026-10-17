@@ -330,7 +330,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({sourceR
   const initialCad=await cadState(),cadJob=await job();assert.equal(initialCad.sequence,0);assert.equal(await cadHead(),undefined);
   await assert.rejects(tx(pool,async client=>{
     await client.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);
-    await client.query('UPDATE app.neighborhood_custom_cohort_cad_success_v2_jobs SET consumed_claim_token=gen_random_uuid(),consumed_attempts=4 WHERE operation_id=$1',[operation]);
+    await client.query('UPDATE app.neighborhood_custom_cohort_cad_success_v2_jobs SET consumed_claim_token=gen_random_uuid(),consumed_attempts=$2 WHERE operation_id=$1',[operation,firstCad.attempts+1]);
   }),e=>e.code==='55000'&&/cad_success_v2_commit_conflict/.test(e.message));
   assert.deepEqual(await cadState(),initialCad);assert.deepEqual(await job(),cadJob);
   for(const [mode,reason] of [['cad_orphan',e=>e.outcome_unknown===true&&e.code==='55000'],

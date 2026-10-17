@@ -63,6 +63,12 @@ SELECT (SELECT account_id FROM chosen) AS account_id,(SELECT parcel_count::text 
     AND coalesce(sum(bytes+1),0)+2<=$6::integer AND coalesce(sum(2*coalesce(typed_bytes,0)+1024),0)+2<=$9::integer
     THEN coalesce('['||string_agg(encoded,',' ORDER BY kind COLLATE "C",row_key COLLATE "C")||']','[]') ELSE '[]' END AS page_json
 FROM sized`);
+// Independent golden account packet, bound to the actual job's subject rather
+// than a caller cursor. Every original/cache/row/byte constraint stays exact.
+const SUBJECT_ORIGINAL_SQL = ORIGINAL_ACCOUNT_SQL
+  .replace('/* neighborhood-stock-account-original-package-v2 */', '/* neighborhood-stock-subject-housing-original-package-v2 */')
+  .replace('account_id>$4::text COLLATE "C" ORDER BY account_id LIMIT 1',
+    'account_id=(SELECT job.account_id FROM app.neighborhood_custom_cohort_capture_jobs job WHERE job.operation_id=$1::uuid AND job.account_id=$4::text) LIMIT 1');
 
 function validateShapes(calls, { actorUserId, organizationId, assignmentFileId, originals }) {
   let actors = 0, sections = 0;
@@ -84,6 +90,11 @@ function validateShapes(calls, { actorUserId, organizationId, assignmentFileId, 
         && afterAccount === afterAccount.trim() && !/[\u0000-\u001f\u007f]/.test(afterAccount), 'bounded original account cursor only');
       assert.deepEqual(values, [originals.operationId, originals.generationId, originals.profileSha256, afterAccount,
         250, 8_000_000, 2_100_000, 1_000_000, 2_100_000], 'exact original stock, generation, profile and existing row/byte caps only');
+    } else if (sql === SUBJECT_ORIGINAL_SQL) {
+      assert.ok(originals && typeof originals.subjectAccountId === 'string' && originals.subjectAccountId.length > 0,
+        'subject original packet requires the actual retained job subject');
+      assert.deepEqual(values, [originals.operationId, originals.generationId, originals.profileSha256, originals.subjectAccountId,
+        250, 8_000_000, 2_100_000, 1_000_000, 2_100_000], 'exact subject stock, generation, profile and existing row/byte caps only');
     } else {
       assert.fail(`unexpected catalog aggregate SQL: ${sql.slice(0, 180)}`);
     }

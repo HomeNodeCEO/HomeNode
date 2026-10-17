@@ -4725,7 +4725,7 @@ for(const selectionWaitFixture of [false,true,'union','union-empty','union-initi
       assertBoundedCohortAuthorityAggregates(refsCalls.slice(waitFrom).map((text,index)=>({text,values:refsQueryParameters[waitFrom+index]})),
         {actorUserId:actor,organizationId:organization,assignmentFileId:assignment,
           originals:{operationId:refsOperation,generationId:refsBinding.generation_id,
-            profileSha256:getNeighborhoodFrozenTypedOriginalV2Profile().profile_ref.content_sha256}});
+            profileSha256:getNeighborhoodFrozenTypedOriginalV2Profile().profile_ref.content_sha256,subjectAccountId:refsInput.accountId}});
       console.info('[native-issued-catalog-selection-wait-v2]',{independently_built_native_graph:true,
         boundary_scope:'initial_wait_boundary_before_any_new_study_command',
         fresh_terminal_whole_original_cache_and_partition_empty_probe:true,current_authority_and_workspace_prior_head_fenced_both_ends:true,

@@ -1,3 +1,15 @@
+## Subject whole-original aggregate assertion (2026-10-17, fresh native validation pending)
+
+The integrated subject-housing head passed its migration checks and failed one
+prepared case because the aggregate guard had no golden SQL for the new subject
+packet. The guard now compares its entire SQL against an independent fixed
+shape and requires the actual job subject, operation, generation, profile and all
+existing row/byte caps. Negative checks reject foreign subjects, wider caps,
+removed job/account predicates, extra accounts and population aggregates.
+Both ending actor and subject reads remain mandatory for delivery. Runtime,
+source permissions, original reconciliation and request budgets are unchanged.
+The failed head is not rerun; the new exact head requires full cloud validation.
+
 ## Initial9 native assertion correction (2026-10-17, fresh full validation pending)
 
 Exact head 7354 passed 417 migrations, subject and account-quality checks, then

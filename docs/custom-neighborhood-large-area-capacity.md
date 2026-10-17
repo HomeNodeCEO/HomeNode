@@ -35,6 +35,13 @@ economic resolution/publication, terminal pin transfer/retirement and coherent
 activation remain unfinished. No worker/route/registry activation, licensed
 large-area acceptance or production speed proof is claimed.
 
+The existing structural checks now follow the additional dedicated recovered
+checkpoint selector at the ending read and recognize the sixteenth SQL export.
+Every earlier SQL byte expectation and the full original/fence/write ordering
+checks remain. All 24 affected checks pass serially in 1415.8597 ms with zero
+failures, cancellations or skips. These assertion corrections change no runtime,
+SQL, native migration, original query, budget or deadline.
+
 ## Final normal source recovery claim (2026-10-17, unregistered; native validation pending)
 
 Unregistered `20261229_custom_cohort_source_final_recovery_claim_v3.sql` and a

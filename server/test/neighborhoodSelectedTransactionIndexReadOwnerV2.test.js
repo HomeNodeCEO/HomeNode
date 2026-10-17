@@ -45,7 +45,7 @@ test('every retained field, complete native package set and full ending checkpoi
     keys=capture.indexOf('ordered(selectedTransactionNativeKeys.native_packages)',numeric),
     ending=capture.indexOf('const ending=await createCustomCohortV2SelectionIntentRepository(client)',keys),
     heads=capture.indexOf('!same(await semanticStore.read(),semanticAnchor)',ending),
-    checkpoint=capture.indexOf("!same(await jobs[ownedCompletedIndexFirstSource?'readOwnedFirstSourceBirthCheckpoint':'readTransactionIndexCheckpoint'](claim,jobOptions),checkpoint)",heads),
+    checkpoint=capture.indexOf("!same(await jobs[recoveredOwnedFirstSource?'readRecoveredFirstSourceBirthCheckpoint':ownedCompletedIndexFirstSource?'readOwnedFirstSourceBirthCheckpoint':'readTransactionIndexCheckpoint'](claim,jobOptions),checkpoint)",heads),
     plan=capture.indexOf("!same(await selectedTransactionIndexStore[readingCompletedIndexFirstSource?'readFirstAccount':'readNext'](),selectedTransactionIndexPacket)",checkpoint),
     result=capture.indexOf("status:'current_authorized_native_next_selected_transaction_index_originals_reconciled'",plan),
     returned=capture.indexOf('return freeze(result)',result),writes=capture.indexOf('await blobs.put(canonicalAssessmentJson(afterSummary))',returned);

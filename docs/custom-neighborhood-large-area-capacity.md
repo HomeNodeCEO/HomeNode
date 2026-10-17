@@ -24,10 +24,17 @@ The existing independent A-first and B-after-empty-A captures additionally
 observe real job18 UPDATE, forged-root/shape and other job-field refusals,
 unchanged retained17 snapshot and birth-reader refusal after18, all seven
 ending faults, real rejected COMMIT, fresh same-claim reopen and complete
-rollback. Their full current-head cloud execution is pending. Focused writer15
-and owner/resolution17 checks pass (164.9543 and 1504.8973 ms, zero failures,
-cancellations or skips); five syntax checks and diff check pass. Earlier970
-parent proof is separate. Atomic yield, fresh18 recovery, NEXT/fresh EMPTY,
+rollback. Initial head1c72 failed both A/B probes at the unchanged256 aggregate
+query ceiling (prefix20 pass,2 fail; the full prepared suite did not execute).
+The correction uses the actual native head read as its first transaction
+observation and combines checkpoint derivation/update/actual TX return in one
+statement with a native immutable birth-TX WHERE fence. It removes seven
+redundant protocol queries from that failed path, preserving every original,
+native binding, authority read and256-query/32MB/60s limit. The complete old job
+tuple is still compared by both native guards. Fresh focused writer17 checks
+pass (123.402 ms, zero failures/cancellations/skips); changed syntax and diff
+checks pass. Corrected-head full cloud execution is pending; earlier970 and
+the failed1c72 head do not prove it. Atomic yield, fresh18 recovery, NEXT/fresh EMPTY,
 independent legacy-only native acceptance and activation remain unfinished;
 licensed large-area and production-speed acceptance are not established.
 

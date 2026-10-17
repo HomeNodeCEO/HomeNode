@@ -43,7 +43,7 @@ export async function observeNeighborhoodFirstSourceCheckpointBeforeSaveV3({raw,
 }
 
 export async function observeNeighborhoodFirstSourceCheckpointAfterSaveV3({raw,result,scope,before}){
-  assert.equal(result.rowCount,1);assert.deepEqual(result.rows[0],{checkpoint:before.expected});
+  assert.equal(result.rowCount,1);assert.deepEqual(result.rows[0],{checkpoint:before.expected,transaction_id:before.parent.issued_transaction_id});
   const op=before.actual.operation_id,current=(await raw.query(`SELECT * FROM ${jobs} WHERE operation_id=$1`,[op])).rows[0];
   assert.deepEqual({...current,checkpoint:before.actual.checkpoint,updated_at:before.actual.updated_at},before.actual);
   assert.deepEqual((await raw.query(`SELECT * FROM ${parents} WHERE operation_id=$1`,[op])).rows,[before.parent]);

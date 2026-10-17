@@ -84,24 +84,27 @@ export function createCustomCohortSubjectRepository(client, scopeJson) {
   const sameScope = target => {
     if (!SCOPE_KEYS.every(key => target?.[key] === scope[key])) fail('target_mismatch');
   };
-  const readCurrent = async () => {
+  const readCurrent = async (shared = false) => {
       // A checked-out client alone does not prove the caller began a transaction.
       // Two real statements must observe the same server transaction; implicit
       // autocommit would otherwise release every fence before the next read.
       const transactionState = one(await query(`/* custom-cohort-subject:transaction */
         SELECT txid_current()::text AS transaction_id,
-          current_setting('transaction_isolation') AS transaction_isolation`));
-      // Parent locks fence later inserts; they cannot refresh an already-held
+          current_setting('transaction_isolation') AS transaction_isolation${shared
+          ? ',app.custom_cohort_subject_shared_fences_v1_ready() AS shared_read_fences_ready' : ''}`));
+      if (shared && transactionState.shared_read_fences_ready !== true) fail('shared_read_fences_unavailable');
+      // Parent locks and native write guards fence later inserts; they cannot
+      // refresh an already-held
       // REPEATABLE READ / SERIALIZABLE snapshot that predates an inserted row.
       if (transactionState.transaction_isolation !== 'read committed') fail('read_committed_transaction_required');
       const transaction = transactionState.transaction_id;
       if (typeof transaction !== 'string' || transaction.length > 20 || !/^[1-9][0-9]*$/.test(transaction)) fail('caller_transaction_required');
       const assignment = one(await query(`/* custom-cohort-subject:assignment */ SELECT id::text, txid_current()::text AS transaction_id FROM app.assignment_files
-        WHERE organization_id=$1 AND id=$2::bigint AND account_id=$3 FOR UPDATE NOWAIT`,
+        WHERE organization_id=$1 AND id=$2::bigint AND account_id=$3 FOR ${shared ? 'SHARE' : 'UPDATE'} NOWAIT`,
       [scope.organization_id, scope.assignment_file_id, scope.account_id]));
       if (assignment.transaction_id !== transaction) fail('caller_transaction_required');
       const workfile = one(await query(`/* custom-cohort-subject:workfile */ SELECT status, signed_at::text
-        FROM app.custom_appraisal_workfiles WHERE assignment_file_id=$1::bigint FOR UPDATE NOWAIT`, [scope.assignment_file_id]));
+        FROM app.custom_appraisal_workfiles WHERE assignment_file_id=$1::bigint FOR ${shared ? 'SHARE' : 'UPDATE'} NOWAIT`, [scope.assignment_file_id]));
       if (workfile.status !== 'draft' || workfile.signed_at !== null) fail('protected_workfile');
       if (one(await query(`/* custom-cohort-subject:signature */ SELECT EXISTS(SELECT 1 FROM app.custom_appraisal_signed_snapshots
         WHERE assignment_file_id=$1::bigint) AS present`, [scope.assignment_file_id])).present !== false) fail('protected_workfile');
@@ -172,6 +175,20 @@ export function createCustomCohortSubjectRepository(client, scopeJson) {
           canonicalAssessmentJson(material) !== canonicalAssessmentJson(prepared.material)) fail('evidence_mismatch');
       return { ...body, original_snapshot: originalSnapshot, original_sections: originalSections, snapshot, material };
   };
+  const compareCurrent = async (ref, shared) => {
+      // Reopen every actual current and retained input in the same bounded
+      // transaction. Shared reads require the native phantom-write guards;
+      // capture and the existing comparison keep their exclusive parents.
+      const current = await readCurrent(shared);
+      const original = await loadRetained(ref);
+      const changes = [];
+      if (['appraisal_case_id', 'subject_snapshot_id', 'snapshot_version'].some(key => current.target[key] !== original.target[key])) changes.push('snapshot_identity');
+      if (current.effectiveDate !== original.effective_date) changes.push('effective_date');
+      if (canonicalAssessmentJson(current.prepared.snapshot) !== canonicalAssessmentJson(original.snapshot)) changes.push('snapshot_evidence');
+      if (canonicalAssessmentJson(current.prepared.material) !== canonicalAssessmentJson(original.material)) changes.push('material_inputs');
+      return Object.freeze({ status: changes.length ? 'changed' : 'matched', authority: 'not_established',
+        changed_inputs: Object.freeze(changes) });
+  };
   return Object.freeze({
     async capture() {
       const current = await readCurrent();
@@ -199,22 +216,11 @@ export function createCustomCohortSubjectRepository(client, scopeJson) {
       return representCustomCohortSubjectPoint(await loadRetained(ref));
     },
     async compareCurrent(ref) {
-      // Actual fresh scoped rows under the SAME fences as capture, not an
-      // editor-revision comparison or a callback asserting "still current".
-      // No persistence occurs: unrelated note/output saves must not generate
-      // new evidence or invalidate the selected material projection.
-      const current = await readCurrent();
-      const original = await loadRetained(ref);
-      const changes = [];
-      if (['appraisal_case_id', 'subject_snapshot_id', 'snapshot_version'].some(key => current.target[key] !== original.target[key])) changes.push('snapshot_identity');
-      if (current.effectiveDate !== original.effective_date) changes.push('effective_date');
-      if (canonicalAssessmentJson(current.prepared.snapshot) !== canonicalAssessmentJson(original.snapshot)) changes.push('snapshot_evidence');
-      if (canonicalAssessmentJson(current.prepared.material) !== canonicalAssessmentJson(original.material)) changes.push('material_inputs');
-      // Equality of inputs alone grants neither permission nor source/fact
-      // eligibility. Caller must keep the fences through its actual operation
-      // and separately prove current authority/context/study/generation.
-      return Object.freeze({ status: changes.length ? 'changed' : 'matched', authority: 'not_established',
-        changed_inputs: Object.freeze(changes) });
+      return compareCurrent(ref, false);
+    },
+    async compareCurrentReadOnly(...args) {
+      if (args.length !== 1) fail('invalid_shape');
+      return compareCurrent(args[0], true);
     },
   });
 }

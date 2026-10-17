@@ -36,6 +36,25 @@ test('history uses original snapshot and original section rows after live pointe
   assert.notEqual(next.content_sha256, ref.content_sha256);
   assert.deepEqual(await repo.load(ref), original);
 });
+
+test('separate read-only comparison retains whole current inputs with compatible fences only after native rollout guards', async () => {
+  const {state,repo}=fixture(),ref=await repo.capture(),expected=await repo.compareCurrent(ref),before=state.db.size;
+  state.calls.length=0;
+  assert.deepEqual(await repo.compareCurrentReadOnly(ref),expected);
+  const parents=state.calls.filter(c=>['assignment','workfile'].includes(c.tag));
+  assert.equal(parents.length,2);assert.ok(parents.every(c=>/FOR SHARE NOWAIT/.test(c.sql)));
+  assert.match(state.calls[0].sql,/custom_cohort_subject_shared_fences_v1_ready/);
+  assert.ok(state.calls.some(c=>c.tag==='section-fence')&&state.calls.some(c=>c.tag==='sections'));
+  assert.equal(state.db.size,before);
+  setSection(state.input,1,'{"main_improvement":{"living_area_sqft":5000}}');
+  assert.deepEqual(await repo.compareCurrentReadOnly(ref),await repo.compareCurrent(ref));
+  state.calls.length=0;state.sharedReadFencesReady=false;
+  await assert.rejects(repo.compareCurrentReadOnly(ref),/shared_read_fences_unavailable/);
+  assert.deepEqual(state.calls.map(c=>c.tag),['transaction']);
+  state.calls.length=0;
+  await assert.rejects(repo.compareCurrentReadOnly(ref,{shared:true}),/invalid_shape/);
+  assert.equal(state.calls.length,0);
+});
 test('retention needs an existing editable exact target, but history needs no draft lifecycle', async () => {
   for (const missing of ['assignment', 'workfile', 'report', 'case', 'snapshot']) {
     const { state, repo } = fixture(); state.missing = missing;

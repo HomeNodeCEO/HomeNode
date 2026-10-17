@@ -4,6 +4,13 @@ Read-only closing assignment fences now request `FOR SHARE NOWAIT`, retaining
 the assignment through delivery while allowing overlapping viewport, catalog
 and member readers. Write permissions retain `FOR UPDATE NOWAIT`. Every
 current and ending assignment/subject/source-policy check is unchanged.
+The separate whole-subject read-only comparison uses shared assignment and
+workfile locks only after native material INSERT/UPDATE and signature INSERT
+guards are installed and enabled. Those guards acquire the actual assignment
+parent exclusively, retaining protection against new rows and incoming section
+key moves. Capture and the existing write comparison keep exclusive parents.
+The additive registered migration precedes runtime activation; a missing native
+readiness function or either disabled/mismatched trigger refuses the shared read.
 The raw viewport loader returns to its prior two-request ceiling; its separate
 checked-port owner remains one lane. The complete-map, per-response, caller
 signal, deadline and settlement limits are unchanged.
@@ -11,11 +18,20 @@ signal, deadline and settlement limits are unchanged.
 The new native fixture holds an actual viewport assignment fence open while
 another complete viewport, prepared catalog and member page finish. It also
 requires a genuine assignment UPDATE to fail while the shared read is held,
-and the reverse-order writer lock to refuse viewport delivery immediately.
+and absent material/signature INSERTs to fail. The identical schema-valid
+INSERTs must succeed after release inside a fully rolled-back control, without
+creating a signature or establishing an appraiser signing choice. The reverse
+writer lock must also refuse viewport delivery immediately.
 After rollback, the identical viewport must reopen with every assignment,
 report, subject, workfile, manual/workspace section and original blob unchanged.
 Only small serial checks have run locally; actual cloud native/full-suite,
 review, deployment and saved Hardy speed measurements remain required.
+Before merging this rollout, pause frontend automatic deployment under the
+verified service owner. After fresh exact-main checks, deploy/migrate the API,
+verify the native shared-read guards and readiness, then deploy the matching
+frontend to enable two tiles. Restore the prior automatic-deployment setting
+after coherent activation. Never enable two tiles against the old exclusive
+subject reader during the release interval.
 No large-area capacity or production-speed acceptance is established.
 
 ## Initial9 native assertion correction (2026-10-17, fresh full validation pending)

@@ -22,8 +22,8 @@ security and suite results and genuine included review before merge.
 
 ## Initial9 recovery current-request correction (2026-10-17, native validation pending)
 
-The exact6e native run passed417 migration checks, subject and account quality,
-then failed three of15 prepared checks. Both live union graphs refused before
+The exact 6e native run passed 417 migration checks, subject and account quality,
+then failed three of 15 prepared checks. Both live union graphs refused before
 their actual rollback probes; the separate expired initial9 graph returned no
 recovery claim. The new structural predicate incorrectly required the feature
 branch's future `execution_mode` request field. The protected request grammar

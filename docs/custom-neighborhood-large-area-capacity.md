@@ -30,7 +30,15 @@ forged whole-birth/root/token/attempt/TX refusal; preservation of all remaining
 job fields and immutable native parents; generic claim/free recovery refusal;
 all seven ending faults; real rejected COMMIT and fresh same-claim repeat with
 every provisional row AND blob rolled back. These are authored native probes,
-not execution proof. The 21 writer protocol checks and17 changed original-owner
+not execution proof. Initial head5b2fa reached the actual atomic handoff UPDATE
+in both independent prefix captures, then its forged fresh-claim negative
+probe failed because the unchanged earlier continuation trigger correctly
+raised `neighborhood_v2_continuation_job_conflict`. The corrected probe requires
+that exact existing refusal for this transition, keeps the source refusals
+strict for every other mutation and compares the complete job, handoff and
+continuation after each probe. No production guard or SQL is changed. That
+failed head is not rerun; corrected-head full cloud execution is required.
+The 21 writer protocol checks and17 changed original-owner
 checks pass (187.2083 and1516.7122 ms, zero failures/cancellations/skips); syntax
 and diff checks pass. New-head full cloud execution is required.
 
@@ -74,8 +82,12 @@ redundant protocol queries from that failed path, preserving every original,
 native binding, authority read and256-query/32MB/60s limit. The complete old job
 tuple is still compared by both native guards. Fresh focused writer17 checks
 pass (123.402 ms, zero failures/cancellations/skips); changed syntax and diff
-checks pass. Corrected-head full cloud execution is pending; earlier970 and
-the failed1c72 head do not prove it. Atomic yield, fresh18 recovery, NEXT/fresh EMPTY,
+checks pass. Corrected headf893 now passes all native suites:417 migrations,
+one subject, two account-quality,22 prefix,42 full prepared, one edge and two
+bootstrap checks, with zero failures/cancellations/skips. Both independent
+A-first and B-after-empty-A actual17-to18 markers occur in both the prefix and
+full prepared suites (full log6330706 characters; prepared1959206.599726 ms).
+This is provisional checkpoint proof only. Atomic yield, fresh18 recovery, NEXT/fresh EMPTY,
 independent legacy-only native acceptance and activation remain unfinished;
 licensed large-area and production-speed acceptance are not established.
 

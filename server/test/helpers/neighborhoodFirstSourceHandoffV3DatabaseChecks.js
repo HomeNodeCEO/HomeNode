@@ -37,7 +37,8 @@ export async function observeNeighborhoodFirstSourceHandoffAfterSaveV3({raw,resu
   assert.equal(result.rowCount,1);assert.deepEqual(result.rows,[{checkpoint:before.expected,status:'retry',claim_token:null,lease_expires_at:null,
     attempts:before.actual.attempts,sequence:1,issued_claim_token:before.actual.claim_token,issued_attempts:before.actual.attempts,transaction_id:id}]);
   const current=(await raw.query(`SELECT * FROM ${jobs} WHERE operation_id=$1`,[op])).rows[0],
-    handoff=(await raw.query(`SELECT * FROM ${handoffs} WHERE operation_id=$1`,[op])).rows[0];
+    handoff=(await raw.query(`SELECT * FROM ${handoffs} WHERE operation_id=$1`,[op])).rows[0],
+    continuation=(await raw.query('SELECT * FROM app.neighborhood_custom_cohort_v2_continuations WHERE operation_id=$1',[op])).rows;
   assert.deepEqual(handoff,{operation_id:op,organization_id:scope.organization_id,sequence:1,birth_job:before.birthJob,
     checkpoint:before.expected,issued_claim_token:before.actual.claim_token,issued_attempts:before.actual.attempts,issued_transaction_id:id});
   const retained=row=>Object.fromEntries(Object.entries(row).filter(([key])=>!['checkpoint','status','claim_token','lease_expires_at','run_after','updated_at'].includes(key)));
@@ -51,10 +52,22 @@ export async function observeNeighborhoodFirstSourceHandoffAfterSaveV3({raw,resu
   assert.equal((await raw.query('SELECT * FROM app.neighborhood_source_resolution_v3_native_parent($1,$2)',[op,scope.organization_id])).rowCount,0);
   assert.deepEqual(await createCustomCohortCaptureJobRepository(raw).claimDue({limit:1,leaseSeconds:120}),[]);
   assert.deepEqual(await createCustomCohortV2ContinuationRepository(raw).claimDue({limit:1,leaseSeconds:120}),[]);
-  for(const set of ["checkpoint=checkpoint","status='running',claim_token=gen_random_uuid(),lease_expires_at=clock_timestamp()+interval '120 seconds'",
-    'attempts=attempts+1',"last_error_code='reset'","run_after=clock_timestamp()+interval '1 hour'",
-    "checkpoint=jsonb_set(checkpoint,'{phase}','\"frozen_selected_transaction_index_refs_v2\"')"])
-    await refuse(raw,`UPDATE ${jobs} SET ${set} WHERE operation_id=$1`,[op],/actual_checkpoint_transition_required|provisional_checkpoint_immutable/);
+  const checkpointRefusal=/actual_checkpoint_transition_required|provisional_checkpoint_immutable/;
+  for(const [set,reason] of [
+    ['checkpoint=checkpoint',checkpointRefusal],
+    // The existing continuation trigger runs first for retry -> running at the
+    // same attempt. Its exact consumed-token refusal is required too; do not
+    // disable it or require a later source guard to be the first failure.
+    ["status='running',claim_token=gen_random_uuid(),lease_expires_at=clock_timestamp()+interval '120 seconds'",
+      /neighborhood_v2_continuation_job_conflict/],
+    ['attempts=attempts+1',checkpointRefusal],["last_error_code='reset'",checkpointRefusal],
+    ["run_after=clock_timestamp()+interval '1 hour'",checkpointRefusal],
+    ["checkpoint=jsonb_set(checkpoint,'{phase}','\"frozen_selected_transaction_index_refs_v2\"')",checkpointRefusal]]){
+    await refuse(raw,`UPDATE ${jobs} SET ${set} WHERE operation_id=$1`,[op],reason);
+    assert.deepEqual((await raw.query(`SELECT * FROM ${jobs} WHERE operation_id=$1`,[op])).rows,[current]);
+    assert.deepEqual((await raw.query(`SELECT * FROM ${handoffs} WHERE operation_id=$1`,[op])).rows,[handoff]);
+    assert.deepEqual((await raw.query('SELECT * FROM app.neighborhood_custom_cohort_v2_continuations WHERE operation_id=$1',[op])).rows,continuation);
+  }
   for(const sql of [`UPDATE ${handoffs} SET issued_attempts=issued_attempts WHERE operation_id=$1`,
     `DELETE FROM ${handoffs} WHERE operation_id=$1`])await refuse(raw,sql,[op],/handoff_immutable/);
   await refuse(raw,`TRUNCATE ${handoffs}`,[],/immutable/);

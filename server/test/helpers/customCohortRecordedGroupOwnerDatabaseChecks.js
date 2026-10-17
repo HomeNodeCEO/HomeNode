@@ -149,7 +149,8 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, sc
     revokeNextMembershipInsert: () => { revokeAtMembershipInsert = true; },
     revokeNextRead: () => { revokeAtCatalogRead = true; },
   })).checks);
-  assert.equal((await owner.readRecordedGroupSelection(read)).status, 'absent');
+  const absentSelection = await owner.readRecordedGroupSelection(read);
+  assert.equal(absentSelection.status, 'absent');
   let entered, release;
   const holding = new Promise(resolve => { entered = resolve; });
   const released = new Promise(resolve => { release = resolve; });
@@ -162,16 +163,23 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, sc
     const heldSql = await Promise.race([holding, new Promise((_, reject) => {
       gateTimer = setTimeout(() => reject(new Error('native reader did not hold workfile')), 3000);
     })]);
-    assert.match(heldSql, /FOR UPDATE NOWAIT/);
+    assert.match(heldSql, /FOR SHARE NOWAIT/);
     const competitorFrom = calls.length;
-    await assert.rejects(owner.readRecordedGroupSelection(read), error => error.code === '55P03');
-    assert.ok(!calls.slice(competitorFrom).some(sql => /custom-cohort-subject:assignment|prepared-catalog:read|group-selection:head/.test(sql)),
-      'competing reader must refuse at the first parent lock, before subject-lock upgrade or cached facts');
-  } finally { clearTimeout(gateTimer); pauseAtWorkfile = null; release(); }
-  assert.equal((await firstRead).status, 'absent', 'first native reader must complete after the competing reader refuses');
+    assert.deepEqual(await owner.readRecordedGroupSelection(read), absentSelection,
+      'another complete native read must finish while the first shared workfile fence remains held');
+    const competitorCalls = calls.slice(competitorFrom);
+    assert.ok(competitorCalls.some(sql => sql.includes('custom-cohort-subject:assignment')));
+    assert.ok(competitorCalls.some(sql => sql.includes('custom-cohort-group-selection:head */')));
+    const writerFrom = calls.length;
+    await assert.rejects(owner.selectRecordedGroups({ ...read, operationId:randomUUID(), expectedSelectionRef:null,
+      includedRecordedGroupIds:ids }), error => error.code === '55P03');
+    assert.ok(!calls.slice(writerFrom).some(sql => /custom-cohort-subject:assignment|group-selection:head-(insert|update)/.test(sql)),
+      'a selection writer must still refuse at its exclusive parent fence before subject or selection writes');
+  } finally { clearTimeout(gateTimer); pauseAtWorkfile = null; release(); await firstRead.catch(() => {}); }
+  assert.deepEqual(await firstRead, absentSelection, 'first native reader completes with the identical result');
   assert.equal((await owner.readRecordedGroupSelection(read)).status, 'absent', 'a later normal read succeeds after the lock is released');
   assert.deepEqual(await protectedState(), before);
-  checks.push('actual concurrent owner reads serialize at the first workfile UPDATE NOWAIT lock; the loser refuses before facts and the original reader completes without a SHARE-to-UPDATE upgrade');
+  checks.push('actual complete selection readers share the workfile fence; an exclusive selection writer refuses before facts or writes, and both readers preserve the identical result');
   const select = { ...read, operationId: randomUUID(), expectedSelectionRef: null, includedRecordedGroupIds: ids };
   const from = calls.length;
   const first = await owner.selectRecordedGroups(select);

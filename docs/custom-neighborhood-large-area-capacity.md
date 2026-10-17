@@ -120,6 +120,12 @@ It performs the actual original read before expiry, requires the ending claim
 refusal within the unchanged query/owner budgets, then checks expired reclaim,
 renewal, replay and cancellation cleanup. Every previous graph assertion still
 runs; existing deadlines, source grants and native parents are unchanged.
+The lifetime test first requires a successful fresh read-only replay with all
+both-end actor/subject aggregate checks and full tuple preservation. Its later
+expiry call must refuse at the live-claim fence before delivery; it cannot be
+required to execute outer ending-role reads after that refusal. Every aggregate
+and parameter shape in both calls remains checked, and the refused call retains
+its own current actor/subject, actual original I/O and query-ceiling assertions.
 Fresh exact-head native/full-suite proof and actual included review are pending.
 
 Corrected implementation `d498ab57` passes 46 focused repository/worker checks,

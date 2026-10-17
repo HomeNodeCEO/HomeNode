@@ -4248,6 +4248,17 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
         await assertResumedUnchanged();
         intentLifetime={pool,cleanup:removeSyntheticTargetWorkspace,async run(){
           await assertResumedUnchanged();
+          const lifetimeFrom=refsCalls.length,refreshed=await freshRefsOwner()[intentMethod](refsInput,intentOptions),
+            successfulCalls=refsCalls.slice(lifetimeFrom);
+          assert.equal(refreshed.replayed,true);assert.deepEqual(refreshed.claim,replayed.claim);
+          assert.deepEqual(refreshed.included_recorded_group_ids,selectionIntent.included_recorded_group_ids);
+          assert.equal(successfulCalls.filter(sql=>sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,1);
+          assert.ok(!successfulCalls.some(sql=>sql.includes('selection-intent:insert')||sql.includes('selection-intent:resume')));
+          assertBoundedCohortAuthorityAggregates(successfulCalls.map((text,index)=>({text,values:refsQueryParameters[lifetimeFrom+index]})),
+            {actorUserId:actor,organizationId:organization,assignmentFileId:assignment,
+              originals:{operationId:refsOperation,generationId:refsBinding.generation_id,
+                profileSha256:getNeighborhoodFrozenTypedOriginalV2Profile().profile_ref.content_sha256}});
+          await assertResumedUnchanged();
           const remaining=Number((await pool.query(`SELECT EXTRACT(EPOCH FROM
             (lease_expires_at-clock_timestamp()))*1000 AS ms
             FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1`,[refsOperation])).rows[0].ms);
@@ -4258,9 +4269,17 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
           refsFault='intent_claim_expired';const from=refsCalls.length;
           await assert.rejects(freshRefsOwner()[intentMethod](refsInput,intentOptions),/claim_lost/);
           assert.equal(refsFault,null);
-          assert.equal(refsCalls.slice(from).filter(sql=>sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,1);
-          assert.ok(!refsCalls.slice(from).some(sql=>sql.includes('selection-intent:insert')||sql.includes('selection-intent:resume')));
-          assertBoundedCohortAuthorityAggregates(refsCalls.slice(from).map((text,index)=>({text,values:refsQueryParameters[from+index]})),
+          const expiredCalls=refsCalls.slice(from);
+          assert.equal(expiredCalls.filter(sql=>sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,1);
+          assert.equal(expiredCalls.filter(sql=>sql.includes('custom-cohort-job:current-actor')).length,1);
+          assert.ok(expiredCalls.some(sql=>sql.includes('custom-cohort-subject:sections')));
+          assert.ok(expiredCalls.length-3<=ORIGINAL_OWNER_LIMITS.sql_queries);
+          assert.ok(!expiredCalls.some(sql=>sql.includes('selection-intent:insert')||sql.includes('selection-intent:resume')));
+          // The successful call above MUST complete both-end role/subject
+          // checks before delivering facts. Actual expiry refuses earlier at
+          // the live-claim fence, so cannot deliver or reach those later reads.
+          // Still check EVERY aggregate/parameter shape in both actual calls.
+          assertBoundedCohortAuthorityAggregates(refsCalls.slice(lifetimeFrom).map((text,index)=>({text,values:refsQueryParameters[lifetimeFrom+index]})),
             {actorUserId:actor,organizationId:organization,assignmentFileId:assignment,
               originals:{operationId:refsOperation,generationId:refsBinding.generation_id,
                 profileSha256:getNeighborhoodFrozenTypedOriginalV2Profile().profile_ref.content_sha256}});
@@ -4277,6 +4296,7 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
             same_independently_built_native_graph_job_command_and_originals:true,
             no_lease_clock_attempt_parent_or_grant_rewrite:true,
             actual_original_query_precedes_real_expiry_and_ending_claim_refusal:true,
+            successful_live_replay_proves_all_both_end_authority_reads_before_expired_call_refuses_early_without_delivery:true,
             same_owner_query_byte_runtime_limits_and_existing_test_deadlines:true,
             generic_claim_sweep_direct_reclaim_failure_shortening_clearing_and_renewal_refused:true,
             expired_exact_replay_refused_and_scoped_cancellation_cleanup_verified:true,

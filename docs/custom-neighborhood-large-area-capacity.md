@@ -39,9 +39,35 @@ fault now requires the earlier protected initial-claim refusal and full rollback
 it does not bypass that guard or claim a later expiry result. Existing union
 original/ending-authority faults, real DML/orphan rollback, lost COMMIT ACK,
 A/B/fresh EMPTY, higher-attempt recovery after10 and cancellation probes remain.
-87 focused checks pass (1392.0931 ms, zero failures/cancellations/skips). Current
-integrated-head native/security/full cloud checks and genuine included review
-are still required; old2d265 small initial-stack proof is historical only.
+
+Actual integrated b04 cloud execution passed the 417 migrations and the two
+single-test prerequisite suites, then failed both new union captures (11 of 13
+prepared tests passed, no cancellations/skips). Their normal failure wrote retry
+at attempt2, but the generic scheduler correctly returned no replacement:
+protected admission excludes EVERY retained intent. That failed head is not
+rerun and its incomplete native result is not release proof.
+
+A separate inactive recovery repository now requires the actual native union
+head, exact ten-root checkpoint, original command/request and matching already
+consumed union continuation. It claims only a due normal failure or an actually
+expired claim, increments the existing attempt without clearing its error,
+and retires a naturally expired fifth attempt. Pending success continuations
+remain single-consume; initial nine-root intents remain ineligible. Generic
+admission, the protected initial-claim guard and all existing migrations are
+unchanged. Scheduling establishes no source or appraiser authority; the original
+bounded owner repeats every real original/cache/workspace/current/ending fence.
+
+Both independent new union fixtures now require generic admission to stay empty
+while two competing closed recovery calls admit one actual third attempt. A
+separate transaction on that same native progress performs normal failure,
+actual minimum 15-second lease expiry at attempts4 and5, terminal exhaustion
+and refusal of a sixth claim. Explicit PostgreSQL ROLLBACK must restore the
+entire original job tuple, continuation, union and blob state. No clock, lease,
+attempt, original, grant or test/owner deadline is rewritten. Four new focused
+boundary tests pass (143.3837 ms), and 52 related repository/receipt checks pass
+(541.3649 ms), all with zero failures/cancellations/skips. Fresh corrected-head native,
+security/full cloud checks and genuine included review are required; old2d265
+small initial-stack proof is historical only.
 
 The finite 8,000,004 success ceiling covers four fixed stock passes. No default
 worker, route, source grant, appraiser choice, Apply, publication, context

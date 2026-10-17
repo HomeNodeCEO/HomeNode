@@ -52,6 +52,8 @@ import { createCustomCohortRecordedCatalogV2Repository } from '../src/services/n
 import { prepareCohortRecordedCatalogReceiptV2 } from '../src/services/neighborhoodAssessment/cohortRecordedCatalogReceiptV2.js';
 import { createCustomCohortV2ContinuationRepository }
   from '../src/services/neighborhoodAssessment/customCohortV2ContinuationRepository.js';
+import { createCustomCohortSelectedUnionV2RecoveryRepository }
+  from '../src/services/neighborhoodAssessment/customCohortSelectedUnionV2RecoveryRepository.js';
 import { createCustomCohortV2SelectionWaitRepository }
   from '../src/services/neighborhoodAssessment/customCohortV2SelectionWaitRepository.js';
 import { runNeighborhoodSelectionWaitStatusValidationV2DatabaseChecks }
@@ -4418,6 +4420,9 @@ for(const selectionWaitFixture of [false,true,'union','union-empty','intent']) t
               assert.deepEqual(await readTargetReport(),targetReport);assert.deepEqual(await readTargetWorkfile(),targetWorkfile);
               assert.deepEqual(await readPriorTargetMetadata(),priorTargetMetadata);
             };
+          assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>
+            createCustomCohortSelectedUnionV2RecoveryRepository(client).claimDue({limit:1,leaseSeconds:900})),[]);
+          await unionUnchanged();
           let liveClaim=replayed.claim;
           const unionStepQueryCounts=[],step=async()=>{const from=refsCalls.length;
             try{return await freshRefsOwner()[method](refsInput,{captureJobClaim:liveClaim});}
@@ -4454,6 +4459,9 @@ for(const selectionWaitFixture of [false,true,'union','union-empty','intent']) t
           assert.equal(firstJob.checkpoint.phase,'frozen_selected_union_refs_v2');assert.equal(firstJob.checkpoint.evidence_refs.length,10);
           assert.equal(firstContinuation.issued_claim_token,originalResumeToken);
           assert.notEqual(catalogReadContinuation.consumed_claim_token,originalResumeToken,'exact native human bridge, not global token relaxation');
+          assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>
+            createCustomCohortSelectedUnionV2RecoveryRepository(client).claimDue({limit:1,leaseSeconds:900})),[]);
+          assert.deepEqual(await continuationJob(),firstJob);assert.deepEqual(await continuationRow(),firstContinuation);
           await assert.rejects(step(),/claim_lost/);assert.deepEqual(await readUnion(),firstState);
           const consume=async()=>{
             const claims=(await Promise.all([1,2].map(()=>withCustomCohortJobTransaction(pool,client=>
@@ -4470,10 +4478,45 @@ for(const selectionWaitFixture of [false,true,'union','union-empty','intent']) t
           await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client)
             .failClaim(liveClaim,'synthetic_union_worker_failure',{retrySeconds:1}));
           await assert.rejects(step(),/claim_lost/);await new Promise(resolve=>setTimeout(resolve,1100));
+          const failedUnionJob=await continuationJob();
+          assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>
+            createCustomCohortCaptureJobRepository(client).claimDue({limit:1,leaseSeconds:900})),[]);
+          assert.deepEqual(await continuationJob(),failedUnionJob,'generic admission still excludes every retained intent');
           const replacements=(await Promise.all([1,2].map(()=>withCustomCohortJobTransaction(pool,client=>
-            createCustomCohortCaptureJobRepository(client).claimDue({limit:1,leaseSeconds:900}))))).flat();
-          assert.equal(replacements.length,1);assert.equal(replacements[0].attempts,3);
-          liveClaim={operation_id:refsOperation,claim_token:replacements[0].claim_token,attempts:3};
+            createCustomCohortSelectedUnionV2RecoveryRepository(client).claimDue({limit:1,leaseSeconds:900}))))).flat();
+          assert.equal(replacements.length,1);assert.equal(replacements[0].claim.attempts,3);
+          assert.equal(replacements[0].authority,'not_established');assert.deepEqual(replacements[0].scope,scope);
+          liveClaim=replacements[0].claim;
+          // Real normal failure and two natural 15-second lease expiries, then
+          // explicit ROLLBACK. No clock, lease, attempts, roots or grant rewrite.
+          const fullJobSql='SELECT to_jsonb(job) AS value FROM app.neighborhood_custom_cohort_capture_jobs job WHERE operation_id=$1',
+            beforeRecoveryProbe=(await pool.query(fullJobSql,[refsOperation])).rows[0].value,
+            beforeRecoveryUnion=await readUnion(),beforeRecoveryContinuation=await continuationRow(),
+            beforeRecoveryBlobs=await refsBlobCount(),recoveryClient=await pool.connect();
+          try{
+            await recoveryClient.query('BEGIN');
+            const recovery=createCustomCohortSelectedUnionV2RecoveryRepository(recoveryClient),
+              jobs=createCustomCohortCaptureJobRepository(recoveryClient);
+            assert.deepEqual(await jobs.failClaim(liveClaim,'synthetic_union_recovery_probe',{retrySeconds:1}),{status:'retry'});
+            await new Promise(resolve=>setTimeout(resolve,1100));
+            const [fourth]=await recovery.claimDue({limit:1,leaseSeconds:15});assert.equal(fourth.claim.attempts,4);
+            await new Promise(resolve=>setTimeout(resolve,15_100));
+            const [fifth]=await recovery.claimDue({limit:1,leaseSeconds:15});assert.equal(fifth.claim.attempts,5);
+            assert.notEqual(fifth.claim.claim_token,fourth.claim.claim_token);
+            await new Promise(resolve=>setTimeout(resolve,15_100));
+            assert.deepEqual(await recovery.claimDue({limit:1,leaseSeconds:15}),[]);
+            const exhausted=(await recoveryClient.query(fullJobSql,[refsOperation])).rows[0].value;
+            assert.equal(exhausted.status,'failed');assert.equal(exhausted.attempts,5);
+            assert.equal(exhausted.last_error_code,'attempts_exhausted');assert.equal(exhausted.claim_token,null);
+            assert.equal(exhausted.lease_expires_at,null);assert.equal(exhausted.context_sha256,null);
+            assert.deepEqual(exhausted.checkpoint,beforeRecoveryProbe.checkpoint);
+            assert.deepEqual(await jobs.claimDue({limit:1,leaseSeconds:15}),[]);
+            assert.deepEqual(await recovery.claimDue({limit:1,leaseSeconds:15}),[]);
+            assert.deepEqual((await recoveryClient.query(fullJobSql,[refsOperation])).rows[0].value,exhausted);
+          }finally{await recoveryClient.query('ROLLBACK');recoveryClient.release();}
+          assert.deepEqual((await pool.query(fullJobSql,[refsOperation])).rows[0].value,beforeRecoveryProbe);
+          assert.deepEqual(await readUnion(),beforeRecoveryUnion);assert.deepEqual(await continuationRow(),beforeRecoveryContinuation);
+          assert.equal(await refsBlobCount(),beforeRecoveryBlobs);assert.deepEqual(await readIntents(),retainedIntents);
           await assert.rejects(freshRefsOwner()[method](refsInput,{captureJobClaim:staleUnionClaim}),/claim_lost/);
           await assert.rejects(freshRefsOwner()[intentMethod](refsInput,intentOptions),/checkpoint_changed|command_conflict/);
           const terminal=await step(),finalUnion=await readUnion(),finalJob=await continuationJob();
@@ -4521,6 +4564,8 @@ for(const selectionWaitFixture of [false,true,'union','union-empty','intent']) t
             one_combined_whole_original_full_labels_all_outside_parts_retained_date_states_entire_cache_partition_per_step:true,
             current_source_before_command_and_known_ID_lookup_all_ending_faults_and_real_DML_rollbacks:true,
             exact_human_resume_token_bridge_fresh_same_attempt_success_and_real_higher_attempt_reclaim:true,
+            generic_admission_unchanged_closed_native_union_recovery_only_after_consumed_progress:true,
+            actual_natural_lease_expiry_fifth_failure_ceiling_no_sixth_claim_and_full_tuple_ROLLBACK:true,
             lost_real_COMMIT_ack_next_native_ordinal_no_duplicate_or_recapture:true,
             first_nine_roots_and_intent_pins_workspace_history_reports_unchanged:true,
             maximum_whole_owner_sql_queries:Math.max(...unionStepQueryCounts),whole_owner_limits:ORIGINAL_OWNER_LIMITS,

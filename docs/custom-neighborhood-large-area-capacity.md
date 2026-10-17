@@ -1,3 +1,21 @@
+## Initial source failure native grant preservation (2026-10-17, inactive)
+
+The initial-one failure fixture now snapshots every membership-role field,
+including the original grant timestamp and granting user. After its real ending
+actor refusal, it verifies the entire job, empty failure ledger and every other
+protected row before structural failure bookkeeping. It restores the exact
+native role rows from their complete JSON values, verifies the inserted count,
+and requires the full immutable snapshot, including grant metadata, to match
+after the real failure COMMIT or lost acknowledgment. It no longer recreates a
+three-column grant with fresh default metadata.
+
+This changes isolated native validation only. All existing original reads,
+current and ending refusals, independent A/B graphs, earlier native parents,
+failure history, deferred events, aggregate budgets and deadlines remain.
+Fresh complete cloud/native validation is pending. Production grants, migration
+registration, worker activation, all-source cursor/EMPTY, economic publication,
+terminal pins, licensed capacity and live-speed acceptance are unchanged.
+
 ## Whole NEXT originals under actual third3 (2026-10-17, inactive)
 
 The closed third NEXT reader reopens the actual owned1/failure1/second2/

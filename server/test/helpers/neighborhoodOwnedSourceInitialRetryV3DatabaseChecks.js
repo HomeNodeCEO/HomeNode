@@ -52,6 +52,7 @@ export async function runNeighborhoodOwnedSourceInitialRetryV3DatabaseChecks({so
     report:(await pool.query('SELECT to_jsonb(r) AS body FROM app.report_files r WHERE id=$1',[scope.report_file_id])).rows,
     assignment:(await pool.query('SELECT to_jsonb(r) AS body FROM app.assignment_files r WHERE id=$1',[scope.assignment_file_id])).rows,
     private_workfile:(await pool.query('SELECT to_jsonb(r) AS body FROM app.custom_appraisal_workfiles r WHERE assignment_file_id=$1',[scope.assignment_file_id])).rows,
+    roles:(await pool.query('SELECT to_jsonb(r) AS body FROM app_auth.membership_roles r WHERE organization_id=$1 AND user_id=$2 ORDER BY role_code',[scope.organization_id,actor])).rows,
     source_grants:(await pool.query('SELECT to_jsonb(r) AS body FROM app_auth.organizations r WHERE id=$1',[scope.organization_id])).rows,
     subject_snapshot:(await pool.query(`SELECT to_jsonb(s) AS body FROM app.appraisal_subject_snapshots s
       JOIN app.report_files r ON r.subject_snapshot_id=s.id WHERE r.id=$1 AND r.organization_id=$2`,[scope.report_file_id,scope.organization_id])).rows,
@@ -92,11 +93,25 @@ export async function runNeighborhoodOwnedSourceInitialRetryV3DatabaseChecks({so
     [claim,{...scope,assignment_file_id:'8'}],[claim,{...scope,account_id:'OTHER'}]]){
     await assert.rejects(transaction(pool,c=>failInitial(c,badClaim,badScope,badActor)),/claim_lost/);await unchanged();
   }
+  // Restore the actual grant rows, including timestamp and granting actor.
+  // A new three-column INSERT would silently replace that native history.
+  const originalRoles=before.immutable.roles.map(r=>r.body);
+  assert.ok(originalRoles.length>0&&originalRoles.some(r=>r.role_code==='appraiser'));
+  assert.ok(originalRoles.every(r=>Object.hasOwn(r,'granted_at')&&Object.hasOwn(r,'granted_by_user_id')));
+  const restoreOriginalRoles=async()=>{
+    assert.equal((await pool.query('SELECT 1 FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',
+      [scope.organization_id,actor])).rowCount,0);
+    const restored=await pool.query(`INSERT INTO app_auth.membership_roles
+      SELECT * FROM jsonb_populate_recordset(NULL::app_auth.membership_roles,$1::jsonb)`,[JSON.stringify(originalRoles)]);
+    assert.equal(restored.rowCount,originalRoles.length);
+  };
   let originalCount=originalReads();setFault('union_role');
   try{
     await assert.rejects(service.readCoveredOriginalFrozenCaptureJobOwnedFirstSourceReferencesV3(input,{captureJobClaim:claim}),
       /custom_cohort_job_actor_access_revoked/);
-    assert.equal(readFault(),null);assert.equal(originalReads(),originalCount+1);await unchanged();
+    assert.equal(readFault(),null);assert.equal(originalReads(),originalCount+1);
+    assert.deepEqual(await job(),before.job);assert.deepEqual(await failureRows(),[]);
+    assert.deepEqual({...await immutable(),roles:before.immutable.roles},before.immutable);
     // The actual ending role is revoked. Structural retry bookkeeping may
     // close its already-owned failed claim; it cannot authorize another original read.
     assert.equal((await pool.query(`SELECT 1 FROM app_auth.membership_roles
@@ -113,7 +128,7 @@ export async function runNeighborhoodOwnedSourceInitialRetryV3DatabaseChecks({so
       e=>e.outcome_unknown===true&&/real_COMMIT_ack_lost/.test(e.message));assert.equal(actualCommit,true);}
     else assert.deepEqual(await transaction(ownerPool,c=>failInitial(c)),{status:'retry',attempts:1,failure_code:'access_revoked'});
     assert.equal(originalReads(),originalCount);
-  }finally{await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);}
+  }finally{await restoreOriginalRoles();}
   const durable=(await failureRows())[0].body,failed=await job();
   assert.deepEqual(durable.claimed_job,before.job);assert.equal(durable.claim_transaction_id,issued.issued_transaction_id);
   assert.notEqual(durable.issued_transaction_id,durable.claim_transaction_id);assert.equal(durable.failure_code,'access_revoked');
@@ -155,6 +170,7 @@ export async function runNeighborhoodOwnedSourceInitialRetryV3DatabaseChecks({so
     only_status_token_lease_error_update_and_native_bounded_schedule_change:true,
     actual_one_second_due_wait_without_clock_lease_attempt_schedule_or_parent_rewrite:true,
     original_failure1_captured_in_full_immutable_job_no_refund_or_new_failure_spent:true,
+    entire_original_membership_grant_rows_including_timestamp_and_granting_actor_restored:true,
     no_duplicate_retry_generic_or_old_continuation_adoption_or_stale_FIRST_NEXT_original_IO:true,
     all_prior_native_rows_blobs_claim_source_grants_report_assignment_private_workfile_subject_manual_sections_workspace_choices_pins_unchanged:true,
     fresh2_claim:false,repeated_attempt2_or3_retry:false,expired_recovery:false,NEXT_or_EMPTY:false,publication:false,

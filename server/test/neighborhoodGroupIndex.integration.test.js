@@ -56,6 +56,8 @@ import { createCustomCohortV2ContinuationRepository }
   from '../src/services/neighborhoodAssessment/customCohortV2ContinuationRepository.js';
 import { createCustomCohortSelectedUnionV2RecoveryRepository }
   from '../src/services/neighborhoodAssessment/customCohortSelectedUnionV2RecoveryRepository.js';
+import { createCustomCohortSelectedEligibilityV2RecoveryRepository }
+  from '../src/services/neighborhoodAssessment/customCohortSelectedEligibilityV2RecoveryRepository.js';
 import { createCustomCohortV2SelectionWaitRepository }
   from '../src/services/neighborhoodAssessment/customCohortV2SelectionWaitRepository.js';
 import { runNeighborhoodSelectionWaitStatusValidationV2DatabaseChecks }
@@ -4633,6 +4635,9 @@ for(const selectionWaitFixture of [false,true,'union','union-empty','union-all',
           await assert.rejects(step(),/claim_lost/);await new Promise(resolve=>setTimeout(resolve,1100));
           const failedUnionJob=await continuationJob();
           assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>
+            createCustomCohortSelectedEligibilityV2RecoveryRepository(client).claimDue({limit:1,leaseSeconds:900})),[],
+            'eleven-root scheduling cannot reclaim a ten-root union failure');
+          assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>
             createCustomCohortCaptureJobRepository(client).claimDue({limit:1,leaseSeconds:900})),[]);
           assert.deepEqual(await continuationJob(),failedUnionJob,'generic admission still excludes every retained intent');
           const replacements=(await Promise.all([1,2].map(()=>withCustomCohortJobTransaction(pool,client=>
@@ -4964,14 +4969,82 @@ for(const selectionWaitFixture of [false,true,'union','union-empty','union-all',
               ['eligibility_yield_rollback',/actual eligibility_yield_rollback/],['eligibility_orphan_commit',/orphan_progress/]]){
               refsFault=fault;await assert.rejects(eligibilityStep(),reason);assert.equal(refsFault,null);await eligibilityUnchanged(pending);
             }
-            // Normal failure/reclaim, preserving existing native progress and
-            // all prior error history; never reset attempts for success steps.
+            // Failed eleven-root eligibility has its own native scheduling
+            // boundary. Generic, initial9, union10 and success continuation
+            // admission stay strict; success never resets failure history.
             await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client)
               .failClaim(liveClaim,'synthetic_eligibility_reclaim',{retrySeconds:1}));
             await new Promise(resolve=>setTimeout(resolve,1100));
-            const [replacement]=await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900}));
-            assert.equal(replacement.operation_id,refsOperation);assert.equal(replacement.attempts,subjectJob.attempts+1);
-            liveClaim={operation_id:replacement.operation_id,claim_token:replacement.claim_token,attempts:replacement.attempts};
+            const failedEligibility=await eligibilitySnapshot();
+            const fullFailedEligibility=(await pool.query(fullJobSql,[refsOperation])).rows[0].value;
+            for(const repo of [createCustomCohortCaptureJobRepository,createCustomCohortV2ContinuationRepository,
+              createCustomCohortSelectedUnionV2RecoveryRepository])
+              assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>repo(client).claimDue({limit:1,leaseSeconds:900})),[]);
+            assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>
+              createCustomCohortSelectedUnionV2RecoveryRepository(client).claimInitialDue({limit:1,leaseSeconds:900})),[]);
+            await eligibilityUnchanged(failedEligibility);
+            const probe=await pool.connect();
+            try{
+              await probe.query('BEGIN');
+              const [tentative]=await createCustomCohortSelectedEligibilityV2RecoveryRepository(probe).claimDue({limit:1,leaseSeconds:900});
+              assert.equal(tentative.claim.attempts,subjectJob.attempts+1);assert.equal(tentative.authority,'not_established');
+            }finally{await probe.query('ROLLBACK');probe.release();}
+            await eligibilityUnchanged(failedEligibility);
+            let replacement;
+            // The winning B claim really commits before its acknowledgment is
+            // lost. A second connection competes while that row is locked and
+            // must return EMPTY; reopening uses the actual committed job.
+            const recoveryPool=allSelected?{async connect(){const raw=await pool.connect();return {
+              query:async config=>{const result=await raw.query(config);
+                if(config.text==='COMMIT')throw Error('synthetic actual eligibility recovery COMMIT acknowledgment lost');return result;},
+              on:(...args)=>raw.on(...args),off:(...args)=>raw.off(...args),release:(...args)=>raw.release(...args)};}}:pool;
+            const recover=()=>withCustomCohortJobTransaction(recoveryPool,async client=>{
+              const claims=await createCustomCohortSelectedEligibilityV2RecoveryRepository(client).claimDue({limit:1,leaseSeconds:900});
+              assert.equal(claims.length,1);replacement=claims[0];
+              assert.deepEqual(await withCustomCohortJobTransaction(pool,other=>
+                createCustomCohortSelectedEligibilityV2RecoveryRepository(other).claimDue({limit:1,leaseSeconds:900})),[]);
+            });
+            if(allSelected)await assert.rejects(recover(),error=>error.outcome_unknown===true);else await recover();
+            assert.equal(replacement.claim.operation_id,refsOperation);assert.equal(replacement.claim.attempts,subjectJob.attempts+1);
+            assert.equal(replacement.authority,'not_established');assert.deepEqual(replacement.scope,scope);
+            assert.equal(replacement.actor_user_id,actor);liveClaim=replacement.claim;
+            const recoveredEligibility=await eligibilitySnapshot();
+            const fullRecoveredEligibility=(await pool.query(fullJobSql,[refsOperation])).rows[0].value,
+              preservedJob=value=>Object.fromEntries(Object.entries(value).filter(([key])=>
+                !['status','attempts','claim_token','lease_expires_at','updated_at'].includes(key)));
+            assert.deepEqual(preservedJob(fullRecoveredEligibility),preservedJob(fullFailedEligibility));
+            assert.notEqual(liveClaim.claim_token,pending.continuation.consumed_claim_token);
+            assert.notEqual(liveClaim.claim_token,pending.continuation.issued_claim_token);
+            assert.equal(recoveredEligibility.job.claim_token,liveClaim.claim_token);assert.equal(recoveredEligibility.job.attempts,liveClaim.attempts);
+            assert.equal(recoveredEligibility.job.status,'running');
+            assert.deepEqual(recoveredEligibility.heads,failedEligibility.heads);
+            assert.deepEqual(recoveredEligibility.continuation,failedEligibility.continuation);
+            assert.equal(recoveredEligibility.blobs,failedEligibility.blobs);
+            assert.deepEqual(recoveredEligibility.job.checkpoint,failedEligibility.job.checkpoint);
+            assert.equal(recoveredEligibility.job.last_error_code,failedEligibility.job.last_error_code);await stablePrior();
+            // Spend the real final failure in a transaction, refuse attempt6,
+            // then roll back the ENTIRE probe. No counters, clocks or leases
+            // are rewritten and this is not an expired-running recovery proof.
+            const ceilingClient=await pool.connect();
+            try{
+              await ceilingClient.query('BEGIN');
+              const jobs=createCustomCohortCaptureJobRepository(ceilingClient),recovery=createCustomCohortSelectedEligibilityV2RecoveryRepository(ceilingClient);
+              assert.equal(liveClaim.attempts,4);
+              assert.deepEqual(await jobs.failClaim(liveClaim,'synthetic_eligibility_final_claim',{retrySeconds:1}),{status:'retry'});
+              await new Promise(resolve=>setTimeout(resolve,1100));
+              const [fifth]=await recovery.claimDue({limit:1,leaseSeconds:900});assert.equal(fifth.claim.attempts,5);
+              assert.deepEqual(await jobs.failClaim(fifth.claim,'synthetic_eligibility_final_failure',{retrySeconds:1}),{status:'failed'});
+              assert.deepEqual(await recovery.claimDue({limit:1,leaseSeconds:900}),[]);
+              const exhausted=(await ceilingClient.query(fullJobSql,[refsOperation])).rows[0].value;
+              assert.equal(exhausted.status,'failed');assert.equal(exhausted.attempts,5);
+              assert.equal(exhausted.claim_token,null);assert.equal(exhausted.lease_expires_at,null);
+              assert.deepEqual(exhausted.checkpoint,recoveredEligibility.job.checkpoint);
+              assert.equal(exhausted.last_error_code,'synthetic_eligibility_final_failure');
+              assert.deepEqual(await recovery.claimDue({limit:1,leaseSeconds:900}),[]);
+              assert.deepEqual((await ceilingClient.query(fullJobSql,[refsOperation])).rows[0].value,exhausted);
+            }finally{await ceilingClient.query('ROLLBACK');ceilingClient.release();}
+            await eligibilityUnchanged(recoveredEligibility);
+            assert.deepEqual((await pool.query(fullJobSql,[refsOperation])).rows[0].value,fullRecoveredEligibility);
             assert.deepEqual(await readEligibility(),pending.heads);
             const terminalEligibility=await eligibilityStep();
             assert.deepEqual(terminalEligibility.progress,{selected_ordinal:selectedCount,done:true});assert.equal(terminalEligibility.selected_entry,null);
@@ -5003,6 +5076,10 @@ for(const selectionWaitFixture of [false,true,'union','union-empty','union-all',
             actual_head_insert_update_yield_rollback_and_orphan_real_COMMIT_refused:true,
             lost_real_COMMIT_ack_fresh_consumed_continuation_no_duplicate_selected_ordinal:true,
             ordinary_higher_failure_attempt_preserves_progress_and_fresh_terminal_EMPTY_no_prior_decision:selectionWaitFixture!=='union-empty',
+            separate_native_eleven_root_failure_claim_rollback_competing_one_winner_and_no_attempt6:selectionWaitFixture!=='union-empty',
+            actual_winning_eligibility_recovery_COMMIT_ack_lost_then_native_job_reopened:allSelected,
+            generic_initial9_union10_and_success_continuation_admission_unchanged:true,
+            eligibility_expired_running_recovery:false,
             exact_first_ten_roots_old_readers_strict_unknown_denominator_counts_not_authority:true,
             current_rights_before_source_intent_and_native_member_reads_all_ending_fences:true,
             maximum_whole_owner_sql_queries:Math.max(...eligibilityQueries),whole_owner_limits:ORIGINAL_OWNER_LIMITS,

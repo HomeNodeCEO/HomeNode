@@ -1,3 +1,32 @@
+## Separate eleven-root eligibility failure scheduling (2026-10-17, cloud validation pending)
+
+Integrated head 1e7 passed the complete applications and security checks, but its
+native index cases finished 14 passed and two failed. Both nonempty eligibility
+cases attempted the generic claimer after a real failure. Generic admission
+correctly excludes retained human intents, so no replacement claim existed.
+
+A separate inactive repository now schedules only an actual due failed
+eleven-root eligibility step. It binds the immutable command, completed native
+union, native eligibility head and compact pending receipt, exact checkpoint,
+consumed continuation and retained attempt/error history. Only status, fresh
+token, next attempt, bounded lease and update time change. It admits no caller
+roots, ordinal, phase or authority. Generic admission and the independent
+nine-root and ten-root recovery owners are unchanged. A successful scheduling
+claim still establishes no source authority: the actual original owner must
+reopen every original, entire neutral cache and all current/ending fences.
+
+Authored native assertions require tentative claim rollback, a second connection
+competing against the locked winning claim, actual winning COMMIT acknowledgment
+loss for the explicit-both graph, fresh job reopen and unchanged complete job
+fields outside those five scheduling fields. A real fourth failure admits the
+fifth claim; its real failure must become terminal and refuse attempt six, then
+the whole probe rolls back. Existing positive eligibility counts and fresh EMPTY
+completion remain required. No clock, counter, schedule, root, source grant,
+deadline or aggregate budget is rewritten. Expired-running eleven-root recovery
+is excluded from this slice and remains unfinished. Nothing is activated.
+The failed head is not rerun; the new exact head requires full cloud native,
+application and security validation and genuine included review before merge.
+
 ## Subject whole-original aggregate assertion (2026-10-17, fresh native validation pending)
 
 The integrated subject-housing head passed its migration checks and failed one

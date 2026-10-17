@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { after } from 'node:test';
 import { randomUUID,createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { prepareNeighborhoodCiDatabase } from './helpers/neighborhoodCiDatabase.js';
@@ -1356,6 +1356,13 @@ test('isolated PostgreSQL: freezes a complete 60001-account original source popu
 // lifetime check. It reopens the same database/job/originals/current authority;
 // this is test sequencing, never a callback accepted as source authority.
 let retainedSelectionIntentLifetime;
+// A filtered run may execute the producer without the lifetime consumer. The
+// consumer takes ownership by clearing this slot before its own finally block.
+after(async()=>{
+  const lifetime=retainedSelectionIntentLifetime;
+  retainedSelectionIntentLifetime=undefined;
+  if(lifetime)await lifetime.pool.end();
+});
 for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
   +(selectionWaitFixture==='intent'?' with explicit new-study selection intent':selectionWaitFixture?' with issued selection waiting':''),{
   skip:!process.env.DATABASE_URL,timeout:180_000,

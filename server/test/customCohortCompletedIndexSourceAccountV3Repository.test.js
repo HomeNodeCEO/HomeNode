@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCustomCohortCompletedIndexSourceAccountV3Repository as create } from '../src/services/neighborhoodAssessment/customCohortCompletedIndexSourceAccountV3Repository.js';
+import { createCustomCohortCompletedIndexSourceAccountV3Repository as create,createCustomCohortOwnedFirstSourceAccountV3Repository as owned } from '../src/services/neighborhoodAssessment/customCohortCompletedIndexSourceAccountV3Repository.js';
 import { createCustomCohortContextCapture as context } from '../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { NEIGHBORHOOD_FIRST_COMPLETED_INDEX_SOURCE_ORIGINAL_PACKAGE_V3_SQL as SQL } from '../src/services/neighborhoodAssessment/neighborhoodSelectedTransactionOriginalPackageV2.js';
 
@@ -59,6 +59,16 @@ test('account plan refuses partial memberships, lossy numeric cells, corrupt anc
     r=>r.native_packages[0].first_selected_ordinal=3,r=>r.native_packages[0].native_key='9223372036854775808'];
   for(const change of changes){const r=copy(account);change(r);await assert.rejects(fixture([r]).repo.readFirstAccount(),/corrupt|invalid_reference/);}
   const r=copy(account);r.transaction_id='102';await assert.rejects(fixture([r]).repo.readFirstAccount(),/caller_transaction_required/);
+});
+
+test('owned18 account seam keeps every original first-seen member field and account key with no caller cursor',async()=>{
+  const {input,queries}=fixture(),packet=await owned(input).readFirstAccount();
+  assert.deepEqual(packet.plan.native_packages,account.native_packages);assert.equal(packet.selected_entry.account_id,'B');
+  assert.equal(packet.selected_entry.ordinal,2);assert.equal(packet.selected_entry.reported_residential_area,'1000.01');
+  const sql=queries.find(q=>q.sql.includes(':native-account */')).sql;
+  assert.match(sql,/neighborhood_source_resolution_v3_owned_first_parent/);assert.match(sql,/neighborhood_source_resolution_v3_owned_first\(/);
+  assert.match(sql,/LIMIT 251/);assert.match(sql,/gate.anchor_count<=250/);
+  assert.throws(()=>owned({...input,cursor:'501'}),/invalid_input/);
 });
 
 test('repeat AFTER ending fences refuses even a still-valid changed prior member',async()=>{

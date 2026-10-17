@@ -1,3 +1,45 @@
+## Actual owned18 FIRST original reconciliation (2026-10-17, unregistered; native execution pending)
+
+The separate dormant `readCoveredOriginalFrozenCaptureJobOwnedFirstSourceReferencesV3`
+entry point now uses the actual fresh18 claim and the ENTIRE retained17 birth.
+It retains the existing whole-original pipeline: current database actor,
+assignment/private draft, subject, source-purpose decisions, complete issued
+graph, whole first-seen selected stock/CAD/all-date transaction packages,
+required subject fallback, ENTIRE neutral caches and every prior native member
+are reopened and reconciled again. All ending source/CAD/actor/assignment/draft/
+subject/workspace and immutable native checks run before delivery under the
+unchanged aggregate256-query / 32MB / 60s and stricter single-use250-original
+child budgets. No callback or candidate supplied by a caller enters this owner.
+
+Separate owned birth-checkpoint, intent, FIRST/account and whole-original SQL
+seams require the actual current18 claim and independently reopen its immutable
+preclaim18, ENTIRE original17 birth and native parents. The ordinary17 readers,
+checkpoint codec and earlier fourteen original SQL constants retain their
+behavior and bytes. No eighteenth root is removed to manufacture17, and no
+original token, transaction, attempt, lease or native parent is rebound. After
+every ending fence the owner compares the stored candidate's full canonical
+bytes with a new private candidate derived from actual whole originals. The
+result remains read-only with no cursor advance, economic progress, publication
+or pin transfer.
+
+New native probes follow all previous independent A/B birth/claim proofs. They
+require current database actor loss before original I/O, eight ending cache/
+workspace/role/source/CAD/subject faults with rollback, stale token/attempt
+refusal before I/O, lost real read-only COMMIT acknowledgment, then successful
+fresh-owner reconciliation. The subject fault changes the actual scoped
+snapshot inside the real transaction; the complete snapshot and manual subject
+sections must restore along with every native parent/blob/job/claim/workspace/
+report/choice/pin. The A and B graphs must retain their independently acquired
+first-seen ordinal1 and ordinal2. Authored probes and small detached boundary
+checks are not native execution or licensed capacity/speed proof; current-head
+prefix AND full prepared cloud results are required.
+
+Nothing is registered or activated. Current-owned failure recovery through5,
+NEXT/fresh EMPTY, independent legacy-only native acquisition, complete economic
+eligibility/selected-union medians/CODs/calendar quarters, coherent publication,
+terminal pin transfer/retirement and licensed large-area/live-speed acceptance
+remain required before rollout of this stage.
+
 ## Single-consume initial owned18 FIRST claim (2026-10-17, unregistered; native execution pending)
 
 Unregistered `20261226_custom_cohort_source_first_owned_claim_v3.sql` adds a

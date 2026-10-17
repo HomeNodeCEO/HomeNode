@@ -9,13 +9,14 @@ import { createCustomCohortV2ContinuationRepository as continuations }
   from '../../src/services/neighborhoodAssessment/customCohortV2ContinuationRepository.js';
 import { withCustomCohortJobTransaction as transaction }
   from '../../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
+import { runNeighborhoodOwnedFirstSourceOriginalV3DatabaseChecks } from './neighborhoodOwnedFirstSourceOriginalV3DatabaseChecks.js';
 
 const jobTable='app.neighborhood_custom_cohort_capture_jobs',claimTable='app.neighborhood_custom_cohort_source_resolution_v3_claims';
 // Only the independently acquired disposable native graphs reach this helper,
 // AFTER every previous refusal and real birth COMMIT/lost-ACK assertion. No
 // original, attempt, clock, claim lease, parent, grant or pin is rewritten.
 export async function runNeighborhoodFirstSourceOwnedClaimV3DatabaseChecks({pool,input,scope,actor,service,
-  claim:oldClaim,originalReads,laterFirstSource}){
+  claim:oldClaim,originalReads,laterFirstSource,setFault,readFault}){
   const op=input.operationId,read=async table=>(await pool.query(`SELECT to_jsonb(r) AS body FROM app.${table} r
     WHERE operation_id=$1 ORDER BY to_jsonb(r)::text COLLATE "C"`,[op])).rows,
     job=async()=>(await read('neighborhood_custom_cohort_capture_jobs'))[0].body;
@@ -40,6 +41,10 @@ export async function runNeighborhoodFirstSourceOwnedClaimV3DatabaseChecks({pool
       WHERE organization_id=$1 ORDER BY content_sha256`,[scope.organization_id])).rows,
     report:(await pool.query('SELECT to_jsonb(r) AS body FROM app.report_files r WHERE id=$1',[scope.report_file_id])).rows,
     assignment:(await pool.query('SELECT to_jsonb(r) AS body FROM app.assignment_files r WHERE id=$1',[scope.assignment_file_id])).rows,
+    subject_snapshot:(await pool.query(`SELECT to_jsonb(s) AS body FROM app.appraisal_subject_snapshots s
+      JOIN app.report_files r ON r.subject_snapshot_id=s.id WHERE r.id=$1 AND r.organization_id=$2`,[scope.report_file_id,scope.organization_id])).rows,
+    subject_sections:(await pool.query(`SELECT to_jsonb(r) AS body FROM app.custom_appraisal_sections r
+      WHERE assignment_file_id=$1 ORDER BY section_key`,[scope.assignment_file_id])).rows,
     workspace:(await pool.query(`SELECT to_jsonb(r) AS body FROM app.custom_appraisal_workfile_sections r
       WHERE assignment_file_id=$1 ORDER BY section_key`,[scope.assignment_file_id])).rows}),
     before={job:await job(),immutable:await immutable()},
@@ -137,4 +142,6 @@ export async function runNeighborhoodFirstSourceOwnedClaimV3DatabaseChecks({pool
     immutable_claim_and_owned_job_renewal_failure_refund_checkpoint_reset_refuse:true,
     original_owner_reopened_under_new18:false,source_authority:'not_established',recovery:false,
     NEXT_or_EMPTY:false,activation:false,licensed_large_area:false,production_speed:false});
+  await runNeighborhoodOwnedFirstSourceOriginalV3DatabaseChecks({pool,input,scope,actor,service,claim:winner.claim,
+    originalReads,laterFirstSource,setFault,readFault,unchanged:preserved,originalBirthTransaction:String(handoff.issued_transaction_id)});
 }

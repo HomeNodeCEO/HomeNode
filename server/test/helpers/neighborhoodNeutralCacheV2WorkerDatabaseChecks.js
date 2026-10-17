@@ -8,6 +8,8 @@ import { runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks } from './neighb
 import { observeNeighborhoodFirstSourceResolutionRowV3 } from './neighborhoodFirstSourceResolutionRowV3DatabaseChecks.js';
 import { observeNeighborhoodFirstSourceCheckpointBeforeSaveV3,observeNeighborhoodFirstSourceCheckpointAfterSaveV3 }
   from './neighborhoodFirstSourceCheckpointV3DatabaseChecks.js';
+import { observeNeighborhoodFirstSourceHandoffBeforeSaveV3,observeNeighborhoodFirstSourceHandoffAfterSaveV3 }
+  from './neighborhoodFirstSourceHandoffV3DatabaseChecks.js';
 import { randomUUID } from 'node:crypto';
 import { createCustomCohortContextCapture } from '../../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { createCustomCohortCaptureJobRepository as jobs } from '../../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
@@ -100,6 +102,13 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
       return raw.query({...c,text:text.replace(selected,'job.organization_id,$9,$10,$11,1,($12::integer+1)')});
     }
     const result=await raw.query(c);
+    if(fault==='source_handoff_observe'&&text.includes('custom-cohort-source-resolution-parent-v3:head-insert */')){
+      sourceCheckpointBefore=await observeNeighborhoodFirstSourceHandoffBeforeSaveV3({raw,result,scope});
+    }
+    if(fault==='source_handoff_observe'&&text.includes('custom-cohort-source-resolution-parent-v3:handoff-save */')){
+      assert.ok(sourceCheckpointBefore);await observeNeighborhoodFirstSourceHandoffAfterSaveV3({raw,result,scope,before:sourceCheckpointBefore});
+      sourceCheckpointBefore=null;fault=null;
+    }
     if(fault==='source_checkpoint_observe'&&text.includes('custom-cohort-source-resolution-parent-v3:head-insert */')){
       sourceCheckpointBefore=await observeNeighborhoodFirstSourceCheckpointBeforeSaveV3({raw,result,scope});
     }

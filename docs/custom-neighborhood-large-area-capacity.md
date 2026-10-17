@@ -1,3 +1,44 @@
+## Original-owned provisional atomic first-source handoff (2026-10-17, unregistered)
+
+A separate closed original-owner entry point now retains actual17/FIRST/blob/
+row/head and asks a zero-argument writer for one atomic handoff statement. The
+native INSERT captures the ENTIRE actual17 job and derives18 before the UPDATE
+stores18, sets retry and clears that exact token/lease. The immutable handoff
+binds the full original job, scope, issued attempt/token, transaction and18.
+Every other job field, including request, context, attempts and failure history,
+must remain identical. No caller checkpoint, continuation or birth snapshot
+is accepted;17 is never reconstructed by stripping a projected18.
+The UPDATE consumes the INSERT's RETURNING row directly; its independent
+native predicates remain VOLATILE so their queries observe that actual INSERT.
+This uses PostgreSQL's documented
+[function snapshot rules](https://www.postgresql.org/docs/current/xfunc-volatility.html)
+and still requires real current-head native execution.
+
+Unregistered migration `20261223_custom_cohort_source_first_handoff_v3.sql`
+admits only this native full-tuple birth transition alongside the previous
+checkpoint-only transition. The two prior trigger bodies otherwise remain
+identical. The independent initial9 guard and all five earlier unconditional
+COMMIT refusals remain, with a sixth for the immutable handoff. Later18
+mutations, generic claiming, lease revival and handoff changes still refuse.
+This is provisional atomic DML, not durable issuance or fresh18 admission.
+Nothing is registered, activated or dispatched, and no pin, grant, appraiser
+choice, report, failure ceiling, deadline or aggregate resource budget changes.
+
+The same actual A-first and independent B-after-empty-A native captures now
+observe native handoff INSERT plus real job18/retry/token-and-lease clear;
+forged whole-birth/root/token/attempt/TX refusal; preservation of all remaining
+job fields and immutable native parents; generic claim/free recovery refusal;
+all seven ending faults; real rejected COMMIT and fresh same-claim repeat with
+every provisional row AND blob rolled back. These are authored native probes,
+not execution proof. The 21 writer protocol checks and17 changed original-owner
+checks pass (187.2083 and1516.7122 ms, zero failures/cancellations/skips); syntax
+and diff checks pass. New-head full cloud execution is required.
+
+Fresh18 reopening of the retained original17 birth, coherent durable COMMIT,
+owned recovery through the unchanged fifth-failure ceiling, NEXT/fresh EMPTY,
+independent legacy-only native acceptance and activation remain unfinished.
+This does not establish licensed large-area acquisition or production speed.
+
 ## Original-owned provisional first source checkpoint (2026-10-17, unregistered)
 
 The closed original owner now has a separate birth-only checkpoint entry point.

@@ -45,7 +45,11 @@ parent with the actual job and index, refuse copied/projected checkpoints and
 wrong scope/reference/claim/attempt/transaction, test immutable rows and force a
 real rejected COMMIT. A fresh read must prove both DDL and provisional rows were
 rolled back and every existing native job/parent/blob/report/choice/pin remains
-unchanged. Execution on this new head is pending. This does not yet issue source
+unchanged. The initial native head failed a probe-ordering assertion: PostgreSQL
+blocks TRUNCATE with pending deferred events before calling our guard. The probe
+now checks the actual statement guard before inserting, then tests row
+immutability, deferred refusal and real COMMIT separately. The unchanged failed
+head is not rerun; execution of this corrected head is pending. This does not yet issue source
 progress, NEXT or a separate fresh EMPTY, or establish economic/quarter/licensed
 large-area/production-speed acceptance.
 

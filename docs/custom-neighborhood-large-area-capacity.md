@@ -107,16 +107,29 @@ Explicit expired-intent recovery and source dispatch still require a separate
 complete owner before activation; neither an automatic retry nor a new lease
 is added.
 
-The corrected code passes 46 focused repository/worker checks, zero failures,
-cancellations or skips (5609.9087 ms), and changed JavaScript syntax/diff checks.
-New native probes are authored against that actual issued graph: expire the
-same native claim inside a guarded disposable transaction, require generic
-claim/sweep and direct mutation refusals with the whole tuple unchanged,
-refuse expired replay, exercise scoped cancellation cleanup, then actually
-roll back and compare the complete original tuple. Execution of those new
-probes, fresh corrected-head security/full suites and included review remain
-required; the prior `88cc200e` results are not corrected-head proof. No heavy
-local database/server/frontend suite was run.
+Corrected implementation `d498ab57` passes 46 focused repository/worker checks,
+zero failures, cancellations or skips (5609.9087 ms), and changed JavaScript
+syntax/diff checks. All 16 checks passed on that exact head, including security,
+CodeQL, full server/frontend and native PostgreSQL run `38993334702` / job
+`117280270948`. Its independently inspected native log passed 417 migration,
+1 subject, 1 account-quality, 10 prepared, 1 edge and 2 bootstrap checks without
+failures, cancellations or skips (prepared 422155.291698 ms).
+
+Those executed native probes expire the same issued claim in a guarded
+disposable transaction, require generic claim/sweep and direct mutation/renewal
+refusals with the whole tuple unchanged, refuse expired replay, exercise scoped
+cancellation cleanup, execute explicit PostgreSQL ROLLBACK and compare the
+complete original tuple. Token substitution requires the independent trigger's
+specific refusal; a separate actual lease-expiry fault exercises the ending
+live-claim refusal. Every provisional refusal restores the full waiting-job
+tuple. The initial probe's obsolete token-error expectation was corrected
+without changing production safeguards or deadlines or rerunning the failed
+head. The earlier `88cc200e` results are separate historical evidence.
+
+These results identify their exact verified implementation. Before release,
+the final integrated head must pass fresh required security/native/full-suite
+checks and actual included review. No heavy local database/server/frontend
+suite was run.
 
 This command establishes explicit intent ONLY. Complete original-reconciled
 catalog semantic replay, exact distinct COMPLETE selected union/eligibility

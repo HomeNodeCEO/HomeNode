@@ -112,8 +112,12 @@ export async function runNeighborhoodFirstSourceOwnedClaimV3DatabaseChecks({pool
   for(const set of ['checkpoint=checkpoint','attempts=4',"last_error_code='reset'","run_after=clock_timestamp()+interval '1 hour'",
     "lease_expires_at=clock_timestamp()+interval '120 seconds'","status='retry',claim_token=NULL,lease_expires_at=NULL",
     "checkpoint=jsonb_set(checkpoint,'{phase}','\"frozen_selected_transaction_index_refs_v2\"')"]){
-    await assert.rejects(transaction(pool,c=>c.query(`UPDATE ${jobTable} SET ${set} WHERE operation_id=$1`,[op])),
-      /actual_checkpoint_transition_required|provisional_checkpoint_immutable|continuation_attempt_history_conflict/);await preserved();
+    // The independent earlier CAD success guard rejects an attempt refund
+    // before a source trigger can run. Require that EXACT native refusal for
+    // this one mutation; preserve every guard and all whole-row assertions.
+    const reason=set==='attempts=4'?e=>e.code==='55000'&&e.message==='neighborhood_cad_success_v2_binding_conflict'
+      :/actual_checkpoint_transition_required|provisional_checkpoint_immutable|continuation_attempt_history_conflict/;
+    await assert.rejects(transaction(pool,c=>c.query(`UPDATE ${jobTable} SET ${set} WHERE operation_id=$1`,[op])),reason);await preserved();
   }
   for(const sql of [`UPDATE ${claimTable} SET attempts=attempts WHERE operation_id=$1`,
     `DELETE FROM ${claimTable} WHERE operation_id=$1`]){

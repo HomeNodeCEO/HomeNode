@@ -20,7 +20,7 @@ function setup({ checkpoint, parent = true, assigned = ACTOR, org = ORG } = {}) 
         const sql = config.text; calls.push(config);
         if (/^(BEGIN |SET LOCAL |ROLLBACK$)/.test(sql)) return one();
         if (sql.includes('custom-cohort-capture:assignment')) {
-          assert.match(sql, /FOR UPDATE NOWAIT/);
+          assert.match(sql, /FOR SHARE NOWAIT/);
           assert.deepEqual(config.values, [input().assignmentFileId, input().accountId]);
           return one({ assignment_file_id: input().assignmentFileId, account_id: input().accountId,
             organization_id: org, assigned_appraiser_user_id: assigned, supervisory_appraiser_user_id: null });

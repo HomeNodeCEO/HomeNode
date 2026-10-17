@@ -1,3 +1,35 @@
+## Native first-source binding (2026-10-17, unregistered)
+
+The next provisional native table derives the first registered source key and
+its exact first-seen selected account from the actual retained17 parent. It
+reopens the locked native parent, requires every retained field to match, picks
+the first source-record ID (or first C-ordered legacy key when no source record
+exists), and joins the exact selected index row and native edge. Generation,
+command, index reference/sequence, account ordinal and all three selected-entry
+references come from those native rows. No caller source key, account, plan,
+resolution, cursor, DONE flag or projected18 checkpoint is input.
+
+The closed writer applies all scope/actor/claim/attempt predicates, verifies a
+single transaction before and after DML, derives the native binding again for
+INSERT and compares the entire returned row. Eight focused protocol checks pass
+(133.5622 ms), with no failures, cancellations or skips. These are protocol
+checks, not PostgreSQL execution proof. The independent A-first and B-first
+after empty A native probes compare this binding with the candidate produced
+by the actual whole-original owner, without passing that candidate to SQL.
+They exercise missing retained parent, forged keys/members/references/transaction,
+seven wrong scope/claim writes, immutability and actual rejected COMMIT rolling
+back both provisional tables and all rows. Fresh exact-head cloud execution is
+pending; legacy-only native admission remains separate acceptance work.
+
+Migration `20261220_custom_cohort_source_native_first_v3.sql` is unregistered.
+The parent and new binding both retain unconditional durable COMMIT refusal.
+This is structural FIRST binding only: it issues no resolution or exact18,
+advances no source cursor, and establishes no NEXT/fresh EMPTY or economic
+eligibility. The complete original owner still must issue coherent row/head,
+checkpoint and single-use continuation with current and ending rights before
+any registration or activation. No grant, budget, deadline, failure ceiling,
+worker, route, report, choice or pin changes.
+
 ## Fenced native source-parent writer (2026-10-17, inactive)
 
 The source-parent storage primitive now has a closed claim/scope/actor-bound

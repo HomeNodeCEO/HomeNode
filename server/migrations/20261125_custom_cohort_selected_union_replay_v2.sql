@@ -26,6 +26,67 @@ CREATE TABLE app.neighborhood_custom_cohort_selected_union_v2_rows (
 
 -- Only the immutable command's nine EXACT roots plus the actual issued tenth
 -- head are admitted. This structural predicate is NOT original/source authority.
+-- Initial recovery is separate from ten-root progress and generic admission.
+-- The candidate MUST be the actual native job, with its immutable command,
+-- consumed catalog continuation, completed stock and nonretired generation pin.
+CREATE FUNCTION app.neighborhood_v2_initial_union_claim_bound(j app.neighborhood_custom_cohort_capture_jobs)
+RETURNS boolean LANGUAGE sql STABLE AS $$
+ SELECT coalesce(EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_capture_jobs actual
+  JOIN app.neighborhood_custom_cohort_v2_selection_intents command USING(operation_id,organization_id)
+  JOIN app.neighborhood_custom_cohort_v2_continuations c USING(operation_id,organization_id)
+  JOIN app.neighborhood_custom_cohort_job_stocks stock ON stock.operation_id=actual.operation_id
+   AND stock.organization_id=actual.organization_id AND stock.report_file_id=actual.report_file_id
+   AND stock.assignment_file_id=actual.assignment_file_id AND stock.account_id=actual.account_id
+   AND stock.actor_user_id=actual.actor_user_id AND stock.status='complete'
+  JOIN app.neighborhood_custom_cohort_prepared_generation_pins pin ON pin.operation_id=stock.operation_id
+   AND pin.organization_id=stock.organization_id AND pin.generation_id=stock.generation_id
+   AND pin.report_file_id=stock.report_file_id AND pin.assignment_file_id=stock.assignment_file_id
+   AND pin.account_id=stock.account_id AND pin.actor_user_id=stock.actor_user_id
+  JOIN app.neighborhood_group_generations generation ON generation.generation_id=pin.generation_id
+   AND generation.status='complete' AND generation.retirement_started_at IS NULL
+  WHERE actual.operation_id=j.operation_id AND to_jsonb(actual)=to_jsonb(j)
+   AND actual.request_sha256=command.request_sha256 AND actual.checkpoint=command.checkpoint
+   AND actual.checkpoint->>'phase'='frozen_recorded_catalog_refs_v2'
+   AND jsonb_array_length(actual.checkpoint->'evidence_refs')=9
+   AND actual.request_payload->>'execution_mode'='frozen-originals-v2'
+   AND actual.status='running' AND actual.claim_token IS NOT NULL AND actual.lease_expires_at IS NOT NULL
+   AND actual.cancellation_requested_at IS NULL AND actual.context_sha256 IS NULL
+   AND actual.attempts BETWEEN command.issued_attempts AND 5
+   AND c.phase='frozen_recorded_catalog_refs_v2' AND c.progress_reference=command.checkpoint->'evidence_refs'->8
+   AND c.consumed_claim_token IS NOT NULL AND c.issued_attempts<=command.issued_attempts
+   AND ((actual.attempts=command.issued_attempts AND actual.claim_token=command.resume_claim_token)
+    OR (actual.attempts>command.issued_attempts AND actual.claim_token<>command.resume_claim_token
+     AND actual.claim_token<>c.issued_claim_token AND actual.claim_token<>c.consumed_claim_token))
+   AND NOT EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_selected_union_v2_heads h
+    WHERE h.operation_id=actual.operation_id)),false)
+$$;
+REVOKE ALL ON FUNCTION app.neighborhood_v2_initial_union_claim_bound(app.neighborhood_custom_cohort_capture_jobs) FROM PUBLIC;
+
+CREATE FUNCTION app.neighborhood_v2_initial_union_recovery_matches(
+ old_job app.neighborhood_custom_cohort_capture_jobs,new_job app.neighborhood_custom_cohort_capture_jobs)
+RETURNS boolean LANGUAGE sql STABLE AS $$
+ SELECT coalesce(app.neighborhood_v2_initial_union_claim_bound(old_job)
+  AND old_job.lease_expires_at<=clock_timestamp()
+  AND new_job.updated_at BETWEEN statement_timestamp() AND clock_timestamp()
+  AND ((old_job.attempts<5 AND new_job.status='running' AND new_job.attempts=old_job.attempts+1
+    AND new_job.claim_token IS NOT NULL AND new_job.claim_token<>old_job.claim_token
+    AND new_job.lease_expires_at>=statement_timestamp()+interval '15 seconds'
+    AND new_job.lease_expires_at<=clock_timestamp()+interval '900 seconds'
+    AND (to_jsonb(new_job)-ARRAY['attempts','claim_token','lease_expires_at','updated_at'])
+     =(to_jsonb(old_job)-ARRAY['attempts','claim_token','lease_expires_at','updated_at'])
+    AND EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_v2_selection_intents command
+     JOIN app.neighborhood_custom_cohort_v2_continuations c USING(operation_id,organization_id)
+     WHERE command.operation_id=old_job.operation_id AND command.organization_id=old_job.organization_id
+      AND new_job.claim_token<>command.resume_claim_token AND new_job.claim_token<>c.issued_claim_token
+      AND new_job.claim_token<>c.consumed_claim_token))
+   OR (old_job.attempts=5 AND new_job.status='failed' AND new_job.claim_token IS NULL
+    AND new_job.lease_expires_at IS NULL AND new_job.last_error_code='attempts_exhausted'
+    AND (to_jsonb(new_job)-ARRAY['status','claim_token','lease_expires_at','last_error_code','updated_at'])
+     =(to_jsonb(old_job)-ARRAY['status','claim_token','lease_expires_at','last_error_code','updated_at']))),false)
+$$;
+REVOKE ALL ON FUNCTION app.neighborhood_v2_initial_union_recovery_matches(
+ app.neighborhood_custom_cohort_capture_jobs,app.neighborhood_custom_cohort_capture_jobs) FROM PUBLIC;
+
 CREATE FUNCTION app.neighborhood_selected_union_v2_checkpoint_matches(op uuid,org uuid,cp jsonb)
 RETURNS boolean LANGUAGE sql STABLE AS $$
   SELECT coalesce(EXISTS(SELECT 1 FROM app.neighborhood_custom_cohort_v2_selection_intents c
@@ -52,7 +113,7 @@ BEGIN
   SELECT * INTO head FROM app.neighborhood_custom_cohort_selected_union_v2_heads WHERE operation_id=op AND organization_id=org;
   IF NOT FOUND THEN
     IF job.checkpoint IS DISTINCT FROM command.checkpoint
-      OR job.attempts<>command.issued_attempts OR job.claim_token IS DISTINCT FROM command.resume_claim_token THEN
+      OR NOT app.neighborhood_v2_initial_union_claim_bound(job) THEN
       RAISE EXCEPTION 'neighborhood_selected_union_v2_checkpoint_conflict' USING ERRCODE='55000'; END IF;
     RETURN jsonb_build_object('after',jsonb_build_object('after_account','','account_count',0,'done',false),
       'after_counts',jsonb_build_object('assigned_accounts',0,'unassigned_accounts',0,'assigned_groups',0),'after_selected_count',0);
@@ -370,5 +431,40 @@ BEGIN
       OR (OLD.phase='frozen_selected_union_refs_v2' AND NEW.phase<>'frozen_selected_union_refs_v2') THEN
       RAISE EXCEPTION 'neighborhood_v2_continuation_transition_conflict' USING ERRCODE='55000'; END IF;
   END IF;
+  RETURN NEW;
+END $$;
+
+-- Preserve the independent initial-claim trigger and its entire prior body,
+-- adding only the closed full-tuple expired9 transition above.
+CREATE OR REPLACE FUNCTION app.guard_neighborhood_cohort_v2_initial_intent_claim() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE command app.neighborhood_custom_cohort_v2_selection_intents%ROWTYPE;
+BEGIN
+  SELECT * INTO command FROM app.neighborhood_custom_cohort_v2_selection_intents WHERE operation_id=OLD.operation_id;
+  IF NOT FOUND OR OLD.checkpoint IS DISTINCT FROM command.checkpoint THEN RETURN NEW; END IF;
+  -- Separate native expired9 recovery; all existing fixed-lease/original-token
+  -- and scoped cancellation branches below remain intact.
+  IF app.neighborhood_v2_initial_union_recovery_matches(OLD,NEW) THEN RETURN NEW; END IF;
+  IF OLD.status='awaiting_selection' AND NEW.status='running' AND NEW.claim_token=command.resume_claim_token
+    AND NEW.attempts=command.issued_attempts AND NEW.lease_expires_at>clock_timestamp()
+    AND NEW.lease_expires_at<=clock_timestamp()+interval '120 seconds' AND NEW.cancellation_requested_at IS NULL
+    AND (to_jsonb(NEW)-ARRAY['status','claim_token','lease_expires_at','updated_at'])
+      IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['status','claim_token','lease_expires_at','updated_at']) THEN RETURN NEW; END IF;
+  IF NEW.attempts>OLD.attempts
+    OR (NEW.claim_token IS DISTINCT FROM OLD.claim_token AND NEW.claim_token IS NOT NULL) THEN
+    RAISE EXCEPTION 'neighborhood_v2_selection_intent_job_conflict_initial_claim' USING ERRCODE='55000'; END IF;
+  -- The one issued lease is fixed even while live. A heartbeat with the same
+  -- token/attempt/checkpoint must not extend it, shorten it or clear it.
+  IF NEW.lease_expires_at IS DISTINCT FROM OLD.lease_expires_at
+    AND NOT (OLD.cancellation_requested_at IS NOT NULL
+      AND NEW.status='cancelled' AND NEW.claim_token IS NULL
+      AND NEW.lease_expires_at IS NULL AND NEW.cancellation_requested_at IS NOT NULL) THEN
+    RAISE EXCEPTION 'neighborhood_v2_selection_intent_job_conflict_initial_claim' USING ERRCODE='55000'; END IF;
+  -- Expiry grants no retry, renewal or exhaustion write. Admit only a scoped
+  -- cancellation request; its ordinary cancellation cleanup may follow.
+  IF OLD.lease_expires_at<=clock_timestamp() AND OLD.cancellation_requested_at IS NULL
+    AND (NEW.cancellation_requested_at IS NULL
+      OR (to_jsonb(NEW)-ARRAY['cancellation_requested_at','updated_at'])
+        IS DISTINCT FROM (to_jsonb(OLD)-ARRAY['cancellation_requested_at','updated_at'])) THEN
+    RAISE EXCEPTION 'neighborhood_v2_selection_intent_job_conflict_initial_claim' USING ERRCODE='55000'; END IF;
   RETURN NEW;
 END $$;

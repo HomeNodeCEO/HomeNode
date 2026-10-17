@@ -9,7 +9,8 @@ const JOINS=`JOIN app.neighborhood_custom_cohort_v2_selection_intents command US
   JOIN app.neighborhood_custom_cohort_v2_continuations c USING(operation_id,organization_id)`;
 // Structural scheduling only. The owner still reopens EVERY original, current
 // actor/assignment/draft/subject/workspace and both ending source-purpose fences.
-// No first-nine-root intent or unconsumed success continuation is eligible.
+// This ten-root binding excludes initial9 and pending success continuations.
+// claimInitialDue below has its own independent expired9 native predicate.
 const BINDING=`head.command_id=command.command_id AND job.request_sha256=command.request_sha256
   AND app.neighborhood_selected_union_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)
   AND c.phase='frozen_selected_union_refs_v2' AND c.progress_reference=head.receipt_reference
@@ -68,6 +69,39 @@ export function createCustomCohortSelectedUnionV2RecoveryRepository(client){
         ORDER BY job.run_after,job.operation_id LIMIT $1 FOR UPDATE OF job SKIP LOCKED
       ) UPDATE app.neighborhood_custom_cohort_capture_jobs job
         SET status='running',attempts=job.attempts+1,claim_token=gen_random_uuid(),
+          lease_expires_at=clock_timestamp()+($2::integer*interval '1 second'),updated_at=clock_timestamp()
+        FROM due WHERE job.operation_id=due.operation_id
+        RETURNING job.operation_id::text,job.claim_token::text,job.attempts,job.organization_id::text,job.report_file_id::text,
+          job.assignment_file_id::text,job.account_id,job.actor_user_id::text`,[limit,leaseSeconds]);
+    if(!Array.isArray(r?.rows)||r.rows.length>limit||r.rowCount!==r.rows.length)fail('corrupt');
+    const rows=r.rows.map(rowOf);if(await tx()!==started)fail('caller_transaction_required');
+    return Object.freeze(rows);
+  },async claimInitialDue(rawOptions={limit:1,leaseSeconds:120}){
+    // Separate headless9 path. The native predicate requires the actual full
+    // job, immutable human command, consumed catalog continuation and pin.
+    // The independent BEFORE guard admits only expired lease + next attempt,
+    // with ALL other fields unchanged, or real expired5 terminal exhaustion.
+    const {limit,leaseSeconds}=optionsOf(rawOptions),started=await tx();
+    if(await tx()!==started)fail('caller_transaction_required');
+    await client.query(`/* custom-cohort-selected-union-v2-recovery:initial-expire */
+      WITH expired AS MATERIALIZED (
+        SELECT job.operation_id FROM app.neighborhood_custom_cohort_capture_jobs job
+        WHERE job.status='running' AND job.checkpoint->>'phase'='frozen_recorded_catalog_refs_v2'
+          AND job.lease_expires_at<=clock_timestamp() AND job.attempts=5
+          AND app.neighborhood_v2_initial_union_claim_bound(job)
+        ORDER BY job.lease_expires_at,job.operation_id LIMIT 64 FOR UPDATE OF job SKIP LOCKED
+      ) UPDATE app.neighborhood_custom_cohort_capture_jobs job
+        SET status='failed',claim_token=NULL,lease_expires_at=NULL,last_error_code='attempts_exhausted',updated_at=clock_timestamp()
+        FROM expired WHERE job.operation_id=expired.operation_id`);
+    const r=await client.query(`/* custom-cohort-selected-union-v2-recovery:initial-claim */
+      WITH due AS MATERIALIZED (
+        SELECT job.operation_id FROM app.neighborhood_custom_cohort_capture_jobs job
+        WHERE job.status='running' AND job.checkpoint->>'phase'='frozen_recorded_catalog_refs_v2'
+          AND job.lease_expires_at<=clock_timestamp() AND job.attempts<5
+          AND app.neighborhood_v2_initial_union_claim_bound(job)
+        ORDER BY job.lease_expires_at,job.operation_id LIMIT $1 FOR UPDATE OF job SKIP LOCKED
+      ) UPDATE app.neighborhood_custom_cohort_capture_jobs job
+        SET attempts=job.attempts+1,claim_token=gen_random_uuid(),
           lease_expires_at=clock_timestamp()+($2::integer*interval '1 second'),updated_at=clock_timestamp()
         FROM due WHERE job.operation_id=due.operation_id
         RETURNING job.operation_id::text,job.claim_token::text,job.attempts,job.organization_id::text,job.report_file_id::text,

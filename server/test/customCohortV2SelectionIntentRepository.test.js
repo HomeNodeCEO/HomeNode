@@ -90,7 +90,7 @@ function retainedSetup({patch={},auto=false,endAuto=false,missing=false}={}){
     if(sql.includes(':transaction'))return {rowCount:1,rows:[{transaction_id:String(auto?++transactions:endAuto&&++transactions===3?9:8)}]};
     if(sql.includes(':retained-read')||sql.includes(':replay-read'))return {rowCount:missing?0:1,rows:missing?[]:[{...structuredClone(command),
       job_request_sha256:command.request_sha256,job_checkpoint:structuredClone(checkpoint),
-      ...(sql.includes(':replay-read')?{replay_binding:true}:{}),...patch}]};
+      ...(sql.includes(':replay-read')?{replay_binding:true,initial_recovery_binding:false}:{}),...patch}]};
     assert.fail(sql);
   }})};
 }
@@ -159,7 +159,7 @@ test('fourth-pass command reader admits fresh same-attempt continuation ONLY wit
   await assert.rejects(retainedSetup({patch:{job_checkpoint:progressed}}).owner.readForReplay(currentClaim,workerOptions),/claim_lost/);
   await assert.rejects(retainedSetup({patch:{job_checkpoint:progressed}}).owner.readRetained(fresh,workerOptions),/checkpoint_changed/);
 });
-test('initial union replay requires both the original issued attempt and token; later native recovery stays separate',async()=>{
+test('initial union replay keeps the original issued token strict and requires separate native binding for expired9 recovery',async()=>{
   const {owner,calls}=retainedSetup();
   assert.deepEqual((await owner.readForReplay(currentClaim,workerOptions)).claim,currentClaim);
   const sql=calls.find(c=>c.sql.includes(':replay-read')).sql;
@@ -171,6 +171,13 @@ test('initial union replay requires both the original issued attempt and token; 
     recovered={...currentClaim,attempts:4,claim_token:id(9)};
   assert.deepEqual((await retainedSetup({patch:{issued_attempts:3,job_checkpoint:progressed}})
     .owner.readForReplay(recovered,workerOptions)).claim,recovered);
+  const initialRecovery=retainedSetup({patch:{issued_attempts:3,initial_recovery_binding:true}});
+  assert.deepEqual((await initialRecovery.owner.readForReplay(recovered,workerOptions)).claim,recovered);
+  assert.ok(initialRecovery.calls.find(c=>c.sql.includes(':replay-read')).sql.includes('app.neighborhood_v2_initial_union_claim_bound(job)'));
+  for(const binding of [false,null,1])await assert.rejects(retainedSetup({patch:{issued_attempts:3,initial_recovery_binding:binding}})
+    .owner.readForReplay(recovered,workerOptions),/claim_lost|checkpoint_changed/);
+  await assert.rejects(retainedSetup({patch:{issued_attempts:3,initial_recovery_binding:true}})
+    .owner.readForReplay({...recovered,claim_token:command.resume_claim_token},workerOptions),/claim_lost/);
 });
 test('fourth-pass reader retains closed grammar and same caller transaction, no token/lease/progress resets',async()=>{
   for(const raw of [{...workerOptions,checkpoint},{...workerOptions,continuation:{token:id(9)}},

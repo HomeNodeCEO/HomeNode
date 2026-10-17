@@ -4,6 +4,7 @@ import { randomUUID,createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { prepareNeighborhoodCiDatabase } from './helpers/neighborhoodCiDatabase.js';
 import { assertBoundedCohortAuthorityAggregates } from './helpers/boundedCohortAuthorityAggregateAssertions.js';
+import { runNeighborhoodInitialUnionRecoveryV2DatabaseChecks } from './helpers/neighborhoodInitialUnionRecoveryV2DatabaseChecks.js';
 import { getNeighborhoodFrozenTypedOriginalV2Profile } from '../src/services/neighborhoodAssessment/neighborhoodFrozenTypedOriginalV1.js';
 import { NEIGHBORHOOD_CACHED_SOURCE_SCHEMA } from './fixtures/neighborhoodCachedSourceSchemaFixture.js';
 import { runNeighborhoodGroupIndex,getPreparedNeighborhoodGroupSummary }
@@ -1357,19 +1358,21 @@ test('isolated PostgreSQL: freezes a complete 60001-account original source popu
 // Retain only the original human-intent graph's closure for a separate bounded
 // lifetime check. It reopens the same database/job/originals/current authority;
 // this is test sequencing, never a callback accepted as source authority.
-let retainedSelectionIntentLifetime;
+let retainedSelectionIntentLifetime,retainedInitialUnionRecoveryLifetime;
 // A filtered run may execute the producer without the lifetime consumer. The
 // consumer takes ownership by clearing this slot before its own finally block.
 after(async()=>{
   const lifetime=retainedSelectionIntentLifetime;
   retainedSelectionIntentLifetime=undefined;
   if(lifetime)await lifetime.pool.end();
+  const recoveryLifetime=retainedInitialUnionRecoveryLifetime;retainedInitialUnionRecoveryLifetime=undefined;
+  if(recoveryLifetime)await recoveryLifetime.pool.end();
 });
 // Run the two new independent union captures BEFORE that original intent
 // producer. Its unchanged natural-expiry consumer must run immediately next,
 // with no new fixture's runtime consuming the original fixed 120-second lease.
-for(const selectionWaitFixture of [false,true,'union','union-empty','intent']) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
-  +(['intent','union','union-empty'].includes(selectionWaitFixture)?` with explicit new-study selection ${selectionWaitFixture}`:selectionWaitFixture?' with issued selection waiting':''),{
+for(const selectionWaitFixture of [false,true,'union','union-empty','union-initial-recovery','intent']) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
+  +(['intent','union','union-empty','union-initial-recovery'].includes(selectionWaitFixture)?` with explicit new-study selection ${selectionWaitFixture}`:selectionWaitFixture?' with issued selection waiting':''),{
   skip:!process.env.DATABASE_URL,timeout:180_000,
 },async()=>{
   const target=await prepareNeighborhoodCiDatabase();const {default:pg}=await import('pg');
@@ -4157,7 +4160,7 @@ for(const selectionWaitFixture of [false,true,'union','union-empty','intent']) t
       assert.equal(await pinCount(),pinsBeforeContinuation);assert.deepEqual(await readTargetWorkspace(),targetWorkspace);
       assert.deepEqual(await readTargetHistory(),targetHistory);assert.deepEqual(await readTargetReport(),targetReport);
       assert.deepEqual(await readTargetWorkfile(),targetWorkfile);assert.deepEqual(await readPriorTargetMetadata(),priorTargetMetadata);
-      if(['intent','union','union-empty'].includes(selectionWaitFixture)){
+      if(['intent','union','union-empty','union-initial-recovery'].includes(selectionWaitFixture)){
         const intentMethod='resumeOriginalFrozenCaptureJobSelectionIntentReferencesV2',
           selectionIntent={command_id:randomUUID(),catalog_reference:catalogFinal.receipt_reference,workspace_revision:1,
             included_recorded_group_ids:selectionWaitFixture==='union-empty'?[]:[groupB.recorded_group.assigned_group_id]},
@@ -4277,7 +4280,7 @@ for(const selectionWaitFixture of [false,true,'union','union-empty','intent']) t
         assert.deepEqual(await readTargetWorkfile(),targetWorkfile);assert.deepEqual(await readPriorTargetMetadata(),priorTargetMetadata);
           };
         await assertResumedUnchanged();
-        if(selectionWaitFixture==='intent'){
+        if(['intent','union-initial-recovery'].includes(selectionWaitFixture)){
         const retainedMethod='readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2',
           workerClaim=replayed.claim,assertRetainedUnchanged=assertResumedUnchanged,
           readRetained=()=>freshRefsOwner()[retainedMethod](refsInput,{captureJobClaim:workerClaim}),
@@ -4406,6 +4409,29 @@ for(const selectionWaitFixture of [false,true,'union','union-empty','intent']) t
             all_original_cache_partition_catalog_workspace_reports_prior_choices_and_pins_unchanged:true,
             selected_union:false,publication:false,licensed_acquisition:false,worker_activation:false,production_speed:false});
         }};
+        if(selectionWaitFixture==='union-initial-recovery'){
+          assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>
+            createCustomCohortSelectedUnionV2RecoveryRepository(client).claimInitialDue({limit:1,leaseSeconds:15})),[]);
+          await assertResumedUnchanged();
+          intentLifetime.run=async()=>{
+            refsAbort=new AbortController();
+            await runNeighborhoodInitialUnionRecoveryV2DatabaseChecks({pool,scope,operationId:refsOperation,originalClaim:replayed.claim,
+              runStep:claim=>freshRefsOwner().continueOriginalFrozenCaptureJobSelectedStockUnionReferencesV2(refsInput,
+                {captureJobClaim:claim,signal:refsAbort.signal}),
+              setFault:fault=>{refsFault=fault;refsAbort=new AbortController();},
+              async restoreFault(fault){assert.equal(refsFault,null);
+                if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+                if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);},
+              originalReads:()=>refsCalls.filter(sql=>sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,
+              queryCount:()=>refsCalls.length,
+              assertOwnerQueries(from){assert.equal(refsFault,null);assert.ok(refsCalls.length-from-3<=ORIGINAL_OWNER_LIMITS.sql_queries);
+                assertBoundedCohortAuthorityAggregates(refsCalls.slice(from).map((text,index)=>({text,values:refsQueryParameters[from+index]})),
+                  {actorUserId:actor,organizationId:organization,assignmentFileId:assignment,
+                    originals:{operationId:refsOperation,generationId:refsBinding.generation_id,
+                      profileSha256:getNeighborhoodFrozenTypedOriginalV2Profile().profile_ref.content_sha256}});}
+            });
+          };
+        }
         }else{
           const method='continueOriginalFrozenCaptureJobSelectedStockUnionReferencesV2',
             tables=['heads','groups','rows'],readUnion=async()=>Object.fromEntries(await Promise.all(tables.map(async key=>[key,
@@ -4599,7 +4625,7 @@ for(const selectionWaitFixture of [false,true,'union','union-empty','intent']) t
       assert.deepEqual(await continuationJob(),cancelledWait);
       assert.equal((await continuationJob()).attempts,beforeWaitJob.attempts);assert.equal(await pinCount(),pinsBeforeContinuation);
       }
-      if(selectionWaitFixture!=='intent')await removeSyntheticTargetWorkspace();
+      if(!['intent','union-initial-recovery'].includes(selectionWaitFixture))await removeSyntheticTargetWorkspace();
       assertBoundedCohortAuthorityAggregates(refsCalls.slice(waitFrom).map((text,index)=>({text,values:refsQueryParameters[waitFrom+index]})),
         {actorUserId:actor,organizationId:organization,assignmentFileId:assignment,
           originals:{operationId:refsOperation,generationId:refsBinding.generation_id,
@@ -5006,13 +5032,18 @@ for(const selectionWaitFixture of [false,true,'union','union-empty','intent']) t
     await assert.rejects(withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSourceClosurePages(client,
       frozenSpatialOptions({...options,claim})).page({kind:'source_records',cursor:''})),/claim_lost/);
     };
-    if(selectionWaitFixture==='intent'){
-      assert.ok(intentLifetime);assert.equal(retainedSelectionIntentLifetime,undefined);
+    if(['intent','union-initial-recovery'].includes(selectionWaitFixture)){
+      assert.ok(intentLifetime);
       // The original remaining graph assertions still execute in full, after
       // the new real-expiry proof and workspace cleanup. They create unrelated
       // typed blobs, so must not change the intent's pre-expiry blob inventory.
       intentLifetime.finish=finishOriginalNativeGraph;
-      retainedSelectionIntentLifetime=intentLifetime;retainPool=true;
+      if(selectionWaitFixture==='intent'){
+        assert.equal(retainedSelectionIntentLifetime,undefined);retainedSelectionIntentLifetime=intentLifetime;
+      }else{
+        assert.equal(retainedInitialUnionRecoveryLifetime,undefined);retainedInitialUnionRecoveryLifetime=intentLifetime;
+      }
+      retainPool=true;
     }else await finishOriginalNativeGraph();
   }finally{if(!retainPool)await pool.end();}
 });
@@ -5023,6 +5054,16 @@ test('isolated PostgreSQL: retained selection intent expires naturally with orig
   const lifetime=retainedSelectionIntentLifetime;
   assert.ok(lifetime,'the preceding independent native intent graph must actually complete');
   retainedSelectionIntentLifetime=undefined;
+  let cleaned=false;
+  try{await lifetime.run();await lifetime.cleanup();cleaned=true;await lifetime.finish();}
+  finally{try{if(!cleaned)await lifetime.cleanup();}finally{await lifetime.pool.end();}}
+});
+
+test('isolated PostgreSQL: expired initial union claim recovers actual nine roots through failure5 and first original replay',{
+  skip:!process.env.DATABASE_URL,timeout:180_000,
+},async()=>{
+  const lifetime=retainedInitialUnionRecoveryLifetime;
+  assert.ok(lifetime,'the separate original9 graph must actually complete');retainedInitialUnionRecoveryLifetime=undefined;
   let cleaned=false;
   try{await lifetime.run();await lifetime.cleanup();cleaned=true;await lifetime.finish();}
   finally{try{if(!cleaned)await lifetime.cleanup();}finally{await lifetime.pool.end();}}

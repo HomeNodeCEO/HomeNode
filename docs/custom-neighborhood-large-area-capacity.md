@@ -20,13 +20,14 @@ head/tenth reference and single-consume continuation commit atomically after
 all ending fences. A fresh original/cache/partition EMPTY and native comparison
 of EVERY catalog group establish complete stock replay. Counts alone do not.
 
-The first step requires BOTH the original issued attempt and its exact resume
+The original first step requires BOTH the issued attempt and its exact resume
 token in SQL and JavaScript. The native before-head reader independently checks
-them too. The protected initial9 guard remains byte-identical to main: the first
+the actual binding too. The independent initial9 guard retains every existing
+fixed-lease, original-token and scoped cancellation branch. The first
 9-to-10 save keeps its original lease/token; only then can its native union yield
 clear the claim. Later actual consumed continuations and ordinary higher-attempt
 recovery remain separate and preserve failure history. Initial9 generic failure,
-reclaim and lease changes still refuse. Every provisional DML/orphan failure
+reclaim and live lease changes still refuse. Every provisional DML/orphan failure
 rolls back rows, counters, blob/head/root and continuation together.
 
 Actual protected parent d2824699 is integrated after the child was retargeted
@@ -38,7 +39,7 @@ new captures, the forged initial-token
 fault now requires the earlier protected initial-claim refusal and full rollback;
 it does not bypass that guard or claim a later expiry result. Existing union
 original/ending-authority faults, real DML/orphan rollback, lost COMMIT ACK,
-A/B/fresh EMPTY, higher-attempt recovery after10 and cancellation probes remain.
+A/B/fresh EMPTY, higher-attempt recovery after 10 and cancellation probes remain.
 
 Actual integrated b04 cloud execution passed the 417 migrations and the two
 single-test prerequisite suites, then failed both new union captures (11 of 13
@@ -52,15 +53,48 @@ head, exact ten-root checkpoint, original command/request and matching already
 consumed union continuation. It claims only a due normal failure or an actually
 expired claim, increments the existing attempt without clearing its error,
 and retires a naturally expired fifth attempt. Pending success continuations
-remain single-consume; initial nine-root intents remain ineligible. Generic
-admission, the protected initial-claim guard and all existing migrations are
+remain single-consume; initial nine-root intents remain ineligible for this
+ten-root path. Generic admission and all previously merged migration files are
 unchanged. Scheduling establishes no source or appraiser authority; the original
 bounded owner repeats every real original/cache/workspace/current/ending fence.
+
+The genuine included review of integrated head 3c34 identified a separate availability
+gap: a failed first replay leaves the original nine-root claim running, and
+after its actual expiry neither generic admission nor ten-root recovery can
+adopt it. The correction adds a separate `claimInitialDue` path. Its native
+predicate requires the actual whole job, exact immutable command/nine roots,
+consumed catalog continuation, complete stock and nonretired generation pin.
+The independent trigger adds only that closed expired-claim transition: one
+attempt is spent, the token changes and a new bounded lease is issued; every
+other job field, command, parent and failure-history field stays identical.
+An expired fifth attempt becomes terminal with no sixth claim. Same-attempt renewal,
+token-only substitution, generic claiming and live-lease changes still refuse.
+The original retained-intent reader stays strict. Only the union replay reader
+can accept a higher initial attempt with the separate native recovery binding;
+the actual source owner repeats every original and current/ending fence.
+
+A separate independently built graph reserves new native proof for this path.
+Its consumer runs after the unchanged original SAME-graph 120-second
+expiry/cancellation proof. It requires natural recovery leases at attempts 3,
+4 and 5, terminal exhaustion/no sixth claim and explicit PostgreSQL ROLLBACK of the entire
+original tuple. Two competing recoverers then commit one actual fresh claim
+before the real original owner. Ending authority/cache/workspace/orphan
+refusals, lost real first-union COMMIT acknowledgment, stale-claim refusal
+before original I/O and preservation of all prior parents/choices/reports/pins
+remain required. Neither existing 180-second native deadline nor any owner,
+query, byte, failure or source permission limit changes. These new native
+probes are authored; fresh corrected-head full execution is required.
+The 17 focused recovery/selection-reader checks pass serially (222.8956 ms,
+zero failures/cancellations/skips), with changed JavaScript syntax and diff
+checks passing. Require all 15 current prepared native cases, including the
+new independent recovery graph/consumer and the unchanged original expiry
+graph. The previous head 3c34 full 13/native and 3972/frontend success belongs to that
+older reviewed head; it is not this correction's release proof.
 
 Both independent new union fixtures now require generic admission to stay empty
 while two competing closed recovery calls admit one actual third attempt. A
 separate transaction on that same native progress performs normal failure,
-actual minimum 15-second lease expiry at attempts4 and5, terminal exhaustion
+actual minimum 15-second lease expiry at attempts 4 and 5, terminal exhaustion
 and refusal of a sixth claim. Explicit PostgreSQL ROLLBACK must restore the
 entire original job tuple, continuation, union and blob state. No clock, lease,
 attempt, original, grant or test/owner deadline is rewritten. Four new focused

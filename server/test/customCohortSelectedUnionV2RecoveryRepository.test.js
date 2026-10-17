@@ -11,7 +11,7 @@ const row={operation_id:id(1),claim_token:id(2),attempts:3,organization_id:id(3)
 function setup({auto=false,rows=[row],rowCount=rows.length}={}){let tx=40;const calls=[];
   return {calls,owner:repository({async query(sql,values){calls.push({sql,values});
     if(sql.includes(':transaction'))return {rowCount:1,rows:[{transaction_id:String(auto?++tx:tx)}]};
-    return sql.includes(':claim')?{rowCount,rows}:{rowCount:0,rows:[]};}})};}
+    return sql.includes(':claim')||sql.includes(':initial-claim')?{rowCount,rows}:{rowCount:0,rows:[]};}})};}
 
 test('union recovery returns only a fresh scheduling claim with authority still unestablished',async()=>{
   const {owner,calls}=setup(),[value]=await owner.claimDue({limit:1,leaseSeconds:15});
@@ -43,4 +43,18 @@ test('union recovery refuses corrupt returned scope, failure count and inconsist
     {...row,actor_user_id:'foreign'}, {...row,claim_token:null}])
     await assert.rejects(setup({rows:[bad]}).owner.claimDue(),/corrupt|invalid_claim|invalid_identifier/);
   await assert.rejects(setup({rowCount:0}).owner.claimDue(),/corrupt/);
+});
+
+test('headless9 recovery keeps closed scheduling inputs and refuses autocommit and corrupt claims',async()=>{
+  const {owner,calls}=setup();const [value]=await owner.claimInitialDue({limit:1,leaseSeconds:15});
+  assert.equal(value.authority,'not_established');assert.equal(value.claim.attempts,3);
+  assert.deepEqual(calls.find(c=>c.sql.includes(':initial-claim')).values,[1,15]);
+  assert.ok(calls.find(c=>c.sql.includes(':initial-claim')).sql.includes('app.neighborhood_v2_initial_union_claim_bound(job)'));
+  const auto=setup({auto:true});await assert.rejects(auto.owner.claimInitialDue(),/caller_transaction_required/);
+  assert.equal(auto.calls.length,2);
+  for(const raw of [{limit:1,leaseSeconds:14},{limit:1,leaseSeconds:901},{limit:1,leaseSeconds:120,checkpoint:{}},
+    {limit:1,get leaseSeconds(){assert.fail('no getter');}},new Proxy({limit:1,leaseSeconds:15},{})]){
+    const s=setup();await assert.rejects(s.owner.claimInitialDue(raw),/invalid_options/);assert.equal(s.calls.length,0);
+  }
+  await assert.rejects(setup({rows:[{...row,attempts:6}]}).owner.claimInitialDue(),/corrupt|invalid_claim/);
 });

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { createCustomCohortSourceResolutionParentV3Repository as parentWriter } from '../../src/services/neighborhoodAssessment/customCohortSourceResolutionParentV3Repository.js';
 
 const table='app.neighborhood_custom_cohort_source_resolution_v3_parents',
   ddl=readFileSync(new URL('../../migrations/20261219_custom_cohort_source_resolution_parent_v3.sql',import.meta.url),'utf8');
@@ -52,8 +53,15 @@ export async function runNeighborhoodSourceResolutionParentV3DatabaseChecks({poo
       await refusal(forged,[...values,JSON.stringify(patch)],/neighborhood_source_resolution_v3_actual_parent_required/);
       assert.equal(await count(),0);
     }
-    const inserted=(await query(`INSERT INTO ${table} SELECT * FROM app.neighborhood_source_resolution_v3_native_parent($1::uuid,$2::uuid) RETURNING *`,values)).rows;
-    assert.deepEqual(inserted,[actual]);assert.equal(await count(),1);
+    const writerInput={client:{query},scope,claim,actorUserId:owned.job.actor_user_id};
+    for(const change of [{claim:{...claim,claim_token:randomUUID()}},{claim:{...claim,attempts:claim.attempts===5?4:claim.attempts+1}},
+      {scope:{...scope,organization_id:randomUUID()}},{scope:{...scope,report_file_id:randomUUID()}},
+      {scope:{...scope,assignment_file_id:String(BigInt(scope.assignment_file_id)+1n)}},{scope:{...scope,account_id:'FORGED-SUBJECT'}},
+      {actorUserId:randomUUID()}]){
+      await assert.rejects(parentWriter({...writerInput,...change}).insertActual17Parent(),/claim_or_actual17_parent_lost/);
+      assert.equal(await count(),0);
+    }
+    assert.deepEqual(await parentWriter(writerInput).insertActual17Parent(),actual);assert.equal(await count(),1);
     for(const sql of [`UPDATE ${table} SET parent_checkpoint=parent_checkpoint`,`DELETE FROM ${table}`,`TRUNCATE ${table}`])
       await refusal(sql,[],/immutable|mutation_forbidden/);
     await refusal('SET CONSTRAINTS ALL IMMEDIATE',[],/neighborhood_source_resolution_v3_owner_unintegrated/);
@@ -70,6 +78,7 @@ export async function runNeighborhoodSourceResolutionParentV3DatabaseChecks({poo
     independent_capture:laterFirstSource?'B_ordinal2_after_empty_A':'A_ordinal1',
     actual_complete17_checkpoint_full_scope_index_generation_command_consumed_continuation_and_live_claim:true,
     forged_or_projected18_checkpoint_wrong_scope_reference_claim_attempt_and_transaction_refused:true,
+    closed_writer_actual_native_scope_and_claim_refusals_before_DML:true,
     provisional_parent_immutable_and_real_COMMIT_refused_DDL_and_rows_rolled_back:true,
     all_prior_native_job_parent_rows_blobs_reports_choices_and_pins_unchanged:true,
     exact18_admission:false,source_resolution_issued:false,source_NEXT_or_EMPTY:false,activation:false});

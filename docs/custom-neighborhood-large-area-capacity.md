@@ -1,3 +1,25 @@
+## Actual second source failure ledger (2026-10-17, inactive)
+
+A closed, unregistered attempt-two failure owner retains the entire actual
+running job before clearing its token and lease. The native commit reopens all
+independent original17, birth18, initial1, failure1, second2, FIRST/member/edge,
+complete index, stock, generation and pin parents. Attempts, checkpoints and
+all other fields remain intact; only status, token, lease, error, update time
+and a database-owned one-to-900-second retry schedule may change.
+
+The existing A/B clean graphs append real ending-role refusal after whole
+original I/O, then structural failure2 bookkeeping. Forged tuples, orphan
+COMMIT, full rollback, duplicate or immutable-record mutation, old queue
+adoption and stale FIRST/NEXT reads must refuse. B loses acknowledgment only
+after actual failure COMMIT. All fifteen deferred events remain enabled;
+entire role rows, source grants, native parents, evidence, reports, choices
+and pins are preserved. Existing aggregate budgets and deadlines are unchanged.
+
+Native/cloud validation is pending. This does not implement a third claim,
+all-source traversal or fresh EMPTY, complete economic statistics, publication,
+terminal pins, licensed large-area acquisition or live-speed acceptance.
+No migration, route, worker or scheduler is activated.
+
 ## Native NEXT whole originals under second2 (2026-10-17, inactive)
 
 A separate closed owner selects native NEXT after actual FIRST under the

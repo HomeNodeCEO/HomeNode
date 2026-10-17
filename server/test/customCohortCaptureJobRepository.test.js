@@ -37,6 +37,22 @@ test('every claim consumer rejects active and revoked Proxies before traps or SQ
   assert.deepEqual(prepared,claim);assert.ok(Object.isFrozen(prepared));assert.notEqual(prepared,claim);
 });
 
+
+test('generic admission excludes retained intents from claims and exhaustion but keeps scoped cancellation cleanup',async()=>{
+  const calls=[],repository=createCustomCohortCaptureJobRepository({async query(sql){calls.push(sql);return {rowCount:0,rows:[]};}});
+  assert.deepEqual(await repository.claimDue(),[]);
+  assert.equal(calls.length,2);
+  for(const sql of calls){
+    assert.match(sql,/NOT EXISTS \(SELECT 1 FROM app\.neighborhood_custom_cohort_v2_selection_intents intent/);
+    assert.match(sql,/intent\.operation_id=job\.operation_id AND intent\.organization_id=job\.organization_id/);
+    assert.match(sql,/FOR UPDATE SKIP LOCKED/);
+  }
+  assert.match(calls[0],/job\.cancellation_requested_at IS NOT NULL OR \(job\.attempts>=5/);
+  assert.match(calls[0],/THEN 'failed' ELSE 'cancelled'/);
+  assert.match(calls[1],/WHERE attempts<5 AND cancellation_requested_at IS NULL/);
+  assert.match(calls[1],/neighborhood_custom_cohort_v2_continuations c/);
+});
+
 test('waiting status is not success and scoped cancellation does not reset retained history or requeue',async()=>{
   const calls=[],repository=createCustomCohortCaptureJobRepository({async query(sql,values){calls.push({sql,values});
     return {rowCount:1,rows:[sql.includes('custom-cohort-job:cancel')?{status:'cancelled'}:

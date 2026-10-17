@@ -565,6 +565,7 @@ function fixture(hook=()=>{},initial=false,transactionCounts=null) {
   return {calls,client,store:createNeighborhoodFrozenJobStock(client,options)};
 }
 
+/** Build synthetic complete-cache DATA for page protocol tests, never an issued owner or grant. */
 async function sharedCadFixture(hook=()=>{}){
   const profile=getNeighborhoodFrozenTypedCadImprovementV1Profile(),original=getNeighborhoodFrozenCadImprovementProfile();let source,header;
   const primaryText=JSON.stringify({account_id:'STOCK-A',year_built:'2050',living_area_sqft:'9007199254740993',bedroom_count:'3',bath_count:'2.00',number_units:'1',pool:null});
@@ -1408,6 +1409,25 @@ test('original account housing preserves all five states, county and unknown lit
     f.rows.accounts=[stockOriginalCell('accounts','STOCK-A')];set({class_code:code},{class_code:code});assert.equal((await read()).category,category);
   }
   set({class_description:'MANUFACTURED HOME'},{structure_type:'MOBILE HOME'});assert.equal((await read()).state,'conflicting');
+});
+
+test('housing profile covers its actual county policy and exact combined original-row boundary',()=>{
+  const profile=getNeighborhoodOriginalAccountHousingV2Profile(),definition=JSON.parse(profile.definition_blob.canonical_json);
+  assert.deepEqual(definition.accepted_counties,['DALLAS','DALLAS COUNTY']);
+  assert.equal(definition.limit_original_rows,250);
+  assert.equal(assessmentEvidenceDigest(definition),profile.profile_ref.content_sha256);
+  const parcels=Array.from({length:249},(_,i)=>stockOriginalCell('parcels',String(i+1),{class_code:'A11'}));
+  for(const county of ['Dallas',' Dallas County ']){
+    const rows=[stockOriginalCell('accounts','STOCK-A',{county}),...parcels];
+    const housing=resolveNeighborhoodOriginalAccountHousingV2(rows,()=>{});
+    assert.equal(housing.state,'observed');assert.equal(housing.category,'detached_single_family');
+    assert.equal(housing.county_state,'observed');assert.equal(housing.source_part_count,'249');
+    let budgetChecks=0;
+    assert.throws(()=>resolveNeighborhoodOriginalAccountHousingV2([...rows,parcels[0]],()=>{budgetChecks++;}),/invalid_input/);
+    assert.equal(budgetChecks,0,'one-over admission refuses before any row work');
+  }
+  const changed={...definition,accepted_counties:[...definition.accepted_counties,'TARRANT']};
+  assert.notEqual(assessmentEvidenceDigest(changed),profile.profile_ref.content_sha256);
 });
 
 test('housing cannot bypass complete original replay, whole bounds, ending fences or reset the single-use budget',async()=>{

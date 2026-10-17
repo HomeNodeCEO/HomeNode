@@ -70,7 +70,16 @@ test('additive native guard binds all nine roots, exact workspace and one immuta
   for(let i=1;i<=8;i++)assert.ok(sql.includes(`job.checkpoint->'evidence_refs'->${i}`));
   for(const s of ['DEFERRABLE INITIALLY DEFERRED','orphan_resume','BEFORE TRUNCATE','intent_immutable',
     'NEW.resume_claim_token','workspace.section_value IS DISTINCT FROM NEW.workspace_checkpoint',
-    "NEW.status IN ('succeeded','awaiting_selection')",'NEW.attempts<OLD.attempts','NEW.checkpoint IS DISTINCT FROM command.checkpoint'])assert.ok(sql.includes(s),s);
+    "NEW.status IN ('succeeded','awaiting_selection')",'NEW.attempts<OLD.attempts','NEW.checkpoint IS DISTINCT FROM command.checkpoint',
+    'NEW.attempts>OLD.attempts','NEW.claim_token IS DISTINCT FROM OLD.claim_token AND NEW.claim_token IS NOT NULL',
+    'NEW.lease_expires_at IS DISTINCT FROM OLD.lease_expires_at',
+    "AND NEW.status='cancelled' AND NEW.claim_token IS NULL",
+    'AND NEW.lease_expires_at IS NULL AND NEW.cancellation_requested_at IS NOT NULL',
+    'OLD.lease_expires_at<=clock_timestamp() AND OLD.cancellation_requested_at IS NULL',
+    'CREATE FUNCTION app.guard_neighborhood_cohort_v2_initial_intent_claim()',
+    'CREATE TRIGGER neighborhood_cohort_v2_initial_intent_claim_guard BEFORE UPDATE',
+    'OLD.checkpoint IS DISTINCT FROM command.checkpoint THEN RETURN NEW',
+    'selection_intent_job_conflict_initial_claim'])assert.ok(sql.includes(s),s);
 });
 
 const workerOptions={scope,actorUserId:id(5),workspaceTarget:options.workspaceTarget},
@@ -81,13 +90,13 @@ function retainedSetup({patch={},auto=false,endAuto=false,missing=false}={}){
     if(sql.includes(':transaction'))return {rowCount:1,rows:[{transaction_id:String(auto?++transactions:endAuto&&++transactions===3?9:8)}]};
     if(sql.includes(':retained-read')||sql.includes(':replay-read'))return {rowCount:missing?0:1,rows:missing?[]:[{...structuredClone(command),
       job_request_sha256:command.request_sha256,job_checkpoint:structuredClone(checkpoint),
-      ...(sql.includes(':replay-read')?{replay_binding:true}:{}),...patch}]};
+      ...(sql.includes(':replay-read')?{replay_binding:true,initial_recovery_binding:false}:{}),...patch}]};
     assert.fail(sql);
   }})};
 }
 
-test('retained command reopens read-only for its original claim or a fresh ordinary replacement attempt, never a new choice',async()=>{
-  for(const [claim,patch] of [[currentClaim,{}],[{...currentClaim,claim_token:id(9)},{issued_attempts:4}]]){
+test('retained command reopens read-only for its original issued claim, never a new choice',async()=>{
+  for(const [claim,patch] of [[currentClaim,{}]]){
     const {owner,calls}=retainedSetup({patch}),result=await owner.readRetained(claim,workerOptions);
     assert.deepEqual(result.claim,claim);assert.deepEqual(result.included_recorded_group_ids,intent.included_recorded_group_ids);
     assert.equal(result.issued_attempts,patch.issued_attempts??5);assert.equal(result.command_id,intent.command_id);
@@ -96,14 +105,15 @@ test('retained command reopens read-only for its original claim or a fresh ordin
     assert.ok(calls.every(c=>!(/\b(INSERT|UPDATE|DELETE|TRUNCATE)\b/.test(c.sql))));
     assert.equal(calls.filter(c=>c.sql.includes(':transaction')).length,3);
     for(const s of ['FOR SHARE OF job,command NOWAIT',"job.status='running'",'job.context_sha256 IS NULL',
-      'job.lease_expires_at>clock_timestamp()','job.cancellation_requested_at IS NULL'])
+      'job.lease_expires_at>clock_timestamp()','job.cancellation_requested_at IS NULL',
+      'job.attempts=command.issued_attempts','job.claim_token=command.resume_claim_token'])
       assert.ok(calls.find(c=>c.sql.includes(':retained-read')).sql.includes(s),s);
   }
   const empty=retainedSetup({patch:{included_group_ids:[]}});
   assert.deepEqual((await empty.owner.readRetained(currentClaim,workerOptions)).included_recorded_group_ids,[]);
 });
 
-test('retained command refuses wrong request, roots, profile, workspace, attempt and reused initial token',async()=>{
+test('retained command refuses wrong request, roots, profile, workspace and any replacement attempt or token',async()=>{
   for(const patch of [{job_request_sha256:'d'.repeat(64)},{job_checkpoint:{...checkpoint,phase:'frozen_stock_v1'}},
     {checkpoint:{phase:checkpoint.phase,evidence_refs:[ref]}},{profile_reference:ref},
     {workspace_revision:2},{workspace_checkpoint:{...workspace,pending_capture:null}},
@@ -112,6 +122,9 @@ test('retained command refuses wrong request, roots, profile, workspace, attempt
     await assert.rejects(retainedSetup({patch}).owner.readRetained(currentClaim,workerOptions),
       /checkpoint_changed|workspace_changed|claim_lost|invalid_|group_id/);
   await assert.rejects(retainedSetup({missing:true}).owner.readRetained(currentClaim,workerOptions),/operation_unavailable/);
+  for(const claim of [{...currentClaim,claim_token:id(9)},
+    {...currentClaim,attempts:4,claim_token:id(9)}])
+    await assert.rejects(retainedSetup({patch:{issued_attempts:3}}).owner.readRetained(claim,workerOptions),/claim_lost/);
 });
 
 test('retained worker has a closed read-only grammar and requires the same actual owner transaction',async()=>{
@@ -145,6 +158,26 @@ test('fourth-pass command reader admits fresh same-attempt continuation ONLY wit
     await assert.rejects(retainedSetup({patch}).owner.readForReplay(fresh,workerOptions),/checkpoint_changed|claim_lost/);
   await assert.rejects(retainedSetup({patch:{job_checkpoint:progressed}}).owner.readForReplay(currentClaim,workerOptions),/claim_lost/);
   await assert.rejects(retainedSetup({patch:{job_checkpoint:progressed}}).owner.readRetained(fresh,workerOptions),/checkpoint_changed/);
+});
+test('initial union replay keeps the original issued token strict and requires separate native binding for expired9 recovery',async()=>{
+  const {owner,calls}=retainedSetup();
+  assert.deepEqual((await owner.readForReplay(currentClaim,workerOptions)).claim,currentClaim);
+  const sql=calls.find(c=>c.sql.includes(':replay-read')).sql;
+  for(const text of ['job.attempts=command.issued_attempts','job.claim_token=command.resume_claim_token'])assert.ok(sql.includes(text),text);
+  for(const claim of [{...currentClaim,claim_token:id(9)},
+    {...currentClaim,attempts:4,claim_token:id(9)}, {...currentClaim,attempts:4}])
+    await assert.rejects(retainedSetup({patch:{issued_attempts:3}}).owner.readForReplay(claim,workerOptions),/claim_lost/);
+  const progressed={phase:'frozen_selected_union_refs_v2',evidence_refs:[...checkpoint.evidence_refs,ref]},
+    recovered={...currentClaim,attempts:4,claim_token:id(9)};
+  assert.deepEqual((await retainedSetup({patch:{issued_attempts:3,job_checkpoint:progressed}})
+    .owner.readForReplay(recovered,workerOptions)).claim,recovered);
+  const initialRecovery=retainedSetup({patch:{issued_attempts:3,initial_recovery_binding:true}});
+  assert.deepEqual((await initialRecovery.owner.readForReplay(recovered,workerOptions)).claim,recovered);
+  assert.ok(initialRecovery.calls.find(c=>c.sql.includes(':replay-read')).sql.includes('app.neighborhood_v2_initial_union_claim_bound(job)'));
+  for(const binding of [false,null,1])await assert.rejects(retainedSetup({patch:{issued_attempts:3,initial_recovery_binding:binding}})
+    .owner.readForReplay(recovered,workerOptions),/claim_lost|checkpoint_changed/);
+  await assert.rejects(retainedSetup({patch:{issued_attempts:3,initial_recovery_binding:true}})
+    .owner.readForReplay({...recovered,claim_token:command.resume_claim_token},workerOptions),/claim_lost/);
 });
 test('fourth-pass reader retains closed grammar and same caller transaction, no token/lease/progress resets',async()=>{
   for(const raw of [{...workerOptions,checkpoint},{...workerOptions,continuation:{token:id(9)}},

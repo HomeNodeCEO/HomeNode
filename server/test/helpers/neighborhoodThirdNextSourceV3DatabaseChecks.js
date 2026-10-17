@@ -1,3 +1,4 @@
+import { runNeighborhoodOwnedSourceThirdRetryV3DatabaseChecks } from './neighborhoodOwnedSourceThirdRetryV3DatabaseChecks.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 
@@ -115,4 +116,6 @@ export async function runNeighborhoodThirdNextSourceV3DatabaseChecks({pool,input
     same_aggregate256_SQL_32MB_60s_single_use_child250_and_original180s_deadline:true,
     source_cursor_advanced:false,fresh_EMPTY:false,economic_progress_retained:false,complete_selected_union:false,
     publication:false,pin_transfer:false,activation:false,licensed_large_area:false,production_speed:false});
+  await runNeighborhoodOwnedSourceThirdRetryV3DatabaseChecks({pool,input,scope,actor,service,claim,
+    originalReads,laterFirstSource,setFault,readFault});
 }

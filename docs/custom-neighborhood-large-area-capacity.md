@@ -1,3 +1,26 @@
+## Actual third source failure ledger (2026-10-17, inactive)
+
+A closed, unregistered attempt-three failure owner retains the entire actual
+running job before clearing its token and lease. Its native COMMIT reopens
+every independent original17, birth18, owned1, failure1, second2, failure2,
+third3, FIRST/member/edge, complete index, stock, generation and pin parent.
+Attempts, checkpoints and all other fields remain intact; only status, token,
+lease, error, update time and a native one-to-900-second schedule may change.
+
+Both existing independent A/B graphs append actual ending-role refusal after
+whole third FIRST/NEXT original reconciliation, structural failure3 COMMIT,
+genuine orphan COMMIT/full rollback, forged tuple/transaction/schedule refusal,
+immutable history, duplicate/old queue refusal and stale FIRST/NEXT zero-I/O.
+B loses acknowledgment only after the actual failure COMMIT. All seventeen
+deferred events remain enabled; entire role rows, grants, native parents,
+reports, appraiser choices and pins remain exact. Original aggregate budgets,
+failure ceiling and all previous native cases and deadlines are unchanged.
+
+Fresh exact-head complete cloud/native validation is pending. This does not
+issue a fourth claim or implement all-source cursor/EMPTY, complete economic
+statistics, publication, terminal pins, licensed capacity or live-speed proof.
+No migration, route, worker or scheduler is registered or activated.
+
 ## Initial source failure native grant preservation (2026-10-17, inactive)
 
 The initial-one failure fixture now snapshots every membership-role field,

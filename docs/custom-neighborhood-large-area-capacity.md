@@ -55,6 +55,81 @@ and genuine included review before merge.
 
 # Complete larger-area Custom neighborhood studies
 
+## Original-backed per-account recorded eligibility (2026-10-10, not activated)
+
+The actual native union-progress owner now derives a transient decision for
+its ONE original-reconciled next account, after comparing the ENTIRE partition
+entry and native catalog literals. It uses the already-reopened subject and
+account in the SAME aggregate original/SQL/byte/deadline budget; there is no
+second source reader, caller callback, extra SQL query or population array.
+After all ending fences, the actual native contribution's selected-count delta
+must exactly match the immutable command's group membership. Only that native
+result supplies the returned selected flag/ordinal, never a caller count.
+
+Recorded comparison requires the SAME exact known subject/account housing
+category and EVERY original parcel part observed at the retained date with one
+equal value and its fixed reported unit. An aggregate `observed` state with even
+one missing, invalid or unsupported part is NOT complete. All part denominators
+and subject/account unknown, partial, conflict and different-category reasons
+remain explicit. Market-value currency remains unsupported, even for exact
+numeric literals. Equal reported area is not summed or promoted to verified
+GLA, one economic unit, historical housing, amenities or market eligibility.
+A fresh terminal EMPTY returns no previous account decision.
+
+269 focused synthetic tests passed, zero failures/skips (1648.4677ms), including
+actual neutral-compiler replay with a future outside-part year invalidated
+before account resolution. A separate serial focused run on the protected
+integration passed 98 checks, zero failures/cancellations/skips (2194.2549ms).
+These counts describe distinct synthetic and focused scopes.
+
+Full issued native union assertions for selected and explicit-empty unions
+executed successfully on `e92139ca176af3f4c309c7d78290af295970ae88` in native
+PostgreSQL job `117458960640`. The complete job passed 417/1/1/15/1/2 tests,
+with zero failures/cancellations/skips; the prepared suite took 914340.195695ms.
+Both independently built unions checked unresolved subject/account reasons,
+native selected ordinal, fresh terminal EMPTY and rollback of a forged selected
+delta after real DML. Whole originals, ENTIRE caches, unchanged source/typed
+copies, current and ending fences, aggregate budgets and existing native
+recovery/expiry/COMMIT safeguards remained required.
+
+Exact-commit evidence observed at `2026-10-17T19:45:51Z` for
+`0a6ea084cc0ceab5693beaaf9ead06b3a848c86b`: all 14 GitHub checks passed,
+including JavaScript/TypeScript, Python and CodeQL. Native PostgreSQL job
+`117473670749` passed all 417/1/1/15/1/2 tests with zero failures,
+cancellations or skips; its prepared suite took 737383.139644 ms. Full server
+validation passed 10,768 of 10,838 tests with 70 existing integration skips and
+zero failures/cancellations (221456.833713 ms). Full frontend validation
+passed 3,972 tests with zero failures/cancellations/skips (97818.005823 ms).
+The separate security checks also passed on that exact SHA: dependency-review,
+redteam-bootstrap, both npm-audit jobs, pnpm-audit and both pip-audit jobs.
+
+These are timestamped observations for that SHA, not evidence for a successor.
+Genuine review `5559763061` completed at `2026-10-17T19:51:48Z` and raised
+this documentation-status finding. As of this correction's
+`2026-10-17T19:54:26Z` snapshot, genuine review of the follow-up correction
+is pending. Every successor must independently satisfy the required exact-head
+security/native/full checks and genuine review before merge; conversational
+acknowledgment and skipped review do not establish that guard.
+
+This is ONE-account decision groundwork, NOT an issued eligibility pass or
+complete selected-population eligibility. Decisions are not copied into blobs,
+native rows or a new checkpoint. The fifth native pass still needs server-owned
+selected-ordinal progress, atomic head/checkpoint/consumed continuation, complete
+terminal reconciliation and real DML/orphan/lost-COMMIT/cancellation proofs.
+Statistics, coherent publication, durable workers/pin retirement, licensed
+large-area acquisition and live Hardy reload acceptance remain unfinished.
+All stages stay internal/inactive; no production, rights, choices, reports or
+Apply operations are performed.
+
+The actual protected #1262 parent was normally merged as
+`75e3b75c48ae983d078ba8be8dbbe4abbf417997` after all14 exact-head code
+checks, a genuine current-a6 included review with no actionable findings and
+thread resolution. #1263 was retargeted to main BEFORE fetching and integrating
+that actual parent. The complete protected document, corrected paired-budget
+sentence and shared-capacity/activation contract are retained. Validation and
+security results are the exact-SHA observations above. They do not transfer to
+later revisions, which remain subject to the same protected check/review guards.
+
 ## One subject/next-account original budget (2026-10-10, not activated)
 
 The actual native union-progress owner now resolves retained subject precedence

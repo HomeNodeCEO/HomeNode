@@ -29,12 +29,12 @@ unavailable, malformed-response and aggregate-capacity behavior. Fresh protected
 review/cloud checks and bounded live verification are required before closing
 the Hardy parcel-detail failure or claiming speed acceptance.
 
-## Selection-wait deployment validation (2026-10-16, not released)
+## Selection-wait deployment validation (released 2026-10-17)
 
 The actual included review of a664fb2 identified the widened status CHECK's
-validation scan under ACCESS EXCLUSIVE. The production API is still manually
-pinned to c777de9, whose registered migrations end at 20261122; the new 20261123
-files have not been released. The installation now uses NOT VALID, so the
+validation scan under ACCESS EXCLUSIVE. The production API was then manually
+pinned to c777de9, whose registered migrations ended at 20261122. The corrected
+installation uses NOT VALID, so the
 superset CHECK immediately enforces every new or updated row without scanning
 old rows during installation. A separate registered validation migration runs
 after the installation file commits. The existing runner commits each file
@@ -61,8 +61,15 @@ fixture's validated state; both clients are released, including refusal paths.
 No job/evidence rows are changed. Nine focused checks pass, including refusal
 of prevalidated fixtures, unexpected databases, exclusive validation locks and
 lost validation-COMMIT acknowledgments. Those doubles are protocol checks, not
-native scan proof. Fresh exact-head cloud native/full-suite checks and actual
-included review remain required before a protected merge and release.
+native scan proof. Exact head `aea36794` passed all 16 cloud checks, including
+the genuine first scan with the complete enqueued job tuple unchanged, and
+actual included review `866d3ad1` completed with no actionable findings. Normal
+protected merge #1256 produced `92b5b084`, with the identical reviewed tree.
+Its independent push native suite passed before the API's manual deploy;
+Render pre-deploy migrations completed and both API/frontend became Live on
+that commit. `/health`, `/ready` and the enabled c777de9 rollback were verified.
+This release does not activate unfinished source stages or establish map/speed
+acceptance: the bounded Hardy parcel-detail failures are recorded above.
 All prior original reads,
 source-purpose decisions, actor/workspace fences, guards, failure histories,
 budgets, deadlines, waiting semantics and inactive stage routing are unchanged.

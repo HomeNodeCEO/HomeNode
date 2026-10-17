@@ -24,6 +24,9 @@ export async function runNeighborhoodSourceResolutionParentV3DatabaseChecks({poo
     await query('BEGIN');open=true;
     await query("SET LOCAL statement_timeout='5000ms'; SET LOCAL lock_timeout='1000ms'; SET LOCAL idle_in_transaction_session_timeout='10000ms'");
     await query(ddl);
+    // Exercise our statement guard before an INSERT queues deferred events;
+    // PostgreSQL otherwise rejects TRUNCATE before invoking the guard itself.
+    await refusal(`TRUNCATE ${table}`,[],/custom_cohort_context_immutable/);
     const values=[claim.operation_id,scope.organization_id],native=(await query(
       'SELECT * FROM app.neighborhood_source_resolution_v3_native_parent($1::uuid,$2::uuid)',values)).rows;
     assert.equal(native.length,1);
@@ -54,7 +57,7 @@ export async function runNeighborhoodSourceResolutionParentV3DatabaseChecks({poo
     }
     const inserted=(await query(`INSERT INTO ${table} SELECT * FROM app.neighborhood_source_resolution_v3_native_parent($1::uuid,$2::uuid) RETURNING *`,values)).rows;
     assert.deepEqual(inserted,[actual]);assert.equal(await count(),1);
-    for(const sql of [`UPDATE ${table} SET parent_checkpoint=parent_checkpoint`,`DELETE FROM ${table}`,`TRUNCATE ${table}`])
+    for(const sql of [`UPDATE ${table} SET parent_checkpoint=parent_checkpoint`,`DELETE FROM ${table}`])
       await refusal(sql,[],/immutable|mutation_forbidden/);
     await refusal('SET CONSTRAINTS ALL IMMEDIATE',[],/neighborhood_source_resolution_v3_owner_unintegrated/);
     await assert.rejects(query('COMMIT'),/neighborhood_source_resolution_v3_owner_unintegrated/);open=false;

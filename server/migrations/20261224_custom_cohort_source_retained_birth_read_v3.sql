@@ -83,7 +83,7 @@ RETURNS SETOF app.neighborhood_custom_cohort_source_resolution_v3_first
 LANGUAGE sql VOLATILE AS $$
  WITH actual AS (
  SELECT p.operation_id,p.organization_id,p.generation_id,p.command_id,p.index_reference,p.index_sequence,
-  k.kind,k.native_key,k.first_selected_ordinal,m.account_id,m.partition_ordinal,
+  k.kind,k.native_key,k.first_selected_ordinal,m.account_id AS selected_account_id,m.partition_ordinal,
   m.entry_reference,m.metric_row_reference,m.contribution_row_reference,p.issued_transaction_id
  FROM app.neighborhood_source_resolution_v3_retained_parent_after_handoff(op,org) p
  CROSS JOIN LATERAL (

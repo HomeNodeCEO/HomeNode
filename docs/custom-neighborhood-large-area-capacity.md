@@ -28,6 +28,13 @@ The 23 writer boundary tests and 17 original-owner/resolution checks pass
 JavaScript syntax checks and the diff check pass.
 Fresh current-head native prefix/full cloud execution is required; detached
 boundary checks and previously passing parent results do not prove this change.
+Actual535ac native prefix passed20/22 and failed both independent captures after
+the retained-parent read succeeded: the FIRST comparison returned no row. The
+CTE projected the native member as `account_id`, while the immutable FIRST row
+uses `selected_account_id`. The correction names that projection explicitly;
+the comparison of the ENTIRE native FIRST row remains exact. No guard, source
+read, budget, deadline or assertion is weakened. The failed head is not rerun;
+fresh corrected-head prefix and full prepared execution are required.
 
 This reads retained birth metadata under the provisional18 retry state. All six
 unconditional COMMIT refusals and all prior guards remain byte-for-byte unchanged.

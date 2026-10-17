@@ -104,6 +104,10 @@ jobs:
         run: node --test test/uadSubjectPrefill.integration.test.js
       - name: Verify early original-owner handoffs and worker before full native suite
         run: node --test --test-name-pattern="with early original-owner" test/neighborhoodGroupIndex.integration.test.js
+      # Keep every original prefix/full case below. This early pair only
+      # exposes new clean source/retry failures sooner; both full passes remain.
+      - name: Verify clean initial source and retry graphs before complete prefix matrix
+        run: node --test --test-name-pattern="clean first source ownership at attempt one" test/neighborhoodGroupIndex.integration.test.js
       - name: Verify native source-prefix issuance and success worker before full native suite
         run: node --test --test-name-pattern="with native source-prefix" test/neighborhoodGroupIndex.integration.test.js
       - name: Verify prepared city and subdivision index on isolated PostgreSQL

@@ -35,6 +35,13 @@ not issue a fresh attempt-two claim, implement repeated2/3 recovery, advance a
 source cursor, prove fresh EMPTY, resolve economic values, publish, transfer pins,
 register or activate a stage, or establish licensed acquisition/live speed.
 
+Cloud CI also executes the two clean A/B cases before the complete prefix
+matrix. The same cases still run in both the complete prefix and prepared
+suites, and every prior workflow step remains verbatim. The earlier CAD failure
+was discovered only after roughly23 minutes; this additional early check gives
+faster failure feedback while retaining all original deadlines and complete
+native proofs. Passing the early pair cannot replace either complete pass.
+
 ## Clean first-attempt source native producer (2026-10-17, inactive)
 
 The `4e144300` native prefix run passed28 of30 cases; both new clean cases

@@ -3716,8 +3716,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
                 const handoff=await writer.saveAndYieldActualFirstSourceCheckpoint();
                 if(!same(handoff.checkpoint,{phase:'frozen_selected_source_resolution_refs_v3',
                   evidence_refs:[...parent.parent_checkpoint.evidence_refs,candidateReference]}))fail('completed_index_source_original_mismatch');
-                budget.check();return freeze({status:'provisional_original_first_source_atomic_handoff',operation_id:input.operationId,
-                  read_only:false,durable_source_resolution_issued:false,source_cursor_advanced:false,fresh_claim_admitted:false,
+                // transaction() delivers this only AFTER real COMMIT. The
+                // earlier unintegrated DDL still refuses it; unregistered25
+                // independently checks the complete birth at all six events.
+                budget.check();return freeze({status:'original_first_source_birth_retained',operation_id:input.operationId,
+                  read_only:false,durable_source_resolution_issued:true,source_cursor_advanced:false,fresh_claim_admitted:false,
                   context_complete:false,pin_transfer:false,report_update:'none',activation:false});
               }
               const saved=await writer.saveActualFirstSourceCheckpoint();

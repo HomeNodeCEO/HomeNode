@@ -5,7 +5,7 @@ import { customNeighborhoodPrivateSalesPurpose } from '../../security/customNeig
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA = /^[a-f0-9]{64}$/;
 const ACCOUNT_CONTROL = /[\u0000-\u001f\u007f]/;
-const PHASES = new Set(['subject', 'spatial', 'source', 'preparation', 'registration', 'frozen_stock_v1', 'frozen_source_v1', 'frozen_source_refs_v2', 'frozen_verify_refs_v2', 'frozen_geo_verify_refs_v2', 'frozen_identity_refs_v2', 'frozen_stock_traversal_refs_v2', 'frozen_recorded_partition_refs_v2', 'frozen_recorded_catalog_refs_v2', 'frozen_verify_v1', 'frozen_geo_verify_v1', 'frozen_identity_v1', 'frozen_typed_v1']);
+const PHASES = new Set(['subject', 'spatial', 'source', 'preparation', 'registration', 'frozen_stock_v1', 'frozen_source_v1', 'frozen_source_refs_v2', 'frozen_verify_refs_v2', 'frozen_geo_verify_refs_v2', 'frozen_identity_refs_v2', 'frozen_stock_traversal_refs_v2', 'frozen_recorded_partition_refs_v2', 'frozen_recorded_catalog_refs_v2', 'frozen_selected_union_refs_v2', 'frozen_verify_v1', 'frozen_geo_verify_v1', 'frozen_identity_v1', 'frozen_typed_v1']);
 const STATUSES = new Set(['queued', 'running', 'retry', 'awaiting_selection', 'succeeded', 'failed', 'cancelled']);
 export const CAPTURE_JOB_LEASE_SECONDS = Object.freeze({ min: 15, max: 900 });
 function fail(reason) { throw new TypeError(`custom_cohort_capture_job_${reason}`); }

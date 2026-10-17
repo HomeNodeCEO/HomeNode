@@ -61,11 +61,12 @@ test('registered native continuation guards actual heads, root checkpoint, singl
   assert.match(jobs,/AND NOT EXISTS \(SELECT 1 FROM app\.neighborhood_custom_cohort_v2_continuations/);
   assert.doesNotMatch(sql,/DISABLE TRIGGER|DROP TABLE|ST_DWithin|UPDATE app\.report_files|DELETE FROM/);
 });
-test('catalog continuation admits only the actual native catalog phase within the finite three-pass ceiling',async()=>{
+test('catalog and union continuations admit only issued phases within the finite four-pass ceiling',async()=>{
   const phase='frozen_recorded_catalog_refs_v2',result=await setup({phase,sequence:6000003}).owner.yieldIssued(claim,options);
   assert.equal(result.phase,phase);assert.equal(result.continuation_sequence,6000003);assert.equal(result.attempts,5);
-  for(const sequence of [0,6000004,1.5])await assert.rejects(setup({phase,sequence}).owner.yieldIssued(claim,options),/corrupt/);
-  await assert.rejects(setup({phase:'frozen_selected_union_refs_v2'}).owner.yieldIssued(claim,options),/corrupt/);
+  for(const sequence of [0,8000005,1.5])await assert.rejects(setup({phase,sequence}).owner.yieldIssued(claim,options),/corrupt/);
+  assert.equal((await setup({phase:'frozen_selected_union_refs_v2',sequence:8000004}).owner.yieldIssued(claim,options)).continuation_sequence,8000004);
+  await assert.rejects(setup({phase:'frozen_free_done_refs_v2'}).owner.yieldIssued(claim,options),/corrupt/);
   const {owner,calls}=setup({phase});
   for(const key of ['phase','progress_reference','done','continuation_sequence','retry_count','catalog_head','readOriginal'])
     await assert.rejects(owner.yieldIssued(claim,{...options,[key]:true}),/invalid_/);

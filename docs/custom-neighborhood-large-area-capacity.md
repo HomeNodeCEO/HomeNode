@@ -1,4 +1,158 @@
+## Initial9 native assertion correction (2026-10-17, fresh full validation pending)
+
+Exact head 7354 passed 417 migrations, subject and account-quality checks, then
+failed three of 15 prepared cases (12 passed, no cancellations or skips).
+Both live union fixtures inspected `request_payload` on a deliberately partial
+job projection that did not select it. The assertion now reads the actual
+scoped stored request and checks its operation ID and current field grammar.
+The independent recovery fixture reached its real original owner, but its
+early-refusal probes incorrectly required ending subject reads even when a
+current/ending fence had already refused delivery. Each rejected call now
+checks every exact aggregate/parameter shape and the unchanged query budget.
+The successful lost-actual-COMMIT-acknowledgment call still independently
+requires BOTH ending actor and bounded subject-section reads. The shared
+full-delivery assertion retains those requirements; a focused negative case
+also proves that early-refusal shape checks cannot claim delivery or admit
+widened section caps or population aggregates. No runtime, DDL, authority,
+source, lease, failure-ceiling, byte/query/runtime budget or deadline changes.
+Seventeen focused aggregate/recovery checks pass serially (466.6151 ms,
+zero failures/cancellations/skips); both changed native files pass syntax.
+The failed head is not rerun. A new exact head needs the full cloud native,
+security and suite results and genuine included review before merge.
+
+## Initial9 recovery current-request correction (2026-10-17, native validation pending)
+
+The exact 6e native run passed 417 migration checks, subject and account quality,
+then failed three of 15 prepared checks. Both live union graphs refused before
+their actual rollback probes; the separate expired initial9 graph returned no
+recovery claim. The new structural predicate incorrectly required the feature
+branch's future `execution_mode` request field. The protected request grammar
+retains operation ID, period and genuine choices and cannot issue that field.
+
+The correction binds the actual native request's operation ID alongside its
+entire stored job, immutable command/request digest, exact nine roots, consumed
+catalog continuation, complete stock and nonretired generation pin. It does not
+change the request grammar, source rights, generic admission, failure ceiling or
+fixed leases. Both live union graphs and the independent expired graph now
+explicitly require a positive native binding while preserving their genuine
+current request without the future feature tag. All existing whole-original,
+ENTIRE-cache, current/ending fences, real rollback/COMMIT, natural expiry and
+attempt3/4/5/exhaustion probes remain required under unchanged budgets and
+deadlines. The failed head is not rerun; a new exact head needs full cloud checks
+and genuine included review before merge.
+
 # Complete larger-area Custom neighborhood studies
+
+## Independent original replay and explicit selected-stock union (2026-10-17, inactive)
+
+The next closed internal phase uses the actual bounded database owner to
+replay ONE complete next stock account: every original, outside-geometry part,
+full recorded label, retained-date metric state, ENTIRE neutral cache and
+ENTIRE immutable partition entry. The combined housing/group package is read
+once. Current database actor, private draft, assignment, subject, both ending
+source/claim fences and the locked pending V7 workspace/prior head share the
+unchanged 256-query / 32MB / 60s owner and stricter child budgets. Source policy
+precedes even command and known-ID reads. No caller roster, source callback,
+cursor, receipt, selection, lease or failure reset supplies authority.
+
+Only the immutable new-study command's explicit group IDs select distinct STOCK
+membership, including empty. Unknown/conflicting housing remains separate from
+eligibility. Reference-only account ordinals and bounded group counters contain
+no copied source cells. The first nine roots remain exact; the actual union
+head/tenth reference and single-consume continuation commit atomically after
+all ending fences. A fresh original/cache/partition EMPTY and native comparison
+of EVERY catalog group establish complete stock replay. Counts alone do not.
+
+The original first step requires BOTH the issued attempt and its exact resume
+token in SQL and JavaScript. The native before-head reader independently checks
+the actual binding too. The independent initial9 guard retains every existing
+fixed-lease, original-token and scoped cancellation branch. The first
+9-to-10 save keeps its original lease/token; only then can its native union yield
+clear the claim. Later actual consumed continuations and ordinary higher-attempt
+recovery remain separate and preserve failure history. Initial9 generic failure,
+reclaim and live lease changes still refuse. Every provisional DML/orphan failure
+rolls back rows, counters, blob/head/root and continuation together.
+
+Actual protected parent d2824699 is integrated after the child was retargeted
+MAIN. Its entire retained-intent live-claim proof and SAME native graph's natural
+120-second expiry/cleanup test remain intact. Separate nonempty and explicit-empty
+union captures run before the original human-intent producer so their runtime
+cannot spend its fixed lease before the unchanged expiry consumer. On those
+new captures, the forged initial-token
+fault now requires the earlier protected initial-claim refusal and full rollback;
+it does not bypass that guard or claim a later expiry result. Existing union
+original/ending-authority faults, real DML/orphan rollback, lost COMMIT ACK,
+A/B/fresh EMPTY, higher-attempt recovery after 10 and cancellation probes remain.
+
+Actual integrated b04 cloud execution passed the 417 migrations and the two
+single-test prerequisite suites, then failed both new union captures (11 of 13
+prepared tests passed, no cancellations/skips). Their normal failure wrote retry
+at attempt2, but the generic scheduler correctly returned no replacement:
+protected admission excludes EVERY retained intent. That failed head is not
+rerun and its incomplete native result is not release proof.
+
+A separate inactive recovery repository now requires the actual native union
+head, exact ten-root checkpoint, original command/request and matching already
+consumed union continuation. It claims only a due normal failure or an actually
+expired claim, increments the existing attempt without clearing its error,
+and retires a naturally expired fifth attempt. Pending success continuations
+remain single-consume; initial nine-root intents remain ineligible for this
+ten-root path. Generic admission and all previously merged migration files are
+unchanged. Scheduling establishes no source or appraiser authority; the original
+bounded owner repeats every real original/cache/workspace/current/ending fence.
+
+The genuine included review of integrated head 3c34 identified a separate availability
+gap: a failed first replay leaves the original nine-root claim running, and
+after its actual expiry neither generic admission nor ten-root recovery can
+adopt it. The correction adds a separate `claimInitialDue` path. Its native
+predicate requires the actual whole job, exact immutable command/nine roots,
+consumed catalog continuation, complete stock and nonretired generation pin.
+The independent trigger adds only that closed expired-claim transition: one
+attempt is spent, the token changes and a new bounded lease is issued; every
+other job field, command, parent and failure-history field stays identical.
+An expired fifth attempt becomes terminal with no sixth claim. Same-attempt renewal,
+token-only substitution, generic claiming and live-lease changes still refuse.
+The original retained-intent reader stays strict. Only the union replay reader
+can accept a higher initial attempt with the separate native recovery binding;
+the actual source owner repeats every original and current/ending fence.
+
+A separate independently built graph reserves new native proof for this path.
+Its consumer runs after the unchanged original SAME-graph 120-second
+expiry/cancellation proof. It requires natural recovery leases at attempts 3,
+4 and 5, terminal exhaustion/no sixth claim and explicit PostgreSQL ROLLBACK of the entire
+original tuple. Two competing recoverers then commit one actual fresh claim
+before the real original owner. Ending authority/cache/workspace/orphan
+refusals, lost real first-union COMMIT acknowledgment, stale-claim refusal
+before original I/O and preservation of all prior parents/choices/reports/pins
+remain required. Neither existing 180-second native deadline nor any owner,
+query, byte, failure or source permission limit changes. These new native
+probes are authored; fresh corrected-head full execution is required.
+The 17 focused recovery/selection-reader checks pass serially (222.8956 ms,
+zero failures/cancellations/skips), with changed JavaScript syntax and diff
+checks passing. Require all 15 current prepared native cases, including the
+new independent recovery graph/consumer and the unchanged original expiry
+graph. The previous head 3c34 full 13/native and 3972/frontend success belongs to that
+older reviewed head; it is not this correction's release proof.
+
+Both independent new union fixtures now require generic admission to stay empty
+while two competing closed recovery calls admit one actual third attempt. A
+separate transaction on that same native progress performs normal failure,
+actual minimum 15-second lease expiry at attempts 4 and 5, terminal exhaustion
+and refusal of a sixth claim. Explicit PostgreSQL ROLLBACK must restore the
+entire original job tuple, continuation, union and blob state. No clock, lease,
+attempt, original, grant or test/owner deadline is rewritten. Four new focused
+boundary tests pass (143.3837 ms), and 52 related repository/receipt checks pass
+(541.3649 ms), all with zero failures/cancellations/skips. Fresh corrected-head native,
+security/full cloud checks and genuine included review are required; old2d265
+small initial-stack proof is historical only.
+
+The finite 8,000,004 success ceiling covers four fixed stock passes. No default
+worker, route, source grant, appraiser choice, Apply, publication, context
+completion or pin transfer activates. Eligibility, economic/amenity/transaction
+resolution, full selected-union medians/CODs/calendar quarters, coherent
+publication, bounded whole-run workers, terminal pins and licensed >50k / 5-mile /
+10-mile / city / retrospective acceptance remain open. Synthetic/native fixtures
+do not establish licensed acquisition or production speed.
 
 ## Retained new-study intent under its current initial claim (2026-10-17, not activated)
 

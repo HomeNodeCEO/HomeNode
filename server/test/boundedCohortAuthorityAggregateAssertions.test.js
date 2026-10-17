@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { assertBoundedCohortAuthorityAggregates as check } from './helpers/boundedCohortAuthorityAggregateAssertions.js';
+import { assertBoundedCohortAuthorityAggregates as check, assertBoundedCohortAuthorityAggregateShapes as shapes } from './helpers/boundedCohortAuthorityAggregateAssertions.js';
 import { customCohortRepositoryFixture } from './fixtures/customCohortRepositoryFixture.js';
 import { loadCurrentCustomCohortJobActor } from '../src/services/neighborhoodAssessment/customCohortJobActor.js';
 import { NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL } from '../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
@@ -22,6 +22,14 @@ async function actualQueries() {
 test('catalog aggregate assertion accepts actual bounded actor and three-section SQL at both ends', async () => {
   const { scope, actor, section } = await actualQueries();
   check([actor, section, { text: 'SELECT count(*) FROM app.example', values: [] }, actor, section], scope);
+});
+
+test('early-refusal shape checks retain exact aggregate bounds without claiming ending authority', async () => {
+  const { scope, actor, section } = await actualQueries();
+  shapes([actor, section], scope);
+  assert.throws(() => check([actor, section], scope), /both-end current actor/);
+  assert.throws(() => shapes([actor, { ...section, values: [scope.assignmentFileId, section.values[1], 1_500_001] }], scope), /three fixed material/);
+  assert.throws(() => shapes([actor, { text: 'SELECT jsonb_agg(account_id) FROM app.accounts', values: [] }], scope), /unexpected catalog aggregate/);
 });
 
 test('catalog aggregate assertion refuses tag spoofing, extra aggregates, widened scope/cap and missing end reads', async () => {

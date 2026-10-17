@@ -3,7 +3,8 @@ import test, { after } from 'node:test';
 import { randomUUID,createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { prepareNeighborhoodCiDatabase } from './helpers/neighborhoodCiDatabase.js';
-import { assertBoundedCohortAuthorityAggregates } from './helpers/boundedCohortAuthorityAggregateAssertions.js';
+import { assertBoundedCohortAuthorityAggregates, assertBoundedCohortAuthorityAggregateShapes } from './helpers/boundedCohortAuthorityAggregateAssertions.js';
+import { runNeighborhoodInitialUnionRecoveryV2DatabaseChecks } from './helpers/neighborhoodInitialUnionRecoveryV2DatabaseChecks.js';
 import { getNeighborhoodFrozenTypedOriginalV2Profile } from '../src/services/neighborhoodAssessment/neighborhoodFrozenTypedOriginalV1.js';
 import { NEIGHBORHOOD_CACHED_SOURCE_SCHEMA } from './fixtures/neighborhoodCachedSourceSchemaFixture.js';
 import { runNeighborhoodGroupIndex,getPreparedNeighborhoodGroupSummary }
@@ -52,6 +53,8 @@ import { createCustomCohortRecordedCatalogV2Repository } from '../src/services/n
 import { prepareCohortRecordedCatalogReceiptV2 } from '../src/services/neighborhoodAssessment/cohortRecordedCatalogReceiptV2.js';
 import { createCustomCohortV2ContinuationRepository }
   from '../src/services/neighborhoodAssessment/customCohortV2ContinuationRepository.js';
+import { createCustomCohortSelectedUnionV2RecoveryRepository }
+  from '../src/services/neighborhoodAssessment/customCohortSelectedUnionV2RecoveryRepository.js';
 import { createCustomCohortV2SelectionWaitRepository }
   from '../src/services/neighborhoodAssessment/customCohortV2SelectionWaitRepository.js';
 import { runNeighborhoodSelectionWaitStatusValidationV2DatabaseChecks }
@@ -1352,19 +1355,24 @@ test('isolated PostgreSQL: freezes a complete 60001-account original source popu
 // Independent real-native captures: preserve the original five-failure terminal
 // test, and build an entirely new issued graph for the waiting boundary. Never
 // clone/rebind job roots, summaries, original payloads or caller DONE metadata.
-// Retain only the third actual graph's test closure for a separate bounded
+// Retain only the original human-intent graph's closure for a separate bounded
 // lifetime check. It reopens the same database/job/originals/current authority;
 // this is test sequencing, never a callback accepted as source authority.
-let retainedSelectionIntentLifetime;
+let retainedSelectionIntentLifetime,retainedInitialUnionRecoveryLifetime;
 // A filtered run may execute the producer without the lifetime consumer. The
 // consumer takes ownership by clearing this slot before its own finally block.
 after(async()=>{
   const lifetime=retainedSelectionIntentLifetime;
   retainedSelectionIntentLifetime=undefined;
   if(lifetime)await lifetime.pool.end();
+  const recoveryLifetime=retainedInitialUnionRecoveryLifetime;retainedInitialUnionRecoveryLifetime=undefined;
+  if(recoveryLifetime)await recoveryLifetime.pool.end();
 });
-for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
-  +(selectionWaitFixture==='intent'?' with explicit new-study selection intent':selectionWaitFixture?' with issued selection waiting':''),{
+// Run the two new independent union captures BEFORE that original intent
+// producer. Its unchanged natural-expiry consumer must run immediately next,
+// with no new fixture's runtime consuming the original fixed 120-second lease.
+for(const selectionWaitFixture of [false,true,'union','union-empty','union-initial-recovery','intent']) test('isolated PostgreSQL: frozen source pages retain all-date one-hop packages without linked-account or second-hop expansion'
+  +(['intent','union','union-empty','union-initial-recovery'].includes(selectionWaitFixture)?` with explicit new-study selection ${selectionWaitFixture}`:selectionWaitFixture?' with issued selection waiting':''),{
   skip:!process.env.DATABASE_URL,timeout:180_000,
 },async()=>{
   const target=await prepareNeighborhoodCiDatabase();const {default:pg}=await import('pg');
@@ -1760,7 +1768,7 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
       // error metadata. Waiting must later retain attempt2 and this exact error.
       await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client)
         .failClaim(refsClaim,'synthetic_pre_selection_failure',{retrySeconds:1}));
-      await pool.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET run_after=clock_timestamp() WHERE operation_id=$1',[refsOperation]);
+      await new Promise(resolve=>setTimeout(resolve,1100));
       const [fresh]=await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).claimDue({leaseSeconds:900}));
       assert.equal(fresh.operation_id,refsOperation);assert.equal(fresh.attempts,2);assert.notEqual(fresh.claim_token,refsClaim.claim_token);
       Object.assign(refsClaim,{operation_id:fresh.operation_id,claim_token:fresh.claim_token,attempts:fresh.attempts});
@@ -1770,7 +1778,18 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
       refsCalls.push(config.text);
       refsQueryParameters.push(config.values);
       if(config.text.includes('neighborhood-cohort-blob:insert */'))refsBlobPuts.push(config.values[3]);
+      const orphanUnionYield=refsFault==='union_orphan_commit'&&config.text.includes('custom-cohort-v2-continuation:yield');
+      // Negative native guard test: execute the REAL yield, then roll back ONLY
+      // that statement. The earlier real group/head/root writes remain pending;
+      // REAL COMMIT must reject orphan progress. No fabricated SQL result.
+      if(orphanUnionYield)await client.query('SAVEPOINT synthetic_union_yield');
       const result=await client.query(config);
+      if(orphanUnionYield){await client.query('ROLLBACK TO SAVEPOINT synthetic_union_yield');refsFault=null;}
+      for(const [fault,tag] of [['union_group_rollback','custom-cohort-selected-union-v2:group-contribute'],
+        ['union_head_rollback','custom-cohort-selected-union-v2:head-insert'],
+        ['union_yield_rollback','custom-cohort-v2-continuation:yield']]){
+        if(refsFault===fault&&config.text.includes(tag)){refsFault=null;throw new Error(`actual ${fault}`);}
+      }
       if(config.text.includes('custom-cohort-v2-selection-wait:release')&&refsFault==='wait_release_rollback'){
         refsFault=null;throw Error('synthetic actual waiting release rollback');
       }
@@ -1911,7 +1930,8 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
         ||Object.values(NEIGHBORHOOD_TRANSACTION_PACKAGE_V1_SQL).includes(config.text)){
         // The ending-header fault is consumed by the later second metadata
         // read, not by the page query. Keep it armed like the COMMIT fault.
-        const fault=refsFault;if(!['commit','cad_header','transaction_header','wait_release_rollback','intent_resume_rollback'].includes(fault)&&!fault?.startsWith('partition_')&&!fault?.startsWith('catalog_'))refsFault=null;
+        const fault=refsFault;if(!['commit','cad_header','transaction_header','wait_release_rollback','intent_resume_rollback'].includes(fault)
+          &&!fault?.startsWith('partition_')&&!fault?.startsWith('catalog_')&&!fault?.startsWith('union_'))refsFault=null;
         if(fault==='license')await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
         if(fault==='role')await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);
         if(fault==='subject')await client.query("UPDATE app.appraisal_subject_snapshots SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2000') WHERE id=$1",[sourceSnapshot]);
@@ -4140,10 +4160,10 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
       assert.equal(await pinCount(),pinsBeforeContinuation);assert.deepEqual(await readTargetWorkspace(),targetWorkspace);
       assert.deepEqual(await readTargetHistory(),targetHistory);assert.deepEqual(await readTargetReport(),targetReport);
       assert.deepEqual(await readTargetWorkfile(),targetWorkfile);assert.deepEqual(await readPriorTargetMetadata(),priorTargetMetadata);
-      if(selectionWaitFixture==='intent'){
+      if(['intent','union','union-empty','union-initial-recovery'].includes(selectionWaitFixture)){
         const intentMethod='resumeOriginalFrozenCaptureJobSelectionIntentReferencesV2',
           selectionIntent={command_id:randomUUID(),catalog_reference:catalogFinal.receipt_reference,workspace_revision:1,
-            included_recorded_group_ids:[groupB.recorded_group.assigned_group_id]},
+            included_recorded_group_ids:selectionWaitFixture==='union-empty'?[]:[groupB.recorded_group.assigned_group_id]},
           intentOptions={selectionIntent},readIntents=async()=>(await pool.query(
             'SELECT * FROM app.neighborhood_custom_cohort_v2_selection_intents WHERE operation_id=$1',[refsOperation])).rows,
           waitingWholeJob=(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[refsOperation])).rows[0],
@@ -4227,7 +4247,8 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
         await runNeighborhoodSelectionIntentReclaimV2DatabaseChecks({pool,scope,operationId:refsOperation,actorUserId:actor,intent:selectionIntent,
           workspaceTarget:{authority:'prior_workspace_target_only_not_new_selection',workspace_revision:1,workspace_checkpoint:pendingTarget},
           expectedJob:resumedJob,expired:false});
-        for(const bad of [{...selectionIntent,command_id:randomUUID()},{...selectionIntent,included_recorded_group_ids:[]}])
+        for(const bad of [{...selectionIntent,command_id:randomUUID()},{...selectionIntent,
+          included_recorded_group_ids:selectionIntent.included_recorded_group_ids.length?[]:[groupB.recorded_group.assigned_group_id]}])
           await assert.rejects(freshRefsOwner()[intentMethod](refsInput,{selectionIntent:bad}),/command_conflict/);
         await pool.query("UPDATE app.custom_appraisal_workfile_sections SET revision=2 WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'",[assignment]);
         await assert.rejects(freshRefsOwner()[intentMethod](refsInput,intentOptions),/workspace_changed/);
@@ -4236,7 +4257,13 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
           'DELETE FROM app.neighborhood_custom_cohort_v2_selection_intents WHERE operation_id=$1'])
           await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(sql,[refsOperation])),/selection_intent_immutable/);
         await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query('TRUNCATE app.neighborhood_custom_cohort_v2_selection_intents')),
-          /selection_intent_immutable/);
+          /cannot truncate a table referenced in a foreign key constraint/);
+        // The new union-head FK refuses the single-table command before row
+        // triggers. Include BOTH tables to exercise the native immutable guards
+        // too, never remove the FK or disable a trigger to reach them.
+        await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
+          'TRUNCATE app.neighborhood_custom_cohort_v2_selection_intents, app.neighborhood_custom_cohort_selected_union_v2_heads')),
+        /selection_intent_immutable|custom_cohort_context_immutable/);
         for(const set of ["status='awaiting_selection',claim_token=NULL,lease_expires_at=NULL",'checkpoint=NULL',
           "status='succeeded',context_sha256=repeat('a',64)"])
           await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
@@ -4253,6 +4280,7 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
         assert.deepEqual(await readTargetWorkfile(),targetWorkfile);assert.deepEqual(await readPriorTargetMetadata(),priorTargetMetadata);
           };
         await assertResumedUnchanged();
+        if(['intent','union-initial-recovery'].includes(selectionWaitFixture)){
         const retainedMethod='readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2',
           workerClaim=replayed.claim,assertRetainedUnchanged=assertResumedUnchanged,
           readRetained=()=>freshRefsOwner()[retainedMethod](refsInput,{captureJobClaim:workerClaim}),
@@ -4381,6 +4409,208 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
             all_original_cache_partition_catalog_workspace_reports_prior_choices_and_pins_unchanged:true,
             selected_union:false,publication:false,licensed_acquisition:false,worker_activation:false,production_speed:false});
         }};
+        if(selectionWaitFixture==='union-initial-recovery'){
+          assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>
+            createCustomCohortSelectedUnionV2RecoveryRepository(client).claimInitialDue({limit:1,leaseSeconds:15})),[]);
+          await assertResumedUnchanged();
+          intentLifetime.run=async()=>{
+            refsAbort=new AbortController();
+            await runNeighborhoodInitialUnionRecoveryV2DatabaseChecks({pool,scope,operationId:refsOperation,originalClaim:replayed.claim,
+              runStep:claim=>freshRefsOwner().continueOriginalFrozenCaptureJobSelectedStockUnionReferencesV2(refsInput,
+                {captureJobClaim:claim,signal:refsAbort.signal}),
+              setFault:fault=>{refsFault=fault;refsAbort=new AbortController();},
+              async restoreFault(fault){assert.equal(refsFault,null);
+                if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+                if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);},
+              originalReads:()=>refsCalls.filter(sql=>sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,
+              queryCount:()=>refsCalls.length,
+              assertOwnerQueryShapes(from){assert.equal(refsFault,null);assert.ok(refsCalls.length-from-3<=ORIGINAL_OWNER_LIMITS.sql_queries);
+                assertBoundedCohortAuthorityAggregateShapes(refsCalls.slice(from).map((text,index)=>({text,values:refsQueryParameters[from+index]})),
+                  {actorUserId:actor,organizationId:organization,assignmentFileId:assignment,
+                    originals:{operationId:refsOperation,generationId:refsBinding.generation_id,
+                      profileSha256:getNeighborhoodFrozenTypedOriginalV2Profile().profile_ref.content_sha256}});},
+              assertOwnerQueries(from){assert.equal(refsFault,null);assert.ok(refsCalls.length-from-3<=ORIGINAL_OWNER_LIMITS.sql_queries);
+                assertBoundedCohortAuthorityAggregates(refsCalls.slice(from).map((text,index)=>({text,values:refsQueryParameters[from+index]})),
+                  {actorUserId:actor,organizationId:organization,assignmentFileId:assignment,
+                    originals:{operationId:refsOperation,generationId:refsBinding.generation_id,
+                      profileSha256:getNeighborhoodFrozenTypedOriginalV2Profile().profile_ref.content_sha256}});}
+            });
+          };
+        }
+        }else{
+          const method='continueOriginalFrozenCaptureJobSelectedStockUnionReferencesV2',
+            tables=['heads','groups','rows'],readUnion=async()=>Object.fromEntries(await Promise.all(tables.map(async key=>[key,
+              (await pool.query(`SELECT * FROM app.neighborhood_custom_cohort_selected_union_v2_${key} WHERE operation_id=$1`,[refsOperation])).rows]))),
+            unionUnchanged=async()=>{
+              assert.deepEqual(await readUnion(),{heads:[],groups:[],rows:[]});assert.deepEqual(await continuationJob(),resumedJob);
+              assert.deepEqual(await continuationRow(),catalogReadContinuation);assert.equal(await refsBlobCount(),catalogFinalBlobs);
+              assert.deepEqual(await readIntents(),retainedIntents);assert.deepEqual(await readCatalogHead(),catalogFinal);
+              assert.deepEqual(await readCatalogGroups(),catalogGroups);assert.deepEqual(await readPartitionHead(),partitionFinal);
+              assert.deepEqual(await readPartitionRows(),partitionRows);assert.equal(await pinCount(),pinsBeforeContinuation);
+              assert.deepEqual(await readTargetWorkspace(),targetWorkspace);assert.deepEqual(await readTargetHistory(),targetHistory);
+              assert.deepEqual(await readTargetReport(),targetReport);assert.deepEqual(await readTargetWorkfile(),targetWorkfile);
+              assert.deepEqual(await readPriorTargetMetadata(),priorTargetMetadata);
+            };
+          assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>
+            createCustomCohortSelectedUnionV2RecoveryRepository(client).claimDue({limit:1,leaseSeconds:900})),[]);
+          await unionUnchanged();
+          let liveClaim=replayed.claim;
+          const actualRequest=(await pool.query(`SELECT request_payload FROM app.neighborhood_custom_cohort_capture_jobs
+            WHERE operation_id=$1 AND organization_id=$2`,[refsOperation,organization])).rows[0].request_payload;
+          assert.equal(actualRequest.operation_id,refsOperation);
+          assert.equal(Object.hasOwn(actualRequest,'execution_mode'),false,
+            'current protected native request must not need the future feature execution tag');
+          assert.equal((await pool.query(`SELECT app.neighborhood_v2_initial_union_claim_bound(job) AS bound
+            FROM app.neighborhood_custom_cohort_capture_jobs job WHERE operation_id=$1 AND organization_id=$2`,
+          [refsOperation,organization])).rows[0].bound,true,'actual live initial9 native binding before original union rollback probes');
+          const unionStepQueryCounts=[],step=async()=>{const from=refsCalls.length;
+            try{return await freshRefsOwner()[method](refsInput,{captureJobClaim:liveClaim});}
+            finally{unionStepQueryCounts.push(refsCalls.length-from-3);}};
+          await setFixtureGrant(pool,organization,{...fixtureGrant(organization),revoked_at:'2026-01-01T00:00:00.000000Z'});
+          const deniedFrom=refsCalls.length;await assert.rejects(step(),/market_data_access_denied/);
+          assert.ok(!refsCalls.slice(deniedFrom).some(sql=>sql.includes('selection-intent:replay-read')
+            ||sql.includes('selection-intent:known-groups')||sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL));
+          await unionUnchanged();await setFixtureGrant(pool,organization,fixtureGrant(organization));
+          for(const [fault,reason] of [['catalog_owner_bytes_ending',/original_account_owner_byte_limit/],
+            ['catalog_prior_head_ending',/group_workspace_selection_changed/],['catalog_workspace_revision_ending',/workspace_target_changed/],
+            ['catalog_workspace_pending_ending',/group_workspace_study_changed/],['catalog_workspace_missing_ending',/group_workspace_unavailable/],
+            ['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],['subject',/subject_changed/],
+            ['claim',/selection_intent_job_conflict_initial_claim/],['cancel',/cancelled/],['transaction_header',/cache_unavailable/],
+            ['catalog_read_counts_ending',/catalog_original_mismatch/],['catalog_read_head_ending',/checkpoint_conflict|catalog_original_mismatch/],
+            ['stock_cells_mismatch',/original_mismatch/],['stock_cells_missing',/original_mismatch/],['stock_cells_original',/original_mismatch/],
+            ['union_group_rollback',/actual union_group_rollback/],['union_head_rollback',/actual union_head_rollback/],
+            ['union_yield_rollback',/actual union_yield_rollback/],['union_orphan_commit',/neighborhood_selected_union_v2_orphan_progress/]]){
+            refsFault=fault;refsAbort=new AbortController();
+            await assert.rejects(freshRefsOwner()[method](refsInput,{captureJobClaim:liveClaim,signal:refsAbort.signal}),reason);
+            assert.equal(refsFault,null);await unionUnchanged();
+            if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
+            if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);
+          }
+          const originalResumeToken=liveClaim.claim_token,unionFrom=refsCalls.length;
+          // REAL COMMIT happened before transport failure. Never recapture or
+          // duplicate first-account progress on recovery.
+          refsFault='commit';await assert.rejects(step(),e=>e.outcome_unknown===true);
+          const firstState=await readUnion(),firstJob=await continuationJob(),firstContinuation=await continuationRow();
+          assert.equal(firstState.heads.length,1);assert.equal(firstState.heads[0].sequence,1);
+          assert.equal(firstState.groups.length,1);assert.equal(firstState.rows.length,0,'first conflicting/unassigned account is not promoted to a candidate');
+          assert.equal(firstJob.status,'retry');assert.equal(firstJob.attempts,2);assert.equal(firstJob.context_sha256,null);
+          assert.deepEqual(firstJob.checkpoint.evidence_refs.slice(0,9),resumedJob.checkpoint.evidence_refs);
+          assert.equal(firstJob.checkpoint.phase,'frozen_selected_union_refs_v2');assert.equal(firstJob.checkpoint.evidence_refs.length,10);
+          assert.equal(firstContinuation.issued_claim_token,originalResumeToken);
+          assert.notEqual(catalogReadContinuation.consumed_claim_token,originalResumeToken,'exact native human bridge, not global token relaxation');
+          assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>
+            createCustomCohortSelectedUnionV2RecoveryRepository(client).claimDue({limit:1,leaseSeconds:900})),[]);
+          assert.deepEqual(await continuationJob(),firstJob);assert.deepEqual(await continuationRow(),firstContinuation);
+          await assert.rejects(step(),/claim_lost/);assert.deepEqual(await readUnion(),firstState);
+          const consume=async()=>{
+            const claims=(await Promise.all([1,2].map(()=>withCustomCohortJobTransaction(pool,client=>
+              createCustomCohortV2ContinuationRepository(client).claimDue({limit:1,leaseSeconds:900}))))).flat();
+            assert.equal(claims.length,1);assert.equal(claims[0].claim.operation_id,refsOperation);return claims[0].claim;
+          };
+          liveClaim=await consume();assert.equal(liveClaim.attempts,2);assert.notEqual(liveClaim.claim_token,originalResumeToken);
+          const second=await step();assert.equal(second.progress.account_count,2);assert.equal(second.progress.done,false);
+          assert.equal(second.complete_catalog_original_replay,false);assert.equal(second.complete_distinct_selected_stock_union,false);
+          assert.equal(second.selected_stock_accounts,selectionWaitFixture==='union-empty'?0:1);
+          assert.equal(second.housing_and_metric_eligibility,'separate_not_established_unknown_conflicting_lineage_preserved');
+          assert.equal(second.context_complete,false);assert.equal(second.pin_transfer,false);
+          liveClaim=await consume();const staleUnionClaim=liveClaim;
+          await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client)
+            .failClaim(liveClaim,'synthetic_union_worker_failure',{retrySeconds:1}));
+          await assert.rejects(step(),/claim_lost/);await new Promise(resolve=>setTimeout(resolve,1100));
+          const failedUnionJob=await continuationJob();
+          assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>
+            createCustomCohortCaptureJobRepository(client).claimDue({limit:1,leaseSeconds:900})),[]);
+          assert.deepEqual(await continuationJob(),failedUnionJob,'generic admission still excludes every retained intent');
+          const replacements=(await Promise.all([1,2].map(()=>withCustomCohortJobTransaction(pool,client=>
+            createCustomCohortSelectedUnionV2RecoveryRepository(client).claimDue({limit:1,leaseSeconds:900}))))).flat();
+          assert.equal(replacements.length,1);assert.equal(replacements[0].claim.attempts,3);
+          assert.equal(replacements[0].authority,'not_established');assert.deepEqual(replacements[0].scope,scope);
+          liveClaim=replacements[0].claim;
+          // Real normal failure and two natural 15-second lease expiries, then
+          // explicit ROLLBACK. No clock, lease, attempts, roots or grant rewrite.
+          const fullJobSql='SELECT to_jsonb(job) AS value FROM app.neighborhood_custom_cohort_capture_jobs job WHERE operation_id=$1',
+            beforeRecoveryProbe=(await pool.query(fullJobSql,[refsOperation])).rows[0].value,
+            beforeRecoveryUnion=await readUnion(),beforeRecoveryContinuation=await continuationRow(),
+            beforeRecoveryBlobs=await refsBlobCount(),recoveryClient=await pool.connect();
+          try{
+            await recoveryClient.query('BEGIN');
+            const recovery=createCustomCohortSelectedUnionV2RecoveryRepository(recoveryClient),
+              jobs=createCustomCohortCaptureJobRepository(recoveryClient);
+            assert.deepEqual(await jobs.failClaim(liveClaim,'synthetic_union_recovery_probe',{retrySeconds:1}),{status:'retry'});
+            await new Promise(resolve=>setTimeout(resolve,1100));
+            const [fourth]=await recovery.claimDue({limit:1,leaseSeconds:15});assert.equal(fourth.claim.attempts,4);
+            await new Promise(resolve=>setTimeout(resolve,15_100));
+            const [fifth]=await recovery.claimDue({limit:1,leaseSeconds:15});assert.equal(fifth.claim.attempts,5);
+            assert.notEqual(fifth.claim.claim_token,fourth.claim.claim_token);
+            await new Promise(resolve=>setTimeout(resolve,15_100));
+            assert.deepEqual(await recovery.claimDue({limit:1,leaseSeconds:15}),[]);
+            const exhausted=(await recoveryClient.query(fullJobSql,[refsOperation])).rows[0].value;
+            assert.equal(exhausted.status,'failed');assert.equal(exhausted.attempts,5);
+            assert.equal(exhausted.last_error_code,'attempts_exhausted');assert.equal(exhausted.claim_token,null);
+            assert.equal(exhausted.lease_expires_at,null);assert.equal(exhausted.context_sha256,null);
+            assert.deepEqual(exhausted.checkpoint,beforeRecoveryProbe.checkpoint);
+            assert.deepEqual(await jobs.claimDue({limit:1,leaseSeconds:15}),[]);
+            assert.deepEqual(await recovery.claimDue({limit:1,leaseSeconds:15}),[]);
+            assert.deepEqual((await recoveryClient.query(fullJobSql,[refsOperation])).rows[0].value,exhausted);
+          }finally{await recoveryClient.query('ROLLBACK');recoveryClient.release();}
+          assert.deepEqual((await pool.query(fullJobSql,[refsOperation])).rows[0].value,beforeRecoveryProbe);
+          assert.deepEqual(await readUnion(),beforeRecoveryUnion);assert.deepEqual(await continuationRow(),beforeRecoveryContinuation);
+          assert.equal(await refsBlobCount(),beforeRecoveryBlobs);assert.deepEqual(await readIntents(),retainedIntents);
+          await assert.rejects(freshRefsOwner()[method](refsInput,{captureJobClaim:staleUnionClaim}),/claim_lost/);
+          await assert.rejects(freshRefsOwner()[intentMethod](refsInput,intentOptions),/checkpoint_changed|command_conflict/);
+          const terminal=await step(),finalUnion=await readUnion(),finalJob=await continuationJob();
+          assert.equal(terminal.progress.done,true);assert.equal(terminal.progress.account_count,2);
+          assert.equal(terminal.complete_catalog_original_replay,true);assert.equal(terminal.complete_distinct_selected_stock_union,true);
+          assert.equal(terminal.selected_stock_accounts,selectionWaitFixture==='union-empty'?0:1);
+          assert.equal(finalUnion.heads[0].sequence,3);assert.equal(finalUnion.groups.length,2);
+          assert.equal(finalUnion.rows.length,selectionWaitFixture==='union-empty'?0:1);
+          if(finalUnion.rows.length){const member=finalUnion.rows[0];assert.equal(member.account_id,groupB.account_id);
+            assert.equal(member.ordinal,1);assert.equal(member.partition_ordinal,2);
+            assert.deepEqual(member.entry_reference,partitionRows.find(r=>r.account_id===groupB.account_id).entry_reference);
+            assert.deepEqual(Object.keys(member).sort(),['operation_id','organization_id','account_id','ordinal','partition_ordinal','entry_reference'].sort());
+            assert.equal(housingB.recorded_housing.state,'unknown','selected stock retains unknown housing, not assumed eligible');}
+          assert.equal(finalJob.attempts,3);assert.equal(finalJob.last_error_code,'synthetic_union_worker_failure');
+          assert.equal(finalJob.context_sha256,null);assert.deepEqual(finalJob.checkpoint.evidence_refs.slice(0,9),resumedJob.checkpoint.evidence_refs);
+          assert.deepEqual(await readIntents(),retainedIntents);assert.deepEqual(await readCatalogHead(),catalogFinal);
+          assert.deepEqual(await readCatalogGroups(),catalogGroups);assert.deepEqual(await readPartitionHead(),partitionFinal);
+          assert.deepEqual(await readPartitionRows(),partitionRows);assert.equal(await pinCount(),pinsBeforeContinuation);
+          assert.deepEqual(await readTargetWorkspace(),targetWorkspace);assert.deepEqual(await readTargetHistory(),targetHistory);
+          assert.deepEqual(await readTargetReport(),targetReport);assert.deepEqual(await readTargetWorkfile(),targetWorkfile);
+          assert.deepEqual(await readPriorTargetMetadata(),priorTargetMetadata);
+          const successCalls=refsCalls.slice(unionFrom);
+          assert.equal(successCalls.filter(sql=>sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,3);
+          assert.ok(unionStepQueryCounts.every(n=>n>=0&&n<=ORIGINAL_OWNER_LIMITS.sql_queries));
+          assert.ok(!successCalls.some(sql=>/custom-cohort-recorded-catalog-v2:(contribute|anchor-insert|anchor-advance)/.test(sql)));
+          for(const table of tables.filter(key=>finalUnion[key].length))await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
+            `DELETE FROM app.neighborhood_custom_cohort_selected_union_v2_${table} WHERE operation_id=$1`,[refsOperation])),/immutable/);
+          await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
+            'TRUNCATE app.neighborhood_custom_cohort_selected_union_v2_rows')),/immutable|mutation|not permitted/);
+          assert.deepEqual(await readUnion(),finalUnion);
+          assert.deepEqual(await withCustomCohortJobTransaction(pool,client=>createCustomCohortCaptureJobRepository(client).cancel(scope,refsOperation)),{status:'cancelled'});
+          const cancelledUnionJob=await continuationJob(),cancelledUnionContinuation=await continuationRow();
+          // The pending continuation guard runs before selection-wait guards.
+          // Either native boundary may refuse; every attempted escape must
+          // leave the actual cancelled job, continuation and union unchanged.
+          for(const set of ["status='retry'",'checkpoint=NULL',"cancellation_requested_at=NULL"]){
+            await assert.rejects(withCustomCohortJobTransaction(pool,client=>client.query(
+              `UPDATE app.neighborhood_custom_cohort_capture_jobs SET ${set} WHERE operation_id=$1`,[refsOperation])),/selection_wait_immutable|selection_intent_job_conflict|continuation_job_conflict/);
+            assert.deepEqual(await continuationJob(),cancelledUnionJob);
+            assert.deepEqual(await continuationRow(),cancelledUnionContinuation);assert.deepEqual(await readUnion(),finalUnion);
+          }
+          console.info('[native-original-selected-stock-union-v2]',{independently_built_native_graph:true,
+            explicit_empty:selectionWaitFixture==='union-empty',stock_accounts:2,distinct_selected_stock_accounts:finalUnion.rows.length,
+            complete_original_catalog_replay_and_every_group_terminal_reconciliation:true,
+            one_combined_whole_original_full_labels_all_outside_parts_retained_date_states_entire_cache_partition_per_step:true,
+            current_source_before_command_and_known_ID_lookup_all_ending_faults_and_real_DML_rollbacks:true,
+            exact_human_resume_token_bridge_fresh_same_attempt_success_and_real_higher_attempt_reclaim:true,
+            generic_admission_unchanged_closed_native_union_recovery_only_after_consumed_progress:true,
+            actual_natural_lease_expiry_fifth_failure_ceiling_no_sixth_claim_and_full_tuple_ROLLBACK:true,
+            lost_real_COMMIT_ack_next_native_ordinal_no_duplicate_or_recapture:true,
+            first_nine_roots_and_intent_pins_workspace_history_reports_unchanged:true,
+            maximum_whole_owner_sql_queries:Math.max(...unionStepQueryCounts),whole_owner_limits:ORIGINAL_OWNER_LIMITS,
+            unknown_housing_retained_not_assumed_eligible:true,housing_metric_eligibility:false,statistics:false,publication:false,
+            licensed_acquisition:false,worker_activation:false,production_speed:false});
+        }
         console.info('[native-new-study-selection-intent-v2]',{independently_built_native_graph:true,
           explicit_authenticated_new_study_IDs_not_prior_choice_or_worker_inference:true,
           exact_nine_roots_catalog_profile_request_pending_workspace_and_prior_head:true,
@@ -4408,7 +4638,7 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
       assert.deepEqual(await continuationJob(),cancelledWait);
       assert.equal((await continuationJob()).attempts,beforeWaitJob.attempts);assert.equal(await pinCount(),pinsBeforeContinuation);
       }
-      if(selectionWaitFixture!=='intent')await removeSyntheticTargetWorkspace();
+      if(!['intent','union-initial-recovery'].includes(selectionWaitFixture))await removeSyntheticTargetWorkspace();
       assertBoundedCohortAuthorityAggregates(refsCalls.slice(waitFrom).map((text,index)=>({text,values:refsQueryParameters[waitFrom+index]})),
         {actorUserId:actor,organizationId:organization,assignmentFileId:assignment,
           originals:{operationId:refsOperation,generationId:refsBinding.generation_id,
@@ -4815,13 +5045,18 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
     await assert.rejects(withCustomCohortJobTransaction(pool,client=>createNeighborhoodFrozenSourceClosurePages(client,
       frozenSpatialOptions({...options,claim})).page({kind:'source_records',cursor:''})),/claim_lost/);
     };
-    if(selectionWaitFixture==='intent'){
-      assert.ok(intentLifetime);assert.equal(retainedSelectionIntentLifetime,undefined);
+    if(['intent','union-initial-recovery'].includes(selectionWaitFixture)){
+      assert.ok(intentLifetime);
       // The original remaining graph assertions still execute in full, after
       // the new real-expiry proof and workspace cleanup. They create unrelated
       // typed blobs, so must not change the intent's pre-expiry blob inventory.
       intentLifetime.finish=finishOriginalNativeGraph;
-      retainedSelectionIntentLifetime=intentLifetime;retainPool=true;
+      if(selectionWaitFixture==='intent'){
+        assert.equal(retainedSelectionIntentLifetime,undefined);retainedSelectionIntentLifetime=intentLifetime;
+      }else{
+        assert.equal(retainedInitialUnionRecoveryLifetime,undefined);retainedInitialUnionRecoveryLifetime=intentLifetime;
+      }
+      retainPool=true;
     }else await finishOriginalNativeGraph();
   }finally{if(!retainPool)await pool.end();}
 });
@@ -4832,6 +5067,16 @@ test('isolated PostgreSQL: retained selection intent expires naturally with orig
   const lifetime=retainedSelectionIntentLifetime;
   assert.ok(lifetime,'the preceding independent native intent graph must actually complete');
   retainedSelectionIntentLifetime=undefined;
+  let cleaned=false;
+  try{await lifetime.run();await lifetime.cleanup();cleaned=true;await lifetime.finish();}
+  finally{try{if(!cleaned)await lifetime.cleanup();}finally{await lifetime.pool.end();}}
+});
+
+test('isolated PostgreSQL: expired initial union claim recovers actual nine roots through failure5 and first original replay',{
+  skip:!process.env.DATABASE_URL,timeout:180_000,
+},async()=>{
+  const lifetime=retainedInitialUnionRecoveryLifetime;
+  assert.ok(lifetime,'the separate original9 graph must actually complete');retainedInitialUnionRecoveryLifetime=undefined;
   let cleaned=false;
   try{await lifetime.run();await lifetime.cleanup();cleaned=true;await lifetime.finish();}
   finally{try{if(!cleaned)await lifetime.cleanup();}finally{await lifetime.pool.end();}}

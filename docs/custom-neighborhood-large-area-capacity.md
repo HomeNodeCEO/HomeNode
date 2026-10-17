@@ -1,3 +1,21 @@
+## Actual third source claim (2026-10-17, inactive)
+
+A separate native claim consumes the committed second failure only when its
+actual schedule is due, spending attempt three once with a new bounded token
+and lease. It retains the entire retry2 job and independently reopens every
+original17, birth18, owned1, failure1, second2, failure2 and FIRST/member parent.
+All previous trigger bodies, sixteen deferred events, failure ceiling and
+original native cases, budgets and deadlines remain intact.
+
+The existing A/B native lineage appends forged claim/transaction/lease refusal,
+genuine orphan COMMIT rollback, complete tentative claim rollback, competing
+claimers and B acknowledgment loss after actual third-claim COMMIT. It also
+requires exact whole-parent reopen, immutable history and refusal of duplicate
+or old queue adoption and unimplemented original access. Cloud validation is
+pending. Third-claim issuance establishes no source authority or original
+proof; all-source traversal/EMPTY, economics, publication, terminal pins,
+licensed capacity and live-speed acceptance remain open. Nothing is activated.
+
 ## Actual second source failure ledger (2026-10-17, inactive)
 
 A closed, unregistered attempt-two failure owner retains the entire actual

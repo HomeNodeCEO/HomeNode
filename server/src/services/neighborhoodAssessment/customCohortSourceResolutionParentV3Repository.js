@@ -31,7 +31,9 @@ function checkpoint(v){
 
 // Dormant storage primitive inside the future actual original owner's bounded
 // transaction. This does NOT authorize sources/actors, reconcile originals,
-// issue18, save/yield progress or remove the unconditional COMMIT refusal.
+// issue durable18, yield progress or remove the unconditional COMMIT refusal.
+// The separate provisional checkpoint method can change only the actual birth
+// job's roots before that mandatory refusal rolls the entire transaction back.
 // No caller checkpoint, cursor, source, reference, generation or row is input.
 export function createCustomCohortSourceResolutionParentV3Repository(...args){
   if(args.length!==1)fail('invalid_input');
@@ -96,7 +98,7 @@ export function createCustomCohortSourceResolutionParentV3Repository(...args){
       JOIN app.neighborhood_custom_cohort_source_resolution_v3_rows r
         ON r.operation_id=b.operation_id AND r.organization_id=b.organization_id
         AND r.issued_transaction_id=b.issued_transaction_id AND r.sequence=1`;
-  let candidateRow=null;
+  let candidateRow=null,retainedParent=null,retainedHead=null,savedCheckpoint=false;
   return Object.freeze({async insertActual17Parent(...a){
     if(a.length)fail('invalid_input');
     const id=await tx();if(await tx()!==id)fail('caller_transaction_required');
@@ -105,7 +107,7 @@ export function createCustomCohortSourceResolutionParentV3Repository(...args){
     const retained=prepare(one(await o.client.query(`/* custom-cohort-source-resolution-parent-v3:insert */
       INSERT INTO app.neighborhood_custom_cohort_source_resolution_v3_parents ${selected} RETURNING *`,values)),id);
     if(json(retained)!==json(expected))fail('native_parent_changed');
-    if(await tx()!==id)fail('caller_transaction_required');return retained;
+    if(await tx()!==id)fail('caller_transaction_required');retainedParent=retained;return retained;
   },async insertActualFirstSourceBinding(...a){
     if(a.length)fail('invalid_input');
     const id=await tx();if(await tx()!==id)fail('caller_transaction_required');
@@ -129,7 +131,11 @@ export function createCustomCohortSourceResolutionParentV3Repository(...args){
     if(await tx()!==id)fail('caller_transaction_required');candidateRow=retained;return retained;
   },async insertActualFirstSourceHead(...a){
     if(a.length||candidateRow===null)fail('candidate_row_required');
-    const id=await tx();if(await tx()!==id)fail('caller_transaction_required');
+    // The private candidate's actual issued TX is independently re-derived by
+    // headSelected's native-FIRST/actual17 join below. Use that real native
+    // read as the first transaction observation; retain the following explicit
+    // observation and ending check instead of two redundant leading probes.
+    const id=candidateRow.issued_transaction_id;
     const current=prepareCandidateRow(one(await o.client.query(
       '/* custom-cohort-source-resolution-parent-v3:head-native */ '+headSelected,values)),id,candidateRow.candidate_reference);
     if(json(current)!==json(candidateRow))fail('native_candidate_changed');
@@ -137,6 +143,45 @@ export function createCustomCohortSourceResolutionParentV3Repository(...args){
     const retained=prepareCandidateRow(one(await o.client.query(`/* custom-cohort-source-resolution-parent-v3:head-insert */
       INSERT INTO app.neighborhood_custom_cohort_source_resolution_v3_heads ${headSelected} RETURNING *`,values)),id,candidateRow.candidate_reference);
     if(json(retained)!==json(candidateRow))fail('native_candidate_changed');
-    if(await tx()!==id)fail('caller_transaction_required');return retained;
+    if(await tx()!==id)fail('caller_transaction_required');retainedHead=retained;return retained;
+  },async saveActualFirstSourceCheckpoint(...a){
+    // Birth-only and still uncommittable. No caller checkpoint/reference,
+    // projected18-to17 reconstruction or ordinary checkpoint codec widening.
+    if(a.length||retainedParent===null||retainedHead===null||savedCheckpoint)fail('native_checkpoint_required');
+    const id=retainedParent.issued_transaction_id;
+    const expected=Object.freeze({phase:'frozen_selected_source_resolution_refs_v3',
+      evidence_refs:Object.freeze([...retainedParent.parent_checkpoint.evidence_refs,retainedHead.candidate_reference])}),
+      scoped=`job.operation_id=$1::uuid AND job.organization_id=$2::uuid AND job.report_file_id=$3::uuid
+        AND job.assignment_file_id=$4::bigint AND job.account_id=$5 AND job.actor_user_id=$6::uuid
+        AND job.claim_token=$7::uuid AND job.attempts=$8::integer`,
+      prepareSaved=v=>{const r=data(v,['checkpoint','transaction_id']);
+        if(r.transaction_id!==id)fail('caller_transaction_required');
+        const p=data(r.checkpoint,['phase','evidence_refs']);
+        // Comparing the complete closed data shape also refuses executable
+        // descriptors before canonical serialization can invoke them.
+        const refs=p.evidence_refs;
+        if(p.phase!==expected.phase||!Array.isArray(refs)||isProxy(refs)||Object.getPrototypeOf(refs)!==Array.prototype
+          ||refs.length!==18||Reflect.ownKeys(refs).length!==19)fail('native_checkpoint_changed');
+        const prepared=[];for(let i=0;i<18;i++){
+          const d=Object.getOwnPropertyDescriptor(refs,String(i));if(!d?.enumerable||!Object.hasOwn(d,'value'))fail('native_checkpoint_changed');
+          prepared.push(reference(d.value,i===17?12000:i===16?4096:999999999));
+        }
+        const result=Object.freeze({phase:p.phase,evidence_refs:Object.freeze(prepared)});
+        if(Buffer.byteLength(json(result))>4096||json(result)!==json(expected))fail('native_checkpoint_changed');return result;
+      };
+    // One real native statement re-derives18 and returns its actual TX. The
+    // immutable retained17 birth TX is also a WHERE fence, so autocommit or a
+    // replaced transaction cannot mutate even before JS examines RETURNING.
+    // Both native job guards still compare the entire OLD tuple and actual
+    // parent/FIRST/row/head again. No original/authority read is omitted.
+    const retained=prepareSaved(one(await o.client.query(`/* custom-cohort-source-resolution-parent-v3:checkpoint-save */
+      UPDATE app.neighborhood_custom_cohort_capture_jobs job
+      SET checkpoint=app.neighborhood_source_resolution_v3_first_checkpoint(job.operation_id,job.organization_id),
+        updated_at=clock_timestamp()
+      FROM app.neighborhood_custom_cohort_source_resolution_v3_parents birth
+      WHERE ${scoped} AND birth.operation_id=job.operation_id AND birth.organization_id=job.organization_id
+        AND birth.issued_transaction_id=txid_current() AND birth.parent_checkpoint=job.checkpoint
+      RETURNING job.checkpoint,txid_current()::text AS transaction_id`,values)));
+    savedCheckpoint=true;return retained;
   }});
 }

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runNeighborhoodFirstSourceResolutionRowV3DatabaseChecks } from './neighborhoodFirstSourceResolutionRowV3DatabaseChecks.js';
+import { runNeighborhoodFirstSourceCheckpointV3DatabaseChecks } from './neighborhoodFirstSourceCheckpointV3DatabaseChecks.js';
 
 const parentTable='app.neighborhood_custom_cohort_source_resolution_v3_parents',
   firstTable='app.neighborhood_custom_cohort_source_resolution_v3_first',
@@ -84,5 +85,7 @@ export async function runNeighborhoodFirstSourceBindingOwnerV3DatabaseChecks({po
     exact18_admission:false,source_resolution_issued:false,source_NEXT_or_EMPTY:false,
     economics:false,publication:false,activation:false,licensed_large_area:false,production_speed:false});
   await runNeighborhoodFirstSourceResolutionRowV3DatabaseChecks({pool,input,scope,actor,service,claim,
+    empty,setFault,readFault,originalReads,laterFirstSource});
+  await runNeighborhoodFirstSourceCheckpointV3DatabaseChecks({pool,input,scope,actor,service,claim,
     empty,setFault,readFault,originalReads,laterFirstSource});
 }

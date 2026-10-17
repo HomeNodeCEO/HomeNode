@@ -46,6 +46,10 @@ export async function runNeighborhoodSelectionIntentReclaimV2DatabaseChecks({ po
     const retained = row => Object.fromEntries(Object.entries(row).filter(([key]) =>
       !['status', 'claim_token', 'lease_expires_at', 'last_error_code', 'cancellation_requested_at', 'updated_at'].includes(key)));
     assert.deepEqual(retained(cancelled), retained(expired), 'scoped cancellation preserves attempts, roots, schedule and every target');
+    // Expected SQL refusals mark the transaction wrapper's connection for
+    // discard. Execute a real ROLLBACK before its sentinel exits, so restoration
+    // is proven by PostgreSQL rollback rather than merely closing that client.
+    await client.query('ROLLBACK');
     throw rollback;
   }), error => error === rollback);
   assert.deepEqual(await read(pool), originalJob, 'actual rollback restores the complete original issued-intent job tuple');

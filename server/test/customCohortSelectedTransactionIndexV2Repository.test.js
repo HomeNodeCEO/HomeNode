@@ -230,7 +230,7 @@ test('storage is called only by the inactive original-owner write branch; instal
     sql=readFileSync(new URL('../migrations/20261205_custom_cohort_selected_transaction_index_v2.sql',import.meta.url),'utf8'),
     migrations=readFileSync(new URL('../src/database/mobileMigrations.js',import.meta.url),'utf8');
   assert.match(capture,/:createCustomCohortSelectedTransactionIndexV2Repository/);
-  assert.match(capture,/selectedTransactionIndexPacket=await selectedTransactionIndexStore\[readingCompletedIndexFirstSource\?'readFirstAccount':'readNext'\]\(\)/);
+  assert.match(capture,/selectedTransactionIndexPacket=await selectedTransactionIndexStore\[readingCompletedIndexNextSource\?'readNextAccount':readingCompletedIndexFirstSource\?'readFirstAccount':'readNext'\]\(\)/);
   const atomic=capture.indexOf('if(progressingSelectedTransactionIndex){'),readOnly=capture.indexOf('if(readingSelectedTransactionSource){',atomic);
   assert.equal((capture.match(/selectedTransactionIndexStore\.advance\(/g)||[]).length,1);
   assert.ok(capture.indexOf('selectedTransactionIndexStore.advance(',atomic)<readOnly);

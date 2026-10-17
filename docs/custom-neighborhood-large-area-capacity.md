@@ -1,3 +1,24 @@
+## Whole originals under the actual third source claim (2026-10-17, inactive)
+
+The dedicated third-claim FIRST reader reopens every actual whole source,
+CAD, stock, required subject and all-date transaction original, ENTIRE neutral
+and CAD caches and complete native member/key sets. Closed selectors require
+the actual current third3 claim and all independent original17, birth18,
+owned1, failure1, second2, failure2 and FIRST/member parents. They reopen the
+same graph after current and ending source-purpose, CAD-purpose, actor,
+assignment, private-draft, subject and workspace decisions. The original
+candidate bytes must equal private whole-original reproduction; no birth
+projection, copied conclusion or prior owner receipt supplies authority.
+
+The existing A/B native lineage appends before-I/O refusals, ten ending
+faults after actual originals, complete rollback, lost read-only COMMIT ACK
+and identical reopen with every parent, role, grant, report, choice and pin
+unchanged. The same aggregate256-SQL/32MB/60s and single-use250-original child
+limits and all prior deadlines remain intact. Cloud/native validation is
+pending. No NEXT cursor, fresh EMPTY, durable economic progress, publication,
+terminal pins, licensed large-area or live-speed acceptance is established.
+No migration, route, worker or scheduler is activated.
+
 ## Actual third source claim (2026-10-17, inactive)
 
 A separate native claim consumes the committed second failure only when its

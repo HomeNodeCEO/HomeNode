@@ -443,3 +443,18 @@ function secondFirstSourceOriginalPackageSql(){
  return sql;
 }
 export const NEIGHBORHOOD_SECOND_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL=secondFirstSourceOriginalPackageSql();
+
+// Closed actual third3 package. Every earlier WHOLE-original query remains
+// byte-identical; only fixed native identifiers and diagnostic tag differ.
+function thirdFirstSourceOriginalPackageSql(){
+ let sql=NEIGHBORHOOD_SECOND_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL;
+ for(const [from,to,count]of [
+  ['neighborhood-second-first-source-original-package-v3','neighborhood-third-first-source-original-package-v3',1],
+  ['app.neighborhood_source_resolution_v3_second_parent(','app.neighborhood_source_resolution_v3_third_parent(',1],
+  ['app.neighborhood_source_resolution_v3_second_first(','app.neighborhood_source_resolution_v3_third_first(',2]]){
+  if(sql.split(from).length!==count+1)throw new TypeError('neighborhood_third_first_source_original_sql_shape');
+  sql=sql.split(from).join(to);
+ }
+ return sql;
+}
+export const NEIGHBORHOOD_THIRD_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL=thirdFirstSourceOriginalPackageSql();

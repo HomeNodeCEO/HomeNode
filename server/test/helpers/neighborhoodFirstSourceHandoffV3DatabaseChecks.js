@@ -70,9 +70,15 @@ export async function observeNeighborhoodFirstSourceHandoffAfterSaveV3({raw,resu
   }
   for(const sql of [`UPDATE ${handoffs} SET issued_attempts=issued_attempts WHERE operation_id=$1`,
     `DELETE FROM ${handoffs} WHERE operation_id=$1`])await refuse(raw,sql,[op],/handoff_immutable/);
-  await refuse(raw,`TRUNCATE ${handoffs}`,[],/immutable/);
+  // PostgreSQL refuses TRUNCATE before firing its table trigger when this
+  // transaction has the real INSERT's deferred events. Require that exact
+  // native refusal here; the empty-table setup separately executes the actual
+  // immutable TRUNCATE trigger without removing or forcing deferred events.
+  await refuse(raw,`TRUNCATE ${handoffs}`,[],error=>error.code==='55006'
+    &&error.message===`cannot TRUNCATE "neighborhood_custom_cohort_source_resolution_v3_handoffs" because it has pending trigger events`);
   assert.deepEqual((await raw.query(`SELECT * FROM ${jobs} WHERE operation_id=$1`,[op])).rows,[current]);
   assert.deepEqual((await raw.query(`SELECT * FROM ${handoffs} WHERE operation_id=$1`,[op])).rows,[handoff]);
+  assert.deepEqual((await raw.query('SELECT * FROM app.neighborhood_custom_cohort_v2_continuations WHERE operation_id=$1',[op])).rows,continuation);
 }
 
 export async function runNeighborhoodFirstSourceHandoffV3DatabaseChecks({pool,input,scope,actor,service,claim,empty,setFault,readFault,originalReads,laterFirstSource}){
@@ -81,7 +87,9 @@ export async function runNeighborhoodFirstSourceHandoffV3DatabaseChecks({pool,in
   try{
     assert.match((await setup.query('SELECT current_database() AS name')).rows[0].name,/^neighborhood_[a-f0-9]{32}_test$/);
     await setup.query('BEGIN');open=true;await setup.query("SET LOCAL statement_timeout='5000ms'; SET LOCAL lock_timeout='1000ms'");
-    await setup.query({text:ddl,query_timeout:6000});await setup.query('COMMIT');open=false;
+    await setup.query({text:ddl,query_timeout:6000});
+    await refuse(setup,`TRUNCATE ${handoffs}`,[],error=>error.code==='55000'&&error.message==='custom_cohort_context_immutable');
+    await setup.query('COMMIT');open=false;
   }catch(error){discard=error;throw error;}
   finally{if(open)try{await setup.query({text:'ROLLBACK',query_timeout:1000});}catch(error){discard ||= error;}setup.release(discard||undefined);}
   const unchanged=async()=>{await empty();assert.equal((await pool.query(`SELECT * FROM ${handoffs} WHERE operation_id=$1 AND organization_id=$2`,

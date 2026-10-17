@@ -38,6 +38,16 @@ that exact existing refusal for this transition, keeps the source refusals
 strict for every other mutation and compares the complete job, handoff and
 continuation after each probe. No production guard or SQL is changed. That
 failed head is not rerun; corrected-head full cloud execution is required.
+Corrective headcbb63 then passed those actual mutation probes in both captures
+but reached a second negative-test mismatch: PostgreSQL refused TRUNCATE because
+the actual handoff INSERT had pending deferred trigger events, before the table's
+immutable trigger could execute. The next correction separately requires the
+exact55000 immutable-trigger refusal on the empty table during setup and the
+exact55006 pending-event refusal after the real INSERT, checking the entire job,
+handoff and continuation remain unchanged. No deferred event is forced, removed
+or disabled; all six COMMIT refusals and production SQL remain unchanged.
+The failedcbb63 head is not rerun. Its prefix20/22 does not establish complete
+native handoff proof; fresh corrected-head prefix and full prepared are required.
 The 21 writer protocol checks and17 changed original-owner
 checks pass (187.2083 and1516.7122 ms, zero failures/cancellations/skips); syntax
 and diff checks pass. New-head full cloud execution is required.

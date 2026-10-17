@@ -1,3 +1,4 @@
+import { NEIGHBORHOOD_SECOND_NEXT_SOURCE_ORIGINAL_PACKAGE_V3_SQL as SECOND_NEXT_SOURCE_PACKET } from '../../src/services/neighborhoodAssessment/neighborhoodNextCompletedIndexSourceOriginalPackageV3.js';
 import { NEIGHBORHOOD_SECOND_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL as SECOND_SOURCE_PACKET } from '../../src/services/neighborhoodAssessment/neighborhoodSelectedTransactionOriginalPackageV2.js';
 import { NEIGHBORHOOD_RECOVERED_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL as RECOVERED_SOURCE_PACKET } from '../../src/services/neighborhoodAssessment/neighborhoodSelectedTransactionOriginalPackageV2.js';
 import { NEIGHBORHOOD_NEXT_COMPLETED_INDEX_SOURCE_ORIGINAL_PACKAGE_V3_SQL as NEXT_SOURCE_PACKET,
@@ -82,7 +83,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({sourceR
     cacheFailureAttempt=cleanSourceFixture?1:3,cacheFailureCode=cleanSourceFixture?null:'access_revoked';
   const input={...sourceInput,operationId:randomUUID()},operation=input.operationId;let fault=null,stockReads=0,sourceCheckpointBefore=null;
   const observed={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
-    const text=typeof c==='string'?c:c.text,completedSourcePacket=text===COMPLETED_SOURCE_PACKET||text===OWNED_SOURCE_PACKET||text===RECOVERED_SOURCE_PACKET||text===SECOND_SOURCE_PACKET||text===NEXT_SOURCE_PACKET||text===OWNED_NEXT_SOURCE_PACKET||text===RECOVERED_NEXT_SOURCE_PACKET,
+    const text=typeof c==='string'?c:c.text,completedSourcePacket=text===COMPLETED_SOURCE_PACKET||text===OWNED_SOURCE_PACKET||text===RECOVERED_SOURCE_PACKET||text===SECOND_SOURCE_PACKET||text===NEXT_SOURCE_PACKET||text===OWNED_NEXT_SOURCE_PACKET||text===RECOVERED_NEXT_SOURCE_PACKET||text===SECOND_NEXT_SOURCE_PACKET,
       originalPacket=completedSourcePacket||text===BATCH_PACKET||text===STOCK_PACKET||text===PAIRED_STOCK_PACKET||text===TRANSACTION_PACKET||text===AMENITY_PACKET||(batchRecordedEligibilityFixture&&text===ELIGIBILITY_PACKET)||(batchSelectedEvidenceFixture&&text===EVIDENCE_PACKET)||(batchSelectedMetricsFixture&&[METRIC_PACKET,FIRST_METRIC_PACKET].includes(text))||(batchSelectedStatisticsFixture&&[STATISTICS_PACKET,FIRST_STATISTICS_PACKET].includes(text))||(batchSelectedNumericFixture&&[NUMERIC_PACKET,FIRST_NUMERIC_PACKET].includes(text))||(batchSelectedSemanticFixture&&text===SEMANTIC_PACKET)||(batchSelectedTransactionIndexFixture&&text===TRANSACTION_INDEX_PACKET),
       orphan=fault==='orphan'&&text.includes('custom-cohort-neutral-success-v2:yield')
       ||fault==='cad_orphan'&&text.includes('custom-cohort-CAD-success-v2:yield')
@@ -126,14 +127,14 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({sourceR
     const result=await raw.query(c);
     // Ending revocation follows the complete actual NEXT original packet;
     // the existing ending target/draft reads must refuse and roll it back.
-    if((text===SECOND_SOURCE_PACKET||text===NEXT_SOURCE_PACKET||text===OWNED_NEXT_SOURCE_PACKET||text===RECOVERED_NEXT_SOURCE_PACKET)&&['next_source_assignment_ending','next_source_draft_ending'].includes(fault)){
+    if((text===SECOND_SOURCE_PACKET||text===NEXT_SOURCE_PACKET||text===OWNED_NEXT_SOURCE_PACKET||text===RECOVERED_NEXT_SOURCE_PACKET||text===SECOND_NEXT_SOURCE_PACKET)&&['next_source_assignment_ending','next_source_draft_ending'].includes(fault)){
       const mode=fault;fault=null;
       const changed=mode==='next_source_assignment_ending'
         ?await raw.query('UPDATE app.assignment_files SET assigned_appraiser_user_id=NULL WHERE id=$1 RETURNING id',[scope.assignment_file_id])
         :await raw.query("UPDATE app.custom_appraisal_workfiles SET status='archived' WHERE assignment_file_id=$1 RETURNING assignment_file_id",[scope.assignment_file_id]);
       assert.equal(changed.rowCount,1);
     }
-    if((text===NEXT_SOURCE_PACKET||text===OWNED_NEXT_SOURCE_PACKET||text===RECOVERED_NEXT_SOURCE_PACKET)&&fault==='next_source_native_ending')fault='next_source_native_ending_after_original';
+    if((text===NEXT_SOURCE_PACKET||text===OWNED_NEXT_SOURCE_PACKET||text===RECOVERED_NEXT_SOURCE_PACKET||text===SECOND_NEXT_SOURCE_PACKET)&&fault==='next_source_native_ending')fault='next_source_native_ending_after_original';
     if(fault==='next_source_native_ending_after_original'&&text.includes('custom-cohort-completed-index-next-source-v3:native-next')){
       assert.equal(result.rowCount,1);assert.equal(result.rows[0].native_key,'503');
       fault=null;return {...result,rows:[{...result.rows[0],native_key:'504'}]};
@@ -203,7 +204,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({sourceR
       const envelope=JSON.parse(result.rows[0].page_json);envelope[0].typed.original.payload_utf8_bytes++;
       return {...result,rows:[{...result.rows[0],page_json:JSON.stringify(envelope)}]};}
     if(originalPacket)stockReads++;
-    if((text===OWNED_SOURCE_PACKET||text===RECOVERED_SOURCE_PACKET||text===SECOND_SOURCE_PACKET||text===NEXT_SOURCE_PACKET||text===OWNED_NEXT_SOURCE_PACKET||text===RECOVERED_NEXT_SOURCE_PACKET)&&fault==='owned_source_subject'){
+    if((text===OWNED_SOURCE_PACKET||text===RECOVERED_SOURCE_PACKET||text===SECOND_SOURCE_PACKET||text===NEXT_SOURCE_PACKET||text===OWNED_NEXT_SOURCE_PACKET||text===RECOVERED_NEXT_SOURCE_PACKET||text===SECOND_NEXT_SOURCE_PACKET)&&fault==='owned_source_subject'){
       fault=null;const changed=await raw.query(`UPDATE app.appraisal_subject_snapshots s
         SET subject_data=jsonb_set(s.subject_data,'{custom_property_snapshot,improvement,living_area_sqft}',
           CASE WHEN s.subject_data#>'{custom_property_snapshot,improvement,living_area_sqft}'='2001'::jsonb THEN '2002'::jsonb ELSE '2001'::jsonb END)

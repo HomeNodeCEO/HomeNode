@@ -4452,7 +4452,7 @@ for(const selectionWaitFixture of [false,true,'union','union-empty','union-initi
               async restoreFault(fault){assert.equal(refsFault,null);
                 if(fault==='license')await setFixtureGrant(pool,organization,fixtureGrant(organization));
                 if(fault==='role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[organization,actor]);},
-              originalReads:()=>refsCalls.filter(sql=>sql===NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL).length,
+              originalReads:()=>refsCalls.filter(sql=>sql===NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL).length,
               queryCount:()=>refsCalls.length,
               assertOwnerQueryShapes(from){assert.equal(refsFault,null);assert.ok(refsCalls.length-from-3<=ORIGINAL_OWNER_LIMITS.sql_queries);
                 assertBoundedCohortAuthorityAggregateShapes(refsCalls.slice(from).map((text,index)=>({text,values:refsQueryParameters[from+index]})),

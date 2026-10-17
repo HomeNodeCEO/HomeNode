@@ -100,6 +100,9 @@ whole fixed paired-original SQL and exact existing limits, including the closed
 fallback decision, deduplication and missing-subject payload gate. Negative
 checks reject foreign scope, widened counts/bytes, caller fallback values,
 population substitutions and missing ending actor/subject reads.
+The inherited initial9 recovery fixture counts the exact paired SQL statement
+for its one-real-original-read assertion; stale claims still require zero reads,
+and actual lost COMMIT acknowledgment still requires exactly one new read.
 
 This is a shared-budget prerequisite, NOT issued housing/metric eligibility
 progress, complete selected-population statistics, coherent publication,

@@ -107,6 +107,11 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     }
     if(fault==='source_handoff_observe'&&text.includes('custom-cohort-source-resolution-parent-v3:handoff-save */')){
       assert.ok(sourceCheckpointBefore);await observeNeighborhoodFirstSourceHandoffAfterSaveV3({raw,result,scope,before:sourceCheckpointBefore});
+    }
+    if(fault==='source_handoff_observe'&&text.includes('custom-cohort-source-resolution-parent-v3:handoff-retained-read */')){
+      assert.ok(sourceCheckpointBefore);assert.equal(result.rowCount,1);
+      assert.deepEqual(result.rows,[{parent:sourceCheckpointBefore.parent,first:sourceCheckpointBefore.first,
+        transaction_id:sourceCheckpointBefore.parent.issued_transaction_id}]);
       sourceCheckpointBefore=null;fault=null;
     }
     if(fault==='source_checkpoint_observe'&&text.includes('custom-cohort-source-resolution-parent-v3:head-insert */')){

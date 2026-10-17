@@ -4450,6 +4450,11 @@ for(const selectionWaitFixture of [false,true,'union','union-empty','union-initi
             createCustomCohortSelectedUnionV2RecoveryRepository(client).claimDue({limit:1,leaseSeconds:900})),[]);
           await unionUnchanged();
           let liveClaim=replayed.claim;
+          assert.equal(Object.hasOwn(resumedJob.request_payload,'execution_mode'),false,
+            'current protected native request must not need the future feature execution tag');
+          assert.equal((await pool.query(`SELECT app.neighborhood_v2_initial_union_claim_bound(job) AS bound
+            FROM app.neighborhood_custom_cohort_capture_jobs job WHERE operation_id=$1 AND organization_id=$2`,
+          [refsOperation,organization])).rows[0].bound,true,'actual live initial9 native binding before original union rollback probes');
           const unionStepQueryCounts=[],step=async()=>{const from=refsCalls.length;
             try{return await freshRefsOwner()[method](refsInput,{captureJobClaim:liveClaim});}
             finally{unionStepQueryCounts.push(refsCalls.length-from-3);}};

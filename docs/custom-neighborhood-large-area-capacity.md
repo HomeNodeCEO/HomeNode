@@ -1,3 +1,24 @@
+## Initial9 recovery current-request correction (2026-10-17, native validation pending)
+
+The exact6e native run passed417 migration checks, subject and account quality,
+then failed three of15 prepared checks. Both live union graphs refused before
+their actual rollback probes; the separate expired initial9 graph returned no
+recovery claim. The new structural predicate incorrectly required the feature
+branch's future `execution_mode` request field. The protected request grammar
+retains operation ID, period and genuine choices and cannot issue that field.
+
+The correction binds the actual native request's operation ID alongside its
+entire stored job, immutable command/request digest, exact nine roots, consumed
+catalog continuation, complete stock and nonretired generation pin. It does not
+change the request grammar, source rights, generic admission, failure ceiling or
+fixed leases. Both live union graphs and the independent expired graph now
+explicitly require a positive native binding while preserving their genuine
+current request without the future feature tag. All existing whole-original,
+ENTIRE-cache, current/ending fences, real rollback/COMMIT, natural expiry and
+attempt3/4/5/exhaustion probes remain required under unchanged budgets and
+deadlines. The failed head is not rerun; a new exact head needs full cloud checks
+and genuine included review before merge.
+
 # Complete larger-area Custom neighborhood studies
 
 ## Independent original replay and explicit selected-stock union (2026-10-17, inactive)

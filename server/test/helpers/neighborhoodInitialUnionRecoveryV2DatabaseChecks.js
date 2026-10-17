@@ -28,6 +28,11 @@ export async function runNeighborhoodInitialUnionRecoveryV2DatabaseChecks({pool,
     before={job:await job(pool),parents:await protectedRows(),blobs:await blobs(),union:await union()};
   assert.equal(before.job.checkpoint.evidence_refs.length,9);assert.equal(before.job.attempts,2);
   assert.deepEqual(before.union,[[],[],[]]);
+  assert.equal(Object.hasOwn(before.job.request_payload,'execution_mode'),false,
+    'this independently issued protected graph retains the current allowlisted request grammar');
+  assert.equal((await pool.query(`SELECT app.neighborhood_v2_initial_union_claim_bound(job) AS bound
+    FROM app.neighborhood_custom_cohort_capture_jobs job WHERE operation_id=$1 AND organization_id=$2`,
+  [operationId,scope.organization_id])).rows[0].bound,true,'actual entire initial9/native command/catalog/stock/pin must bind');
   const remaining=Number((await pool.query(`SELECT EXTRACT(EPOCH FROM (lease_expires_at-clock_timestamp()))*1000 AS ms
     FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1`,[operationId])).rows[0].ms);
   if(remaining>0)await new Promise(resolve=>setTimeout(resolve,Math.ceil(remaining)+20));
@@ -43,7 +48,9 @@ export async function runNeighborhoodInitialUnionRecoveryV2DatabaseChecks({pool,
     await raw.query('BEGIN');
     const owner=recovery(raw);
     for(const attempt of [3,4,5]){
-      const [next]=await owner.claimInitialDue({limit:1,leaseSeconds:15});assert.equal(next.claim.attempts,attempt);
+      const nextRows=await owner.claimInitialDue({limit:1,leaseSeconds:15});
+      assert.equal(nextRows.length,1,'one actual expired initial9 claim must be recoverable');
+      const [next]=nextRows;assert.equal(next.claim.attempts,attempt);
       assert.notEqual(next.claim.claim_token,originalClaim.claim_token);assert.equal(next.authority,'not_established');
       const current=await job(raw);assert.deepEqual(current.checkpoint,before.job.checkpoint);
       const keep=j=>Object.fromEntries(Object.entries(j).filter(([k])=>!['attempts','claim_token','lease_expires_at','updated_at'].includes(k)));

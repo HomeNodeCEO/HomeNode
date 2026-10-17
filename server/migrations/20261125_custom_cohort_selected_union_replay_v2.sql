@@ -48,7 +48,11 @@ RETURNS boolean LANGUAGE sql STABLE AS $$
    AND actual.request_sha256=command.request_sha256 AND actual.checkpoint=command.checkpoint
    AND actual.checkpoint->>'phase'='frozen_recorded_catalog_refs_v2'
    AND jsonb_array_length(actual.checkpoint->'evidence_refs')=9
-   AND actual.request_payload->>'execution_mode'='frozen-originals-v2'
+   -- The current protected request grammar has operation_id/period/choices,
+   -- not the later feature branch's execution_mode field. Bind the actual
+   -- stored request and immutable command; native roots/stock/pin prove this
+   -- path rather than requiring an unissued future request property.
+   AND actual.request_payload->>'operation_id'=actual.operation_id::text
    AND actual.status='running' AND actual.claim_token IS NOT NULL AND actual.lease_expires_at IS NOT NULL
    AND actual.cancellation_requested_at IS NULL AND actual.context_sha256 IS NULL
    AND actual.attempts BETWEEN command.issued_attempts AND 5

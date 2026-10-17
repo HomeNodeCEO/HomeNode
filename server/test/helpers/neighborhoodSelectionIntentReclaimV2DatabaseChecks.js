@@ -30,7 +30,7 @@ export async function runNeighborhoodSelectionIntentReclaimV2DatabaseChecks({ po
       "lease_expires_at=clock_timestamp()+interval '120 seconds'"]) {
       await client.query('SAVEPOINT intent_reclaim_probe');
       await assert.rejects(client.query(`UPDATE app.neighborhood_custom_cohort_capture_jobs SET ${set}
-        WHERE operation_id=$1`, [operation]), /selection_intent_job_conflict/);
+        WHERE operation_id=$1`, [operation]), /selection_intent_job_conflict_initial_claim/);
       await client.query('ROLLBACK TO SAVEPOINT intent_reclaim_probe');
       await client.query('RELEASE SAVEPOINT intent_reclaim_probe');
       assert.deepEqual(await read(client), expired);

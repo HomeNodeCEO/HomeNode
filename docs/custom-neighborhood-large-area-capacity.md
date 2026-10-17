@@ -97,12 +97,18 @@ increments and non-null token replacements after the one permitted resume.
 Generic claim and non-cancellation exhaustion selectors skip retained intents;
 an expired intent stays unchanged, including at the fifth-attempt ceiling.
 Native guards also refuse an unowned expired failure or lease renewal. Scoped
-cancellation and its ordinary expired-claim cleanup remain available. Explicit
-expired-intent recovery and source dispatch still require a separate complete
-owner before activation; neither an automatic retry nor a new lease is added.
+cancellation and its ordinary expired-claim cleanup remain available. The
+initial-intent claim checks use a separate trigger, bound to the actual
+retained command checkpoint. Later native phase migrations may replace the
+phase dispatcher without erasing this fence; later checkpoints retain their
+own continuation/recovery guards. The native mutation probes require this
+independent trigger's specific refusal, rather than the dispatcher's error.
+Explicit expired-intent recovery and source dispatch still require a separate
+complete owner before activation; neither an automatic retry nor a new lease
+is added.
 
 The corrected code passes 46 focused repository/worker checks, zero failures,
-cancellations or skips (5607.9599 ms), and changed JavaScript syntax/diff checks.
+cancellations or skips (5609.9087 ms), and changed JavaScript syntax/diff checks.
 New native probes are authored against that actual issued graph: expire the
 same native claim inside a guarded disposable transaction, require generic
 claim/sweep and direct mutation refusals with the whole tuple unchanged,

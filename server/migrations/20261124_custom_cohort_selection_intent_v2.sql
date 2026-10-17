@@ -95,6 +95,36 @@ CREATE CONSTRAINT TRIGGER neighborhood_cohort_v2_selection_intent_commit AFTER I
   ON app.neighborhood_custom_cohort_v2_selection_intents DEFERRABLE INITIALLY DEFERRED
   FOR EACH ROW EXECUTE FUNCTION app.check_neighborhood_cohort_v2_selection_intent_commit();
 
+-- Keep the initial-intent claim fence independent of the phase dispatcher:
+-- later issued-stage migrations replace selection_wait, but must not restore
+-- generic reclaim/renewal while the actual job still retains its issued nine
+-- command roots. Later native checkpoints keep their own continuation guards.
+CREATE FUNCTION app.guard_neighborhood_cohort_v2_initial_intent_claim() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE command app.neighborhood_custom_cohort_v2_selection_intents%ROWTYPE;
+BEGIN
+  SELECT * INTO command FROM app.neighborhood_custom_cohort_v2_selection_intents WHERE operation_id=OLD.operation_id;
+  IF NOT FOUND OR OLD.checkpoint IS DISTINCT FROM command.checkpoint THEN RETURN NEW; END IF;
+  IF OLD.status='awaiting_selection' AND NEW.status='running' AND NEW.claim_token=command.resume_claim_token
+    AND NEW.attempts=command.issued_attempts AND NEW.lease_expires_at>clock_timestamp()
+    AND NEW.lease_expires_at<=clock_timestamp()+interval '120 seconds' AND NEW.cancellation_requested_at IS NULL
+    AND (to_jsonb(NEW)-ARRAY['status','claim_token','lease_expires_at','updated_at'])
+      IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['status','claim_token','lease_expires_at','updated_at']) THEN RETURN NEW; END IF;
+  IF NEW.attempts>OLD.attempts
+    OR (NEW.claim_token IS DISTINCT FROM OLD.claim_token AND NEW.claim_token IS NOT NULL) THEN
+    RAISE EXCEPTION 'neighborhood_v2_selection_intent_job_conflict_initial_claim' USING ERRCODE='55000'; END IF;
+  -- Expiry grants no retry, renewal or exhaustion write. Admit only a scoped
+  -- cancellation request; its ordinary cancellation cleanup may follow.
+  IF OLD.lease_expires_at<=clock_timestamp() AND OLD.cancellation_requested_at IS NULL
+    AND (NEW.cancellation_requested_at IS NULL
+      OR (to_jsonb(NEW)-ARRAY['cancellation_requested_at','updated_at'])
+        IS DISTINCT FROM (to_jsonb(OLD)-ARRAY['cancellation_requested_at','updated_at'])) THEN
+    RAISE EXCEPTION 'neighborhood_v2_selection_intent_job_conflict_initial_claim' USING ERRCODE='55000'; END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER neighborhood_cohort_v2_initial_intent_claim_guard BEFORE UPDATE
+  ON app.neighborhood_custom_cohort_capture_jobs FOR EACH ROW
+  EXECUTE FUNCTION app.guard_neighborhood_cohort_v2_initial_intent_claim();
+
 -- Preserve the previous waiting boundary verbatim unless this exact immutable
 -- command authorizes its one fresh resume. No worker/general retry can do so.
 CREATE OR REPLACE FUNCTION app.guard_neighborhood_cohort_v2_selection_wait() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -126,17 +156,6 @@ BEGIN
       AND NEW.lease_expires_at<=clock_timestamp()+interval '120 seconds' AND NEW.cancellation_requested_at IS NULL
       AND (to_jsonb(NEW)-ARRAY['status','claim_token','lease_expires_at','updated_at'])
         IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['status','claim_token','lease_expires_at','updated_at']) THEN RETURN NEW; END IF;
-    IF NEW.attempts>OLD.attempts
-      OR (NEW.claim_token IS DISTINCT FROM OLD.claim_token AND NEW.claim_token IS NOT NULL) THEN
-      RAISE EXCEPTION 'neighborhood_v2_selection_intent_job_conflict' USING ERRCODE='55000'; END IF;
-    -- An expired intent is retained for explicit handling, never a generic
-    -- retry, lease renewal or attempts-exhausted failure. A scoped cancellation
-    -- request is still admitted; its ordinary cancellation cleanup may follow.
-    IF OLD.lease_expires_at<=clock_timestamp() AND OLD.cancellation_requested_at IS NULL
-      AND (NEW.cancellation_requested_at IS NULL
-        OR (to_jsonb(NEW)-ARRAY['cancellation_requested_at','updated_at'])
-          IS DISTINCT FROM (to_jsonb(OLD)-ARRAY['cancellation_requested_at','updated_at'])) THEN
-      RAISE EXCEPTION 'neighborhood_v2_selection_intent_job_conflict' USING ERRCODE='55000'; END IF;
   END IF;
   IF OLD.status='cancelled' AND OLD.checkpoint->>'phase'='frozen_recorded_catalog_refs_v2' THEN
     IF (to_jsonb(NEW)-'updated_at') IS DISTINCT FROM (to_jsonb(OLD)-'updated_at') THEN

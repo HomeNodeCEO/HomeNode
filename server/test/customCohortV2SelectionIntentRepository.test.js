@@ -72,5 +72,9 @@ test('additive native guard binds all nine roots, exact workspace and one immuta
     'NEW.resume_claim_token','workspace.section_value IS DISTINCT FROM NEW.workspace_checkpoint',
     "NEW.status IN ('succeeded','awaiting_selection')",'NEW.attempts<OLD.attempts','NEW.checkpoint IS DISTINCT FROM command.checkpoint',
     'NEW.attempts>OLD.attempts','NEW.claim_token IS DISTINCT FROM OLD.claim_token AND NEW.claim_token IS NOT NULL',
-    'OLD.lease_expires_at<=clock_timestamp() AND OLD.cancellation_requested_at IS NULL'])assert.ok(sql.includes(s),s);
+    'OLD.lease_expires_at<=clock_timestamp() AND OLD.cancellation_requested_at IS NULL',
+    'CREATE FUNCTION app.guard_neighborhood_cohort_v2_initial_intent_claim()',
+    'CREATE TRIGGER neighborhood_cohort_v2_initial_intent_claim_guard BEFORE UPDATE',
+    'OLD.checkpoint IS DISTINCT FROM command.checkpoint THEN RETURN NEW',
+    'selection_intent_job_conflict_initial_claim'])assert.ok(sql.includes(s),s);
 });

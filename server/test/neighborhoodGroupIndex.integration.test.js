@@ -4234,6 +4234,7 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
           real_resume_DML_rollback_lost_real_COMMIT_ack_and_exact_read_only_replay:true,
           fresh_single_claim_retains_attempt2_prior_error_schedule_roots_pins:true,
           actual_expired_intent_generic_claim_sweep_direct_reclaim_and_lease_renewal_refused_without_tuple_mutation:true,
+          independent_initial_intent_claim_trigger_refuses_actual_native_mutations:true,
           expired_exact_replay_refused_and_scoped_cancellation_cleanup_then_actual_probe_rollback_preserves_original_job:true,
           changed_command_IDs_catalog_workspace_and_group_choices_refuse:true,
           workspace_history_prior_choices_reports_and_original_blob_count_unchanged:true,

@@ -3,7 +3,8 @@ import test from 'node:test';
 import { assertBoundedCohortAuthorityAggregates as check, assertBoundedCohortAuthorityAggregateShapes as shapes } from './helpers/boundedCohortAuthorityAggregateAssertions.js';
 import { customCohortRepositoryFixture } from './fixtures/customCohortRepositoryFixture.js';
 import { loadCurrentCustomCohortJobActor } from '../src/services/neighborhoodAssessment/customCohortJobActor.js';
-import { NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL, NEIGHBORHOOD_STOCK_SUBJECT_HOUSING_PACKAGE_V2_SQL } from '../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
+import { NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL, NEIGHBORHOOD_STOCK_SUBJECT_HOUSING_PACKAGE_V2_SQL,
+  NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL } from '../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
 
 async function actualQueries() {
   const { state, repo } = customCohortRepositoryFixture();
@@ -22,6 +23,40 @@ async function actualQueries() {
 test('catalog aggregate assertion accepts actual bounded actor and three-section SQL at both ends', async () => {
   const { scope, actor, section } = await actualQueries();
   check([actor, section, { text: 'SELECT count(*) FROM app.example', values: [] }, actor, section], scope);
+});
+
+test('paired original aggregate keeps native subject choice, deduplication and one whole-packet budget', async () => {
+  const { scope, actor, section } = await actualQueries();
+  scope.originals = { operationId:'stock-operation', generationId:'retained-generation',
+    profileSha256:'retained-profile', subjectAccountId:'ACTUAL-SUBJECT' };
+  const baseline=[actor,section,actor,section], packet={text:NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,
+    values:['stock-operation','retained-generation','retained-profile','ACCOUNT-A',250,8_000_000,2_100_000,1_000_000,2_100_000,true]};
+  check([...baseline,packet],scope);
+  check([...baseline,{...packet,values:[...packet.values.slice(0,9),false]}],scope);
+  for (const index of [0,1,2,4,5,6,7,8]) {
+    const values=[...packet.values]; values[index]=index<3?'foreign-scope':values[index]+1;
+    assert.throws(()=>check([...baseline,{...packet,values}],scope),/exact paired stock/);
+  }
+  for (const cursor of [[], 'ACCOUNT-A\n', 'x'.repeat(65)]) {
+    const values=[...packet.values]; values[3]=cursor;
+    assert.throws(()=>check([...baseline,{...packet,values}],scope),/bounded paired original account cursor/);
+  }
+  for (const fallback of [undefined,null,0,'true',{}]) {
+    const values=[...packet.values]; values[9]=fallback;
+    assert.throws(()=>check([...baseline,{...packet,values}],scope),/closed retained-subject fallback decision/);
+  }
+  for (const text of [packet.text.replace('AND a.account_id=job.account_id',''),
+    packet.text.replace('job.operation_id=$1::uuid','true'),packet.text.replace('UNION SELECT','UNION ALL SELECT'),
+    packet.text.replace('LIMIT 1','LIMIT 2'),packet.text.replace('LIMIT ($5::integer+1)','LIMIT ($5::integer+2)'),
+    packet.text.replace('AND (SELECT sum(n) FROM totals)<=$5::integer',''),
+    packet.text.replace('AND (NOT $10::boolean OR EXISTS(SELECT 1 FROM subject_account))',''),
+    packet.text.replace('AND o.account_id=a.account_id',''),packet.text+', json_agg(account_id)']) {
+    assert.throws(()=>check([...baseline,{...packet,text}],scope),/unexpected catalog aggregate/);
+  }
+  assert.throws(()=>check([...baseline,packet],{...scope,originals:{...scope.originals,subjectAccountId:undefined}}),
+    /actual retained job subject/);
+  assert.throws(()=>check([actor,section,packet],scope),/both-end current actor/);
+  assert.throws(()=>check([actor,actor,section,packet],scope),/both-end current bounded subject/);
 });
 
 test('subject original aggregate requires the actual job subject and every unchanged whole-packet cap', async () => {

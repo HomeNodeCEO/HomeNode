@@ -1,19 +1,21 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_PAGE_SQL as SQL, NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL,
+  NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,
   NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_LIMITS as L }
   from '../../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
 
 /** SQL admission DATA only, on the already verified isolated native database.
  * TEMP rows are deliberately not issued originals/cache/rights. Table-name
  * substitution is test-only, never a production caller capability. Roll back
- * every fixture row and all three TEMP tables before returning to the owner test.
+ * every fixture row and all four TEMP tables before returning to the owner test.
  */
 export async function runNeighborhoodStockOriginalCellDatabaseChecks(client){
   const operation=randomUUID(),generation=randomUUID(),profile='a'.repeat(64);
   const substitute=text=>text.replaceAll('app.neighborhood_frozen_source_rows','pg_temp.stock_cell_data_originals')
     .replaceAll('app.neighborhood_frozen_typed_v2_rows','pg_temp.stock_cell_data_typed')
-    .replaceAll('app.neighborhood_custom_cohort_stock_accounts','pg_temp.stock_cell_data_accounts');
+    .replaceAll('app.neighborhood_custom_cohort_stock_accounts','pg_temp.stock_cell_data_accounts')
+    .replaceAll('app.neighborhood_custom_cohort_capture_jobs','pg_temp.stock_cell_data_jobs');
   const sql=substitute(SQL),packetSql=substitute(NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL);
   const values=[operation,generation,profile,'parcels','',250,L.page_utf8_bytes,L.row_utf8_bytes,L.original_utf8_bytes,L.output_utf8_bytes];
   /** Read one complete SQL result, not an issued-owner reconciliation receipt. */
@@ -29,6 +31,8 @@ export async function runNeighborhoodStockOriginalCellDatabaseChecks(client){
       PRIMARY KEY(generation_id,profile_sha256,kind,row_key)) ON COMMIT DROP`);
     await client.query(`CREATE TEMP TABLE stock_cell_data_accounts(operation_id uuid,account_id text COLLATE "C",parcel_count bigint,
       PRIMARY KEY(operation_id,account_id)) ON COMMIT DROP`);
+    await client.query(`CREATE TEMP TABLE stock_cell_data_jobs(operation_id uuid PRIMARY KEY,account_id text COLLATE "C") ON COMMIT DROP`);
+    await client.query("INSERT INTO pg_temp.stock_cell_data_jobs VALUES($1,'A')",[operation]);
     await client.query(`CREATE INDEX stock_cell_data_account_idx ON pg_temp.stock_cell_data_originals
       (generation_id,kind,account_id,row_key COLLATE "C") WHERE account_id IS NOT NULL`);
     await client.query("INSERT INTO pg_temp.stock_cell_data_accounts VALUES($1,'A',1)",[operation]);
@@ -108,5 +112,41 @@ export async function runNeighborhoodStockOriginalCellDatabaseChecks(client){
       both_kind_count_caps:251,actual_main_count_input_rows:251,actual_count_loops:2,oversized_original_payload_rows:0,
       missing_cache_not_skipped:true,whole_byte_refusal:true,fresh_empty_probe:true,temporary_DATA_only:true,
       issued_owner_authority:false,original_reconciliation:false,licensed_or_live_acceptance:false});
+    const pairSql=substitute(NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL),pairValues=[...packetValues,true],
+      pair=async overrides=>{const args=[...pairValues];for(const [i,v] of Object.entries(overrides??{}))args[Number(i)]=v;
+        const r=await client.query(pairSql,args);assert.equal(r.rowCount,1);return r.rows[0];};
+    const dedup=await pair();assert.equal(dedup.account_id,'A');assert.equal(dedup.subject_account_id,'A');
+    assert.equal(dedup.original_count,250);assert.equal(dedup.page_count,250,'same subject and next do not double-charge or duplicate originals');
+    await client.query("INSERT INTO pg_temp.stock_cell_data_accounts VALUES($1,'B',1)",[operation]);
+    await client.query(`INSERT INTO pg_temp.stock_cell_data_originals VALUES($1,'parcels','B-part','B',NULL,'{"account_id":"B"}')`,[generation]);
+    await client.query(`INSERT INTO pg_temp.stock_cell_data_typed
+      SELECT generation_id,$1,kind,row_key,account_id,NULL,$1,'{"SQL_admission_DATA_only":true}'::jsonb
+      FROM pg_temp.stock_cell_data_originals WHERE row_key='B-part'`,[profile]);
+    const aggregateOver=await pair({3:'A'});assert.equal(aggregateOver.account_id,'B');assert.equal(aggregateOver.subject_account_id,'A');
+    assert.equal(aggregateOver.next_parcels,1);assert.equal(aggregateOver.subject_parcels,249);assert.equal(aggregateOver.subject_accounts,1);
+    assert.equal(aggregateOver.original_count,251);assert.equal(aggregateOver.page_count,0);assert.equal(aggregateOver.page_json,'[]');
+    const blocked=await pair({3:'A',9:false});assert.equal(blocked.subject_account_id,null);assert.equal(blocked.original_count,1);
+    assert.equal(blocked.page_count,1);assert.equal(JSON.parse(blocked.page_json)[0].account_id,'B');
+    await client.query("UPDATE pg_temp.stock_cell_data_jobs SET account_id='NOT-STOCK'");
+    const missingSubject=await pair({3:'A'});assert.equal(missingSubject.subject_account_id,null);assert.equal(missingSubject.original_count,1);
+    assert.equal(missingSubject.page_count,0);assert.equal(missingSubject.page_json,'[]','missing subject blocks all payload admission');
+    await client.query("UPDATE pg_temp.stock_cell_data_jobs SET account_id='A'");
+    const pairEmpty=await pair({3:'B',9:false});assert.equal(pairEmpty.account_id,null);assert.equal(pairEmpty.original_count,0);
+    assert.equal(pairEmpty.page_json,'[]');
+    await client.query(`INSERT INTO pg_temp.stock_cell_data_originals
+      SELECT $1::uuid,k.kind,('pair-'||a.id||'-'||k.kind||'-'||n),a.id,NULL,'{"SQL_admission_DATA_only":true}'::jsonb
+      FROM (VALUES ('A'),('B')) a(id) CROSS JOIN (VALUES ('parcels'),('accounts')) k(kind) CROSS JOIN generate_series(1,1000) n`,[generation]);
+    await client.query('ANALYZE pg_temp.stock_cell_data_originals');
+    const allCaps=await pair({3:'A'});assert.equal(allCaps.next_parcels,251);assert.equal(allCaps.next_accounts,251);
+    assert.equal(allCaps.subject_parcels,251);assert.equal(allCaps.subject_accounts,251);assert.equal(allCaps.original_count,1004);
+    assert.equal(allCaps.page_count,0);assert.equal(allCaps.page_json,'[]');
+    const pairPlan=(await client.query(`EXPLAIN (ANALYZE,FORMAT JSON) ${pairSql}`,[...pairValues.slice(0,3),'A',...pairValues.slice(4)])).rows[0]['QUERY PLAN'][0].Plan;
+    nodes.length=0;walk(pairPlan);const pairCap=nodes.filter(n=>n['Node Type']==='Limit'&&n['Actual Rows']===251&&n['Actual Loops']===4);
+    assert.equal(pairCap.length,1);assert.equal(pairCap[0].Plans.filter(n=>n['Parent Relationship']==='Outer')[0]['Actual Rows'],251);
+    console.info('[native-subject-next-original-packet-admission-DATA-v2]',{distinct_accounts_max:2,one_aggregate_original_cap:250,
+      same_account_originals_deduplicated:250,different_accounts_aggregate_251_zero_payload:true,
+      all_four_kind_counts_cap_plus_one:251,actual_count_loops:4,missing_subject_zero_payload:true,
+      blocked_fallback_does_not_read_subject:true,fresh_empty_next_probe:true,temporary_DATA_only:true,
+      issued_owner_authority:false,original_reconciliation:false,eligibility:false,licensed_or_live_acceptance:false});
   }finally{await client.query('ROLLBACK');}
 }

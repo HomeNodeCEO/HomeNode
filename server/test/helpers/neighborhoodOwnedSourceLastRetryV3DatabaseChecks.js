@@ -11,6 +11,8 @@ import { createCustomCohortV2ContinuationRepository as continuations }
   from '../../src/services/neighborhoodAssessment/customCohortV2ContinuationRepository.js';
 import { withCustomCohortJobTransaction as transaction }
   from '../../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
+import { runNeighborhoodSourceFinalRecoveryClaimV3DatabaseChecks }
+  from './neighborhoodSourceFinalRecoveryClaimV3DatabaseChecks.js';
 
 const jobTable='app.neighborhood_custom_cohort_capture_jobs',
   failureTable='app.neighborhood_custom_cohort_source_resolution_v3_last_retries';
@@ -147,4 +149,6 @@ export async function runNeighborhoodOwnedSourceLastRetryV3DatabaseChecks({pool,
     all_prior_native_rows_blobs_claim_report_assignment_subject_manual_sections_workspace_choices_pins_unchanged:true,
     fresh5_claim:false,lower1_through3:false,expired_recovery:false,NEXT_or_EMPTY:false,publication:false,
     pin_transfer:false,activation:false,licensed_large_area:false,production_speed:false});
+  await runNeighborhoodSourceFinalRecoveryClaimV3DatabaseChecks({pool,input,scope,actor,service,claim,
+    originalReads,laterFirstSource});
 }

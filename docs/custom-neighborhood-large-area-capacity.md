@@ -1,3 +1,47 @@
+## Owned18 terminal failure at five (2026-10-17, unregistered; native validation pending)
+
+Unregistered `20261227_custom_cohort_source_owned_terminal_failure_v3.sql` and
+the separate closed `failFinal` repository add only normal terminal failure
+for an actually owned, still-live FIRST claim at attempt five. The native
+record captures the ENTIRE actual running18 job and its independent initial
+claim transaction. Only status, token/lease clearing, recorded error and exact
+update time may change; attempts, schedule, all roots, original17 birth,
+initial claim, native parents, subject/workspace/report choices and pin remain.
+The existing full native FIRST/key/member/edge graph is independently reopened
+again at genuine COMMIT, including the captured issued lease still being live.
+All three complete previous immediate guard bodies and the prior job deferred
+birth/claim body follow one closed terminal branch. All seven earlier deferred
+events remain enabled; the eighth rejects a failure record without its actual
+paired terminal job transition. No failed row can be claimed again or become
+a success, pin release, failure refund, lease renewal or rescheduled retry.
+
+The repository accepts only an exact scoped claim at five and a closed failure
+code. It verifies a stable caller transaction before mutation and on return.
+It supplies no source authority; structural error bookkeeping remains possible
+when a genuine original owner's ending role fence has just refused delivery.
+No original read is performed by that bookkeeping path.
+
+The native probes run LAST after the unchanged independent A/B actual birth,
+fresh claim and whole-original owned FIRST proofs. They require malformed
+native event refusal, genuine orphan COMMIT/full rollback, wrong scoped owner
+refusal, then real original I/O followed by actual ending role revocation.
+A must commit the terminal failure with acknowledgment; B must lose the
+acknowledgment AFTER its actual COMMIT. Each compares the full retained running
+job with the immutable event and the complete actual terminal tuple, every
+prior native row/blob/claim, report, assignment, subject snapshot/manual section,
+workspace/genuine choice and pin. Mutation, duplicate failure, sixth claim,
+generic/old-continuation adoption and stale-owner original I/O must refuse.
+The existing 180-second native deadlines and every original-owner budget stay
+unchanged. Detached boundary checks and authored native probes are not actual
+native or licensed acceptance; BOTH independent source-prefix and full prepared
+current-head executions remain required.
+
+Lower-attempt failure/recovery, natural-expiry recovery, cancellation cleanup,
+NEXT/fresh EMPTY, complete source/economic resolution and publication, terminal
+pin transfer/retirement, coherent registration/activation and licensed large-area
+plus saved Hardy live-speed acceptance remain unfinished. This migration and
+repository are unregistered and no worker, route, schedule or production uses them.
+
 ## Owned18 checkpoint integration assertions (2026-10-17, fresh validation pending)
 
 The actual 5315 cloud server suite reported 11,564 passed, two failed and 96

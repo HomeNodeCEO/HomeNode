@@ -10,11 +10,12 @@ const read=name=>readFileSync(new URL(name,import.meta.url),'utf8'),fixture=read
 // the independent new capture in cloud CI, never by these source assertions.
 test('independent35 and the additional reserved-attempt captures append after the original34 without changing their native stack',()=>{
   const variants=fixture.match(/for\(const selectionWaitFixture of \[([^\]]+)\]\)/)[1].split(',');
-  assert.equal(variants.length,37);assert.equal(variants[31],"'initial-dispatch-batch-selected-transaction-index'");
+  assert.equal(variants.length,39);assert.equal(variants[31],"'initial-dispatch-batch-selected-transaction-index'");
   assert.equal(variants[32],"'initial-dispatch-batch-selected-recovery'");assert.equal(variants[33],"'initial-dispatch-batch-selected-progress-recovery'");
   assert.equal(variants[34],"'initial-dispatch-batch-first-source-later-account'");
-  assert.deepEqual(variants.slice(35),["'initial-dispatch-batch-source-last-retry'","'initial-dispatch-batch-source-last-retry-later-account'"]);
-  assert.ok(fixture.includes("batchSelectedTransactionIndexFixture=['initial-dispatch-batch-first-source-later-account','initial-dispatch-batch-source-last-retry-later-account'].includes(selectionWaitFixture)?'later-first-source':['initial-dispatch-batch-selected-transaction-index','initial-dispatch-batch-source-last-retry'].includes(selectionWaitFixture)"));
+  assert.deepEqual(variants.slice(35),["'initial-dispatch-batch-source-last-retry'","'initial-dispatch-batch-source-last-retry-later-account'",
+    "'initial-dispatch-batch-source-expired-final'","'initial-dispatch-batch-source-expired-final-later-account'"]);
+  assert.ok(fixture.includes("batchSelectedTransactionIndexFixture=['initial-dispatch-batch-first-source-later-account','initial-dispatch-batch-source-last-retry-later-account','initial-dispatch-batch-source-expired-final-later-account'].includes(selectionWaitFixture)?'later-first-source':['initial-dispatch-batch-selected-transaction-index','initial-dispatch-batch-source-last-retry','initial-dispatch-batch-source-expired-final'].includes(selectionWaitFixture)"));
   const semantic=read('./helpers/neighborhoodBatchSelectedSemanticV3DatabaseChecks.js');
   assert.ok(semantic.includes("laterFirstSource:batchSelectedTransactionIndexFixture==='later-first-source'"));
   for(const limit of ['timeout:180_000','max:2,statement_timeout:120_000'])assert.ok(fixture.includes(limit),limit);

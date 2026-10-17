@@ -1,3 +1,42 @@
+## Naturally expired recovered fifth-attempt closure (2026-10-17, unregistered; native validation pending)
+
+The separate closed expired-recovery repository and unregistered
+`20270101_custom_cohort_source_expired_recovery_failure_v3.sql` retain the ENTIRE
+actual expired running5 job and its native recovery transaction. They reopen
+every original17/initial4/retry4/recovered5 parent and FIRST key/member/edge
+through dedicated expired-running and historical-terminal functions. The
+paired closure sets only failed status, clears token/lease, records the fixed
+`attempts_exhausted` error and native update time. It issues no new claim,
+renews no lease and changes no attempt, schedule, root, report, choice or pin.
+
+All three COMPLETE earlier immediate guards and the entire previous deferred
+job body are retained after one closed branch. All eleven earlier deferred
+events stay enabled; the twelfth refuses a valid orphan record at actual
+PostgreSQL COMMIT. Live source/terminal ownership stays live-only. The expired
+path grants no source authority and performs no original I/O after expiry.
+
+Two additional independent A/B native captures traverse EVERY preceding real
+original, ENTIRE cache and native-parent stage. Existing normal120s recovery
+and live terminal captures remain unchanged. Only the genuinely new winning
+recovery in the expiry captures issues the native minimum15s lease. All original
+and current/ending probes must finish before actual natural expiry, without
+clock/lease/attempt/schedule rewrites. Authored checks require live-path refusal
+after expiry without original I/O; full parent/FIRST equality; forged whole-job,
+scope, token, transaction and timestamp refusal; genuine orphan COMMIT/full
+rollback; complete terminal rollback; A acknowledged and B lost acknowledgment
+after actual terminal COMMIT; and every historical row/blob/report/subject/
+workspace/choice/pin preserved. No sixth claim or duplicate closure is admitted.
+
+The small serial boundary/affected fixture checks passed all 28 tests with zero
+failures, cancellations or skips (588.8769 ms). Actual prefix AND full prepared
+native execution are still required on the new head. Original180s case deadlines
+and aggregate256SQL/32MB/60s with stricter child250 remain unchanged. Earlier
+parent604 source-prefix24/prepared44 groups and full suites passed independently;
+those results do not validate this new expired path. Lower1–3 recovery,
+NEXT/fresh EMPTY, complete economic resolution/publication, terminal pin transfer/
+retirement, coherent activation and licensed large-area/live-speed acceptance
+remain unfinished. No migration, route, worker or stage is registered or activated.
+
 ## Recovered fifth-attempt terminal failure (2026-10-17, unregistered; native validation pending)
 
 Unregistered `20261231_custom_cohort_source_recovered_terminal_failure_v3.sql`

@@ -1,4 +1,5 @@
 import { runNeighborhoodRecoveredSourceTerminalFailureV3DatabaseChecks } from './neighborhoodRecoveredSourceTerminalFailureV3DatabaseChecks.js';
+import { runNeighborhoodExpiredSourceRecoveryFailureV3DatabaseChecks } from './neighborhoodExpiredSourceRecoveryFailureV3DatabaseChecks.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 // No copied graph or fixture substitute: each independent capture has REALLY
@@ -53,6 +54,8 @@ export async function runNeighborhoodRecoveredFirstSourceOriginalV3DatabaseCheck
     entire_job_claim_birth_parents_blobs_history_report_choices_workspace_and_pins_unchanged:true,
     existing_aggregate_256queries_32MB_60s_and_stricter_single_use_child_250_limits_unchanged:true,
     recovery:false,NEXT_or_EMPTY:false,publication:false,activation:false,licensed_large_area:false,production_speed:false});
-  await runNeighborhoodRecoveredSourceTerminalFailureV3DatabaseChecks({pool,input,scope,actor,service,claim,
+  const terminal=sourceRecoveryFixture==='expired-final5'?runNeighborhoodExpiredSourceRecoveryFailureV3DatabaseChecks
+    :runNeighborhoodRecoveredSourceTerminalFailureV3DatabaseChecks;
+  await terminal({pool,input,scope,actor,service,claim,
     originalReads,laterFirstSource,setFault,readFault});
 }

@@ -18,7 +18,7 @@ const jobTable='app.neighborhood_custom_cohort_capture_jobs',
   failureTable='app.neighborhood_custom_cohort_source_resolution_v3_last_retries';
 // Run LAST, only after the additional independent A/B birth4, claim4 and whole-original
 // owned18 proofs. No copied native parents, lease/attempt rewrite or free facts.
-export async function runNeighborhoodOwnedSourceLastRetryV3DatabaseChecks({pool,input,scope,actor,service,claim,
+export async function runNeighborhoodOwnedSourceLastRetryV3DatabaseChecks({sourceRecoveryFixture=false,pool,input,scope,actor,service,claim,
   originalReads,laterFirstSource,setFault,readFault}){
   const op=input.operationId,read=async table=>(await pool.query(`SELECT to_jsonb(r) AS body FROM app.${table} r
     WHERE operation_id=$1 ORDER BY to_jsonb(r)::text COLLATE "C"`,[op])).rows,
@@ -149,6 +149,6 @@ export async function runNeighborhoodOwnedSourceLastRetryV3DatabaseChecks({pool,
     all_prior_native_rows_blobs_claim_report_assignment_subject_manual_sections_workspace_choices_pins_unchanged:true,
     fresh5_claim:false,lower1_through3:false,expired_recovery:false,NEXT_or_EMPTY:false,publication:false,
     pin_transfer:false,activation:false,licensed_large_area:false,production_speed:false});
-  await runNeighborhoodSourceFinalRecoveryClaimV3DatabaseChecks({pool,input,scope,actor,service,claim,
+  await runNeighborhoodSourceFinalRecoveryClaimV3DatabaseChecks({sourceRecoveryFixture,pool,input,scope,actor,service,claim,
     originalReads,laterFirstSource,setFault,readFault});
 }

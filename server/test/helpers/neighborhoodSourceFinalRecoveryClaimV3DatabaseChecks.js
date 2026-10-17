@@ -17,7 +17,7 @@ const jobTable='app.neighborhood_custom_cohort_capture_jobs',
   table='app.neighborhood_custom_cohort_source_resolution_v3_recoveries';
 // Run LAST on each additional independently acquired A/B graph, AFTER all
 // original18/real retry4 COMMIT/whole-row/old-queue refusal proofs. No free facts.
-export async function runNeighborhoodSourceFinalRecoveryClaimV3DatabaseChecks({pool,input,scope,actor,service,
+export async function runNeighborhoodSourceFinalRecoveryClaimV3DatabaseChecks({sourceRecoveryFixture=false,pool,input,scope,actor,service,
   claim:oldClaim,originalReads,laterFirstSource,setFault,readFault}){
   const op=input.operationId,read=async name=>(await pool.query(`SELECT to_jsonb(r) AS body FROM app.${name} r
     WHERE operation_id=$1 ORDER BY to_jsonb(r)::text COLLATE "C"`,[op])).rows,
@@ -95,6 +95,9 @@ export async function runNeighborhoodSourceFinalRecoveryClaimV3DatabaseChecks({p
       [op,scope.organization_id,rows[0].claim.claim_token,5])).rowCount,1);
     throw Error('native_final_recovery5_explicit_ROLLBACK');
   }),/explicit_ROLLBACK/);await unchanged();
+  // Only additional independently acquired expiry A/B graphs issue a new
+  // minimum15s winning recovery. All existing normal120s paths stay unchanged.
+  const winningLeaseSeconds=sourceRecoveryFixture==='expired-final5'?15:120;
   let winner=null,actualLostCommit=false;
   const compete=async()=>{
     let won=false;
@@ -105,7 +108,7 @@ export async function runNeighborhoodSourceFinalRecoveryClaimV3DatabaseChecks({p
             actualLostCommit=true;throw Error('native_final_recovery5_real_COMMIT_ack_lost');
           }return r;}};}}:pool;
     return transaction(ownerPool,async c=>{
-      const rows=await recoveries(c).claimDue({limit:1,leaseSeconds:120});
+      const rows=await recoveries(c).claimDue({limit:1,leaseSeconds:winningLeaseSeconds});
       if(rows.length){assert.equal(winner,null);winner=rows[0];won=true;}return rows;
     });
   };
@@ -120,7 +123,7 @@ export async function runNeighborhoodSourceFinalRecoveryClaimV3DatabaseChecks({p
   const durable=(await recoveryRows())[0].body,recovered=await job();
   assert.deepEqual(durable.preclaim_job,before.job);assert.equal(durable.retry_transaction_id,failure.issued_transaction_id);
   assert.notEqual(durable.issued_transaction_id,durable.retry_transaction_id);assert.equal(durable.attempts,5);
-  assert.notEqual(durable.claim_token,initial.claim_token);assert.equal(durable.lease_seconds,120);
+  assert.notEqual(durable.claim_token,initial.claim_token);assert.equal(durable.lease_seconds,winningLeaseSeconds);
   assert.deepEqual(recovered,{...before.job,status:'running',claim_token:durable.claim_token,attempts:5,
     lease_expires_at:durable.lease_expires_at,updated_at:durable.issued_at});assert.deepEqual(await immutable(),before.immutable);
   const ownedRead=(fn,org=scope.organization_id,token=winner.claim.claim_token,attempt=5)=>transaction(pool,c=>c.query(
@@ -159,7 +162,7 @@ export async function runNeighborhoodSourceFinalRecoveryClaimV3DatabaseChecks({p
     expired_recovery:false,NEXT_or_EMPTY:false,publication:false,pin_transfer:false,
     activation:false,licensed_large_area:false,production_speed:false});
   const history=(await pool.query('SELECT birth_transaction_id::text FROM app.neighborhood_custom_cohort_source_resolution_v3_claims WHERE operation_id=$1 AND organization_id=$2',[op,scope.organization_id])).rows[0];
-  await runNeighborhoodRecoveredFirstSourceOriginalV3DatabaseChecks({pool,input,scope,actor,service,claim:winner.claim,
+  await runNeighborhoodRecoveredFirstSourceOriginalV3DatabaseChecks({sourceRecoveryFixture,pool,input,scope,actor,service,claim:winner.claim,
     originalReads,laterFirstSource,setFault,readFault,unchanged:preserved,originalBirthTransaction:history.birth_transaction_id,
     retryTransaction:String(durable.retry_transaction_id),recoveryTransaction:String(durable.issued_transaction_id)});
 }

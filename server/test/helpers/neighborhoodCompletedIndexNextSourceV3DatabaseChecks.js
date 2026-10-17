@@ -70,7 +70,11 @@ export async function runNeighborhoodCompletedIndexNextSourceV3DatabaseChecks({p
   assert.equal(resolution.membership.selected_account_count,1);assert.equal(resolution.membership.unresolved_account_row_count,2);
   assert.equal(resolution.membership.reported_resolved_link_count,1);assert.equal(resolution.membership.unresolved_link_count,1);
   assert.equal(resolution.native_closing_date.state,'unresolved');assert.equal(resolution.native_calendar_quarter,null);
-  assert.equal(resolution.same_payload_reported.closing_date.state,'missing');assert.equal(resolution.same_payload_reported.calendar_quarter,null);
+  // Source503 has an actual SQL-NULL raw payload. Its unavailable witness is
+  // unsupported, distinct from an absent CloseDate field in an object payload.
+  assert.deepEqual(resolution.same_payload_reported.closing_date,
+    {state:'unsupported',exact_value:null,reason:'unsupported_close_date'});
+  assert.equal(resolution.same_payload_reported.calendar_quarter,null);
   assert.equal(resolution.economic_transaction_eligibility,'not_established');assert.equal(resolution.quarter_statistics,'not_established');
   assert.equal(result.complete_original_reconciled_source,true);assert.equal(result.read_only,true);
   for(const key of ['lease_extended','source_cursor_advanced','economic_progress_retained','pin_transfer','context_complete'])assert.equal(result[key],false);

@@ -1,3 +1,6 @@
+import { NEIGHBORHOOD_FOURTH_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL as FOURTH_PACKAGE } from './neighborhoodSelectedTransactionOriginalPackageV2.js';
+import { FOURTH_FIRST_SOURCE_CONTEXT_V3_SQL as FOURTH_FIRST } from './completedIndexFirstSourceV3Sql.js';
+import { FOURTH_NEXT_SOURCE_CONTEXT_V3_SQL as FOURTH_NEXT } from './completedIndexNextSourceV3Sql.js';
 import { NEIGHBORHOOD_THIRD_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL as THIRD_PACKAGE } from './neighborhoodSelectedTransactionOriginalPackageV2.js';
 import { THIRD_FIRST_SOURCE_CONTEXT_V3_SQL as THIRD_FIRST } from './completedIndexFirstSourceV3Sql.js';
 import { THIRD_NEXT_SOURCE_CONTEXT_V3_SQL as THIRD_NEXT } from './completedIndexNextSourceV3Sql.js';
@@ -63,3 +66,15 @@ function thirdNextPackage(){
  return sql;
 }
 export const NEIGHBORHOOD_THIRD_NEXT_SOURCE_ORIGINAL_PACKAGE_V3_SQL=thirdNextPackage();
+
+// ENTIRE actual fourth FIRST whole-original package; fixed native NEXT only.
+function fourthNextPackage(){
+ let sql=FOURTH_PACKAGE;
+ for(const[from,to]of [[FOURTH_FIRST,FOURTH_NEXT],
+  ['neighborhood-fourth-first-source-original-package-v3','neighborhood-fourth-next-source-original-package-v3']]){
+  if(sql.split(from).length!==2)throw new TypeError('neighborhood_fourth_next_source_original_sql_shape');
+  sql=sql.replace(from,to);
+ }
+ return sql;
+}
+export const NEIGHBORHOOD_FOURTH_NEXT_SOURCE_ORIGINAL_PACKAGE_V3_SQL=fourthNextPackage();

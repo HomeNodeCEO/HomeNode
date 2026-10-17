@@ -27,7 +27,7 @@ test('all twelve previous original SQL constants stay byte-identical, including 
     'NEIGHBORHOOD_FIRST_COMPLETED_INDEX_SOURCE_ORIGINAL_PACKAGE_V3_SQL',
     'NEIGHBORHOOD_OWNED_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL',
     'NEIGHBORHOOD_RECOVERED_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL',
-    'NEIGHBORHOOD_SECOND_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL'].sort());
+    'NEIGHBORHOOD_SECOND_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL','NEIGHBORHOOD_THIRD_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL'].sort());
   assert.equal(typeof plans.NEIGHBORHOOD_SECOND_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL,'string');
   assert.equal(typeof plans.NEIGHBORHOOD_RECOVERED_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL,'string');
   for(const [key,sha] of Object.entries(expected))assert.equal(createHash('sha256').update(plans[key]).digest('hex'),sha,key);

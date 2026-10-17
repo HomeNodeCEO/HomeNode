@@ -108,6 +108,7 @@ import { createCustomCohortSelectedTransactionIndexV2Repository } from './custom
 import { createCustomCohortCompletedIndexSourceAccountV3Repository,createCustomCohortOwnedFirstSourceAccountV3Repository } from './customCohortCompletedIndexSourceAccountV3Repository.js';
 import { createCustomCohortRecoveredFirstSourceAccountV3Repository } from './customCohortRecoveredFirstSourceAccountV3Repository.js';
 import { createCustomCohortSecondFirstSourceAccountV3Repository } from './customCohortSecondFirstSourceAccountV3Repository.js';
+import { createCustomCohortThirdFirstSourceAccountV3Repository } from './customCohortThirdFirstSourceAccountV3Repository.js';
 import { resolveNeighborhoodOriginalSourceResolutionV3,resolveNeighborhoodNextOriginalSourceResolutionV3 } from './neighborhoodOriginalSourceResolutionV3.js';
 import { prepareNeighborhoodFirstSourceResolutionCandidateV3 } from './neighborhoodFirstSourceResolutionCandidateV3.js';
 import { createCustomCohortSourceResolutionParentV3Repository } from './customCohortSourceResolutionParentV3Repository.js';
@@ -627,6 +628,14 @@ const FROZEN_SOURCE_STAGES = freeze({
     readingSelectedStatisticsSource:true,readingSelectedFrequencySource:true,readingSelectedNumericSource:true,
     progressingSelectedSemantic:true,readingSelectedTransactionSource:true,readingSelectedTransactionIndex:true,
     readingCompletedIndexFirstSource:true,ownedCompletedIndexFirstSource:true,recoveredOwnedFirstSource:true,secondOwnedFirstSource:true,resolvingCompletedIndexFirstSource:true,preparingCompletedIndexSourceCandidate:true,
+    coveredNeutralOriginals:true,catalogBatchLineage:true,allowedPhases:['frozen_selected_transaction_index_refs_v2'] },
+  covered_third_first_source_original_refs_v3: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,
+    readingSelectedUnionSubjectHousing:true,readingSelectedUnionFirstEligibility:true,
+    readingSelectedUnionFirstAmenities:true,readingSelectedUnionFirstTransactions:true,readingSelectedMetricSource:true,
+    readingSelectedStatisticsSource:true,readingSelectedFrequencySource:true,readingSelectedNumericSource:true,
+    progressingSelectedSemantic:true,readingSelectedTransactionSource:true,readingSelectedTransactionIndex:true,
+    readingCompletedIndexFirstSource:true,ownedCompletedIndexFirstSource:true,recoveredOwnedFirstSource:true,thirdOwnedFirstSource:true,resolvingCompletedIndexFirstSource:true,preparingCompletedIndexSourceCandidate:true,
     coveredNeutralOriginals:true,catalogBatchLineage:true,allowedPhases:['frozen_selected_transaction_index_refs_v2'] },
   covered_completed_index_first_source_resolution_candidate_refs_v3: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
     catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,
@@ -2154,7 +2163,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,cachingCadOriginals=false,cachingCadCoverage=false,yieldingCadProgress=false,readingCoveredCadAmenities=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,readingStockWholeAccountBatch=false,coveredNeutralOriginals=false,cacheStockHandoff=false,
       resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,batchingStock=false,batchingPartition=false,batchingCatalog=false,catalogBatchLineage=false,partitioningRecordedGroups=false,
-      readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,readingSelectedUnionFirstEligibility=false,readingSelectedUnionFirstAmenities=false,readingSelectedUnionFirstTransactions=false,progressingSelectedEligibility=false,progressingSelectedEvidence=false,readingSelectedMetricSource=false,progressingSelectedMetrics=false,readingSelectedStatisticsSource=false,progressingSelectedStatistics=false,readingSelectedFrequencySource=false,readingSelectedNumericSource=false,progressingSelectedNumeric=false,readingSelectedRankCandidates=false,progressingSelectedSemantic=false,readingSelectedTransactionSource=false,preparingSelectedTransactionFirstCandidate=false,readingSelectedTransactionIndex=false,progressingSelectedTransactionIndex=false,readingCompletedIndexFirstSource=false,readingCompletedIndexNextSource=false,ownedNextSource=false,recoveredNextSource=false,ownedCompletedIndexFirstSource=false,recoveredOwnedFirstSource=false,secondOwnedFirstSource=false,secondNextSource=false,resolvingCompletedIndexFirstSource=false,preparingCompletedIndexSourceCandidate=false,retainingCompletedIndexSourceBinding=false,retainingCompletedIndexSourceRow=false,savingCompletedIndexSourceCheckpoint=false,yieldingCompletedIndexSourceCheckpoint=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
+      readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,readingSelectedUnionFirstEligibility=false,readingSelectedUnionFirstAmenities=false,readingSelectedUnionFirstTransactions=false,progressingSelectedEligibility=false,progressingSelectedEvidence=false,readingSelectedMetricSource=false,progressingSelectedMetrics=false,readingSelectedStatisticsSource=false,progressingSelectedStatistics=false,readingSelectedFrequencySource=false,readingSelectedNumericSource=false,progressingSelectedNumeric=false,readingSelectedRankCandidates=false,progressingSelectedSemantic=false,readingSelectedTransactionSource=false,preparingSelectedTransactionFirstCandidate=false,readingSelectedTransactionIndex=false,progressingSelectedTransactionIndex=false,readingCompletedIndexFirstSource=false,readingCompletedIndexNextSource=false,ownedNextSource=false,recoveredNextSource=false,ownedCompletedIndexFirstSource=false,recoveredOwnedFirstSource=false,secondOwnedFirstSource=false,thirdOwnedFirstSource=false,secondNextSource=false,resolvingCompletedIndexFirstSource=false,preparingCompletedIndexSourceCandidate=false,retainingCompletedIndexSourceBinding=false,retainingCompletedIndexSourceRow=false,savingCompletedIndexSourceCheckpoint=false,yieldingCompletedIndexSourceCheckpoint=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     const readingCadSource=readingCadPages||readingSelectedUnionFirstAmenities;
     if(referencesV2){
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
@@ -2246,7 +2255,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         selectionWorkspaceTarget=await readCustomCohortFrozenSelectionWorkspaceTarget({
           client,input,scopeJson:canonicalAssessmentJson(scope),checkBudget:budget.check});
       }
-      const checkpoint=await jobs[secondOwnedFirstSource?'readSecondFirstSourceBirthCheckpoint':recoveredOwnedFirstSource?'readRecoveredFirstSourceBirthCheckpoint':ownedCompletedIndexFirstSource?'readOwnedFirstSourceBirthCheckpoint':readingSelectedTransactionIndex?'readTransactionIndexCheckpoint':'readCheckpoint'](claim,jobOptions);
+      const checkpoint=await jobs[thirdOwnedFirstSource?'readThirdFirstSourceBirthCheckpoint':secondOwnedFirstSource?'readSecondFirstSourceBirthCheckpoint':recoveredOwnedFirstSource?'readRecoveredFirstSourceBirthCheckpoint':ownedCompletedIndexFirstSource?'readOwnedFirstSourceBirthCheckpoint':readingSelectedTransactionIndex?'readTransactionIndexCheckpoint':'readCheckpoint'](claim,jobOptions);
       if(!checkpoint || !allowedPhases.includes(checkpoint.phase)
         ||checkpoint.evidence_refs.length!==({frozen_stock_v1:2,frozen_source_v1:3,frozen_source_refs_v2:3,frozen_verify_refs_v2:4,frozen_geo_verify_refs_v2:5,frozen_identity_refs_v2:6,frozen_stock_traversal_refs_v2:7,frozen_recorded_partition_refs_v2:8,frozen_recorded_catalog_refs_v2:9,frozen_selected_union_refs_v2:10,frozen_selected_eligibility_refs_v2:11,frozen_selected_evidence_refs_v2:12,frozen_selected_metrics_refs_v2:13,frozen_selected_statistics_refs_v2:14,frozen_selected_numeric_refs_v2:15,frozen_selected_semantic_refs_v2:16,frozen_selected_transaction_index_refs_v2:17,frozen_verify_v1:4,frozen_geo_verify_v1:5,frozen_identity_v1:6,frozen_typed_v1:7}[checkpoint.phase]))
         fail('checkpoint_conflict');
@@ -2286,7 +2295,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if(readingRetainedSelectionIntent)issuedSelectionIntent=await createCustomCohortV2SelectionIntentRepository(client)
         .readRetained(claim,{...jobOptions,workspaceTarget:selectionWorkspaceTarget});
       if(replayingSelectedUnion)issuedSelectionIntent=await createCustomCohortV2SelectionIntentRepository(client)
-        [secondOwnedFirstSource?'readForSecondFirstSource':recoveredOwnedFirstSource?'readForRecoveredFirstSource':ownedCompletedIndexFirstSource?'readForOwnedFirstSource':readingSelectedTransactionIndex?'readForTransactionIndex':readingSelectedTransactionSource?'readForTransactionSource':progressingSelectedSemantic?'readForSemanticStatistics':progressingSelectedNumeric||readingSelectedRankCandidates?'readForNumericPopulation':readingSelectedFrequencySource?'readForFrequencies':progressingSelectedStatistics?'readForStatisticsContributions':readingSelectedStatisticsSource?'readForStatistics':progressingSelectedMetrics?'readForMetrics':progressingSelectedEvidence||readingSelectedMetricSource?'readForEvidence':progressingSelectedEligibility?'readForEligibility':'readForReplay'](claim,{...jobOptions,workspaceTarget:selectionWorkspaceTarget});
+        [thirdOwnedFirstSource?'readForThirdFirstSource':secondOwnedFirstSource?'readForSecondFirstSource':recoveredOwnedFirstSource?'readForRecoveredFirstSource':ownedCompletedIndexFirstSource?'readForOwnedFirstSource':readingSelectedTransactionIndex?'readForTransactionIndex':readingSelectedTransactionSource?'readForTransactionSource':progressingSelectedSemantic?'readForSemanticStatistics':progressingSelectedNumeric||readingSelectedRankCandidates?'readForNumericPopulation':readingSelectedFrequencySource?'readForFrequencies':progressingSelectedStatistics?'readForStatisticsContributions':readingSelectedStatisticsSource?'readForStatistics':progressingSelectedMetrics?'readForMetrics':progressingSelectedEvidence||readingSelectedMetricSource?'readForEvidence':progressingSelectedEligibility?'readForEligibility':'readForReplay'](claim,{...jobOptions,workspaceTarget:selectionWorkspaceTarget});
       // Never let an early known-ID error become a revoked-license catalog
       // oracle. This fixed lookup is permitted only AFTER current source policy
       // at BOTH ends. Choices come from the immutable native command, not body
@@ -3049,7 +3058,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
               generation_id:stock.generation_id,selected_stock_count:unionCounts.selected_count};
             const parentKeys=['union_reference','eligibility_reference','evidence_reference','metrics_reference','statistics_reference','numeric_reference','semantic_reference'];
             selectedTransactionIndexStore=readingCompletedIndexFirstSource
-              ?(secondNextSource?createCustomCohortSecondNextSourceAccountV3Repository:recoveredNextSource?createCustomCohortRecoveredNextSourceAccountV3Repository:ownedNextSource?createCustomCohortOwnedNextSourceAccountV3Repository:readingCompletedIndexNextSource?createCustomCohortCompletedIndexNextSourceAccountV3Repository:secondOwnedFirstSource?createCustomCohortSecondFirstSourceAccountV3Repository:recoveredOwnedFirstSource?createCustomCohortRecoveredFirstSourceAccountV3Repository:ownedCompletedIndexFirstSource?createCustomCohortOwnedFirstSourceAccountV3Repository:createCustomCohortCompletedIndexSourceAccountV3Repository)({client,claim,scope,actorUserId:input.auth.userId})
+              ?(secondNextSource?createCustomCohortSecondNextSourceAccountV3Repository:recoveredNextSource?createCustomCohortRecoveredNextSourceAccountV3Repository:ownedNextSource?createCustomCohortOwnedNextSourceAccountV3Repository:readingCompletedIndexNextSource?createCustomCohortCompletedIndexNextSourceAccountV3Repository:thirdOwnedFirstSource?createCustomCohortThirdFirstSourceAccountV3Repository:secondOwnedFirstSource?createCustomCohortSecondFirstSourceAccountV3Repository:recoveredOwnedFirstSource?createCustomCohortRecoveredFirstSourceAccountV3Repository:ownedCompletedIndexFirstSource?createCustomCohortOwnedFirstSourceAccountV3Repository:createCustomCohortCompletedIndexSourceAccountV3Repository)({client,claim,scope,actorUserId:input.auth.userId})
               :createCustomCohortSelectedTransactionIndexV2Repository({client,claim,scope,
               actorUserId:input.auth.userId,command_id:issuedSelectionIntent.command_id,
               ...Object.fromEntries(parentKeys.map(k=>[k,selectedTransactionIndexExpected[k]]))});
@@ -3116,7 +3125,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             paired=await (coveredNeutralOriginals&&readingSelectedUnionFirstAmenities?createNeighborhoodCoveredCadStockOriginalCellsV2
               :coveredNeutralOriginals?createNeighborhoodCoveredStockOriginalCellsV2:createNeighborhoodSharedStockOriginalCellsV2)(client,stockOptions,graph,context.effective_date,
                 ...(coveredNeutralOriginals&&readingSelectedUnionFirstAmenities?[{purpose:cadPurpose,decision:cadDecision}]:[]))
-              [secondNextSource?'subjectAndSecondNextSourceAccountPackageV3':recoveredNextSource?'subjectAndRecoveredNextSourceAccountPackageV3':ownedNextSource?'subjectAndOwnedNextSourceAccountPackageV3':readingCompletedIndexNextSource?'subjectAndNextCompletedIndexSourceAccountPackageV3':secondOwnedFirstSource?'subjectAndSecondFirstSourceAccountPackageV3':recoveredOwnedFirstSource?'subjectAndRecoveredFirstSourceAccountPackageV3':ownedCompletedIndexFirstSource?'subjectAndOwnedFirstSourceAccountPackageV3':readingCompletedIndexFirstSource?'subjectAndFirstCompletedIndexSourceAccountPackageV3':readingSelectedTransactionIndex?'subjectAndNextSelectedTransactionIndexAccountPackage':readingSelectedTransactionSource?'subjectAndFirstCompletedSemanticAccountPackage':progressingSelectedSemantic?'subjectAndNextSelectedSemanticAccountPackage':readingSelectedRankCandidates?'subjectAndFirstCompletedNumericAccountPackage':progressingSelectedNumeric?'subjectAndNextSelectedNumericAccountPackage':readingSelectedFrequencySource?'subjectAndFirstSelectedFrequencyAccountPackage':progressingSelectedStatistics?'subjectAndNextSelectedStatisticsAccountPackage':readingSelectedStatisticsSource?'subjectAndFirstSelectedStatisticsAccountPackage':progressingSelectedMetrics?'subjectAndNextSelectedMetricAccountPackage':readingSelectedMetricSource?'subjectAndFirstSelectedMetricAccountPackage':progressingSelectedEvidence?'subjectAndNextSelectedCombinedAccountPackage':
+              [secondNextSource?'subjectAndSecondNextSourceAccountPackageV3':recoveredNextSource?'subjectAndRecoveredNextSourceAccountPackageV3':ownedNextSource?'subjectAndOwnedNextSourceAccountPackageV3':readingCompletedIndexNextSource?'subjectAndNextCompletedIndexSourceAccountPackageV3':thirdOwnedFirstSource?'subjectAndThirdFirstSourceAccountPackageV3':secondOwnedFirstSource?'subjectAndSecondFirstSourceAccountPackageV3':recoveredOwnedFirstSource?'subjectAndRecoveredFirstSourceAccountPackageV3':ownedCompletedIndexFirstSource?'subjectAndOwnedFirstSourceAccountPackageV3':readingCompletedIndexFirstSource?'subjectAndFirstCompletedIndexSourceAccountPackageV3':readingSelectedTransactionIndex?'subjectAndNextSelectedTransactionIndexAccountPackage':readingSelectedTransactionSource?'subjectAndFirstCompletedSemanticAccountPackage':progressingSelectedSemantic?'subjectAndNextSelectedSemanticAccountPackage':readingSelectedRankCandidates?'subjectAndFirstCompletedNumericAccountPackage':progressingSelectedNumeric?'subjectAndNextSelectedNumericAccountPackage':readingSelectedFrequencySource?'subjectAndFirstSelectedFrequencyAccountPackage':progressingSelectedStatistics?'subjectAndNextSelectedStatisticsAccountPackage':readingSelectedStatisticsSource?'subjectAndFirstSelectedStatisticsAccountPackage':progressingSelectedMetrics?'subjectAndNextSelectedMetricAccountPackage':readingSelectedMetricSource?'subjectAndFirstSelectedMetricAccountPackage':progressingSelectedEvidence?'subjectAndNextSelectedCombinedAccountPackage':
                 readingSelectedUnionFirstTransactions&&readingSelectedUnionFirstAmenities?'subjectAndFirstSelectedCombinedAccountPackage':
                 readingSelectedUnionFirstTransactions?'subjectAndFirstSelectedTransactionAccountPackage':
                 readingSelectedUnionFirstAmenities?'subjectAndFirstSelectedAmenityAccountPackage':
@@ -3707,7 +3716,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           source_acquisition:'not_established',publication:'not_established',report_update:'none'});
       }
       if(replayingSelectedUnion){
-        const ending=await createCustomCohortV2SelectionIntentRepository(client)[secondOwnedFirstSource?'readForSecondFirstSource':recoveredOwnedFirstSource?'readForRecoveredFirstSource':ownedCompletedIndexFirstSource?'readForOwnedFirstSource':readingSelectedTransactionIndex?'readForTransactionIndex':readingSelectedTransactionSource?'readForTransactionSource':progressingSelectedSemantic?'readForSemanticStatistics':progressingSelectedNumeric||readingSelectedRankCandidates?'readForNumericPopulation':readingSelectedFrequencySource?'readForFrequencies':progressingSelectedStatistics?'readForStatisticsContributions':readingSelectedStatisticsSource?'readForStatistics':progressingSelectedMetrics?'readForMetrics':progressingSelectedEvidence||readingSelectedMetricSource?'readForEvidence':progressingSelectedEligibility?'readForEligibility':'readForReplay'](claim,
+        const ending=await createCustomCohortV2SelectionIntentRepository(client)[thirdOwnedFirstSource?'readForThirdFirstSource':secondOwnedFirstSource?'readForSecondFirstSource':recoveredOwnedFirstSource?'readForRecoveredFirstSource':ownedCompletedIndexFirstSource?'readForOwnedFirstSource':readingSelectedTransactionIndex?'readForTransactionIndex':readingSelectedTransactionSource?'readForTransactionSource':progressingSelectedSemantic?'readForSemanticStatistics':progressingSelectedNumeric||readingSelectedRankCandidates?'readForNumericPopulation':readingSelectedFrequencySource?'readForFrequencies':progressingSelectedStatistics?'readForStatisticsContributions':readingSelectedStatisticsSource?'readForStatistics':progressingSelectedMetrics?'readForMetrics':progressingSelectedEvidence||readingSelectedMetricSource?'readForEvidence':progressingSelectedEligibility?'readForEligibility':'readForReplay'](claim,
           {...jobOptions,workspaceTarget:selectionWorkspaceTarget});
         if(!same(ending,issuedSelectionIntent)||!same(await unionStore.read(),unionAnchor)
           ||!same(await unionStore.counts(),unionCounts))fail('selected_union_original_mismatch');
@@ -3734,7 +3743,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           // Repeat the actual native checkpoint and ENTIRE bounded NEXT plan,
           // including every retained member field and typed first-seen binding,
           // only AFTER all current+ending rights, workspace and immutable heads.
-          if(!same(await jobs[secondOwnedFirstSource?'readSecondFirstSourceBirthCheckpoint':recoveredOwnedFirstSource?'readRecoveredFirstSourceBirthCheckpoint':ownedCompletedIndexFirstSource?'readOwnedFirstSourceBirthCheckpoint':'readTransactionIndexCheckpoint'](claim,jobOptions),checkpoint)
+          if(!same(await jobs[thirdOwnedFirstSource?'readThirdFirstSourceBirthCheckpoint':secondOwnedFirstSource?'readSecondFirstSourceBirthCheckpoint':recoveredOwnedFirstSource?'readRecoveredFirstSourceBirthCheckpoint':ownedCompletedIndexFirstSource?'readOwnedFirstSourceBirthCheckpoint':'readTransactionIndexCheckpoint'](claim,jobOptions),checkpoint)
             ||!same(await selectedTransactionIndexStore[readingCompletedIndexNextSource?'readNextAccount':readingCompletedIndexFirstSource?'readFirstAccount':'readNext'](),selectedTransactionIndexPacket))
             fail('selected_transaction_index_original_mismatch');
         }
@@ -3748,7 +3757,20 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           // bytes with the privately reproduced whole-original candidate; no
           // hash/count or cached conclusion substitutes for that reproduction.
           if(selectedTransactionSourceCandidate===null)fail('completed_index_source_original_mismatch');
-          const native=one(await client.query(secondOwnedFirstSource?`/* custom-cohort-second-first-source-v3:ending-birth */
+          const native=one(await client.query(thirdOwnedFirstSource?`/* custom-cohort-third-first-source-v3:ending-birth */
+            SELECT p.parent_checkpoint AS birth_checkpoint,p.issued_transaction_id::text AS birth_transaction_id,
+              recovery.retry_transaction_id::text AS retry_transaction_id,
+              recovery.issued_transaction_id::text AS recovery_transaction_id,body.canonical_utf8 AS candidate_utf8
+            FROM app.neighborhood_source_resolution_v3_third_parent($1::uuid,$2::uuid,$3::uuid,$4::integer) p
+            JOIN app.neighborhood_source_resolution_v3_third_first($1::uuid,$2::uuid,$3::uuid,$4::integer) f
+              USING(operation_id,organization_id)
+            JOIN app.neighborhood_custom_cohort_source_resolution_v3_third_claims recovery USING(operation_id,organization_id)
+            JOIN app.neighborhood_custom_cohort_source_resolution_v3_heads h USING(operation_id,organization_id)
+            JOIN app.neighborhood_cohort_evidence_blobs body ON body.organization_id=h.organization_id
+              AND body.content_sha256=h.candidate_reference->>'content_sha256'
+              AND body.canonical_utf8_bytes::text=h.candidate_reference->>'canonical_utf8_bytes'
+              AND body.canonical_utf8_bytes<=12000
+            WHERE p.report_file_id=$5::uuid AND p.assignment_file_id=$6::bigint AND p.account_id=$7 AND p.actor_user_id=$8::uuid`:secondOwnedFirstSource?`/* custom-cohort-second-first-source-v3:ending-birth */
             SELECT p.parent_checkpoint AS birth_checkpoint,p.issued_transaction_id::text AS birth_transaction_id,
               recovery.retry_transaction_id::text AS retry_transaction_id,
               recovery.issued_transaction_id::text AS recovery_transaction_id,body.canonical_utf8 AS candidate_utf8
@@ -3942,7 +3964,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
               original_birth_rebound:false,source_cursor_advanced:false,economic_progress_retained:false}:{}),
             ...(recoveredNextSource?{recovered_source_failure_attempt:claim.attempts,original_birth_rebound:false}:{}),
             ...(secondNextSource?{second_source_failure_attempt:claim.attempts,original_birth_rebound:false}:{}),
-            ...(recoveredOwnedFirstSource&&!recoveredNextSource&&!secondOwnedFirstSource?{
+            ...(recoveredOwnedFirstSource&&!recoveredNextSource&&!secondOwnedFirstSource&&!thirdOwnedFirstSource?{
               status:'current_authorized_recovered_first_source_originals_reconciled',
               retained_source_retry_transaction:recoveredSourceTransactions.retry,
               retained_source_recovery_transaction:recoveredSourceTransactions.recovery,
@@ -3952,6 +3974,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
               retained_source_retry_transaction:recoveredSourceTransactions.retry,
               retained_source_second_claim_transaction:recoveredSourceTransactions.recovery,
               second_source_failure_attempt:claim.attempts}:{}),
+            ...(thirdOwnedFirstSource?{
+              status:'current_authorized_third_first_source_originals_reconciled',
+              retained_source_retry_transaction:recoveredSourceTransactions.retry,
+              retained_source_third_claim_transaction:recoveredSourceTransactions.recovery,
+              third_source_failure_attempt:claim.attempts}:{}),
             ...(preparingSelectedTransactionFirstCandidate?{
               status:'current_authorized_first_selected_transaction_index_candidate_originals_reconciled',
               native_index_candidate:prepareCohortSelectedTransactionIndexFirstCandidateV2({command_id:issuedSelectionIntent.command_id,
@@ -4906,6 +4933,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     readCoveredOriginalFrozenCaptureJobSecondFirstSourceReferencesV3(...args){
       if(args.length!==2)fail('invalid_options');
       return frozenCaptureJobSourceStage(args[0],args[1],'covered_second_first_source_original_refs_v3');
+    },
+    readCoveredOriginalFrozenCaptureJobThirdFirstSourceReferencesV3(...args){
+      if(args.length!==2)fail('invalid_options');
+      return frozenCaptureJobSourceStage(args[0],args[1],'covered_third_first_source_original_refs_v3');
     },
     retainCoveredOriginalFrozenCaptureJobFirstSourceBindingReferencesV3(...args){
       if(args.length!==2)fail('invalid_options');

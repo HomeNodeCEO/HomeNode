@@ -1,3 +1,16 @@
+## Owned18 checkpoint integration assertions (2026-10-17, fresh validation pending)
+
+The actual 5315 cloud server suite reported 11,564 passed, two failed and 96
+skipped tests. Both failures were existing structural order assertions searching
+for the old direct ending checkpoint call. The separate owned18 stage now
+selects its dedicated birth reader with a closed internal flag; the ordinary
+index owner still selects its original transaction-index reader. Both tests
+now locate that exact ending conditional call and retain every subsequent
+native-plan, blob/head/checkpoint/single-use-yield or read-only ordering check.
+No runtime, SQL, migration, budget, deadline or activation changes. Current-head
+cloud server and independent native results remain required; the failed head
+is not rerun, and a skipped draft review provides no substantive review.
+
 ## Actual owned18 FIRST original reconciliation (2026-10-17, unregistered; native execution pending)
 
 The separate dormant `readCoveredOriginalFrozenCaptureJobOwnedFirstSourceReferencesV3`

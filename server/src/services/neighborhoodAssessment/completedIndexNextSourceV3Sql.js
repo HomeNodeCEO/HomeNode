@@ -1,3 +1,4 @@
+import { THIRD_FIRST_SOURCE_CONTEXT_V3_SQL as THIRD_FIRST } from './completedIndexFirstSourceV3Sql.js';
 import { SECOND_FIRST_SOURCE_CONTEXT_V3_SQL as SECOND_FIRST } from './completedIndexFirstSourceV3Sql.js';
 import { COMPLETED_INDEX_FIRST_SOURCE_CONTEXT_V3_SQL as FIRST,
   OWNED_FIRST_SOURCE_CONTEXT_V3_SQL as OWNED_FIRST, RECOVERED_FIRST_SOURCE_CONTEXT_V3_SQL as RECOVERED_FIRST } from './completedIndexFirstSourceV3Sql.js';
@@ -67,3 +68,11 @@ function secondNext(){
  return sql.replace(FIRST,SECOND_FIRST);
 }
 export const SECOND_NEXT_SOURCE_CONTEXT_V3_SQL=secondNext();
+
+// Independent actual1/failure1/second2/failure2/third3 parent. No copied roots.
+function thirdNext(){
+ const sql=COMPLETED_INDEX_NEXT_SOURCE_CONTEXT_V3_SQL;
+ if(sql.split(FIRST).length!==2)throw new TypeError('completed_index_third_next_source_v3_sql_shape');
+ return sql.replace(FIRST,THIRD_FIRST);
+}
+export const THIRD_NEXT_SOURCE_CONTEXT_V3_SQL=thirdNext();

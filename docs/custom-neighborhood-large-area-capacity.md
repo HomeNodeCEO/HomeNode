@@ -1,3 +1,22 @@
+## Whole NEXT originals under actual third3 (2026-10-17, inactive)
+
+The closed third NEXT reader reopens the actual owned1/failure1/second2/
+failure2/third3 native graph and chooses NEXT after FIRST in the two native
+key namespaces. It reopens the chosen account’s whole source/CAD/stock/
+all-date originals, required subject and ENTIRE caches, reconciles every
+native member/key and repeats all current and ending authority fences.
+The FIRST candidate remains a parent binding; no FIRST semantic fact or
+original reproduction is borrowed from NEXT’s different account.
+
+Existing A/B graphs append native503 with first-seen B at ordinal two,
+unresolved associations and SQL-NULL payload reasons, real before-I/O
+actor/assignment/draft refusals, eleven ending faults, lost actual read-only
+COMMIT ACK and identical reopen. Entire role rows and every parent, original,
+grant, report, choice and pin remain intact under unchanged aggregate budgets
+and deadlines. Cloud/native validation is pending. No cursor, fresh EMPTY,
+complete economic population, publication, terminal pins, licensed capacity
+or live-speed acceptance is established. No production stage is activated.
+
 ## Whole originals under the actual third source claim (2026-10-17, inactive)
 
 The dedicated third-claim FIRST reader reopens every actual whole source,

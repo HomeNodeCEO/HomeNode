@@ -59,6 +59,28 @@ export function createCustomCohortSourceResolutionParentV3Repository(...args){
       const result=Object.freeze({...p,index_reference:index,parent_checkpoint:parent});
       if(Buffer.byteLength(json(result))>8192)fail('native_parent_corrupt');return result;
     };
+  const firstFields=['operation_id','organization_id','generation_id','command_id','index_reference','index_sequence',
+    'kind','native_key','first_selected_ordinal','selected_account_id','partition_ordinal','entry_reference',
+    'metric_row_reference','contribution_row_reference','issued_transaction_id'],
+    firstSelected=`SELECT b.* FROM app.neighborhood_source_resolution_v3_native_first($1::uuid,$2::uuid) b
+      JOIN app.neighborhood_custom_cohort_source_resolution_v3_parents p USING(operation_id,organization_id)
+      WHERE p.report_file_id=$3::uuid AND p.assignment_file_id=$4::bigint AND p.account_id=$5 AND p.actor_user_id=$6::uuid
+        AND p.issued_claim_token=$7::uuid AND p.issued_attempts=$8::integer`,
+    prepareFirst=(v,id)=>{
+      const p=data(v,firstFields);
+      if(p.operation_id!==claim.operation_id||p.organization_id!==scope.organization_id||p.issued_transaction_id!==id
+        ||![p.generation_id,p.command_id].every(v=>typeof v==='string'&&UUID.test(v))
+        ||!Number.isSafeInteger(p.index_sequence)||p.index_sequence<2||p.index_sequence>2000001
+        ||!['source_record','legacy_sale'].includes(p.kind)||typeof p.native_key!=='string'
+        ||!/^[1-9][0-9]{0,18}$/.test(p.native_key)||BigInt(p.native_key)>9223372036854775807n
+        ||!Number.isSafeInteger(p.first_selected_ordinal)||p.first_selected_ordinal<1||p.first_selected_ordinal>=p.index_sequence
+        ||!Number.isSafeInteger(p.partition_ordinal)||p.partition_ordinal<1||p.partition_ordinal>2000000
+        ||typeof p.selected_account_id!=='string'||!p.selected_account_id||p.selected_account_id.length>64
+        ||!p.selected_account_id.isWellFormed()||p.selected_account_id.trim()!==p.selected_account_id
+        ||/[\u0000-\u001f\u007f]/.test(p.selected_account_id))fail('native_first_corrupt');
+      return Object.freeze({...p,index_reference:reference(p.index_reference,4096),entry_reference:reference(p.entry_reference,1000000),
+        metric_row_reference:reference(p.metric_row_reference,4096),contribution_row_reference:reference(p.contribution_row_reference,4096)});
+    };
   return Object.freeze({async insertActual17Parent(...a){
     if(a.length)fail('invalid_input');
     const id=await tx();if(await tx()!==id)fail('caller_transaction_required');
@@ -67,6 +89,15 @@ export function createCustomCohortSourceResolutionParentV3Repository(...args){
     const retained=prepare(one(await o.client.query(`/* custom-cohort-source-resolution-parent-v3:insert */
       INSERT INTO app.neighborhood_custom_cohort_source_resolution_v3_parents ${selected} RETURNING *`,values)),id);
     if(json(retained)!==json(expected))fail('native_parent_changed');
+    if(await tx()!==id)fail('caller_transaction_required');return retained;
+  },async insertActualFirstSourceBinding(...a){
+    if(a.length)fail('invalid_input');
+    const id=await tx();if(await tx()!==id)fail('caller_transaction_required');
+    const expected=prepareFirst(one(await o.client.query('/* custom-cohort-source-resolution-parent-v3:first-native */ '+firstSelected,values)),id);
+    if(await tx()!==id)fail('caller_transaction_required');
+    const retained=prepareFirst(one(await o.client.query(`/* custom-cohort-source-resolution-parent-v3:first-insert */
+      INSERT INTO app.neighborhood_custom_cohort_source_resolution_v3_first ${firstSelected} RETURNING *`,values)),id);
+    if(json(retained)!==json(expected))fail('native_first_changed');
     if(await tx()!==id)fail('caller_transaction_required');return retained;
   }});
 }

@@ -1,3 +1,4 @@
+import { runNeighborhoodSecondFirstSourceOriginalV3DatabaseChecks } from './neighborhoodSecondFirstSourceOriginalV3DatabaseChecks.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -166,4 +167,8 @@ export async function runNeighborhoodSourceSecondClaimV3DatabaseChecks({sourceRe
     source_authority:'not_established',second2_original_replay:false,repeated_attempt2_or3_retry:false,
     expired_recovery:false,NEXT_or_EMPTY:false,publication:false,pin_transfer:false,
     activation:false,licensed_large_area:false,production_speed:false});
+  const history=(await read('neighborhood_custom_cohort_source_resolution_v3_claims'))[0].body;
+  await runNeighborhoodSecondFirstSourceOriginalV3DatabaseChecks({sourceRecoveryFixture,pool,input,scope,actor,service,claim:winner.claim,
+    originalReads,laterFirstSource,setFault,readFault,unchanged:preserved,originalBirthTransaction:String(history.birth_transaction_id),
+    retryTransaction:String(durable.retry_transaction_id),secondClaimTransaction:String(durable.issued_transaction_id)});
 }

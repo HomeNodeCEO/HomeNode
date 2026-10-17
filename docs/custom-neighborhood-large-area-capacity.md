@@ -1,3 +1,23 @@
+## Whole NEXT originals under actual normal fifth5 (2026-10-17, inactive)
+
+A closed fifth NEXT reader reopens the whole actual owned1/failure1/second2/
+failure2/third3/failure3/fourth4/failure4/fifth5 graph, choosing native NEXT after FIRST in both
+key namespaces. Whole source/CAD/stock/all-date transaction originals, required
+subject, ENTIRE caches and every native member/key are reconciled under all
+current and ending fences. The FIRST candidate remains a native parent; its
+semantic facts and original reproduction are never borrowed for NEXT.
+
+The existing independent A/B lineage adds native503 after FIRST501 with the
+real later first-seen B ordinal, unresolved associations and SQL-NULL payload
+reasons, before-I/O actor/assignment/draft refusal, eleven ending faults,
+lost actual read-only COMMIT ACK and identical fresh reopen. Whole grants,
+native parents, reports, appraiser choices and pins remain exact under every
+original budget and deadline. No inherited fourth-failure bookkeeping is run.
+
+Fresh complete cloud/native validation is pending. This is not a durable
+source cursor/fresh EMPTY, complete economic population, publication, terminal
+pins, licensed capacity or live-speed proof. Nothing is activated.
+
 ## Whole originals under the actual fifth source claim (2026-10-17, inactive)
 
 A dedicated normal-fifth FIRST owner reopens every whole source, CAD,

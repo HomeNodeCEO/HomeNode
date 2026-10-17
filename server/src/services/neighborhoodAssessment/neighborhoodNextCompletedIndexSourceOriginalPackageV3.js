@@ -1,3 +1,6 @@
+import { NEIGHBORHOOD_FIFTH_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL as FIFTH_PACKAGE } from './neighborhoodSelectedTransactionOriginalPackageV2.js';
+import { FIFTH_FIRST_SOURCE_CONTEXT_V3_SQL as FIFTH_FIRST } from './completedIndexFirstSourceV3Sql.js';
+import { FIFTH_NEXT_SOURCE_CONTEXT_V3_SQL as FIFTH_NEXT } from './completedIndexNextSourceV3Sql.js';
 import { NEIGHBORHOOD_FOURTH_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL as FOURTH_PACKAGE } from './neighborhoodSelectedTransactionOriginalPackageV2.js';
 import { FOURTH_FIRST_SOURCE_CONTEXT_V3_SQL as FOURTH_FIRST } from './completedIndexFirstSourceV3Sql.js';
 import { FOURTH_NEXT_SOURCE_CONTEXT_V3_SQL as FOURTH_NEXT } from './completedIndexNextSourceV3Sql.js';
@@ -78,3 +81,15 @@ function fourthNextPackage(){
  return sql;
 }
 export const NEIGHBORHOOD_FOURTH_NEXT_SOURCE_ORIGINAL_PACKAGE_V3_SQL=fourthNextPackage();
+
+// ENTIRE actual fifth FIRST whole-original package; fixed native NEXT only.
+function fifthNextPackage(){
+ let sql=FIFTH_PACKAGE;
+ for(const[from,to]of [[FIFTH_FIRST,FIFTH_NEXT],
+  ['neighborhood-fifth-first-source-original-package-v3','neighborhood-fifth-next-source-original-package-v3']]){
+  if(sql.split(from).length!==2)throw new TypeError('neighborhood_fifth_next_source_original_sql_shape');
+  sql=sql.replace(from,to);
+ }
+ return sql;
+}
+export const NEIGHBORHOOD_FIFTH_NEXT_SOURCE_ORIGINAL_PACKAGE_V3_SQL=fifthNextPackage();

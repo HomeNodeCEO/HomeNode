@@ -1,3 +1,5 @@
+import { createCustomCohortFifthFirstSourceV3Repository as fifthFirstRepository } from './customCohortFifthFirstSourceV3Repository.js';
+import { FIFTH_NEXT_SOURCE_CONTEXT_V3_SQL as FIFTH_NEXT } from './completedIndexNextSourceV3Sql.js';
 import { createCustomCohortFourthFirstSourceV3Repository as fourthFirstRepository } from './customCohortFourthFirstSourceV3Repository.js';
 import { FOURTH_NEXT_SOURCE_CONTEXT_V3_SQL as FOURTH_NEXT } from './completedIndexNextSourceV3Sql.js';
 import { createCustomCohortThirdFirstSourceV3Repository as thirdFirstRepository } from './customCohortThirdFirstSourceV3Repository.js';
@@ -35,20 +37,20 @@ function integer(value,max){
 // entire selected account/package, subject, ENTIRE caches and native members,
 // then repeat this selection after ALL current/ending fences in the same
 // bounded transaction. No caller source, account, cursor, count or callback.
-function createRepository(args,owned,recovered=false,second=false,third=false,fourth=false){
+function createRepository(args,owned,recovered=false,second=false,third=false,fourth=false,fifth=false){
   if(args.length!==1)fail('invalid_input');
   const raw=data(args[0],['client','claim','scope','actorUserId']),o={...raw,
     claim:Object.freeze(data(raw.claim,['operation_id','claim_token','attempts'])),
     scope:Object.freeze(data(raw.scope,['organization_id','report_file_id','assignment_file_id','account_id']))};
   // This independently validates the exact detached scope and actual complete
   // native17 context, including job lock, original continuation and every root.
-  const first=(fourth?fourthFirstRepository:third?thirdFirstRepository:second?secondFirstRepository:recovered?recoveredFirstRepository:owned?ownedFirstRepository:firstRepository)(o);let observed=null,transaction=null;
+  const first=(fifth?fifthFirstRepository:fourth?fourthFirstRepository:third?thirdFirstRepository:second?secondFirstRepository:recovered?recoveredFirstRepository:owned?ownedFirstRepository:firstRepository)(o);let observed=null,transaction=null;
   return Object.freeze({async readNextSource(...values){
     if(values.length)fail('invalid_input');
     const predecessor=await first.readFirst();
     if(predecessor.source===null)fail('no_registered_source');
     const result=await o.client.query(`/* custom-cohort-completed-index-next-source-v3:native-next */
-      SELECT txid_current()::text AS transaction_id,chosen.* FROM (${fourth?FOURTH_NEXT:third?THIRD_NEXT:second?SECOND_NEXT:recovered?RECOVERED_NEXT:owned?OWNED_NEXT:NEXT}
+      SELECT txid_current()::text AS transaction_id,chosen.* FROM (${fifth?FIFTH_NEXT:fourth?FOURTH_NEXT:third?THIRD_NEXT:second?SECOND_NEXT:recovered?RECOVERED_NEXT:owned?OWNED_NEXT:NEXT}
        AND job.claim_token=$3::uuid AND job.attempts=$4::integer AND job.organization_id=$5::uuid
        AND job.report_file_id=$6::uuid AND job.assignment_file_id=$7::bigint
        AND job.account_id=$8 AND job.actor_user_id=$9::uuid) chosen`,
@@ -92,3 +94,5 @@ export function createCustomCohortSecondNextSourceV3Repository(...args){return c
 export function createCustomCohortThirdNextSourceV3Repository(...args){return createRepository(args,true,false,false,true);}
 
 export function createCustomCohortFourthNextSourceV3Repository(...args){return createRepository(args,true,false,false,false,true);}
+
+export function createCustomCohortFifthNextSourceV3Repository(...args){return createRepository(args,true,false,false,false,false,true);}

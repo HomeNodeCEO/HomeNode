@@ -1,3 +1,4 @@
+import { FIFTH_FIRST_SOURCE_CONTEXT_V3_SQL as FIFTH_FIRST } from './completedIndexFirstSourceV3Sql.js';
 import { FOURTH_FIRST_SOURCE_CONTEXT_V3_SQL as FOURTH_FIRST } from './completedIndexFirstSourceV3Sql.js';
 import { THIRD_FIRST_SOURCE_CONTEXT_V3_SQL as THIRD_FIRST } from './completedIndexFirstSourceV3Sql.js';
 import { SECOND_FIRST_SOURCE_CONTEXT_V3_SQL as SECOND_FIRST } from './completedIndexFirstSourceV3Sql.js';
@@ -85,3 +86,11 @@ function fourthNext(){
  return sql.replace(FIRST,FOURTH_FIRST);
 }
 export const FOURTH_NEXT_SOURCE_CONTEXT_V3_SQL=fourthNext();
+
+// Actual normal-fifth graph; no initial4 recovery or copied roots.
+function fifthNext(){
+ const sql=COMPLETED_INDEX_NEXT_SOURCE_CONTEXT_V3_SQL;
+ if(sql.split(FIRST).length!==2)throw new TypeError('completed_index_fifth_next_source_v3_sql_shape');
+ return sql.replace(FIRST,FIFTH_FIRST);
+}
+export const FIFTH_NEXT_SOURCE_CONTEXT_V3_SQL=fifthNext();

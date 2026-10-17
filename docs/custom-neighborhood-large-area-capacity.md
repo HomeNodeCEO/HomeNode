@@ -90,8 +90,26 @@ Both independently built unions checked unresolved subject/account reasons,
 native selected ordinal, fresh terminal EMPTY and rollback of a forged selected
 delta after real DML. Whole originals, ENTIRE caches, unchanged source/typed
 copies, current and ending fences, aggregate budgets and existing native
-recovery/expiry/COMMIT safeguards remained required. This documentation-only
-follow-up requires fresh checks on its new exact head before merge.
+recovery/expiry/COMMIT safeguards remained required.
+
+Exact-commit evidence observed at `2026-10-17T19:45:51Z` for
+`0a6ea084cc0ceab5693beaaf9ead06b3a848c86b`: all 14 GitHub checks passed,
+including JavaScript/TypeScript, Python and CodeQL. Native PostgreSQL job
+`117473670749` passed all 417/1/1/15/1/2 tests with zero failures,
+cancellations or skips; its prepared suite took 737383.139644 ms. Full server
+validation passed 10,768 of 10,838 tests with 70 existing integration skips and
+zero failures/cancellations (221456.833713 ms). Full frontend validation
+passed 3,972 tests with zero failures/cancellations/skips (97818.005823 ms).
+The separate security checks also passed on that exact SHA: dependency-review,
+redteam-bootstrap, both npm-audit jobs, pnpm-audit and both pip-audit jobs.
+
+These are timestamped observations for that SHA, not evidence for a successor.
+Genuine review `5559763061` completed at `2026-10-17T19:51:48Z` and raised
+this documentation-status finding. As of this correction's
+`2026-10-17T19:54:26Z` snapshot, genuine review of the follow-up correction
+is pending. Every successor must independently satisfy the required exact-head
+security/native/full checks and genuine review before merge; conversational
+acknowledgment and skipped review do not establish that guard.
 
 This is ONE-account decision groundwork, NOT an issued eligibility pass or
 complete selected-population eligibility. Decisions are not copied into blobs,
@@ -108,8 +126,9 @@ The actual protected #1262 parent was normally merged as
 checks, a genuine current-a6 included review with no actionable findings and
 thread resolution. #1263 was retargeted to main BEFORE fetching and integrating
 that actual parent. The complete protected document, corrected paired-budget
-sentence and shared-capacity/activation contract are retained. This integrated
-child requires fresh exact-head security/native/full suites and genuine review.
+sentence and shared-capacity/activation contract are retained. Validation and
+security results are the exact-SHA observations above. They do not transfer to
+later revisions, which remain subject to the same protected check/review guards.
 
 ## One subject/next-account original budget (2026-10-10, not activated)
 

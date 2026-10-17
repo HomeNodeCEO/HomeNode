@@ -1,3 +1,24 @@
+## Actual fourth source failure ledger (2026-10-17, inactive)
+
+A closed unregistered failure owner preserves the ENTIRE actual normal-fourth4
+running job and original17/birth18/owned1/failure1/second2/failure2/third3/
+failure3/fourth4/FIRST/member/index/stock/pin history. Only status, token, lease,
+error, update time and the bounded native one-to-900-second schedule change.
+The separate initial-fourth recovery lineage supplies no authority here.
+
+Existing independent A/B graphs append real ending-role refusal after whole
+fourth FIRST/NEXT originals, structural failure4 COMMIT, orphan COMMIT/full
+rollback, forged tuple/transaction/schedule refusal, immutable history, old
+queue/duplicate refusal and stale readers with zero original I/O. B loses ACK
+only after actual COMMIT. All nineteen deferred events remain enabled. Full
+role rows, grants, native parents, reports, choices and pins remain exact.
+All earlier cases, deadlines, aggregate budgets and the failure ceiling remain.
+
+Fresh exact-head cloud/native validation is pending. No fresh5 claim or original
+authority, all-source cursor/EMPTY, economic statistics, publication, terminal
+pins, licensed capacity or live-speed acceptance is established. No migration,
+route, worker or scheduler is registered or activated.
+
 ## Whole NEXT originals under actual normal fourth4 (2026-10-17, inactive)
 
 A closed fourth NEXT reader reopens the whole actual owned1/failure1/second2/

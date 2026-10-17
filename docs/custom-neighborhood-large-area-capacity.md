@@ -1,3 +1,35 @@
+## Actual issued17 parent for source progress (2026-10-16, unregistered)
+
+Unregistered migration `20261219_custom_cohort_source_resolution_parent_v3.sql`
+adds an immutable provisional native parent. Its operation/organization-only
+reader locks the actual running job and takes the entire issued17 checkpoint,
+scope, request, command, generation, index head, live claim and attempts directly
+from the native graph. It requires a complete index, its consumed continuation,
+the independent stock and live generation pin. No checkpoint reconstructed from
+an18-reference proposal, caller reference, generation, source key or cursor is
+accepted. Every inserted field is compared with that same native read.
+
+This is structural parent retention groundwork, not current source-purpose or
+actor authorization and not exact18 admission. A deferred unconditional guard
+refuses every durable parent COMMIT until the complete source owner, row/head,
+checkpoint and single-use continuation can be issued together. No migration is
+registered, no existing checkpoint codec or worker changes, and no source grant,
+deadline, failure ceiling, aggregate budget, report or pin changes.
+
+The existing independent32/A-first and35/B-first cloud captures now install the
+candidate DDL only inside a disposable transaction. They compare the native
+parent with the actual job and index, refuse copied/projected checkpoints and
+wrong scope/reference/claim/attempt/transaction, test immutable rows and force a
+real rejected COMMIT. A fresh read must prove both DDL and provisional rows were
+rolled back and every existing native job/parent/blob/report/choice/pin remains
+unchanged. The initial native head failed a probe-ordering assertion: PostgreSQL
+blocks TRUNCATE with pending deferred events before calling our guard. The probe
+now checks the actual statement guard before inserting, then tests row
+immutability, deferred refusal and real COMMIT separately. The unchanged failed
+head is not rerun; execution of this corrected head is pending. This does not yet issue source
+progress, NEXT or a separate fresh EMPTY, or establish economic/quarter/licensed
+large-area/production-speed acceptance.
+
 ## First-source candidate membership binding (2026-10-16, inactive)
 
 The candidate grammar now requires its first-seen selected account to occur in

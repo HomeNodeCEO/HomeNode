@@ -51,6 +51,13 @@ test('additive waiting guard admits only issued catalog DONE and leaves no free 
   const name='20261123_custom_cohort_selection_wait_v2.sql',registry=readFileSync(new URL('../src/database/mobileMigrations.js',import.meta.url),'utf8'),
     sql=readFileSync(new URL(`../migrations/${name}`,import.meta.url),'utf8');
   assert.ok(registry.indexOf(name)>registry.indexOf('20261122_custom_cohort_catalog_continuations_v2.sql'));
+  const validation='20261123_custom_cohort_selection_wait_validate_status_v2.sql',
+    validationSql=readFileSync(new URL(`../migrations/${validation}`,import.meta.url),'utf8');
+  assert.ok(registry.indexOf(validation)>registry.indexOf(name));
+  assert.match(sql,/CHECK\(status IN \([^;]+\)\) NOT VALID;/);
+  assert.doesNotMatch(sql,/VALIDATE CONSTRAINT/);
+  assert.match(validationSql,/VALIDATE CONSTRAINT neighborhood_custom_cohort_capture_jobs_status_check;/);
+  assert.doesNotMatch(validationSql,/ADD CONSTRAINT|DROP CONSTRAINT|INSERT INTO|UPDATE app\.|DELETE FROM/);
   for(const s of ["IF OLD.status='awaiting_selection'", "NEW.status<>'cancelled'",'NEW.cancellation_requested_at IS NULL',
     "OLD.status<>'running'",'OLD.lease_expires_at<=clock_timestamp()',"OLD.checkpoint->>'phase' IS DISTINCT FROM 'frozen_recorded_catalog_refs_v2'",
     "jsonb_array_length(OLD.checkpoint->'evidence_refs') IS DISTINCT FROM 9", "receipt->'after'->>'done' IS DISTINCT FROM 'true'",

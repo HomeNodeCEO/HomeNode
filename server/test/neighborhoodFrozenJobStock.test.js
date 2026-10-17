@@ -567,6 +567,7 @@ function fixture(hook=()=>{},initial=false,transactionCounts=null) {
   return {calls,client,store:createNeighborhoodFrozenJobStock(client,options)};
 }
 
+/** Build synthetic complete-cache DATA for page protocol tests, never an issued owner or grant. */
 async function sharedCadFixture(hook=()=>{}){
   const profile=getNeighborhoodFrozenTypedCadImprovementV1Profile(),original=getNeighborhoodFrozenCadImprovementProfile();let source,header;
   const primaryText=JSON.stringify({account_id:'STOCK-A',year_built:'2050',living_area_sqft:'9007199254740993',bedroom_count:'3',bath_count:'2.00',number_units:'1',pool:null});
@@ -1325,6 +1326,30 @@ test('paired originals reconcile two different accounts, omit blocked fallback a
   assert.equal(empty.next,null);assert.equal(empty.subject,null);assert.equal(empty.distinct_original_count,0);
 });
 
+test('paired capacity refusal is nonretryable and cannot reset its single-use budget (DATA fixture only)',async()=>{
+  for(const [changes,reason]of [
+    [{account_id:'STOCK-B',next_parcels:125,next_accounts:1,subject_parcels:124,subject_accounts:1,
+      original_count:251,page_count:0,page_json:'[]'},/account_package_row_limit/],
+    [{packet_oversize:true},/account_package_byte_limit/],
+  ]){
+    const f=await stockOriginalCellFixture(({text,rows})=>text===NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL
+      ?result({account_id:'STOCK-A',geographic_parcel_count:'1',subject_account_id:'STOCK-A',subject_geographic_parcel_count:'1',
+        next_parcels:2,next_accounts:1,subject_parcels:2,subject_accounts:1,original_count:3,page_count:3,
+        invalid_count:0,packet_oversize:false,page_json:JSON.stringify([...rows.accounts,...rows.parcels]),...changes}):null);
+    const reader=f.pages();let failure;
+    await assert.rejects(reader.subjectAndRecordedGroupHousingAccountPackage({cursor:''},{includeSubject:true}),error=>{
+      failure=error;return error instanceof TypeError&&reason.test(error.message)&&error.retryable===false;
+    });
+    assert.deepEqual(Object.getOwnPropertyDescriptor(failure,'retryable'),
+      {value:false,writable:false,enumerable:false,configurable:false});
+    assert.equal(f.calls.filter(c=>c.text===NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL).length,1);
+    const count=f.calls.length;
+    await assert.rejects(reader.subjectAndRecordedGroupHousingAccountPackage({cursor:''},{includeSubject:true}),/single_use/);
+    assert.equal(f.calls.length,count,'a refusal does not create a second account or subject budget');
+    assert.deepEqual(Object.keys(failure),[],'the exception delivers no original facts or receipt');
+  }
+});
+
 test('paired original guards refuse aggregate overflow, absent/wrong subject, forged metadata/cache and changed ending source',async()=>{
   const valid={account_id:'STOCK-A',geographic_parcel_count:'1',subject_account_id:'STOCK-A',subject_geographic_parcel_count:'1',
     next_parcels:2,next_accounts:1,subject_parcels:2,subject_accounts:1,original_count:3,page_count:3,invalid_count:0,packet_oversize:false};
@@ -1512,6 +1537,25 @@ test('original account housing preserves all five states, county and unknown lit
     f.rows.accounts=[stockOriginalCell('accounts','STOCK-A')];set({class_code:code},{class_code:code});assert.equal((await read()).category,category);
   }
   set({class_description:'MANUFACTURED HOME'},{structure_type:'MOBILE HOME'});assert.equal((await read()).state,'conflicting');
+});
+
+test('housing profile covers its actual county policy and exact combined original-row boundary',()=>{
+  const profile=getNeighborhoodOriginalAccountHousingV2Profile(),definition=JSON.parse(profile.definition_blob.canonical_json);
+  assert.deepEqual(definition.accepted_counties,['DALLAS','DALLAS COUNTY']);
+  assert.equal(definition.limit_original_rows,250);
+  assert.equal(assessmentEvidenceDigest(definition),profile.profile_ref.content_sha256);
+  const parcels=Array.from({length:249},(_,i)=>stockOriginalCell('parcels',String(i+1),{class_code:'A11'}));
+  for(const county of ['Dallas',' Dallas County ']){
+    const rows=[stockOriginalCell('accounts','STOCK-A',{county}),...parcels];
+    const housing=resolveNeighborhoodOriginalAccountHousingV2(rows,()=>{});
+    assert.equal(housing.state,'observed');assert.equal(housing.category,'detached_single_family');
+    assert.equal(housing.county_state,'observed');assert.equal(housing.source_part_count,'249');
+    let budgetChecks=0;
+    assert.throws(()=>resolveNeighborhoodOriginalAccountHousingV2([...rows,parcels[0]],()=>{budgetChecks++;}),/invalid_input/);
+    assert.equal(budgetChecks,0,'one-over admission refuses before any row work');
+  }
+  const changed={...definition,accepted_counties:[...definition.accepted_counties,'TARRANT']};
+  assert.notEqual(assessmentEvidenceDigest(changed),profile.profile_ref.content_sha256);
 });
 
 test('housing cannot bypass complete original replay, whole bounds, ending fences or reset the single-use budget',async()=>{

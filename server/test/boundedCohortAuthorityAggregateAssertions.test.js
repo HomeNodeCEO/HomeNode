@@ -3,7 +3,7 @@ import test from 'node:test';
 import { assertBoundedCohortAuthorityAggregates as check, assertBoundedCohortAuthorityAggregateShapes as shapes } from './helpers/boundedCohortAuthorityAggregateAssertions.js';
 import { customCohortRepositoryFixture } from './fixtures/customCohortRepositoryFixture.js';
 import { loadCurrentCustomCohortJobActor } from '../src/services/neighborhoodAssessment/customCohortJobActor.js';
-import { NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL } from '../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
+import { NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL, NEIGHBORHOOD_STOCK_SUBJECT_HOUSING_PACKAGE_V2_SQL } from '../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
 
 async function actualQueries() {
   const { state, repo } = customCohortRepositoryFixture();
@@ -22,6 +22,24 @@ async function actualQueries() {
 test('catalog aggregate assertion accepts actual bounded actor and three-section SQL at both ends', async () => {
   const { scope, actor, section } = await actualQueries();
   check([actor, section, { text: 'SELECT count(*) FROM app.example', values: [] }, actor, section], scope);
+});
+
+test('subject original aggregate requires the actual job subject and every unchanged whole-packet cap', async () => {
+  const { scope, actor, section } = await actualQueries();
+  scope.originals = { operationId:'stock-operation', generationId:'retained-generation', profileSha256:'retained-profile', subjectAccountId:'ACTUAL-SUBJECT' };
+  const baseline=[actor,section,actor,section], packet={text:NEIGHBORHOOD_STOCK_SUBJECT_HOUSING_PACKAGE_V2_SQL,
+    values:['stock-operation','retained-generation','retained-profile','ACTUAL-SUBJECT',250,8_000_000,2_100_000,1_000_000,2_100_000]};
+  check([...baseline,packet],scope);
+  for (let index=0;index<packet.values.length;index++) {
+    const values=[...packet.values];values[index]=index<4?'foreign-scope':values[index]+1;
+    assert.throws(()=>check([...baseline,{...packet,values}],scope),/exact subject stock/);
+  }
+  for (const text of [packet.text.replace('AND job.account_id=$4::text',''),packet.text.replace('job.operation_id=$1::uuid','true'),
+    packet.text.replace('LIMIT 1','LIMIT 2'),packet.text.replace('AND o.account_id=a.account_id',''),packet.text+', jsonb_agg(account_id)']) {
+    assert.throws(()=>check([...baseline,{...packet,text}],scope),/unexpected catalog aggregate/);
+  }
+  assert.throws(()=>check([...baseline,packet],{...scope,originals:{...scope.originals,subjectAccountId:undefined}}),/actual retained job subject/);
+  assert.throws(()=>check([actor,section,packet],scope),/both-end current actor/);
 });
 
 test('early-refusal shape checks retain exact aggregate bounds without claiming ending authority', async () => {

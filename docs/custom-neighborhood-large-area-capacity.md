@@ -34,6 +34,31 @@ after coherent activation. Never enable two tiles against the old exclusive
 subject reader during the release interval.
 No large-area capacity or production-speed acceptance is established.
 
+
+The isolated component head `f3c0e836fb61e9c427a6bf64f9be12898a28f726`
+passed all 16 code checks. Full native job 117421174739 passed
+417/1/1/15/1/2 tests with zero failures, cancellations or skips, including all
+three complete concurrent-reader, exclusive-writer, phantom-insert and rolled-back
+positive-control fixtures. Full server and frontend suites passed. This is
+component evidence; integration with actual protected main
+`8e89970747a034830bc02c4060696457829c3601` requires fresh exact-head checks
+and genuine included review before merge. Actual frontend automatic deployment
+is Off (prior On Commit saved); matching manual frontend deployment is required
+after every intervening verified API release. Restore On Commit only after
+coherent API/guard/matching-frontend activation and bounded production checks.
+
+## Subject whole-original aggregate assertion (2026-10-17, fresh native validation pending)
+
+The integrated subject-housing head passed its migration checks and failed one
+prepared case because the aggregate guard had no golden SQL for the new subject
+packet. The guard now compares its entire SQL against an independent fixed
+shape and requires the actual job subject, operation, generation, profile and all
+existing row/byte caps. Negative checks reject foreign subjects, wider caps,
+removed job/account predicates, extra accounts and population aggregates.
+Both ending actor and subject reads remain mandatory for delivery. Runtime,
+source permissions, original reconciliation and request budgets are unchanged.
+The failed head is not rerun; the new exact head requires full cloud validation.
+
 ## Initial9 native assertion correction (2026-10-17, fresh full validation pending)
 
 Exact head 7354 passed 417 migrations, subject and account-quality checks, then
@@ -78,6 +103,45 @@ deadlines. The failed head is not rerun; a new exact head needs full cloud check
 and genuine included review before merge.
 
 # Complete larger-area Custom neighborhood studies
+
+## Actual completed-union subject housing owner (2026-10-10, not activated)
+
+The new internal READ-ONLY owner reopens the ACTUAL completed tenth-root native
+selected STOCK union, immutable command and current pending workspace. It uses
+the exact retained subject material, not caller/current-default housing, a
+worker choice, first stock account or selected group. Saved subject observations
+take precedence over retained-public observations; ONLY absence allows CAD
+fallback. Explicit null/blank/unknown/unmapped/conflicting preferred values block
+fallback. Generic Single Family still requires explicit Detached. Mobile and
+manufactured housing remain distinct; secondary style cannot repair an unmapped
+primary. The existing dense interpretation and retained profile are unchanged.
+
+Fallback chooses the exact native JOB SUBJECT in the issued stock. It recompiles
+EVERY original, including all outside-geometry parts, compares the ENTIRE neutral
+cache and preserves full housing states/part denominators. Missing subject stock
+membership REFUSES rather than borrowing the first member or fabricating missing
+housing. Original cap+1 admission, complete 250-row packet, single-use child
+budget and the actual 256-query / 32MB / 60s whole owner remain unchanged. Current
+actor/assignment/private draft/subject/source rights, graph/geography/identity,
+traversal/partition/catalog/union heads and counts, exact intent/workspace and
+all ending fences precede the read-only result. No root/continuation is advanced.
+
+261 focused synthetic tests passed with zero failures/skips (1605.003ms).
+They include whole-original/cache forgeries, missing stock,
+wrong subject, whole bounds/single-use/header changes, hostile entry-point input
+and parity with existing dense housing on actual retained material projections.
+Cloud-only native assertions are AUTHORED, NOT YET EXECUTED for this head: two
+independently issued complete graphs exercise conflicting outside-part fallback
+and explicit-null preferred observation on an empty union, unfinished-union
+refusal, current/ending faults, read-only lost REAL COMMIT acknowledgment and
+unchanged jobs/heads/blobs/continuation/intent/pins/workspace/history/reports.
+
+This resolves a subject-housing prerequisite, NOT issued eligibility progress,
+complete selected-union housing/metric eligibility, statistics, coherent
+publication, licensed acquisition or production-speed/live acceptance. No HTTP
+route, worker/scheduler, source grant, pin transfer, report, genuine choice or
+Apply is activated. Protected-parent integration, fresh exact-head security/
+native/full suites and actual included review remain required before merge.
 
 ## Shared capture-claim DATA boundary (2026-10-17, protected integration pending)
 

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { runNeighborhoodOwnedSourceInitialRetryV3DatabaseChecks } from './neighborhoodOwnedSourceInitialRetryV3DatabaseChecks.js';
 import { runNeighborhoodOwnedSourceLastRetryV3DatabaseChecks } from './neighborhoodOwnedSourceLastRetryV3DatabaseChecks.js';
 import { runNeighborhoodOwnedSourceTerminalFailureV3DatabaseChecks } from './neighborhoodOwnedSourceTerminalFailureV3DatabaseChecks.js';
 import { runNeighborhoodCompletedIndexNextSourceV3DatabaseChecks } from './neighborhoodCompletedIndexNextSourceV3DatabaseChecks.js';
@@ -69,6 +70,8 @@ export async function runNeighborhoodOwnedFirstSourceOriginalV3DatabaseChecks({s
       original_deadlines_and_aggregate_SQL_byte_runtime_limits_unchanged:true,
       lower_attempt2_or3_retry_lineage:false,fresh_EMPTY:false,source_cursor_advanced:false,
       activation:false,licensed_large_area:false,production_speed:false});
+    await runNeighborhoodOwnedSourceInitialRetryV3DatabaseChecks({sourceRecoveryFixture,pool,input,scope,actor,service,claim,
+      originalReads,laterFirstSource,setFault,readFault});
     return;
   }
   if(sourceRecoveryFixture)await runNeighborhoodOwnedSourceLastRetryV3DatabaseChecks({sourceRecoveryFixture,pool,input,scope,actor,service,claim,

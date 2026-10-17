@@ -3,8 +3,9 @@ import { canonicalAssessmentJson as json } from './contract.js';
 import { prepareNeighborhoodCohortBlobReference } from './cohortEvidenceBlobRepository.js';
 import { createCustomCohortCompletedIndexFirstSourceV3Repository as firstRepository,
   createCustomCohortOwnedFirstSourceV3Repository as ownedFirstRepository } from './customCohortCompletedIndexFirstSourceV3Repository.js';
+import { createCustomCohortRecoveredFirstSourceV3Repository as recoveredFirstRepository } from './customCohortRecoveredFirstSourceV3Repository.js';
 import { COMPLETED_INDEX_NEXT_SOURCE_CONTEXT_V3_SQL as NEXT,
-  OWNED_NEXT_SOURCE_CONTEXT_V3_SQL as OWNED_NEXT } from './completedIndexNextSourceV3Sql.js';
+  OWNED_NEXT_SOURCE_CONTEXT_V3_SQL as OWNED_NEXT, RECOVERED_NEXT_SOURCE_CONTEXT_V3_SQL as RECOVERED_NEXT } from './completedIndexNextSourceV3Sql.js';
 
 const fail=reason=>{throw new TypeError(`custom_cohort_completed_index_next_source_v3_${reason}`);};
 const same=(a,b)=>json(a)===json(b);
@@ -28,20 +29,20 @@ function integer(value,max){
 // entire selected account/package, subject, ENTIRE caches and native members,
 // then repeat this selection after ALL current/ending fences in the same
 // bounded transaction. No caller source, account, cursor, count or callback.
-function createRepository(args,owned){
+function createRepository(args,owned,recovered=false){
   if(args.length!==1)fail('invalid_input');
   const raw=data(args[0],['client','claim','scope','actorUserId']),o={...raw,
     claim:Object.freeze(data(raw.claim,['operation_id','claim_token','attempts'])),
     scope:Object.freeze(data(raw.scope,['organization_id','report_file_id','assignment_file_id','account_id']))};
   // This independently validates the exact detached scope and actual complete
   // native17 context, including job lock, original continuation and every root.
-  const first=(owned?ownedFirstRepository:firstRepository)(o);let observed=null,transaction=null;
+  const first=(recovered?recoveredFirstRepository:owned?ownedFirstRepository:firstRepository)(o);let observed=null,transaction=null;
   return Object.freeze({async readNextSource(...values){
     if(values.length)fail('invalid_input');
     const predecessor=await first.readFirst();
     if(predecessor.source===null)fail('no_registered_source');
     const result=await o.client.query(`/* custom-cohort-completed-index-next-source-v3:native-next */
-      SELECT txid_current()::text AS transaction_id,chosen.* FROM (${owned?OWNED_NEXT:NEXT}
+      SELECT txid_current()::text AS transaction_id,chosen.* FROM (${recovered?RECOVERED_NEXT:owned?OWNED_NEXT:NEXT}
        AND job.claim_token=$3::uuid AND job.attempts=$4::integer AND job.organization_id=$5::uuid
        AND job.report_file_id=$6::uuid AND job.assignment_file_id=$7::bigint
        AND job.account_id=$8 AND job.actor_user_id=$9::uuid) chosen`,
@@ -78,3 +79,4 @@ function createRepository(args,owned){
 
 export function createCustomCohortCompletedIndexNextSourceV3Repository(...args){return createRepository(args,false);}
 export function createCustomCohortOwnedNextSourceV3Repository(...args){return createRepository(args,true);}
+export function createCustomCohortRecoveredNextSourceV3Repository(...args){return createRepository(args,true,true);}

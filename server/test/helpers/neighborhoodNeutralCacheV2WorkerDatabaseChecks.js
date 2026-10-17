@@ -1,6 +1,7 @@
 import { NEIGHBORHOOD_RECOVERED_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL as RECOVERED_SOURCE_PACKET } from '../../src/services/neighborhoodAssessment/neighborhoodSelectedTransactionOriginalPackageV2.js';
 import { NEIGHBORHOOD_NEXT_COMPLETED_INDEX_SOURCE_ORIGINAL_PACKAGE_V3_SQL as NEXT_SOURCE_PACKET,
-  NEIGHBORHOOD_OWNED_NEXT_SOURCE_ORIGINAL_PACKAGE_V3_SQL as OWNED_NEXT_SOURCE_PACKET } from '../../src/services/neighborhoodAssessment/neighborhoodNextCompletedIndexSourceOriginalPackageV3.js';
+  NEIGHBORHOOD_OWNED_NEXT_SOURCE_ORIGINAL_PACKAGE_V3_SQL as OWNED_NEXT_SOURCE_PACKET,
+  NEIGHBORHOOD_RECOVERED_NEXT_SOURCE_ORIGINAL_PACKAGE_V3_SQL as RECOVERED_NEXT_SOURCE_PACKET } from '../../src/services/neighborhoodAssessment/neighborhoodNextCompletedIndexSourceOriginalPackageV3.js';
 import { NEIGHBORHOOD_STOCK_WHOLE_ACCOUNT_BATCH_V2_SQL as BATCH_PACKET } from '../../src/services/neighborhoodAssessment/neighborhoodStockWholeAccountBatchV2.js';
 import { CUSTOM_NEIGHBORHOOD_WITNESS2_SOURCE_RIGHTS_KEY as SOURCE_RIGHTS } from '../../src/security/customNeighborhoodWitness2SourcePolicy.js';
 import assert from 'node:assert/strict';
@@ -77,7 +78,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({sourceR
   const batchFailureAttempt=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture||sourceRecoveryFixture)?4:5,batchFailureCode=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture||sourceRecoveryFixture)?'capture_failed':'access_revoked';
   const input={...sourceInput,operationId:randomUUID()},operation=input.operationId;let fault=null,stockReads=0,sourceCheckpointBefore=null;
   const observed={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
-    const text=typeof c==='string'?c:c.text,completedSourcePacket=text===COMPLETED_SOURCE_PACKET||text===OWNED_SOURCE_PACKET||text===RECOVERED_SOURCE_PACKET||text===NEXT_SOURCE_PACKET||text===OWNED_NEXT_SOURCE_PACKET,
+    const text=typeof c==='string'?c:c.text,completedSourcePacket=text===COMPLETED_SOURCE_PACKET||text===OWNED_SOURCE_PACKET||text===RECOVERED_SOURCE_PACKET||text===NEXT_SOURCE_PACKET||text===OWNED_NEXT_SOURCE_PACKET||text===RECOVERED_NEXT_SOURCE_PACKET,
       originalPacket=completedSourcePacket||text===BATCH_PACKET||text===STOCK_PACKET||text===PAIRED_STOCK_PACKET||text===TRANSACTION_PACKET||text===AMENITY_PACKET||(batchRecordedEligibilityFixture&&text===ELIGIBILITY_PACKET)||(batchSelectedEvidenceFixture&&text===EVIDENCE_PACKET)||(batchSelectedMetricsFixture&&[METRIC_PACKET,FIRST_METRIC_PACKET].includes(text))||(batchSelectedStatisticsFixture&&[STATISTICS_PACKET,FIRST_STATISTICS_PACKET].includes(text))||(batchSelectedNumericFixture&&[NUMERIC_PACKET,FIRST_NUMERIC_PACKET].includes(text))||(batchSelectedSemanticFixture&&text===SEMANTIC_PACKET)||(batchSelectedTransactionIndexFixture&&text===TRANSACTION_INDEX_PACKET),
       orphan=fault==='orphan'&&text.includes('custom-cohort-neutral-success-v2:yield')
       ||fault==='cad_orphan'&&text.includes('custom-cohort-CAD-success-v2:yield')

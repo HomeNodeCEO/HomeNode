@@ -84,6 +84,8 @@ export async function runNeighborhoodExpiredSourceRecoveryFailureV3DatabaseCheck
   let originalCount=originalReads();
   await assert.rejects(service.readCoveredOriginalFrozenCaptureJobRecoveredFirstSourceReferencesV3(input,{captureJobClaim:claim}),/claim_lost/);
   assert.equal(originalReads(),originalCount);await unchanged();
+  await assert.rejects(service.readCoveredOriginalFrozenCaptureJobRecoveredNextSourceReferencesV3(input,{captureJobClaim:claim}),/claim_lost/);
+  assert.equal(originalReads(),originalCount);await unchanged();
   await assert.rejects(transaction(pool,c=>liveFailures({client:c,claim,scope,actorUserId:actor}).failFinal('attempts_exhausted')),/claim_lost/);
   await unchanged();
   for(const [fn,expected]of [['expired_parent',parent],['expired_first',first]]){
@@ -152,12 +154,15 @@ export async function runNeighborhoodExpiredSourceRecoveryFailureV3DatabaseCheck
   }
   originalCount=originalReads();await assert.rejects(service.readCoveredOriginalFrozenCaptureJobRecoveredFirstSourceReferencesV3(input,
     {captureJobClaim:claim}),/claim_lost/);assert.equal(originalReads(),originalCount);await preserved();
+  await assert.rejects(service.readCoveredOriginalFrozenCaptureJobRecoveredNextSourceReferencesV3(input,
+    {captureJobClaim:claim}),/claim_lost/);assert.equal(originalReads(),originalCount);await preserved();
   console.info('[native-recovered18-naturally-expired5-terminal-COMMIT-v3]',{
     independent_capture:laterFirstSource?'B_ordinal2_after_empty_A':'A_ordinal1',
     actual_new_native_minimum15_recovery_and_natural_expiry_no_clock_lease_attempt_schedule_rewrite:true,
     all_whole_original_entire_cache_current_ending_probes_completed_before_expiry:true,
     entire_expired_running5_recovery_TX_original17_initial4_retry4_FIRST_all_native_parents_reopened:true,
     live_source_owner_and_live_terminal_refused_after_expiry_without_original_IO:true,
+    expired_NEXT_and_closed_terminal_NEXT_refused_before_original_IO:true,
     all_twelve_deferred_events_enabled_genuine_orphan_COMMIT_refused_and_complete_terminal_ROLLBACK:true,
     real_terminal_COMMIT_and_actual_lost_COMMIT_ACK:!!laterFirstSource,
     only_status_token_lease_error_updated_change_no_refund_new_claim_schedule_root_or_pin_change:true,

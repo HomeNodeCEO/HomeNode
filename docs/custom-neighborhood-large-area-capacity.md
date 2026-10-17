@@ -1,3 +1,46 @@
+## Recovered-claim NEXT source originals (2026-10-17, inactive; native validation pending)
+
+A separate closed read-only owner reopens native NEXT under the actual recovered
+fifth-attempt claim. Its selectors independently retain the entire original17
+birth, initial owned4 claim, recorded retry4, real recovery5 and FIRST/member/edge
+graph. Initial owned18 and completed17 queries retain their exact prior SQL.
+Lower1--4 claims cannot enter the recovered5 selector, and no caller supplies a
+key, account, ordinal, cursor, roster, callback, phase or candidate.
+
+The recovered NEXT original packet retains the complete existing recovered
+original SQL and all original/cache/subject/count/byte limits. Every stock, CAD
+and all-date transaction original, required subject, ENTIRE neutral/CAD cache,
+independent member and full native account key set is reconciled in the same
+256-query/32MB/60s aggregate and single-use child250. All current and ending
+source-purpose, actor/assignment/private-draft/subject/workspace fences precede
+an ending repeat of the complete native NEXT plan and recovered birth checkpoint.
+The retained FIRST candidate remains a native-parent binding; it is not borrowed
+as semantic evidence for NEXT or claimed reproduced from NEXT's different account.
+
+The existing independent A/B normal120s recovery captures now require real
+recovered NEXT originals, eleven ending refusals, current target DML before I/O,
+actual readonly lost COMMIT acknowledgment, identical fresh reopen and complete
+row/blob/history/grant/report/choice/pin preservation before their original
+terminal proofs. The independent minimum15s natural-expiry captures keep every
+original live proof and timing; after natural expiry and again after terminal
+closure, the new NEXT owner must refuse with zero original I/O. No lease, clock,
+attempt, schedule, native parent or original180s case deadline is rewritten.
+
+Focused source/recovered-original/stock checks passed147 tests serially with
+zero failures, cancellations or skips (3575.1214ms). All11 changed JavaScript
+files pass syntax; all four previous completed17/owned18 NEXT selector and whole
+original SQL exports retain exact bytes under canonical source newlines.
+This new head still needs full exact-head
+cloud native/security/suite validation. Its actual59b65 parent independently
+passed all five component checks and full417/1/2/28/48/1/2 native tests, including
+sixteen owned-NEXT A/B blocks under real4/5 claims in prefix and full runs.
+Those results are parent component proof, not validation of this recovered NEXT.
+
+This slice does not advance a source cursor, prove fresh EMPTY or complete
+durable source traversal, retain economic progress, publish selected-union
+statistics, activate a dispatcher/worker/stage, transfer/retire pins or establish
+licensed larger-area/live-speed acceptance. No migration is added or registered.
+
 ## Native NEXT source original owner (2026-10-17, inactive; native validation pending)
 
 A separate closed two-argument read-only owner selects the next registered

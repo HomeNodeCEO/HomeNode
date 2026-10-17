@@ -1,5 +1,5 @@
 import { COMPLETED_INDEX_FIRST_SOURCE_CONTEXT_V3_SQL as FIRST,
-  OWNED_FIRST_SOURCE_CONTEXT_V3_SQL as OWNED_FIRST } from './completedIndexFirstSourceV3Sql.js';
+  OWNED_FIRST_SOURCE_CONTEXT_V3_SQL as OWNED_FIRST, RECOVERED_FIRST_SOURCE_CONTEXT_V3_SQL as RECOVERED_FIRST } from './completedIndexFirstSourceV3Sql.js';
 
 // Fixed NEXT after the actual completed-index FIRST. This is a read-only
 // selection, never a durable cursor or source grant. Both namespaces retain
@@ -49,3 +49,12 @@ function ownedNext(){
   return sql.replace(FIRST,OWNED_FIRST);
 }
 export const OWNED_NEXT_SOURCE_CONTEXT_V3_SQL=ownedNext();
+
+// Independent live recovered5 parent: retain original17, initial owned4, retry4,
+// recovery5 and FIRST/member/edge. No initial-claim or17 projection substitutes.
+function recoveredNext(){
+  const sql=COMPLETED_INDEX_NEXT_SOURCE_CONTEXT_V3_SQL;
+  if(sql.split(FIRST).length!==2)throw new TypeError('completed_index_recovered_next_source_v3_sql_shape');
+  return sql.replace(FIRST,RECOVERED_FIRST);
+}
+export const RECOVERED_NEXT_SOURCE_CONTEXT_V3_SQL=recoveredNext();

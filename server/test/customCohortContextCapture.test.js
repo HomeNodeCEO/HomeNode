@@ -73,7 +73,13 @@ test('actual capture entry points refuse executable claim Proxies before connect
     'continueOriginalFrozenCaptureJobSelectedStockUnionReferencesV2','readOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2',
     'readOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2']){
     assert.equal(typeof service[method],'function',method);
-    for(const value of values)await assert.rejects(service[method](base,{captureJobClaim:value}),/invalid_input|invalid_options/);
+    const expected=method==='readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2'
+      ||method==='continueOriginalFrozenCaptureJobSelectedStockUnionReferencesV2'
+      ||method==='readOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2'
+      ||method==='readOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2'
+      ?{name:'Error',message:'custom_cohort_capture_invalid_options'}
+      :{name:'TypeError',message:'custom_cohort_capture_job_invalid_input'};
+    for(const value of values)await assert.rejects(service[method](base,{captureJobClaim:value}),expected,method);
   }
   assert.equal(traps,0);assert.equal(connections,0);assert.equal(policies,0);
 });

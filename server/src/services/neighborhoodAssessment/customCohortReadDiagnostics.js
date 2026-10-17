@@ -25,8 +25,24 @@ const FAMILIES = [
   ['custom_cohort_reported_shared_sales_', 'reported_sales'],
   ['custom_cohort_reported_assessment_', 'reported_assessment'],
 ];
+const VIEWPORT_INTERRUPTS = new Map([
+  ['55P03', 'lock_unavailable'], ['57014', 'query_cancelled'],
+  ['40001', 'serialization_failure'], ['40P01', 'deadlock_detected'],
+  ['custom_cohort_execution_busy', 'admission_busy'],
+  ['custom_cohort_execution_interrupted', 'admission_interrupted'],
+]);
 export function customCohortReadDiagnostic(action, error) {
-  if (!['catalog', 'preview', 'members', 'reported-proposal'].includes(action) || !(error instanceof Error)) return null;
+  if (!['catalog', 'preview', 'members', 'reported-proposal', 'viewport', 'selection-viewport'].includes(action)
+    || !(error instanceof Error)) return null;
+  if (action === 'viewport' || action === 'selection-viewport') {
+    const check = VIEWPORT_INTERRUPTS.get(error.code);
+    if (check) return { action, family: 'interrupted', check };
+    if (['cancelled', 'deadline_exceeded', 'connection_timeout', 'policy_timeout'].includes(error.reason))
+      return { action, family: 'interrupted', check: error.reason };
+    // Keep the viewport diagnostic deliberately closed. The response owner
+    // still decides status/recovery; source data and SQL never enter logs.
+    return null;
+  }
   if (action === 'reported-proposal' && !error.outcome_unknown && error.code === 'CUSTOM_COHORT_CAPTURE_FAILED'
     && ['deadline_exceeded', 'cancelled'].includes(error.reason)) {
     return { action, family: 'coordinator', check: error.reason };

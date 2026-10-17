@@ -16,7 +16,7 @@ async function checkSharedReadTriggerPrerequisites(pool,scope){
   ];
   for(const [name,table,event,condition,args='']of variants){
     const client=await pool.connect(),calls=[];
-    const observed={async query(...values){
+    const observed={release:client.release.bind(client),async query(...values){
       calls.push(typeof values[0]==='string'?values[0]:values[0].text);
       return client.query(...values);
     }};

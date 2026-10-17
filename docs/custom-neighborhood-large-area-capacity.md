@@ -1,3 +1,41 @@
+## Original-owned provisional FIRST writes (2026-10-17, unregistered)
+
+A separate internal entry point now reaches the native parent and FIRST writers
+from inside the actual bounded original owner. It accepts only the existing
+closed claim/signal/deadline options. It reloads the current database actor,
+private draft, assignment/subject, pending workspace and prior head; reopens the
+complete issued graph, whole first-source package, first-seen selected account,
+required subject and ENTIRE neutral/CAD caches; reconciles every prior native
+member and both directions of the account's key set; then repeats the ending
+source-purpose, actor, material, workspace, checkpoint and native FIRST fences.
+
+Only after those checks does the SAME transaction retain the actual native17
+parent and derive FIRST again for the closed insert. The entire returned binding
+must match the private candidate derived from those actual originals, including
+generation, command, index reference/sequence, selected account/ordinal and all
+entry references. No caller source, resolution, checkpoint, candidate, binding,
+callback or permission decision supplies those values. The existing aggregate
+query/byte/runtime budget includes both writers and their transaction checks.
+
+Both deferred native guards still unconditionally reject durable COMMIT. The
+transaction owner withholds its tentative result until COMMIT; no success can be
+delivered. This step retains no resolution, receipt, head, exact18 checkpoint or
+continuation, and advances no cursor. Complete coherent issuance, recovery,
+NEXT/fresh EMPTY, economic semantics and activation remain required. Nothing is
+registered or mounted; no worker, grant, deadline, failure ceiling, report, choice
+or pin changes.
+
+The existing independent A-first and B-first-after-empty-A captures now also
+install the exact unregistered definitions in their guarded disposable database
+so the actual service owns a separate real BEGIN/original-I/O/DML/COMMIT. They
+require current actor refusal before original I/O, seven actual ending faults,
+closed input refusal, real deferred COMMIT rejection and fresh same-claim repeat
+with every provisional row rolled back and all prior state unchanged. These
+are authored native checks; full current-head cloud execution is required.
+One focused runtime input test passes with zero failures/cancellations/skips
+(5170.7054 ms); JavaScript syntax and diff checks pass. This is not durable source
+issuance, complete licensed acquisition or production map/speed acceptance.
+
 ## Native first-source binding (2026-10-17, unregistered)
 
 The next provisional native table derives the first registered source key and
@@ -18,8 +56,13 @@ after empty A native probes compare this binding with the candidate produced
 by the actual whole-original owner, without passing that candidate to SQL.
 They exercise missing retained parent, forged keys/members/references/transaction,
 seven wrong scope/claim writes, immutability and actual rejected COMMIT rolling
-back both provisional tables and all rows. Fresh exact-head cloud execution is
-pending; legacy-only native admission remains separate acceptance work.
+back both provisional tables and all rows. Exact parent head `9b50a828` passed all six feature checks. Its complete
+native job 117294878504 (foundation 38998057701, 6,114,291 characters) passed
+417/1/2/22/42/1/2 tests with zero failures/cancellations/skips (prepared
+1845235.587955 ms). Both actual FIRST-binding captures ran in the source-prefix
+and prepared suites. This is historical feature proof, separate from fresh
+protected integration and actual review; legacy-only native admission remains
+separate acceptance work.
 
 Migration `20261220_custom_cohort_source_native_first_v3.sql` is unregistered.
 The parent and new binding both retain unconditional durable COMMIT refusal.

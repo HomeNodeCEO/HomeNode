@@ -186,6 +186,26 @@ test('actual candidate owner derives inside the original transaction and deliver
   assert.equal(calls,0);
 });
 
+test('provisional FIRST owner refuses caller bindings, executable inputs and missing CAD policy before connection',async()=>{
+  let calls=0;const hostile=()=>{calls++;assert.fail('no connection or policy before closed input admission');},
+    dependencies={pool:{connect:hostile},sourceMode:'combined-witness2-v1',authorizeMarketData:hostile},
+    id=n=>`70000000-0000-4000-8000-${String(n).padStart(12,'0')}`,
+    input={auth:{userId:id(1),organizations:[]},accountId:'SUBJECT',assignmentFileId:'7',operationId:id(2),observationPeriod:period,
+      discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
+    options={captureJobClaim:{operation_id:id(2),claim_token:id(3),attempts:5}},
+    method='retainCoveredOriginalFrozenCaptureJobFirstSourceBindingReferencesV3';
+  await assert.rejects(capture(dependencies)[method](input,options),/CAD_source_policy_required/);
+  const service=capture({...dependencies,authorizeCadImprovementData:hostile});
+  for(const args of [[],[input],[input,options,{}]])assert.throws(()=>service[method](...args),/invalid_options/);
+  for(const key of ['source','native_key','plan','candidate','binding','resolution','checkpoint','ordinal','cursor','done','sourceAuthority'])
+    await assert.rejects(service[method](input,{...options,[key]:hostile}),/invalid_options/);
+  await assert.rejects(service[method](input,{get captureJobClaim(){return hostile();}}),/invalid_options/);
+  await assert.rejects(service[method](input,{captureJobClaim:new Proxy({},{getPrototypeOf:hostile})}),/invalid_options/);
+  const controller=new AbortController();controller.abort();
+  await assert.rejects(service[method](input,{...options,signal:controller.signal}),/cancelled/);
+  assert.equal(calls,0);
+});
+
 test('resolution refuses changed coverage, asserted authority and inconsistent native subject selection metadata',()=>{
   for(const mutate of [m=>m.coverage='whole_native_packages_for_native_next_selected_account_only',
     m=>m.coverage='complete_selected_union',m=>m.economic_property_membership='established',

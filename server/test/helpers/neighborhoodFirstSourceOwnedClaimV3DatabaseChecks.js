@@ -17,7 +17,8 @@ const jobTable='app.neighborhood_custom_cohort_capture_jobs',claimTable='app.nei
 // original, attempt, clock, claim lease, parent, grant or pin is rewritten.
 export async function runNeighborhoodFirstSourceOwnedClaimV3DatabaseChecks({sourceRecoveryFixture=false,pool,input,scope,actor,service,
   claim:oldClaim,originalReads,laterFirstSource,setFault,readFault}){
-  const sourceFailureAttempt=sourceRecoveryFixture?4:5,sourceFailureCode=sourceRecoveryFixture?'capture_failed':'access_revoked';
+  const sourceFailureAttempt=sourceRecoveryFixture==='clean-first1'?1:sourceRecoveryFixture?4:5,
+    sourceFailureCode=sourceRecoveryFixture==='clean-first1'?null:sourceRecoveryFixture?'capture_failed':'access_revoked';
   const op=input.operationId,read=async table=>(await pool.query(`SELECT to_jsonb(r) AS body FROM app.${table} r
     WHERE operation_id=$1 ORDER BY to_jsonb(r)::text COLLATE "C"`,[op])).rows,
     job=async()=>(await read('neighborhood_custom_cohort_capture_jobs'))[0].body;

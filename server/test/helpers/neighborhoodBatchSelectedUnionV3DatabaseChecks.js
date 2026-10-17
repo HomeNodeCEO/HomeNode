@@ -6,7 +6,8 @@ import { createCustomCohortV2ContinuationRepository as continuations } from '../
  * chooses groups. Every account and subject still come from actual originals. */
 export async function runNeighborhoodBatchSelectedUnionV3DatabaseChecks({sourceRecoveryFixture=false,pool,input,scope,actor,service,job,parent,blobs,
   catalogHead,groups,assertParents,setFault,readFault,originalReads,claim,command}){
-  const sourceFailureAttempt=sourceRecoveryFixture?4:5,sourceFailureCode=sourceRecoveryFixture?'capture_failed':'access_revoked';
+  const sourceFailureAttempt=sourceRecoveryFixture==='clean-first1'?1:sourceRecoveryFixture?4:5,
+    sourceFailureCode=sourceRecoveryFixture==='clean-first1'?null:sourceRecoveryFixture?'capture_failed':'access_revoked';
   const operation=input.operationId,method='continueCoveredOriginalFrozenCaptureJobBatchSelectedStockUnionReferencesV3',
     before={job:await job(),parent:await parent(),catalog:await catalogHead(),groups:await groups(),blobs:await blobs()},
     union=async()=>({head:(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_union_v2_heads WHERE operation_id=$1',[operation])).rows,

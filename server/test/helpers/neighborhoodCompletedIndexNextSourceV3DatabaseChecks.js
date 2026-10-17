@@ -39,7 +39,7 @@ export async function runNeighborhoodCompletedIndexNextSourceV3DatabaseChecks({o
     reads=originalReads();setFault(fault);await assert.rejects(run(),reason);
     assert.equal(readFault(),null);assert.equal(originalReads(),reads);await preserved();
   }
-  for(const owned of [{...claim,claim_token:randomUUID()},{...claim,attempts:claim.attempts-1}]){
+  for(const owned of [{...claim,claim_token:randomUUID()},{...claim,attempts:claim.attempts===1?2:claim.attempts-1}]){
     reads=originalReads();await assert.rejects(run(owned),/claim_lost/);assert.equal(originalReads(),reads);await preserved();
   }
   for(const [fault,reason]of [['completed_source_cache',/original_mismatch/],

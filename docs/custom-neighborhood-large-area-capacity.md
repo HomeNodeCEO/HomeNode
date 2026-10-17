@@ -1,3 +1,30 @@
+## Clean first-attempt source native producer (2026-10-17, inactive)
+
+Two additional independent A/B cases require attempt one and a null prior error
+through the actual initial dispatcher, source prefix, neutral/CAD caches, whole
+stock/partition/catalog, explicit fixture selection, selected union and complete
+transaction index. The real original owner then retains birth17/FIRST18, and a
+distinct native claim reopens FIRST and NEXT against every original and ENTIRE
+cache. The B case still reaches its first source only after empty account A.
+
+These separate cases do not spend the earlier fixtures' deliberate neutral and
+bridge failures. They use their already-issued native claim for the actual
+owner transaction, including real lost COMMIT acknowledgment and ending-role
+refusal/rollback, then continue the same successful native handoff. Expected
+attempt/error checks follow the actual clean lineage through every later owner.
+Adversarial claim, original/cache, target, workspace, native-member, orphan and
+COMMIT probes remain. Their real negative DML rolls back; no persisted attempt,
+lease, clock, schedule, native parent or root is rewritten to manufacture a
+lower claim. Existing failure4, recovered5 and natural-expiry cases are retained
+separately with their original probes, deadlines and failure ceilings.
+
+This test-only producer stops after the current-authorized owned FIRST/NEXT
+original proofs. It does not implement attempts two/three retry lineage,
+durable source traversal/fresh EMPTY, economic progress, publication, pin
+transfer, activation, licensed acquisition or live speed. Small local syntax
+and boundary checks cannot establish this proof: full exact-head native and
+application cloud results are required under the existing limits.
+
 ## Recovered NEXT native fault injection correction (2026-10-17, validation pending)
 
 The exact `61d00c97` native prefix run passed 24 of 28 cases and failed four

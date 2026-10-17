@@ -16,7 +16,8 @@ import { runCustomCohortCoveredSelectedProgressV2JobOnce as legacyProgress } fro
  * adapter, progress, counts or membership. The real original owner does all IO. */
 export async function runNeighborhoodBatchSelectedWorkersV3DatabaseChecks({sourceRecoveryFixture=false,pool,input,scope,actor,service,job,parent,blobs,
   catalogHead,groups,assertParents,setFault,readFault,originalReads,claim,command,batchRecordedEligibilityFixture=false,batchSelectedEvidenceFixture=false,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false,batchSelectedTransactionIndexFixture=false,batchSelectedRecoveryFixture=false,batchSelectedProgressRecoveryFixture=false}){
-  const sourceFailureAttempt=sourceRecoveryFixture?4:5,sourceFailureCode=sourceRecoveryFixture?'capture_failed':'access_revoked';
+  const sourceFailureAttempt=sourceRecoveryFixture==='clean-first1'?1:sourceRecoveryFixture?4:5,
+    sourceFailureCode=sourceRecoveryFixture==='clean-first1'?null:sourceRecoveryFixture?'capture_failed':'access_revoked';
   const operation=input.operationId,method='continueCoveredOriginalFrozenCaptureJobBatchSelectedStockUnionReferencesV3',
     before={job:await job(),parent:await parent(),catalog:await catalogHead(),groups:await groups(),blobs:await blobs()},
     dispatches=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_initial_dispatch_v2 WHERE operation_id=$1 ORDER BY attempts,claim_token',[operation])).rows,
@@ -111,7 +112,7 @@ export async function runNeighborhoodBatchSelectedWorkersV3DatabaseChecks({sourc
       }else assert.deepEqual(options.captureJobClaim,claim);
       ownedDispatch=await dispatches();assert.equal(ownedDispatch.length,batchSelectedRecoveryFixture?2:1);
       const adopted=ownedDispatch.find(row=>row.claim_token===claim.claim_token);assert.ok(adopted);
-      assert.equal(adopted.attempts,batchSelectedProgressRecoveryFixture||sourceRecoveryFixture?4:5);assert.equal(adopted.command_id,command.command_id);
+      assert.equal(adopted.attempts,sourceRecoveryFixture==='clean-first1'?1:batchSelectedProgressRecoveryFixture||sourceRecoveryFixture?4:5);assert.equal(adopted.command_id,command.command_id);
       if(batchSelectedRecoveryFixture)assert.deepEqual(ownedDispatch.filter(row=>row.claim_token!==claim.claim_token),failedFourthDispatch);
       const reads=originalReads();setFault('union_ack');
       try{return await service[method](value,options);}finally{assert.equal(originalReads(),reads+1);}

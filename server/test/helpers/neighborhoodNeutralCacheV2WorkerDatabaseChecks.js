@@ -75,7 +75,10 @@ import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL as TRAN
 /** Independent disposable job; all acquisition owners, authorization, original
  * queries, native issuance, savepoint rollback and COMMITs are real. */
 export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({sourceRecoveryFixture=false,pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData,coveredTransactionIndexFixture=false,stockBatchFixture=false,partitionBatchFixture=false,catalogBatchFixture=false,catalogBatchReplayFixture=false,batchSelectionWaitFixture=false,batchSelectionIntentFixture=false,batchSelectedUnionFixture=false,batchSelectedWorkersFixture=false,batchRecordedEligibilityFixture=false,batchSelectedEvidenceFixture=false,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false,batchSelectedTransactionIndexFixture=false,batchSelectedRecoveryFixture=false,batchSelectedProgressRecoveryFixture=false}){
-  const batchFailureAttempt=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture||sourceRecoveryFixture)?4:5,batchFailureCode=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture||sourceRecoveryFixture)?'capture_failed':'access_revoked';
+  const cleanSourceFixture=sourceRecoveryFixture==='clean-first1',
+    batchFailureAttempt=cleanSourceFixture?1:(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture||sourceRecoveryFixture)?4:5,
+    batchFailureCode=cleanSourceFixture?null:(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture||sourceRecoveryFixture)?'capture_failed':'access_revoked',
+    cacheFailureAttempt=cleanSourceFixture?1:3,cacheFailureCode=cleanSourceFixture?null:'access_revoked';
   const input={...sourceInput,operationId:randomUUID()},operation=input.operationId;let fault=null,stockReads=0,sourceCheckpointBefore=null;
   const observed={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
     const text=typeof c==='string'?c:c.text,completedSourcePacket=text===COMPLETED_SOURCE_PACKET||text===OWNED_SOURCE_PACKET||text===RECOVERED_SOURCE_PACKET||text===NEXT_SOURCE_PACKET||text===OWNED_NEXT_SOURCE_PACKET||text===RECOVERED_NEXT_SOURCE_PACKET,
@@ -274,20 +277,39 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({sourceR
   fault='orphan';await assert.rejects(service.continueFrozenCaptureJobNeutralOriginalsReferencesV2(input,{captureJobClaim:first}),
     error=>error.outcome_unknown===true&&error.code==='55000');
   assert.equal(fault,null);assert.equal(await head(),undefined);assert.deepEqual(await cacheState(),initialState);
+  if(cleanSourceFixture){
+    // This separate graph spends no failure. Use the actual already-owned
+    // first claim; the lost acknowledgment follows its real native COMMIT.
+    fault='ack';await assert.rejects(service.continueFrozenCaptureJobNeutralOriginalsReferencesV2(input,
+      {captureJobClaim:first}),e=>e.outcome_unknown===true);
+  }else{
   await tx(pool,client=>jobs(client).failClaim(first,'capture_failed',{retrySeconds:1}));
   await settleRetrySchedule();
   fault='ack';assert.equal((await runCache(args)).status,'outcome_unknown');
-  assert.equal(fault,null);assert.equal((await cacheState()).sequence,1);assert.equal((await job()).attempts,2);
+  }
+  assert.equal(fault,null);assert.equal((await cacheState()).sequence,1);assert.equal((await job()).attempts,cleanSourceFixture?1:2);
   const firstHead=await head();
   assert.deepEqual(await tx(pool,client=>bridgeClaims(client).claimDue({leaseSeconds:900})),[],
     'an actual unfinished native cache cannot enroll the first stock owner');
+  let successes=0;
+  if(cleanSourceFixture){
+    const [next]=await tx(pool,client=>cacheClaims(client).claimDue({leaseSeconds:900}));
+    assert.equal(next.claim.attempts,1);fault='role';
+    await assert.rejects(service.continueFrozenCaptureJobNeutralOriginalsReferencesV2(input,
+      {captureJobClaim:next.claim}),/job_actor_access_revoked/);assert.equal(fault,null);
+    assert.deepEqual(await head(),firstHead,'ending role refusal rolls actual cache/head progress back');
+    await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);
+    // The same genuine claim remains live after the refused owner transaction.
+    await service.continueFrozenCaptureJobNeutralOriginalsReferencesV2(input,{captureJobClaim:next.claim});successes++;
+  }else{
   fault='role';const denied=await runCache(args);assert.equal(denied.reason,'access_revoked');assert.equal(fault,null);
   assert.deepEqual(await head(),firstHead,'ending role refusal rolls actual cache/head progress back');
   await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);
   await settleRetrySchedule();
-  let successes=0;for(let i=0;i<50;i++){const r=await runCache(args);if(r.status==='idle')break;assert.equal(r.status,'continuation_pending');successes++;}
+  }
+  for(let i=0;i<50;i++){const r=await runCache(args);if(r.status==='idle')break;assert.equal(r.status,'continuation_pending');successes++;}
   const done=await job(),complete=await cacheState(),nativeHead=await head();
-  assert.equal(done.attempts,3);assert.equal(done.last_error_code,'access_revoked');assert.equal(done.context_sha256,null);
+  assert.equal(done.attempts,cacheFailureAttempt);assert.equal(done.last_error_code,cacheFailureCode);assert.equal(done.context_sha256,null);
   assert.equal(done.status,'retry');assert.equal(done.claim_token,null);assert.equal(complete.sequence,7);
   assert.equal(successes,6);assert.equal(nativeHead.sequence,7);assert.equal((await parent()).sequence,parentBefore.sequence);
   assert.equal((await parent()).consumed_claim_token,initialState.initial_claim_token);
@@ -304,7 +326,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({sourceR
     cadHead=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_cad_cache_v2_heads WHERE operation_id=$1',[operation])).rows[0];
   const firstCadRows=(await Promise.all([1,2].map(()=>tx(pool,client=>cadClaims(client).claimDue({leaseSeconds:900}))))).flat();
   assert.equal(firstCadRows.length,1);const firstCad=firstCadRows[0].claim;
-  assert.equal(firstCad.attempts,3);assert.notEqual(firstCad.claim_token,complete.issued_claim_token);
+  assert.equal(firstCad.attempts,cacheFailureAttempt);assert.notEqual(firstCad.claim_token,complete.issued_claim_token);
   const initialCad=await cadState(),cadJob=await job();assert.equal(initialCad.sequence,0);assert.equal(await cadHead(),undefined);
   await assert.rejects(tx(pool,async client=>{
     await client.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);
@@ -319,7 +341,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({sourceR
     assert.deepEqual(await job(),cadJob);assert.deepEqual(await cacheState(),complete);assert.deepEqual(await head(),nativeHead);
   }
   fault='cad_ack';await assert.rejects(service.continueFrozenCaptureJobCadOriginalsReferencesV2(input,{captureJobClaim:firstCad}),e=>e.outcome_unknown===true);
-  assert.equal(fault,null);assert.equal((await cadState()).sequence,1);assert.equal((await job()).attempts,3);
+  assert.equal(fault,null);assert.equal((await cadState()).sequence,1);assert.equal((await job()).attempts,cacheFailureAttempt);
   assert.deepEqual(await tx(pool,client=>bridgeClaims(client).claimDue({leaseSeconds:900})),[],'partial CAD cannot adopt stock');
   await assert.rejects(service.continueFrozenCaptureJobCadOriginalsReferencesV2(input,{captureJobClaim:firstCad}),/claim_lost/);
   for(let i=0;i<2;i++)assert.equal((await runCad(args)).status,'continuation_pending');
@@ -328,14 +350,14 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({sourceR
   const cadBody=JSON.parse((await pool.query('SELECT canonical_utf8 FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1 AND content_sha256=$2',
     [scope.organization_id,completedCad.receipt_reference.content_sha256])).rows[0].canonical_utf8);
   assert.equal(cadBody.after.done,true);assert.equal(cadBody.after.account_count,2);assert.equal(cadBody.after.original_count,5);
-  assert.equal(completedCadJob.attempts,3);assert.equal(completedCadJob.last_error_code,'access_revoked');
+  assert.equal(completedCadJob.attempts,cacheFailureAttempt);assert.equal(completedCadJob.last_error_code,cacheFailureCode);
   assert.deepEqual(completedCadJob.checkpoint,completedJob.checkpoint);assert.deepEqual(await cacheState(),complete);assert.deepEqual(await head(),nativeHead);
   assert.deepEqual(await runCad(args),{status:'idle'});assert.deepEqual(await job(),completedCadJob);
   console.info('[native-automatic-CAD-cache-success-handoff-v2]',{actual_accounts:2,actual_originals:5,
     neutral_DONE_missing_or_partial_CAD_cannot_adopt_stock:true,concurrent_single_fresh_claim:true,
     every_original_and_entire_cache_current_and_ending_CAD_actor_fences:true,orphan_claim_and_yield_refused:true,
     actual_COMMIT_after_saved_lease_deadline_refused:true,lost_real_COMMIT_ACK_fresh_next_account:true,
-    separate_terminal_EMPTY_and_DONE_idle:true,success_preserves_failure_attempt:3,neutral_and_main_parent_unchanged:true,
+    separate_terminal_EMPTY_and_DONE_idle:true,success_preserves_failure_attempt:cacheFailureAttempt,neutral_and_main_parent_unchanged:true,
     automatic_schedule:false,licensed_large_area:false,production_speed:false,publication:false,pin_transfer:false});
   let batchPendingWorkspace=null;
   if(stockBatchFixture){
@@ -364,7 +386,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({sourceR
     bridgeWorker=stockBatchFixture?runBatchBridge:runBridge;
   const adopted=(await Promise.all([1,2].map(()=>tx(pool,client=>bridgeClaims(client).claimDue({leaseSeconds:900}))))).flat();
   assert.equal(adopted.length,1);const adoptedClaim=adopted[0].claim;
-  assert.equal(adoptedClaim.attempts,3);assert.notEqual(adoptedClaim.claim_token,complete.issued_claim_token);
+  assert.equal(adoptedClaim.attempts,cacheFailureAttempt);assert.notEqual(adoptedClaim.claim_token,complete.issued_claim_token);
   assert.deepEqual((await bridgeState()).cad_reference,completedCad.receipt_reference);assert.notEqual(adoptedClaim.claim_token,completedCad.issued_claim_token);
   assert.notEqual(adoptedClaim.claim_token,complete.initial_claim_token);assert.equal((await parent()).sequence,parentBefore.sequence);
   const adoptedState=await bridgeState(),adoptedJob=await job(),adoptedParent=await parent();
@@ -396,8 +418,10 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({sourceR
     error=>error.outcome_unknown===true&&error.code==='55000');
   assert.equal(fault,null);assert.equal(await stockHead(),undefined);assert.deepEqual(await parent(),adoptedParent);
   assert.equal((await parent()).sequence,parentBefore.sequence);assert.deepEqual(await bridgeState(),adoptedState);
+  if(!cleanSourceFixture){
   await tx(pool,client=>jobs(client).failClaim(adoptedClaim,'capture_failed',{retrySeconds:1}));
   await settleRetrySchedule();
+  }
   // Only the independent recovery graphs reserve this failure for a selected
   // initial or progress worker. Older graphs keep the bridge role failure.
   if(!batchSelectedRecoveryFixture&&!batchSelectedProgressRecoveryFixture&&!sourceRecoveryFixture){
@@ -406,7 +430,12 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({sourceR
   await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);
   await settleRetrySchedule();
   }
+  if(cleanSourceFixture){
+    fault='bridge_ack';await assert.rejects(service[stockContinuation](input,{captureJobClaim:adoptedClaim}),e=>e.outcome_unknown===true);
+    assert.equal(fault,null);
+  }else{
   fault='bridge_ack';assert.equal((await bridgeWorker(args)).status,'outcome_unknown');assert.equal(fault,null);
+  }
   const firstStock=await stockHead(),issuedBridge=await bridgeState();
   assert.equal(firstStock.sequence,1);assert.deepEqual(issuedBridge.completed_reference,firstStock.receipt_reference);
   assert.equal((await parent()).sequence,parentBefore.sequence+1);assert.equal((await parent()).phase,'frozen_stock_traversal_refs_v2');

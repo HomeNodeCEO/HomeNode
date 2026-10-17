@@ -17,7 +17,8 @@ import { NEIGHBORHOOD_SHARED_TYPED_CAD_SQL as CAD_SQL } from '../../src/services
  * Complete original replay is evidence admission, not economic equivalence. */
 export async function runNeighborhoodBatchSelectedEvidenceV3DatabaseChecks({sourceRecoveryFixture=false,pool,input,scope,actor,service,job,parent,blobs,
   catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false,batchSelectedTransactionIndexFixture=false}){
-  const sourceFailureAttempt=sourceRecoveryFixture?4:5,sourceFailureCode=sourceRecoveryFixture?'capture_failed':'access_revoked';
+  const sourceFailureAttempt=sourceRecoveryFixture==='clean-first1'?1:sourceRecoveryFixture?4:5,
+    sourceFailureCode=sourceRecoveryFixture==='clean-first1'?null:sourceRecoveryFixture?'capture_failed':'access_revoked';
   const operation=input.operationId,method='progressCoveredOriginalFrozenCaptureJobBatchSelectedEvidenceReferencesV3',
     head=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_evidence_v2_heads WHERE operation_id=$1',[operation])).rows[0],
     parents=async()=>({union:(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_union_v2_heads WHERE operation_id=$1',[operation])).rows,

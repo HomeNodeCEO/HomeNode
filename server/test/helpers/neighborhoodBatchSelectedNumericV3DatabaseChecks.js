@@ -12,7 +12,8 @@ import { runCustomCohortBatchSelectedStatisticsV3JobOnce as statistics } from '.
  * follows actual contribution DONE; numeric index rows grant no authority. */
 export async function runNeighborhoodBatchSelectedNumericV3DatabaseChecks({sourceRecoveryFixture=false,pool,input,scope,actor,service,job,parent,blobs,
   catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedSemanticFixture=false,batchSelectedTransactionIndexFixture=false}){
-  const sourceFailureAttempt=sourceRecoveryFixture?4:5,sourceFailureCode=sourceRecoveryFixture?'capture_failed':'access_revoked';
+  const sourceFailureAttempt=sourceRecoveryFixture==='clean-first1'?1:sourceRecoveryFixture?4:5,
+    sourceFailureCode=sourceRecoveryFixture==='clean-first1'?null:sourceRecoveryFixture?'capture_failed':'access_revoked';
   const operation=input.operationId,method='progressCoveredOriginalFrozenCaptureJobBatchSelectedNumericReferencesV3',
     readMethod='readCoveredOriginalFrozenCaptureJobBatchFirstSelectedNumericReferencesV3',
     head=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_numeric_v2_heads WHERE operation_id=$1',[operation])).rows[0],

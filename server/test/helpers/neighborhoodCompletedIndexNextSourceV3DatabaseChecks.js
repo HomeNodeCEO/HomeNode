@@ -17,6 +17,7 @@ export async function runNeighborhoodCompletedIndexNextSourceV3DatabaseChecks({p
       WHERE organization_id=$1 ORDER BY content_sha256`,[scope.organization_id])).rows,
     report:(await pool.query('SELECT to_jsonb(r) AS body FROM app.report_files r WHERE id=$1',[scope.report_file_id])).rows,
     assignment:(await pool.query('SELECT to_jsonb(r) AS body FROM app.assignment_files r WHERE id=$1',[scope.assignment_file_id])).rows,
+    private_workfile:(await pool.query('SELECT to_jsonb(r) AS body FROM app.custom_appraisal_workfiles r WHERE assignment_file_id=$1',[scope.assignment_file_id])).rows,
     subject:(await pool.query(`SELECT to_jsonb(s) AS body FROM app.appraisal_subject_snapshots s
       JOIN app.report_files r ON r.subject_snapshot_id=s.id WHERE r.id=$1`,[scope.report_file_id])).rows,
     manual:(await pool.query(`SELECT to_jsonb(r) AS body FROM app.custom_appraisal_sections r
@@ -32,6 +33,11 @@ export async function runNeighborhoodCompletedIndexNextSourceV3DatabaseChecks({p
   try{await assert.rejects(run(),/custom_cohort_job_actor_access_revoked/);assert.equal(originalReads(),reads);}
   finally{await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);}
   await preserved();
+  for(const [fault,reason]of [['next_source_assignment_before_io',/assignment_access_denied/],
+    ['next_source_draft_before_io',/private_source_read_only/]]){
+    reads=originalReads();setFault(fault);await assert.rejects(run(),reason);
+    assert.equal(readFault(),null);assert.equal(originalReads(),reads);await preserved();
+  }
   for(const owned of [{...claim,claim_token:randomUUID()},{...claim,attempts:claim.attempts-1}]){
     reads=originalReads();await assert.rejects(run(owned),/claim_lost/);assert.equal(originalReads(),reads);await preserved();
   }
@@ -40,7 +46,8 @@ export async function runNeighborhoodCompletedIndexNextSourceV3DatabaseChecks({p
     ['catalog_replay_rights',/market_data_access_denied|market_policy_changed/],
     ['selected_CAD_deny',/market_data_access_denied|cad_policy_changed/],
     ['selected_CAD_header',/cache_unavailable/],['selected_CAD_coverage',/coverage_unavailable/],
-    ['owned_source_subject',/subject_changed/],['next_source_native_ending',/native_plan_changed/]]){
+    ['owned_source_subject',/subject_changed/],['next_source_native_ending',/native_plan_changed/],
+    ['next_source_assignment_ending',/assignment_access_denied/],['next_source_draft_ending',/private_source_read_only/]]){
     reads=originalReads();setFault(fault);
     try{await assert.rejects(run(),reason);assert.equal(readFault(),null);assert.equal(originalReads(),reads+1);}
     finally{if(fault==='union_role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);}
@@ -76,9 +83,10 @@ export async function runNeighborhoodCompletedIndexNextSourceV3DatabaseChecks({p
     actual_native_NEXT503_after_FIRST501_and_real_first_seen_B_ordinal2:true,
     every_whole_B_source_CAD_stock_all_date_original_required_subject_ENTIRE_caches_and_all_native_members_reconciled:true,
     entire_native_B_keyset_bidirectional_equal_and_unresolved503_without_borrowed_sale_date_quarter_or_price:true,
-    current_actor_before_IO_nine_real_ending_fences_and_same_count_changed_ending_NATIVE_NEXT_refused:true,
+    current_actor_assignment_private_draft_refused_before_IO_with_real_target_DML_rolled_back:true,
+    eleven_real_ending_fences_including_assignment_draft_and_same_count_changed_ending_NATIVE_NEXT_refused:true,
     actual_lost_readonly_COMMIT_ACK_and_identical_fresh_reopen_with_full_native_job_history_preserved:true,
-    every_parent_blob_source_grant_report_assignment_subject_manual_workspace_choice_pin_unchanged:true,
+    every_parent_blob_source_grant_report_assignment_private_workfile_subject_manual_workspace_choice_pin_unchanged:true,
     same_aggregate256_SQL_32MB_60s_single_use_child250_and_original180s_deadline:true,
     source_cursor_advanced:false,fresh_EMPTY:false,economic_progress_retained:false,complete_selected_union:false,
     publication:false,pin_transfer:false,activation:false,licensed_large_area:false,production_speed:false});

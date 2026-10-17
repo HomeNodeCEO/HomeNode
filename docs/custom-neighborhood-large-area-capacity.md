@@ -24,7 +24,13 @@ proofs. Authored probes require current actor refusal before I/O, full cache and
 nine ending refusals, same-count ending NEXT replacement refusal, missing503
 sale/date/quarter retention, actual lost read-only COMMIT acknowledgment,
 identical reopen, and full native history/blobs/source grants/report/assignment/
-subject/manual/workspace/choice/pin preservation.
+subject/manual/workspace/choice/pin preservation. Additional real target DML
+probes revoke assignment and archive the private draft before original I/O and
+after the complete actual NEXT packet. Both current refusals must read no
+originals; both ending refusals must follow one whole original read. Every
+refusal must roll back the target DML and preserve the entire private workfile
+as well as every earlier protected row. All nine earlier ending probes remain,
+for eleven ending refusals; the original deadlines and budgets are unchanged.
 
 Small serial checks passed38 existing/new source tests (1890.6971 ms) and46
 source/affected fixture tests (1544.1266 ms), with zero failures, cancellations or

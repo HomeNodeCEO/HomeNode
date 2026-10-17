@@ -107,7 +107,26 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({sourceR
     }
     if(fault==='source_birth_orphan'&&text.includes('custom-cohort-source-resolution-parent-v3:handoff-save */'))
       await raw.query('SAVEPOINT source_birth_handoff');
+    // Change real disposable target rows inside this owner's transaction,
+    // before the current guard. No target or authority result is replaced.
+    if(fault==='next_source_assignment_before_io'&&text.includes('custom-cohort-capture:assignment */')){
+      fault=null;const changed=await raw.query('UPDATE app.assignment_files SET assigned_appraiser_user_id=NULL WHERE id=$1 RETURNING id',
+        [scope.assignment_file_id]);assert.equal(changed.rowCount,1);
+    }
+    if(fault==='next_source_draft_before_io'&&text.includes('custom-cohort-capture:private-workfile */')){
+      fault=null;const changed=await raw.query("UPDATE app.custom_appraisal_workfiles SET status='archived' WHERE assignment_file_id=$1 RETURNING assignment_file_id",
+        [scope.assignment_file_id]);assert.equal(changed.rowCount,1);
+    }
     const result=await raw.query(c);
+    // Ending revocation follows the complete actual NEXT original packet;
+    // the existing ending target/draft reads must refuse and roll it back.
+    if(text===NEXT_SOURCE_PACKET&&['next_source_assignment_ending','next_source_draft_ending'].includes(fault)){
+      const mode=fault;fault=null;
+      const changed=mode==='next_source_assignment_ending'
+        ?await raw.query('UPDATE app.assignment_files SET assigned_appraiser_user_id=NULL WHERE id=$1 RETURNING id',[scope.assignment_file_id])
+        :await raw.query("UPDATE app.custom_appraisal_workfiles SET status='archived' WHERE assignment_file_id=$1 RETURNING assignment_file_id",[scope.assignment_file_id]);
+      assert.equal(changed.rowCount,1);
+    }
     if(text===NEXT_SOURCE_PACKET&&fault==='next_source_native_ending')fault='next_source_native_ending_after_original';
     if(fault==='next_source_native_ending_after_original'&&text.includes('custom-cohort-completed-index-next-source-v3:native-next')){
       assert.equal(result.rowCount,1);assert.equal(result.rows[0].native_key,'503');

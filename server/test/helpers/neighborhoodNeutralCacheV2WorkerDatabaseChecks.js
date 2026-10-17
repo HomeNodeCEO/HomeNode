@@ -392,7 +392,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({sourceR
   const adoptedState=await bridgeState(),adoptedJob=await job(),adoptedParent=await parent();
   await assert.rejects(tx(pool,async client=>{
     await client.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[operation]);
-    await client.query('UPDATE app.neighborhood_custom_cohort_cache_stock_v2_bridges SET claim_token=gen_random_uuid(),attempts=4 WHERE operation_id=$1',[operation]);
+    await client.query('UPDATE app.neighborhood_custom_cohort_cache_stock_v2_bridges SET claim_token=gen_random_uuid(),attempts=$2 WHERE operation_id=$1',[operation,adoptedClaim.attempts+1]);
   }),error=>error.code==='55000'&&/cache_stock_v2_commit_conflict/.test(error.message));
   assert.deepEqual(await job(),adoptedJob);assert.deepEqual(await bridgeState(),adoptedState);
   await assert.rejects(tx(pool,async client=>{

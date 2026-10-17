@@ -53,6 +53,14 @@ native deferred COMMIT refusal and whole-state rollback assertions remain
 required. No refusal pattern, deadline, failure counter, native guard or runtime
 code is relaxed. Fresh exact-head native execution remains required.
 
+The child `01ef9d73` early pair then reached the separate bridge probe and
+failed both cases in28.811s because that probe also hard-coded forged attempt
+four. It now uses the actual adopted native claim plus one, retaining its exact
+deferred `cache_stock_v2_commit_conflict` requirement, genuine expiry DML and
+full rollback. The original attempt-three probes still forge four. Both complete
+prefix/prepared suites were skipped after this failure; no completion is claimed
+and the failed head is not rerun.
+
 The `4e144300` server run exposed four fixture-shape checks that still expected
 the previous 41-case matrix. Their explicit expectations now include the two
 appended clean cases and the extended later-account selector. All previous

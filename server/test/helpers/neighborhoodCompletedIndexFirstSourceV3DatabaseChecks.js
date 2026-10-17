@@ -4,11 +4,12 @@ import { createCustomCohortV2ContinuationRepository as continuations } from '../
 import { runNeighborhoodSourceResolutionParentV3DatabaseChecks } from './neighborhoodSourceResolutionParentV3DatabaseChecks.js';
 import { runNeighborhoodFirstSourceBindingOwnerV3DatabaseChecks } from './neighborhoodFirstSourceBindingOwnerV3DatabaseChecks.js';
 
-// Continue ONLY the already complete independent graph32 or later-account35.
+// Continue ONLY an already complete independent native capture, including
+// the unchanged failure5 graphs and the additional reserved failure4 graphs.
 // Claiming is a real
 // native transition committed before opening the real read-only source owner;
 // no uncommitted lease, fixture callback or substituted original packet.
-export async function runNeighborhoodCompletedIndexFirstSourceV3DatabaseChecks({pool,input,scope,actor,service,
+export async function runNeighborhoodCompletedIndexFirstSourceV3DatabaseChecks({sourceRecoveryFixture=false,pool,input,scope,actor,service,
   job,parent,blobs,snapshot,immutable,setFault,readFault,originalReads,laterFirstSource=false}){
   const method='readCoveredOriginalFrozenCaptureJobCompletedIndexFirstSourceReferencesV3',before=await job();
   const [next]=await tx(pool,client=>continuations(client).claimDue({limit:1,leaseSeconds:900}));
@@ -127,7 +128,7 @@ export async function runNeighborhoodCompletedIndexFirstSourceV3DatabaseChecks({
   assert.equal(readFault(),null);assert.equal(originalReads(),reads+1);await unchanged();
   reads=originalReads();assert.deepEqual(await prepare(),proposed);assert.equal(originalReads(),reads+1);await unchanged();
   await runNeighborhoodSourceResolutionParentV3DatabaseChecks({pool,scope,claim:next.claim,owned,unchanged,laterFirstSource,candidate});
-  await runNeighborhoodFirstSourceBindingOwnerV3DatabaseChecks({pool,input,scope,actor,service,claim:next.claim,
+  await runNeighborhoodFirstSourceBindingOwnerV3DatabaseChecks({sourceRecoveryFixture,pool,input,scope,actor,service,claim:next.claim,
     unchanged,setFault,readFault,originalReads,laterFirstSource});
   console.info('[native-completed-index-first-source-candidate-v3]',{
     actual_native_FIRST_whole_original_package_and_independent_native_membership:true,

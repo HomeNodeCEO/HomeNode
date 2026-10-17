@@ -31,7 +31,7 @@ export async function observeNeighborhoodFirstSourceCheckpointBeforeSaveV3({raw,
   }
   // A structurally correct18 is insufficient if ANY other original job field
   // changes. In particular this cannot renew/rewrite/refund the real claim.
-  for(const set of ["status='retry'","claim_token=gen_random_uuid()",'attempts=4',
+  for(const set of ["status='retry'","claim_token=gen_random_uuid()",`attempts=${actual.attempts-1}`,
     "lease_expires_at=clock_timestamp()+interval '1 hour'","lease_expires_at=NULL",
     "run_after=clock_timestamp()+interval '1 hour'","last_error_code='invented_error'",
     "context_sha256=repeat('a',64)","account_id='FORGED-SUBJECT'","cancellation_requested_at=clock_timestamp()"]){

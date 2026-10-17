@@ -15,8 +15,9 @@ import { NEIGHBORHOOD_SHARED_TYPED_CAD_SQL as CAD_SQL } from '../../src/services
 /** Twenty-seventh independent acquisition, after actual V3 worker union and
  * recorded-comparison DONE. Real independent neutral/CAD owners precede both.
  * Complete original replay is evidence admission, not economic equivalence. */
-export async function runNeighborhoodBatchSelectedEvidenceV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
+export async function runNeighborhoodBatchSelectedEvidenceV3DatabaseChecks({sourceRecoveryFixture=false,pool,input,scope,actor,service,job,parent,blobs,
   catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false,batchSelectedTransactionIndexFixture=false}){
+  const sourceFailureAttempt=sourceRecoveryFixture?4:5,sourceFailureCode=sourceRecoveryFixture?'capture_failed':'access_revoked';
   const operation=input.operationId,method='progressCoveredOriginalFrozenCaptureJobBatchSelectedEvidenceReferencesV3',
     head=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_evidence_v2_heads WHERE operation_id=$1',[operation])).rows[0],
     parents=async()=>({union:(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_union_v2_heads WHERE operation_id=$1',[operation])).rows,
@@ -45,7 +46,7 @@ export async function runNeighborhoodBatchSelectedEvidenceV3DatabaseChecks({pool
   };
   const firstArgs={...args,cohortService:{async [method](value,options){
     try{
-      calls++;firstClaim=options.captureJobClaim;assert.equal(firstClaim.attempts,5);owned=await job();ownedParent=await parent();
+      calls++;firstClaim=options.captureJobClaim;assert.equal(firstClaim.attempts,sourceFailureAttempt);owned=await job();ownedParent=await parent();
       await assert.rejects(service.progressCoveredOriginalFrozenCaptureJobSelectedEvidenceReferencesV2(value,options),/invalid_receipt/);await unchanged();
       for(const [fault,reason] of [['selected_CAD_workspace',/custom_cohort_group_workspace_study_changed/],
         ['selected_CAD_role',/custom_cohort_job_actor_access_revoked/],['catalog_replay_rights',/market_data_access_denied|market_policy_changed/],
@@ -72,7 +73,7 @@ export async function runNeighborhoodBatchSelectedEvidenceV3DatabaseChecks({pool
   for(const sequence of [2,3]){
     let count=0,result,nextError,nextClaim;
     const stepArgs={...args,cohortService:{async [method](value,options){
-      try{count++;nextClaim=options.captureJobClaim;assert.equal(nextClaim.attempts,5);assert.notEqual(nextClaim.claim_token,firstClaim.claim_token);
+      try{count++;nextClaim=options.captureJobClaim;assert.equal(nextClaim.attempts,sourceFailureAttempt);assert.notEqual(nextClaim.claim_token,firstClaim.claim_token);
         const reads=originalReads();result=await service[method](value,options);assert.equal(originalReads(),reads+1);return result;
       }catch(error){nextError=error;throw error;}
     }}};
@@ -87,7 +88,7 @@ export async function runNeighborhoodBatchSelectedEvidenceV3DatabaseChecks({pool
     if(sequence===2){assert.equal(receipt.selected_entry.account_id,'CLOSURE-B');assert.equal(receipt.selected_entry.ordinal,2);
       assert.deepEqual(receipt.selected_entry.entry_reference,before.parents.rows[1].entry_reference);}
     else assert.equal(receipt.selected_entry,null);
-    assert.equal((await job()).attempts,5);assert.equal((await job()).last_error_code,'access_revoked');
+    assert.equal((await job()).attempts,sourceFailureAttempt);assert.equal((await job()).last_error_code,sourceFailureCode);
     assert.equal((await job()).checkpoint.evidence_refs.length,12);await immutable();
   }
   const terminal={job:await job(),parent:await parent(),blobs:await blobs(),head:await head()};
@@ -102,7 +103,7 @@ export async function runNeighborhoodBatchSelectedEvidenceV3DatabaseChecks({pool
   }),e=>e===rollback);
   assert.deepEqual(await job(),terminal.job);assert.deepEqual(await parent(),terminal.parent);assert.deepEqual(await blobs(),terminal.blobs);assert.deepEqual(await head(),terminal.head);await immutable();
   if(batchSelectedMetricsFixture){
-    await runNeighborhoodBatchSelectedMetricsV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
+    await runNeighborhoodBatchSelectedMetricsV3DatabaseChecks({sourceRecoveryFixture,pool,input,scope,actor,service,job,parent,blobs,
       catalogHead,groups,assertParents,setFault,readFault,originalReads,command,batchSelectedStatisticsFixture,batchSelectedNumericFixture,batchSelectedSemanticFixture,batchSelectedTransactionIndexFixture});return;
   }
   console.info('[native-batch-selected-evidence-v3]',{independent_actual_V3_workers_union_and_recorded_eligibility_DONE:true,

@@ -12,9 +12,9 @@ import { createCustomCohortCatalogBatchV3WorkerRepository as catalogClaims } fro
 
 /** Explicit disposable-fixture choice ONLY, after an independently captured
  * actual batch waiting boundary. No production/appraiser choice is inferred. */
-export async function runNeighborhoodBatchSelectionIntentV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,blobs,
+export async function runNeighborhoodBatchSelectionIntentV3DatabaseChecks({sourceRecoveryFixture=false,pool,input,scope,actor,service,args,job,parent,blobs,
   catalogHead,groups,assertParents,setFault,readFault,originalReads,batchSelectedUnionFixture=false,batchSelectedWorkersFixture=false,batchRecordedEligibilityFixture=false,batchSelectedEvidenceFixture=false,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false,batchSelectedTransactionIndexFixture=false,batchSelectedRecoveryFixture=false,batchSelectedProgressRecoveryFixture=false}){
-  const expectedAttempts=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture)?4:5,expectedError=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture)?'capture_failed':'access_revoked';
+  const expectedAttempts=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture||sourceRecoveryFixture)?4:5,expectedError=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture||sourceRecoveryFixture)?'capture_failed':'access_revoked';
   const operation=input.operationId,method='resumeCoveredOriginalFrozenCaptureJobBatchSelectionIntentReferencesV3',
     readMethod='readCoveredOriginalFrozenCaptureJobRetainedBatchSelectionIntentReferencesV3',
     intents=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_v2_selection_intents WHERE operation_id=$1',[operation])).rows,
@@ -78,7 +78,7 @@ export async function runNeighborhoodBatchSelectionIntentV3DatabaseChecks({pool,
     assert.deepEqual((await client.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[operation])).rows,snapshot);throw rollback;
   }),e=>e===rollback);await assertResumed();
   if(batchSelectedUnionFixture){
-    await (batchSelectedWorkersFixture?runNeighborhoodBatchSelectedWorkersV3DatabaseChecks:runNeighborhoodBatchSelectedUnionV3DatabaseChecks)({pool,input,scope,actor,service,job,parent,blobs,
+    await (batchSelectedWorkersFixture?runNeighborhoodBatchSelectedWorkersV3DatabaseChecks:runNeighborhoodBatchSelectedUnionV3DatabaseChecks)({sourceRecoveryFixture,pool,input,scope,actor,service,job,parent,blobs,
       catalogHead,groups,assertParents,setFault,readFault,originalReads,claim:resumed.claim,command,batchRecordedEligibilityFixture,batchSelectedEvidenceFixture,batchSelectedMetricsFixture,batchSelectedStatisticsFixture,batchSelectedNumericFixture,batchSelectedSemanticFixture,batchSelectedTransactionIndexFixture,batchSelectedRecoveryFixture,batchSelectedProgressRecoveryFixture});return;
   }
   console.info('[native-batch-selection-intent-v3]',{independent_actual_initial_source_cache_stock_partition_catalog_and_waiting:true,

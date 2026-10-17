@@ -15,7 +15,7 @@ const parentTable='app.neighborhood_custom_cohort_source_resolution_v3_parents',
 // disposable native CI database. No copied parent or callback supplies source
 // authority. The real service owns its own BEGIN/original I/O/DML/COMMIT; its
 // unconditional deferred guard must reject COMMIT and roll every row back.
-export async function runNeighborhoodFirstSourceBindingOwnerV3DatabaseChecks({pool,input,scope,actor,service,
+export async function runNeighborhoodFirstSourceBindingOwnerV3DatabaseChecks({sourceRecoveryFixture=false,pool,input,scope,actor,service,
   claim,unchanged,setFault,readFault,originalReads,laterFirstSource}){
   const setup=await pool.connect();let open=false,discard;
   try{
@@ -89,6 +89,6 @@ export async function runNeighborhoodFirstSourceBindingOwnerV3DatabaseChecks({po
     empty,setFault,readFault,originalReads,laterFirstSource});
   await runNeighborhoodFirstSourceCheckpointV3DatabaseChecks({pool,input,scope,actor,service,claim,
     empty,setFault,readFault,originalReads,laterFirstSource});
-  await runNeighborhoodFirstSourceHandoffV3DatabaseChecks({pool,input,scope,actor,service,claim,
+  await runNeighborhoodFirstSourceHandoffV3DatabaseChecks({sourceRecoveryFixture,pool,input,scope,actor,service,claim,
     empty,setFault,readFault,originalReads,laterFirstSource});
 }

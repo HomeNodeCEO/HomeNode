@@ -19,10 +19,10 @@ import { runNeighborhoodBatchSelectionWaitV3DatabaseChecks } from './neighborhoo
  * parent, original/cache/entry read, current authority fence and COMMIT is real.
  * Forged receipt probes below establish native consistency only, never source
  * authority, capacity, activation or complete selected-union semantics. */
-export async function runNeighborhoodCatalogBatchV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,
+export async function runNeighborhoodCatalogBatchV3DatabaseChecks({sourceRecoveryFixture=false,pool,input,scope,actor,service,args,job,parent,
   setFault,readFault,packet,readBody,stockHead,partitionHead,partitionRows,bridgeState,cacheState,head,cadState,cadHead,
   protectedRows,protectedBefore,pin,batchPendingWorkspace,catalogBatchReplayFixture=false,batchSelectionWaitFixture=false,batchSelectionIntentFixture=false,batchSelectedUnionFixture=false,batchSelectedWorkersFixture=false,batchRecordedEligibilityFixture=false,batchSelectedEvidenceFixture=false,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false,batchSelectedTransactionIndexFixture=false,batchSelectedRecoveryFixture=false,batchSelectedProgressRecoveryFixture=false,originalReads}){
-  const expectedAttempts=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture)?4:5,expectedError=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture)?'capture_failed':'access_revoked';
+  const expectedAttempts=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture||sourceRecoveryFixture)?4:5,expectedError=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture||sourceRecoveryFixture)?'capture_failed':'access_revoked';
   const operation=input.operationId,method='continueCoveredOriginalFrozenCaptureJobRecordedCatalogBatchReferencesV3',
     catalogHead=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_recorded_catalog_v2_heads WHERE operation_id=$1',[operation])).rows[0],
     groups=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_recorded_catalog_v2_groups WHERE operation_id=$1 ORDER BY group_id',[operation])).rows,
@@ -111,7 +111,7 @@ export async function runNeighborhoodCatalogBatchV3DatabaseChecks({pool,input,sc
   assert.equal((await parent()).sequence,ownedParent.sequence+2);for(const worker of [run,legacyRun,legacyWait])assert.deepEqual(await worker(args),{status:'idle'});
   assert.deepEqual(await job(),terminalJob);await assertParents();
   if(batchSelectionWaitFixture){
-    await runNeighborhoodBatchSelectionWaitV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,blobs,
+    await runNeighborhoodBatchSelectionWaitV3DatabaseChecks({sourceRecoveryFixture,pool,input,scope,actor,service,args,job,parent,blobs,
       catalogHead,groups,assertParents,setFault,readFault,originalReads,batchSelectionIntentFixture,batchSelectedUnionFixture,batchSelectedWorkersFixture,batchRecordedEligibilityFixture,batchSelectedEvidenceFixture,batchSelectedMetricsFixture,batchSelectedStatisticsFixture,batchSelectedNumericFixture,batchSelectedSemanticFixture,batchSelectedTransactionIndexFixture,batchSelectedRecoveryFixture,batchSelectedProgressRecoveryFixture});
     return;
   }

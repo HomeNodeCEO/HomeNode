@@ -70,8 +70,8 @@ import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL as TRAN
 
 /** Independent disposable job; all acquisition owners, authorization, original
  * queries, native issuance, savepoint rollback and COMMITs are real. */
-export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData,coveredTransactionIndexFixture=false,stockBatchFixture=false,partitionBatchFixture=false,catalogBatchFixture=false,catalogBatchReplayFixture=false,batchSelectionWaitFixture=false,batchSelectionIntentFixture=false,batchSelectedUnionFixture=false,batchSelectedWorkersFixture=false,batchRecordedEligibilityFixture=false,batchSelectedEvidenceFixture=false,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false,batchSelectedTransactionIndexFixture=false,batchSelectedRecoveryFixture=false,batchSelectedProgressRecoveryFixture=false}){
-  const batchFailureAttempt=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture)?4:5,batchFailureCode=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture)?'capture_failed':'access_revoked';
+export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({sourceRecoveryFixture=false,pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData,coveredTransactionIndexFixture=false,stockBatchFixture=false,partitionBatchFixture=false,catalogBatchFixture=false,catalogBatchReplayFixture=false,batchSelectionWaitFixture=false,batchSelectionIntentFixture=false,batchSelectedUnionFixture=false,batchSelectedWorkersFixture=false,batchRecordedEligibilityFixture=false,batchSelectedEvidenceFixture=false,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false,batchSelectedTransactionIndexFixture=false,batchSelectedRecoveryFixture=false,batchSelectedProgressRecoveryFixture=false}){
+  const batchFailureAttempt=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture||sourceRecoveryFixture)?4:5,batchFailureCode=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture||sourceRecoveryFixture)?'capture_failed':'access_revoked';
   const input={...sourceInput,operationId:randomUUID()},operation=input.operationId;let fault=null,stockReads=0,sourceCheckpointBefore=null;
   const observed={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
     const text=typeof c==='string'?c:c.text,completedSourcePacket=text===COMPLETED_SOURCE_PACKET||text===OWNED_SOURCE_PACKET,
@@ -192,6 +192,21 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     parent=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_v2_continuations WHERE operation_id=$1',[operation])).rows[0],
     protectedRows=async()=>({report:(await pool.query('SELECT to_jsonb(r) AS body FROM app.report_files r WHERE id=$1',[scope.report_file_id])).rows,
       assignment:(await pool.query('SELECT to_jsonb(a) AS body FROM app.assignment_files a WHERE id=$1',[scope.assignment_file_id])).rows});
+  const settleRetrySchedule=async()=>{
+    if(!sourceRecoveryFixture){
+      await pool.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET run_after=clock_timestamp() WHERE operation_id=$1',[operation]);
+      return;
+    }
+    // The NEW independent source4 captures wait for the actual native retry
+    // schedule, including the worker's existing 60-second error delay. They
+    // never shorten it. Older fixture paths retain their previous probes.
+    const remaining=Number((await pool.query(`SELECT EXTRACT(EPOCH FROM (run_after-clock_timestamp()))*1000 AS ms
+      FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1 AND organization_id=$2`,[operation,scope.organization_id])).rows[0].ms);
+    assert.ok(Number.isFinite(remaining)&&remaining<=60000);
+    if(remaining>0)await new Promise(resolve=>setTimeout(resolve,Math.ceil(remaining)+20));
+    assert.equal((await pool.query(`SELECT run_after<=clock_timestamp() AS due
+      FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1 AND organization_id=$2`,[operation,scope.organization_id])).rows[0].due,true);
+  };
   let protectedBefore=await protectedRows();
   await service.queueFrozenOriginalCaptureJobV2(input);
   assert.equal((await runInitial(args)).status,'continuation_pending');
@@ -232,7 +247,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
     error=>error.outcome_unknown===true&&error.code==='55000');
   assert.equal(fault,null);assert.equal(await head(),undefined);assert.deepEqual(await cacheState(),initialState);
   await tx(pool,client=>jobs(client).failClaim(first,'capture_failed',{retrySeconds:1}));
-  await pool.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET run_after=clock_timestamp() WHERE operation_id=$1',[operation]);
+  await settleRetrySchedule();
   fault='ack';assert.equal((await runCache(args)).status,'outcome_unknown');
   assert.equal(fault,null);assert.equal((await cacheState()).sequence,1);assert.equal((await job()).attempts,2);
   const firstHead=await head();
@@ -241,7 +256,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   fault='role';const denied=await runCache(args);assert.equal(denied.reason,'access_revoked');assert.equal(fault,null);
   assert.deepEqual(await head(),firstHead,'ending role refusal rolls actual cache/head progress back');
   await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);
-  await pool.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET run_after=clock_timestamp() WHERE operation_id=$1',[operation]);
+  await settleRetrySchedule();
   let successes=0;for(let i=0;i<50;i++){const r=await runCache(args);if(r.status==='idle')break;assert.equal(r.status,'continuation_pending');successes++;}
   const done=await job(),complete=await cacheState(),nativeHead=await head();
   assert.equal(done.attempts,3);assert.equal(done.last_error_code,'access_revoked');assert.equal(done.context_sha256,null);
@@ -354,14 +369,14 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
   assert.equal(fault,null);assert.equal(await stockHead(),undefined);assert.deepEqual(await parent(),adoptedParent);
   assert.equal((await parent()).sequence,parentBefore.sequence);assert.deepEqual(await bridgeState(),adoptedState);
   await tx(pool,client=>jobs(client).failClaim(adoptedClaim,'capture_failed',{retrySeconds:1}));
-  await pool.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET run_after=clock_timestamp() WHERE operation_id=$1',[operation]);
+  await settleRetrySchedule();
   // Only the independent recovery graphs reserve this failure for a selected
   // initial or progress worker. Older graphs keep the bridge role failure.
-  if(!batchSelectedRecoveryFixture&&!batchSelectedProgressRecoveryFixture){
+  if(!batchSelectedRecoveryFixture&&!batchSelectedProgressRecoveryFixture&&!sourceRecoveryFixture){
   fault='bridge_role';assert.equal((await bridgeWorker(args)).reason,'access_revoked');assert.equal(fault,null);
   assert.equal(await stockHead(),undefined);assert.equal((await job()).attempts,4);
   await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);
-  await pool.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET run_after=clock_timestamp() WHERE operation_id=$1',[operation]);
+  await settleRetrySchedule();
   }
   fault='bridge_ack';assert.equal((await bridgeWorker(args)).status,'outcome_unknown');assert.equal(fault,null);
   const firstStock=await stockHead(),issuedBridge=await bridgeState();
@@ -466,7 +481,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
       for(const worker of [runBatchStock,runStock,runBatchPartition,runPartition,runCatalog])assert.deepEqual(await worker(args),{status:'idle'});
       assert.deepEqual(await job(),terminalJob);
       if(catalogBatchFixture){
-        await runNeighborhoodCatalogBatchV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,
+        await runNeighborhoodCatalogBatchV3DatabaseChecks({sourceRecoveryFixture,pool,input,scope,actor,service,args,job,parent,
           setFault:value=>{fault=value;},readFault:()=>fault,packet,readBody,stockHead,partitionHead,partitionRows,
           bridgeState,cacheState,head,cadState,cadHead,protectedRows,protectedBefore,pin,batchPendingWorkspace,
           catalogBatchReplayFixture,batchSelectionWaitFixture,batchSelectionIntentFixture,batchSelectedUnionFixture,batchSelectedWorkersFixture,batchRecordedEligibilityFixture,batchSelectedEvidenceFixture,batchSelectedMetricsFixture,batchSelectedStatisticsFixture,batchSelectedNumericFixture,batchSelectedSemanticFixture,batchSelectedTransactionIndexFixture,batchSelectedRecoveryFixture,batchSelectedProgressRecoveryFixture,originalReads:()=>stockReads});

@@ -12,9 +12,9 @@ import { runNeighborhoodBatchSelectionIntentV3DatabaseChecks } from './neighborh
 
 /** Twenty-second independent real capture. Source/current/ending/COMMIT work
  * stays real; a missing appraiser command is never supplied by this worker. */
-export async function runNeighborhoodBatchSelectionWaitV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,blobs,
+export async function runNeighborhoodBatchSelectionWaitV3DatabaseChecks({sourceRecoveryFixture=false,pool,input,scope,actor,service,args,job,parent,blobs,
   catalogHead,groups,assertParents,setFault,readFault,originalReads,batchSelectionIntentFixture=false,batchSelectedUnionFixture=false,batchSelectedWorkersFixture=false,batchRecordedEligibilityFixture=false,batchSelectedEvidenceFixture=false,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false,batchSelectedTransactionIndexFixture=false,batchSelectedRecoveryFixture=false,batchSelectedProgressRecoveryFixture=false}){
-  const expectedAttempts=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture)?4:5,expectedError=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture)?'capture_failed':'access_revoked';
+  const expectedAttempts=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture||sourceRecoveryFixture)?4:5,expectedError=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture||sourceRecoveryFixture)?'capture_failed':'access_revoked';
   const operation=input.operationId,method='awaitCoveredOriginalFrozenCaptureJobBatchSelectionReferencesV3',
     before={catalog:await catalogHead(),groups:await groups(),blobs:await blobs()},
     intents=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_v2_selection_intents WHERE operation_id=$1',[operation])).rows;
@@ -65,7 +65,7 @@ export async function runNeighborhoodBatchSelectionWaitV3DatabaseChecks({pool,in
       e=>e.code==='55000');assert.deepEqual(await job(),waiting);
   }
   if(batchSelectionIntentFixture){
-    await runNeighborhoodBatchSelectionIntentV3DatabaseChecks({pool,input,scope,actor,service,args,job,parent,blobs,
+    await runNeighborhoodBatchSelectionIntentV3DatabaseChecks({sourceRecoveryFixture,pool,input,scope,actor,service,args,job,parent,blobs,
       catalogHead,groups,assertParents,setFault,readFault,originalReads,batchSelectedUnionFixture,batchSelectedWorkersFixture,batchRecordedEligibilityFixture,batchSelectedEvidenceFixture,batchSelectedMetricsFixture,batchSelectedStatisticsFixture,batchSelectedNumericFixture,batchSelectedSemanticFixture,batchSelectedTransactionIndexFixture,batchSelectedRecoveryFixture,batchSelectedProgressRecoveryFixture});
     return;
   }

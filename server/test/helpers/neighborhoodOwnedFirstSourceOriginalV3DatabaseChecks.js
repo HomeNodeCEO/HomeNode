@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { runNeighborhoodOwnedSourceLastRetryV3DatabaseChecks } from './neighborhoodOwnedSourceLastRetryV3DatabaseChecks.js';
 import { runNeighborhoodOwnedSourceTerminalFailureV3DatabaseChecks } from './neighborhoodOwnedSourceTerminalFailureV3DatabaseChecks.js';
 
-// No new graph or fixture substitute: the existing independent A/B captures
-// have REALLY committed birth17/FIRST18 and the distinct fresh18 claim at5.
-export async function runNeighborhoodOwnedFirstSourceOriginalV3DatabaseChecks({pool,input,scope,actor,service,claim,
+// No copied graph or fixture substitute: each independent capture has REALLY
+// committed birth17/FIRST18 and its distinct fresh18 claim, preserving the
+// actual fifth attempt or the separately reserved fourth attempt throughout.
+export async function runNeighborhoodOwnedFirstSourceOriginalV3DatabaseChecks({sourceRecoveryFixture=false,pool,input,scope,actor,service,claim,
   originalReads,laterFirstSource,setFault,readFault,unchanged,originalBirthTransaction}){
   const run=()=>service.readCoveredOriginalFrozenCaptureJobOwnedFirstSourceReferencesV3(input,{captureJobClaim:claim});
   let count=originalReads();
@@ -23,7 +25,7 @@ export async function runNeighborhoodOwnedFirstSourceOriginalV3DatabaseChecks({p
     finally{if(fault==='union_role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);}
     await unchanged();
   }
-  for(const invalid of [{...claim,claim_token:randomUUID()},{...claim,attempts:4}]){
+  for(const invalid of [{...claim,claim_token:randomUUID()},{...claim,attempts:claim.attempts-1}]){
     count=originalReads();await assert.rejects(service.readCoveredOriginalFrozenCaptureJobOwnedFirstSourceReferencesV3(input,
       {captureJobClaim:invalid}),/claim_lost/);assert.equal(originalReads(),count);await unchanged();
   }
@@ -40,7 +42,8 @@ export async function runNeighborhoodOwnedFirstSourceOriginalV3DatabaseChecks({p
   await unchanged();
   console.info('[native-owned18-first-source-actual-original-owner-v3]',{
     independent_capture:laterFirstSource?'B_ordinal2_after_empty_A':'A_ordinal1',
-    actual_distinct_fresh18_claim5_original17_birth_never_rebound:true,
+    actual_distinct_fresh18_claim5_original17_birth_never_rebound:!sourceRecoveryFixture,
+    actual_failure_attempt:claim.attempts,entire_original17_birth_never_rebound:true,
     every_real_original_required_subject_entire_stock_CAD_all_date_transaction_and_ENTIRE_neutral_caches_reopened:true,
     every_native_member_and_complete_first_seen_key_set_reconciled_independently:true,
     all_current_ending_source_purpose_actor_assignment_private_draft_subject_workspace_fences:true,
@@ -49,6 +52,8 @@ export async function runNeighborhoodOwnedFirstSourceOriginalV3DatabaseChecks({p
     entire_job_claim_birth_parents_blobs_history_report_choices_workspace_and_pins_unchanged:true,
     existing_aggregate_256queries_32MB_60s_and_stricter_single_use_child_250_limits_unchanged:true,
     recovery:false,NEXT_or_EMPTY:false,publication:false,activation:false,licensed_large_area:false,production_speed:false});
-  await runNeighborhoodOwnedSourceTerminalFailureV3DatabaseChecks({pool,input,scope,actor,service,claim,
+  if(sourceRecoveryFixture)await runNeighborhoodOwnedSourceLastRetryV3DatabaseChecks({pool,input,scope,actor,service,claim,
+    originalReads,laterFirstSource,setFault,readFault});
+  else await runNeighborhoodOwnedSourceTerminalFailureV3DatabaseChecks({pool,input,scope,actor,service,claim,
     originalReads,laterFirstSource,setFault,readFault});
 }

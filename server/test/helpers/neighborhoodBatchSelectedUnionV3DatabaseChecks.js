@@ -4,8 +4,9 @@ import { createCustomCohortV2ContinuationRepository as continuations } from '../
 
 /** Twenty-fourth independently captured graph. Explicit fixture intent alone
  * chooses groups. Every account and subject still come from actual originals. */
-export async function runNeighborhoodBatchSelectedUnionV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
+export async function runNeighborhoodBatchSelectedUnionV3DatabaseChecks({sourceRecoveryFixture=false,pool,input,scope,actor,service,job,parent,blobs,
   catalogHead,groups,assertParents,setFault,readFault,originalReads,claim,command}){
+  const sourceFailureAttempt=sourceRecoveryFixture?4:5,sourceFailureCode=sourceRecoveryFixture?'capture_failed':'access_revoked';
   const operation=input.operationId,method='continueCoveredOriginalFrozenCaptureJobBatchSelectedStockUnionReferencesV3',
     before={job:await job(),parent:await parent(),catalog:await catalogHead(),groups:await groups(),blobs:await blobs()},
     union=async()=>({head:(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_selected_union_v2_heads WHERE operation_id=$1',[operation])).rows,
@@ -43,11 +44,11 @@ export async function runNeighborhoodBatchSelectedUnionV3DatabaseChecks({pool,in
   for(const sequence of [2,3]){
     const issued=await tx(pool,c=>continuations(c).claimDue({limit:1,leaseSeconds:900}));
     assert.equal(issued.length,1);assert.equal(issued[0].claim.operation_id,operation);
-    assert.equal(issued[0].claim.attempts,5);assert.notEqual(issued[0].claim.claim_token,claim.claim_token);claim=issued[0].claim;
+    assert.equal(issued[0].claim.attempts,sourceFailureAttempt);assert.notEqual(issued[0].claim.claim_token,claim.claim_token);claim=issued[0].claim;
     const reads=originalReads(),result=await invoke();assert.equal(originalReads(),reads+1);
     assert.equal(result.catalog_receipt_format,'cohort_recorded_catalog_batch_receipt_v3');
     assert.equal(result.complete_distinct_selected_stock_union,sequence===3);assert.equal(result.selected_stock_accounts,2);
-    assert.equal(result.continuation.fresh_claim_required,true);assert.equal(result.continuation.attempts,5);
+    assert.equal(result.continuation.fresh_claim_required,true);assert.equal(result.continuation.attempts,sourceFailureAttempt);
     const receipt=await readBody(result.union_reference);assert.equal(receipt.format,'cohort_selected_union_receipt_v2');
     assert.equal(receipt.sequence,sequence);assert.equal(receipt.after.done,sequence===3);
     assert.equal(receipt.after.account_count,2);assert.equal(receipt.after_selected_count,2);
@@ -56,7 +57,7 @@ export async function runNeighborhoodBatchSelectedUnionV3DatabaseChecks({pool,in
     for(const row of saved.rows){const actual=(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_recorded_partition_v2_rows WHERE operation_id=$1 AND ordinal=$2',[operation,row.partition_ordinal])).rows[0];
       assert.equal(row.account_id,actual.account_id);assert.deepEqual(row.entry_reference,actual.entry_reference);}
     if(sequence===3){assert.equal(receipt.entry_reference,null);assert.deepEqual(receipt.after_counts,receipt.before_counts);}
-    const current=await job();assert.equal(current.attempts,5);assert.equal(current.last_error_code,'access_revoked');
+    const current=await job();assert.equal(current.attempts,sourceFailureAttempt);assert.equal(current.last_error_code,sourceFailureCode);
     assert.equal(current.context_sha256,null);assert.equal(current.checkpoint.evidence_refs.length,10);await immutable();
   }
   assert.deepEqual(saved.groups.map(g=>g.member_count),[1,1]);

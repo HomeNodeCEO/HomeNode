@@ -9,11 +9,12 @@ import { runCustomCohortBatchSelectedSemanticV3JobOnce as semantic } from '../..
 import { createCustomCohortCompletedIndexFirstSourceV3Repository as completedSource } from '../../src/services/neighborhoodAssessment/customCohortCompletedIndexFirstSourceV3Repository.js';
 import { runNeighborhoodCompletedIndexFirstSourceV3DatabaseChecks } from './neighborhoodCompletedIndexFirstSourceV3DatabaseChecks.js';
 
-/** Thirty-second independent capture. The actual shared native package is
+/** Independent capture. The actual shared native package is
  * frozen before capture, then reopened for EACH selected account and EMPTY.
  * Registry keys and edges never establish economic identity or source rights. */
-export async function runNeighborhoodBatchSelectedTransactionIndexV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
+export async function runNeighborhoodBatchSelectedTransactionIndexV3DatabaseChecks({sourceRecoveryFixture=false,pool,input,scope,actor,service,job,parent,blobs,
   catalogHead,groups,assertParents,setFault,readFault,originalReads,command,laterFirstSource=false}){
+  const sourceFailureAttempt=sourceRecoveryFixture?4:5,sourceFailureCode=sourceRecoveryFixture?'capture_failed':'access_revoked';
   const operation=input.operationId,method='progressCoveredOriginalFrozenCaptureJobBatchSelectedTransactionIndexReferencesV3',
     tables=['selected_transaction_index_v2_heads','selected_transaction_index_v2_rows',
       'selected_transaction_source_v2_keys','selected_transaction_legacy_v2_keys','selected_transaction_index_v2_edges'],
@@ -52,7 +53,7 @@ export async function runNeighborhoodBatchSelectedTransactionIndexV3DatabaseChec
   };
   const firstArgs={...args,cohortService:{async [method](value,options){
     try{
-      calls++;firstClaim=options.captureJobClaim;assert.equal(firstClaim.attempts,5);owned=await job();ownedParent=await parent();
+      calls++;firstClaim=options.captureJobClaim;assert.equal(firstClaim.attempts,sourceFailureAttempt);owned=await job();ownedParent=await parent();
       await assert.rejects(service.progressCoveredOriginalFrozenCaptureJobSelectedTransactionIndexReferencesV2(value,options),/invalid_receipt/);await unchanged();
       const admissionReads=originalReads();
       await assert.rejects(service.readCoveredOriginalFrozenCaptureJobCompletedIndexFirstSourceReferencesV3(value,options),/checkpoint_conflict/);
@@ -77,7 +78,7 @@ export async function runNeighborhoodBatchSelectedTransactionIndexV3DatabaseChec
   for(const sequence of [2,3]){
     let count=0,result,nextError,nextClaim;
     const stepArgs={...args,cohortService:{async [method](value,options){
-      try{count++;nextClaim=options.captureJobClaim;assert.equal(nextClaim.attempts,5);assert.notEqual(nextClaim.claim_token,firstClaim.claim_token);
+      try{count++;nextClaim=options.captureJobClaim;assert.equal(nextClaim.attempts,sourceFailureAttempt);assert.notEqual(nextClaim.claim_token,firstClaim.claim_token);
         const reads=originalReads();result=await service[method](value,options);assert.equal(originalReads(),reads+1);return result;
       }catch(error){nextError=error;throw error;}
     }}};
@@ -91,7 +92,7 @@ export async function runNeighborhoodBatchSelectedTransactionIndexV3DatabaseChec
     receipt=await body(head.receipt_reference);assert.equal(receipt.after.done,sequence===3);assert.equal(receipt.after.selected_ordinal,2);
     assert.deepEqual(current.selected_transaction_index_v2_rows.map(r=>r.ordinal).sort(),[1,2]);
     if(sequence===3){assert.equal(receipt.selected_entry,null);assert.equal(result.source_package_count,0);assert.equal(result.legacy_package_count,0);}
-    assert.equal((await job()).attempts,5);assert.equal((await job()).last_error_code,'access_revoked');assert.equal((await job()).checkpoint.evidence_refs.length,17);await immutable();
+    assert.equal((await job()).attempts,sourceFailureAttempt);assert.equal((await job()).last_error_code,sourceFailureCode);assert.equal((await job()).checkpoint.evidence_refs.length,17);await immutable();
   }
   const sources=current.selected_transaction_source_v2_keys,legacies=current.selected_transaction_legacy_v2_keys,edges=current.selected_transaction_index_v2_edges;
   assert.deepEqual(sources.map(r=>r.source_record_id).sort(),['501','503','504']);assert.deepEqual(legacies.map(r=>r.legacy_sale_key).sort(),['10','3']);assert.equal(edges.length,laterFirstSource?5:6);
@@ -129,13 +130,14 @@ export async function runNeighborhoodBatchSelectedTransactionIndexV3DatabaseChec
     assert.deepEqual((await client.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[operation])).rows,saved);throw rollback;
   }),e=>e===rollback);
   assert.deepEqual(await job(),terminal.job);assert.deepEqual(await parent(),terminal.parent);assert.deepEqual(await blobs(),terminal.blobs);assert.deepEqual(await snapshot(),terminal.index);await immutable();
-  await runNeighborhoodCompletedIndexFirstSourceV3DatabaseChecks({pool,input,scope,actor,service,job,parent,blobs,
+  await runNeighborhoodCompletedIndexFirstSourceV3DatabaseChecks({sourceRecoveryFixture,pool,input,scope,actor,service,job,parent,blobs,
     snapshot,immutable,setFault,readFault,originalReads,laterFirstSource});
   console.info('[native-batch-selected-transaction-index-v3]',{independent_actual_V3_semantic_worker_fresh_EMPTY:true,
     every_selected_complete_original_ENTIRE_cache_and_every_prior_native_member_reconciled_again:true,
     real_shared_source_replayed_per_selected_account_exact_namespaced_keys_edges_and_first_seen:!laterFirstSource,
     first_registered_source_belongs_to_selected_ordinal_two_after_empty_A:laterFirstSource,
-    cache_refusal_real_orphan_COMMIT_rollback_lost_first_ACK_concurrent_A_B_fresh_EMPTY_native_claims5:true,
+    cache_refusal_real_orphan_COMMIT_rollback_lost_first_ACK_concurrent_A_B_fresh_EMPTY_native_claims5:!sourceRecoveryFixture,
+    actual_preserved_native_claim_failure_attempt:sourceFailureAttempt,
     DONE_all_claim_recovery_expiry_cancelled_next_owner_excluded_native_parents_history_pins_preserved:true,
     ordinary_worker_recovery_below5:'not_exercised_requires_new_reserved_failure_graph',
     new_stage_all_ending_authority_faults:'not_separately_injected_prior_independent_stages_cover_shared_fences',

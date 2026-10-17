@@ -1,3 +1,55 @@
+## Reserved fourth-attempt source retry (2026-10-17, unregistered; native validation pending)
+
+Two additional independent native captures reserve the fourth failure attempt
+for the source stage. The existing captures still reach attempt five and retain
+their original terminal-failure probes. The new captures omit one induced bridge
+failure, then preserve their actual counter and error through every original
+source-prefix, ENTIRE neutral/CAD cache, stock, partition, catalog, explicit
+selection, selected population, index, original source birth and initial owned
+claim operation. Assertions distinguish the actual fourth attempt from the
+unchanged fifth-attempt cases; a forged refund always reduces the actual counter.
+No original or native parent is copied or projected to create the new captures.
+
+The additional captures wait for the actual native retry schedules, including
+the existing worker's 60-second delay, instead of shortening them. All original
+reads, positive and negative authority/subject/workspace tests, native COMMIT
+and rollback probes, failure ceiling and existing 180-second case deadlines
+remain. Older fixture paths retain their previous behavior. The additional
+captures have the existing source-prefix test prefix and run again in the full
+prepared suite. Their authored tests are not executed database proof.
+
+Unregistered `20261228_custom_cohort_source_owned_last_retry_v3.sql` and a
+separate closed repository retain one normal failure of the actual owned claim
+at attempt four. The immutable record contains the ENTIRE running job and its
+initial claim transaction. The native transition changes only retry status,
+token/lease clearing, closed error, update time and a native schedule between
+one and 900 seconds. It preserves the actual fourth attempt, every root,
+original birth, initial claim, native parent, subject/report/workspace choice
+and pin. The complete native FIRST key/member/edge and captured live claim
+are independently reopened at genuine COMMIT. All three complete previous
+immediate guard bodies and the full earlier job deferred body remain after
+one closed retry branch. All eight older deferred events stay enabled; the
+ninth rejects an orphan retry record without its real paired job update.
+
+Native probes follow the actual original owner and all ending fences. They
+require malformed tuple/transaction/scope/schedule refusal, genuine orphan
+COMMIT/full rollback, then real original I/O and actual ending role revocation.
+A must acknowledge the retry COMMIT; B loses acknowledgment after its actual
+COMMIT. Both compare the full captured running job and actual retry tuple plus
+all earlier rows/blobs/claims, report/assignment, subject snapshot/manual sections,
+workspace/choices and pins. They let the real one-second schedule become due
+before proving that duplicate retries, generic/old queues and the stale original
+owner cannot adopt it or perform original I/O. Error bookkeeping grants no
+source authority, refunds no failure and publishes no data.
+
+Five detached boundary checks pass serially (97.1234 ms, zero failures,
+cancellations or skips). Static checks preserve the complete prior guard bodies;
+native prefix and full prepared execution on both additional captures remain
+required. Actual fresh fifth-attempt claiming and original replay, earlier
+failure recovery, expiry/cancellation, source NEXT/fresh EMPTY, complete economic
+resolution/publication and terminal pin transfer/retirement remain unfinished.
+No registry, worker, route, schedule or production activation is changed.
+
 ## Owned18 terminal failure at five (2026-10-17, unregistered; native validation pending)
 
 Unregistered `20261227_custom_cohort_source_owned_terminal_failure_v3.sql` and

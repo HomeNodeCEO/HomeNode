@@ -26,7 +26,7 @@ export async function runCustomCohortReadFenceConcurrencyDatabaseChecks({pool,au
   const signatureInsert=`INSERT INTO app.custom_appraisal_signed_snapshots
     (assignment_file_id,canonical_file_name,schema_version,snapshot,checksum_sha256,signed_by,organization_id,signed_by_user_id)
     SELECT w.assignment_file_id,w.canonical_file_name,w.schema_version,to_jsonb(w),
-      encode(digest(convert_to(to_jsonb(w)::text,'UTF8'),'sha256'),'hex'),u.display_name,a.organization_id,u.id
+      encode(sha256(convert_to(to_jsonb(w)::text,'UTF8')),'hex'),u.display_name,a.organization_id,u.id
     FROM app.custom_appraisal_workfiles w JOIN app.assignment_files a ON a.id=w.assignment_file_id
     JOIN app_auth.users u ON u.id=$2::uuid WHERE w.assignment_file_id=$1 RETURNING id`;
   assert.equal((await pool.query('SELECT app.custom_cohort_subject_shared_fences_v1_ready() AS ready')).rows[0].ready,true);

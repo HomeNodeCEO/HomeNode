@@ -1,3 +1,4 @@
+import { runNeighborhoodCompletedIndexNextSourceV3DatabaseChecks } from './neighborhoodCompletedIndexNextSourceV3DatabaseChecks.js';
 import assert from 'node:assert/strict';
 import { withCustomCohortJobTransaction as tx } from '../../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
 import { createCustomCohortV2ContinuationRepository as continuations } from '../../src/services/neighborhoodAssessment/customCohortV2ContinuationRepository.js';
@@ -128,6 +129,8 @@ export async function runNeighborhoodCompletedIndexFirstSourceV3DatabaseChecks({
   assert.equal(readFault(),null);assert.equal(originalReads(),reads+1);await unchanged();
   reads=originalReads();assert.deepEqual(await prepare(),proposed);assert.equal(originalReads(),reads+1);await unchanged();
   await runNeighborhoodSourceResolutionParentV3DatabaseChecks({pool,scope,claim:next.claim,owned,unchanged,laterFirstSource,candidate});
+  if(sourceRecoveryFixture==='next-original')await runNeighborhoodCompletedIndexNextSourceV3DatabaseChecks({pool,input,scope,actor,service,
+    claim:next.claim,unchanged,setFault,readFault,originalReads,laterFirstSource});
   await runNeighborhoodFirstSourceBindingOwnerV3DatabaseChecks({sourceRecoveryFixture,pool,input,scope,actor,service,claim:next.claim,
     unchanged,setFault,readFault,originalReads,laterFirstSource});
   console.info('[native-completed-index-first-source-candidate-v3]',{

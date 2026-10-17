@@ -66,7 +66,7 @@ const freeze=v=>{if(v&&typeof v==='object'&&!Object.isFrozen(v)){Object.values(v
  * returned identity/count is a source grant, economic equivalence or eligibility.
  * In particular selected source/link accounts never override a sale's outside
  * account, infer price allocation or inherit another row's date/currency/area. */
-export function resolveNeighborhoodOriginalSourceResolutionV3(...args){
+function resolve(args,nextSource){
   if(args.length!==3||typeof args[2]!=='function')fail('invalid_input');const check=args[2];
   const input=snapshot({packet:args[0],membership:args[1]},check),
     p=data(input.packet,['package_version','kind','native_key','counts','rows','retained_effective_date','retained_observation_period',
@@ -78,7 +78,8 @@ export function resolveNeighborhoodOriginalSourceResolutionV3(...args){
   if(typeof m.subject_account_id!=='string'||!m.subject_account_id||m.subject_account_id.length>64
     ||!m.subject_account_id.isWellFormed()||m.subject_account_id.trim()!==m.subject_account_id
     ||/[\u0000-\u001f\u007f]/.test(m.subject_account_id)||typeof m.subject_selected_union_member!=='boolean'
-    ||m.coverage!=='whole_native_packages_for_first_registered_source_first_seen_account_only'
+    ||m.coverage!==(nextSource?'whole_native_packages_for_next_registered_source_first_seen_account_only'
+      :'whole_native_packages_for_first_registered_source_first_seen_account_only')
     ||m.economic_property_membership!=='not_established'||m.global_selected_native_deduplication!==false)fail('invalid_membership');
   id(p.native_key);const effective=assessmentDate(p.retained_effective_date),period=prepareNeighborhoodTransactionRetainedPeriodV1(p.retained_observation_period,effective),
     counts=data(p.counts,KINDS),native=new Map(),observed=Object.fromEntries(KINDS.map(k=>[k,0]));
@@ -160,3 +161,8 @@ export function resolveNeighborhoodOriginalSourceResolutionV3(...args){
     authority:'not_established',report_update:'none'};
   check();if(Buffer.byteLength(json(result))>8192)fail('output_limit');return freeze(result);
 }
+
+// Separate closed DATA interpretations; neither export establishes native
+// origin, source rights or progress. The actual owner supplies whole originals.
+export function resolveNeighborhoodOriginalSourceResolutionV3(...args){return resolve(args,false);}
+export function resolveNeighborhoodNextOriginalSourceResolutionV3(...args){return resolve(args,true);}

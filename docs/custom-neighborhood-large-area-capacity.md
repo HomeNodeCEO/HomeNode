@@ -1,5 +1,34 @@
 # Complete larger-area Custom neighborhood studies
 
+## Retained-map viewport admission (2026-10-17, not released)
+
+Two bounded, read-only Hardy reloads on release `92b5b084` retained the saved
+3-mile period, choices and statistics but showed the parcel-detail failure.
+Actual Render HTTP logs show two concurrent viewport calls per reload: one
+200 and one 503 (955/1549 ms, then 411/2093 ms). The earlier plain search query
+did not install a Render path filter; it is not evidence of missing requests.
+The structured path filter confirms the calls. These measurements establish
+neither a complete licensed acquisition nor live map/speed acceptance.
+
+Each legacy viewport rechecks the same assignment using `FOR UPDATE NOWAIT`.
+The API's one-active-request gate is per process, so requests on separate
+instances can contend on that native fence. The legacy tile reader now settles
+one response before admitting the next tile, preserving the original one-pass
+small view, exact subdivision, complete-leaf validation, all map/query/byte
+ceilings and the caller's single signal/deadline. It adds no retry or deadline
+extension and leaves every server lock and source-purpose decision intact.
+
+The observed 503's internal code was not logged by the previous viewport route;
+contention is a supported explanation to verify after release, not an already
+observed SQLSTATE. Closed diagnostics now distinguish lock/query/deadlock,
+serialization, admission and fixed interruption reasons for the two viewport
+actions only. No raw error, identity, request, source value or SQL is logged.
+Regression checks hold a first leaf open against a shared-lock transport,
+require that no sibling starts, refuse partial publication, and retain abort,
+unavailable, malformed-response and aggregate-capacity behavior. Fresh protected
+review/cloud checks and bounded live verification are required before closing
+the Hardy parcel-detail failure or claiming speed acceptance.
+
 ## Selection-wait deployment validation (2026-10-16, released in 92b5b084)
 
 The actual included review of a664fb2 identified the widened status CHECK's
@@ -35,8 +64,15 @@ fixture's validated state; both clients are released, including refusal paths.
 No job/evidence rows are changed. Nine focused checks pass, including refusal
 of prevalidated fixtures, unexpected databases, exclusive validation locks and
 lost validation-COMMIT acknowledgments. Those doubles are protocol checks, not
-native scan proof. Fresh exact-head cloud native/full-suite checks and actual
-included review remain required before a protected merge and release.
+native scan proof. Exact head `aea36794` passed all 16 cloud checks, including
+the genuine first scan with the complete enqueued job tuple unchanged, and
+actual included review `866d3ad1` completed with no actionable findings. Normal
+protected merge #1256 produced `92b5b084`, with the identical reviewed tree.
+Its independent push native suite passed before the API's manual deploy;
+Render pre-deploy migrations completed and both API/frontend became Live on
+that commit. `/health`, `/ready` and the enabled c777de9 rollback were verified.
+This release does not activate unfinished source stages or establish map/speed
+acceptance: the bounded Hardy parcel-detail failures are recorded above.
 All prior original reads,
 source-purpose decisions, actor/workspace fences, guards, failure histories,
 budgets, deadlines, waiting semantics and inactive stage routing are unchanged.

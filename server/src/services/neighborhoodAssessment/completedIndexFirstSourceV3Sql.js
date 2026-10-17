@@ -89,3 +89,16 @@ export const THIRD_FIRST_SOURCE_CONTEXT_V3_SQL=`
   job.operation_id,job.organization_id,job.claim_token,job.attempts) f
   ON f.operation_id=p.operation_id AND f.organization_id=p.organization_id
  WHERE job.operation_id=$1::uuid AND p.generation_id=$2::uuid`;
+
+// Separate actual normal fourth4 context; no historical initial4 borrowing.
+export const FOURTH_FIRST_SOURCE_CONTEXT_V3_SQL=`
+ SELECT p.generation_id,f.selected_account_id AS account_id,f.first_selected_ordinal AS ordinal,
+  f.partition_ordinal,f.entry_reference,f.metric_row_reference,f.contribution_row_reference,
+  p.index_reference,p.index_sequence,f.kind,f.native_key,f.first_selected_ordinal
+ FROM app.neighborhood_custom_cohort_capture_jobs job
+ JOIN LATERAL app.neighborhood_source_resolution_v3_fourth_parent(
+  job.operation_id,job.organization_id,job.claim_token,job.attempts) p ON true
+ JOIN LATERAL app.neighborhood_source_resolution_v3_fourth_first(
+  job.operation_id,job.organization_id,job.claim_token,job.attempts) f
+  ON f.operation_id=p.operation_id AND f.organization_id=p.organization_id
+ WHERE job.operation_id=$1::uuid AND p.generation_id=$2::uuid`;

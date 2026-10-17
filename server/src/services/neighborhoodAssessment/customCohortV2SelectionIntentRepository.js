@@ -1001,6 +1001,38 @@ export function createCustomCohortV2SelectionIntentRepository(client){
     return Object.freeze({command_id:intent.command_id,claim,issued_attempts:row.issued_attempts,
       included_recorded_group_ids:intent.included_recorded_group_ids,catalog_reference:intent.catalog_reference});
   },
+  async readForFourthFirstSource(...args){
+    if(args.length!==2)fail('invalid_input');
+    const claim=prepareCustomCohortCaptureJobClaim(data(args[0],['operation_id','claim_token','attempts'])),
+      o=data(args[1],['scope','actorUserId','workspaceTarget']),scope=authority(o),target=workspaceOf(o.workspaceTarget,claim.operation_id),
+      values=[claim.operation_id,scope.organization_id,claim.claim_token,claim.attempts,scope.report_file_id,
+        scope.assignment_file_id,scope.account_id,o.actorUserId],started=await tx();
+    if(await tx()!==started)fail('caller_transaction_required');
+    const row=data(one(await client.query(`/* custom-cohort-v2-selection-intent:fourth-first-source-read */
+      SELECT command.command_id::text,command.request_sha256,command.checkpoint,command.profile_reference,
+        command.workspace_revision,command.workspace_checkpoint,command.included_group_ids,command.issued_attempts,
+        command.resume_claim_token::text,p.parent_checkpoint AS retained_birth_checkpoint
+      FROM app.neighborhood_source_resolution_v3_fourth_parent($1::uuid,$2::uuid,$3::uuid,$4::integer) p
+      JOIN app.neighborhood_custom_cohort_v2_selection_intents command USING(operation_id,organization_id,command_id,request_sha256)
+      JOIN app.neighborhood_source_resolution_v3_fourth_first($1::uuid,$2::uuid,$3::uuid,$4::integer) first_row
+        USING(operation_id,organization_id)
+      WHERE p.report_file_id=$5::uuid AND p.assignment_file_id=$6::bigint AND p.account_id=$7 AND p.actor_user_id=$8::uuid
+      FOR SHARE OF command NOWAIT`,values)),['command_id','request_sha256','checkpoint','profile_reference',
+      'workspace_revision','workspace_checkpoint','included_group_ids','issued_attempts','resume_claim_token','retained_birth_checkpoint']);
+    const issued=retainedSourceCheckpoint(row.checkpoint,'frozen_recorded_catalog_refs_v2',9),
+      birth=retainedSourceCheckpoint(row.retained_birth_checkpoint,'frozen_selected_transaction_index_refs_v2',17);
+    if(!same(birth.evidence_refs.slice(0,9),issued.evidence_refs)
+      ||typeof row.request_sha256!=='string'||!/^[a-f0-9]{64}$/.test(row.request_sha256)
+      ||!same(ref(row.profile_reference),getNeighborhoodOriginalRecordedGroupV2Profile().definition_blob.ref))fail('checkpoint_changed');
+    if(row.workspace_revision!==target.revision||!same(prepareCustomNeighborhoodWorkspaceCheckpoint(row.workspace_checkpoint),target.checkpoint))fail('workspace_changed');
+    if(!Number.isInteger(row.issued_attempts)||row.issued_attempts<1||row.issued_attempts>claim.attempts
+      ||typeof row.resume_claim_token!=='string'||!UUID.test(row.resume_claim_token)||claim.claim_token===row.resume_claim_token)fail('claim_lost');
+    const intent=prepareCustomCohortV2SelectionIntent({command_id:row.command_id,catalog_reference:issued.evidence_refs[8],
+      workspace_revision:row.workspace_revision,included_recorded_group_ids:row.included_group_ids});
+    if(await tx()!==started)fail('caller_transaction_required');
+    return Object.freeze({command_id:intent.command_id,claim,issued_attempts:row.issued_attempts,
+      included_recorded_group_ids:intent.included_recorded_group_ids,catalog_reference:intent.catalog_reference});
+  },
   async readForSemanticStatistics(rawClaim,raw){
     const claim=prepareCustomCohortCaptureJobClaim(data(rawClaim,['operation_id','claim_token','attempts'])),
       o=data(raw,['scope','actorUserId','workspaceTarget']),scope=authority(o),target=workspaceOf(o.workspaceTarget,claim.operation_id),

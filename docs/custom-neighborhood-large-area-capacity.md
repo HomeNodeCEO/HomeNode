@@ -37,6 +37,15 @@ register or activate a stage, or establish licensed acquisition/live speed.
 
 ## Clean first-attempt source native producer (2026-10-17, inactive)
 
+The `4e144300` native prefix run passed28 of30 cases; both new clean cases
+stopped at the CAD adversarial claim probe. That probe hard-coded forged attempt
+four, which reaches deferred COMMIT from the previous actual attempt three but
+is rejected by the immediate claim guard from actual attempt one. It now derives
+the forged attempt as the actual CAD claim plus one. The real lease-expiry DML,
+native deferred COMMIT refusal and whole-state rollback assertions remain
+required. No refusal pattern, deadline, failure counter, native guard or runtime
+code is relaxed. Fresh exact-head native execution remains required.
+
 The `4e144300` server run exposed four fixture-shape checks that still expected
 the previous 41-case matrix. Their explicit expectations now include the two
 appended clean cases and the extended later-account selector. All previous

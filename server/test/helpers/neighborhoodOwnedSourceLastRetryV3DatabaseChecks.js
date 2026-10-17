@@ -150,5 +150,5 @@ export async function runNeighborhoodOwnedSourceLastRetryV3DatabaseChecks({pool,
     fresh5_claim:false,lower1_through3:false,expired_recovery:false,NEXT_or_EMPTY:false,publication:false,
     pin_transfer:false,activation:false,licensed_large_area:false,production_speed:false});
   await runNeighborhoodSourceFinalRecoveryClaimV3DatabaseChecks({pool,input,scope,actor,service,claim,
-    originalReads,laterFirstSource});
+    originalReads,laterFirstSource,setFault,readFault});
 }

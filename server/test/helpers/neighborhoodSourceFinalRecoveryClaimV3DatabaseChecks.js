@@ -1,3 +1,4 @@
+import { runNeighborhoodRecoveredFirstSourceOriginalV3DatabaseChecks } from './neighborhoodRecoveredFirstSourceOriginalV3DatabaseChecks.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -17,7 +18,7 @@ const jobTable='app.neighborhood_custom_cohort_capture_jobs',
 // Run LAST on each additional independently acquired A/B graph, AFTER all
 // original18/real retry4 COMMIT/whole-row/old-queue refusal proofs. No free facts.
 export async function runNeighborhoodSourceFinalRecoveryClaimV3DatabaseChecks({pool,input,scope,actor,service,
-  claim:oldClaim,originalReads,laterFirstSource}){
+  claim:oldClaim,originalReads,laterFirstSource,setFault,readFault}){
   const op=input.operationId,read=async name=>(await pool.query(`SELECT to_jsonb(r) AS body FROM app.${name} r
     WHERE operation_id=$1 ORDER BY to_jsonb(r)::text COLLATE "C"`,[op])).rows,
     job=async()=>(await read('neighborhood_custom_cohort_capture_jobs'))[0].body,
@@ -157,4 +158,8 @@ export async function runNeighborhoodSourceFinalRecoveryClaimV3DatabaseChecks({p
     source_authority:'not_established',fresh5_original_replay:false,lower1_through3:false,
     expired_recovery:false,NEXT_or_EMPTY:false,publication:false,pin_transfer:false,
     activation:false,licensed_large_area:false,production_speed:false});
+  const history=(await pool.query('SELECT birth_transaction_id::text FROM app.neighborhood_custom_cohort_source_resolution_v3_claims WHERE operation_id=$1 AND organization_id=$2',[op,scope.organization_id])).rows[0];
+  await runNeighborhoodRecoveredFirstSourceOriginalV3DatabaseChecks({pool,input,scope,actor,service,claim:winner.claim,
+    originalReads,laterFirstSource,setFault,readFault,unchanged:preserved,originalBirthTransaction:history.birth_transaction_id,
+    retryTransaction:String(durable.retry_transaction_id),recoveryTransaction:String(durable.issued_transaction_id)});
 }

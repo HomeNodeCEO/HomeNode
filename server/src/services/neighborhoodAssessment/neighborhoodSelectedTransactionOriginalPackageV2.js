@@ -412,3 +412,19 @@ ${ownedFirst?OWNED_FIRST_SOURCE_CONTEXT_V3_SQL:COMPLETED_INDEX_FIRST_SOURCE_CONT
 export const NEIGHBORHOOD_NEXT_SELECTED_TRANSACTION_INDEX_ORIGINAL_PACKAGE_V2_SQL=transactionIndexOriginalPackageSql();
 export const NEIGHBORHOOD_FIRST_COMPLETED_INDEX_SOURCE_ORIGINAL_PACKAGE_V3_SQL=transactionIndexOriginalPackageSql(true);
 export const NEIGHBORHOOD_OWNED_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL=transactionIndexOriginalPackageSql(true,true);
+
+// Closed recovered5 original query. Retain every byte of all previous exported
+// original queries. Only the fixed module-owned native ownership identifiers
+// and its diagnostic tag differ; no caller SQL, cursor, key or callback.
+function recoveredFirstSourceOriginalPackageSql(){
+ let sql=NEIGHBORHOOD_OWNED_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL;
+ for(const [from,to,count]of [
+  ['neighborhood-owned-first-source-original-package-v3','neighborhood-recovered-first-source-original-package-v3',1],
+  ['app.neighborhood_source_resolution_v3_owned_first_parent(','app.neighborhood_source_resolution_v3_recovered_parent(',1],
+  ['app.neighborhood_source_resolution_v3_owned_first(','app.neighborhood_source_resolution_v3_recovered_first(',2]]){
+  if(sql.split(from).length!==count+1)throw new TypeError('neighborhood_recovered_first_source_original_sql_shape');
+  sql=sql.split(from).join(to);
+ }
+ return sql;
+}
+export const NEIGHBORHOOD_RECOVERED_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL=recoveredFirstSourceOriginalPackageSql();

@@ -1,3 +1,40 @@
+## Recovered fifth-attempt original owner (2026-10-17, inactive; native validation pending)
+
+A separate closed original owner reads under the actual recovered attempt-five
+claim. It reopens the complete native original17 birth, initial owned4 claim,
+recorded failure4, retained retry tuple and independent recovered FIRST graph.
+Dedicated checkpoint, command and first-account readers use that native history.
+The initial owned18 readers retain their original admission rules. All 15 earlier
+original SQL exports and both earlier context SQL exports remain byte identical.
+
+The new fixed original query changes only its diagnostic tag and the native
+ownership functions. It retains the complete original package, required subject,
+whole selected stock/CAD/all-date transaction originals, ENTIRE neutral/CAD
+caches, complete first-seen key set and independent prior native member checks.
+The same current AND ending source-purpose/actor/assignment/private-draft/subject/
+workspace fences run in the same bounded transaction. After every ending fence,
+the owner rereads its actual recovered native parent and compares stored candidate
+bytes with its privately reproduced whole-original candidate. It reports the
+original birth, retry and recovery transactions without rebinding any of them.
+
+Authored native probes follow the actual fresh5 winning COMMIT on both A/B
+captures. They require role loss before original I/O, eight actual ending faults,
+stale token/attempt refusal, lost acknowledgment after actual read-only COMMIT
+and positive current-authorized replay. Full recovered job, every previous native
+row/blob/claim/failure, report/assignment, subject snapshot/manual sections,
+workspace/choices and pins must remain unchanged. The old original owner still
+refuses the fresh5 token. No callback, supplied cursor, source key, count or cached
+conclusion can select or satisfy the new owner.
+
+Eighteen focused checks passed serially in 2003.4246 ms with zero failures,
+cancellations or skips. Both prefix and full prepared native execution remain
+required. The existing aggregate 256 queries/32 MB/60 seconds, stricter
+single-use child250 and native case deadlines are unchanged. Recovered-claim
+terminal closure, lower1–3 and expired recovery, NEXT/fresh EMPTY, complete
+economic resolution/publication, terminal pin transfer/retirement and coherent
+activation remain unfinished. No worker/route/registry activation, licensed
+large-area acceptance or production speed proof is claimed.
+
 ## Final normal source recovery claim (2026-10-17, unregistered; native validation pending)
 
 Unregistered `20261229_custom_cohort_source_final_recovery_claim_v3.sql` and a

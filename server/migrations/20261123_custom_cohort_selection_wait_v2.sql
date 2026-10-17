@@ -1,9 +1,12 @@
 -- Dormant, lease-neutral waiting boundary. This issues NO human command,
 -- selection, completed context, source grant, publication or pin retirement.
+-- The widened CHECK is a superset of the still-enforced old CHECK. Avoid a
+-- table scan while holding ACCESS EXCLUSIVE; validate in a separate migration
+-- transaction after this installation has committed and released its lock.
 ALTER TABLE app.neighborhood_custom_cohort_capture_jobs
   DROP CONSTRAINT neighborhood_custom_cohort_capture_jobs_status_check,
   ADD CONSTRAINT neighborhood_custom_cohort_capture_jobs_status_check
-    CHECK(status IN ('queued','running','retry','awaiting_selection','succeeded','failed','cancelled'));
+    CHECK(status IN ('queued','running','retry','awaiting_selection','succeeded','failed','cancelled')) NOT VALID;
 
 CREATE FUNCTION app.guard_neighborhood_cohort_v2_selection_wait() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE head app.neighborhood_custom_cohort_recorded_catalog_v2_heads%ROWTYPE; receipt jsonb;

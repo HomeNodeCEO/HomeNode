@@ -1904,6 +1904,10 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
         if(fault==='role')await pool.query('DELETE FROM app_auth.membership_roles WHERE organization_id=$1 AND user_id=$2',[organization,actor]);
         if(fault==='subject')await client.query("UPDATE app.appraisal_subject_snapshots SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2000') WHERE id=$1",[sourceSnapshot]);
         if(fault==='claim')await client.query('UPDATE app.neighborhood_custom_cohort_capture_jobs SET claim_token=$1 WHERE operation_id=$2',[randomUUID(),refsOperation]);
+        // Once the provisional immutable intent exists, a foreign token is a
+        // native SQL refusal. Expiry separately reaches the actual ending
+        // live-claim fence without bypassing that mutation guard.
+        if(fault==='intent_claim_expired')await client.query("UPDATE app.neighborhood_custom_cohort_capture_jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1",[refsOperation]);
         if(fault==='cancel')refsAbort.abort();
         if(fault==='cad_license')await setCadFixtureGrant(pool,organization,{...cadGrant,revoked_at:cadGrant.valid_from});
         if(fault==='cad_expiry')await setCadFixtureGrant(pool,organization,{...cadGrant,expires_at:cadGrant.valid_from});
@@ -4121,8 +4125,10 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
             included_recorded_group_ids:[groupB.recorded_group.assigned_group_id]},
           intentOptions={selectionIntent},readIntents=async()=>(await pool.query(
             'SELECT * FROM app.neighborhood_custom_cohort_v2_selection_intents WHERE operation_id=$1',[refsOperation])).rows,
+          waitingWholeJob=(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[refsOperation])).rows[0],
           assertWaitingUnchanged=async()=>{
             assert.deepEqual(await continuationJob(),waiting);assert.deepEqual(await readIntents(),[]);
+            assert.deepEqual((await pool.query('SELECT * FROM app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1',[refsOperation])).rows[0],waitingWholeJob);
             assert.deepEqual(await readCatalogHead(),catalogFinal);assert.deepEqual(await readCatalogGroups(),catalogGroups);
             assert.deepEqual(await readPartitionHead(),partitionFinal);assert.deepEqual(await readPartitionRows(),partitionRows);
             assert.deepEqual(await continuationRow(),catalogReadContinuation);assert.equal(await refsBlobCount(),catalogFinalBlobs);
@@ -4160,7 +4166,8 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
           ['catalog_prior_head_ending',/group_workspace_selection_changed/],['catalog_workspace_revision_ending',/workspace_target_changed/],
           ['catalog_workspace_pending_ending',/group_workspace_study_changed/],['catalog_workspace_missing_ending',/group_workspace_unavailable/],
           ['license',/market_data_access_denied/],['role',/job_actor_access_revoked/],['subject',/subject_changed/],
-          ['claim',/claim_lost/],['cancel',/cancelled/],['transaction_header',/cache_unavailable/],
+          ['claim',/selection_intent_job_conflict_initial_claim/],['intent_claim_expired',/claim_lost/],
+          ['cancel',/cancelled/],['transaction_header',/cache_unavailable/],
           ['catalog_read_counts_ending',/catalog_original_mismatch/],['catalog_read_head_ending',/checkpoint_conflict|catalog_original_mismatch/]]){
           refsFault=fault;refsAbort=new AbortController();const from=refsCalls.length;
           await assert.rejects(freshRefsOwner()[intentMethod](refsInput,{...intentOptions,signal:refsAbort.signal}),reason);
@@ -4229,6 +4236,7 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
           exact_nine_roots_catalog_profile_request_pending_workspace_and_prior_head:true,
           same_whole_owner_budget_current_rights_subject_original_cache_partition_and_ending_fences:true,
           all_ending_refusals_rollback_provisional_command_and_fresh_lease:true,
+          provisional_token_substitution_native_refusal_and_separate_actual_expired_ending_claim_refusal:true,
           revoked_license_known_and_unknown_IDs_refuse_before_any_known_ID_lookup:true,
           native_orphan_resume_immutable_command_update_delete_truncate_and_free_success_root_change_refused:true,
           real_resume_DML_rollback_lost_real_COMMIT_ack_and_exact_read_only_replay:true,

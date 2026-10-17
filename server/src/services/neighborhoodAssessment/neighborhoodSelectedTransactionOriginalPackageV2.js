@@ -473,3 +473,18 @@ function fourthFirstSourceOriginalPackageSql(){
  return sql;
 }
 export const NEIGHBORHOOD_FOURTH_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL=fourthFirstSourceOriginalPackageSql();
+
+// Closed actual normal-fifth package. Every prior whole-original query is
+// unchanged; only fixed native identifiers and the diagnostic tag differ.
+function fifthFirstSourceOriginalPackageSql(){
+ let sql=NEIGHBORHOOD_FOURTH_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL;
+ for(const [from,to,count]of [
+  ['neighborhood-fourth-first-source-original-package-v3','neighborhood-fifth-first-source-original-package-v3',1],
+  ['app.neighborhood_source_resolution_v3_fourth_parent(','app.neighborhood_source_resolution_v3_fifth_parent(',1],
+  ['app.neighborhood_source_resolution_v3_fourth_first(','app.neighborhood_source_resolution_v3_fifth_first(',2]]){
+  if(sql.split(from).length!==count+1)throw new TypeError('neighborhood_fifth_first_source_original_sql_shape');
+  sql=sql.split(from).join(to);
+ }
+ return sql;
+}
+export const NEIGHBORHOOD_FIFTH_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL=fifthFirstSourceOriginalPackageSql();

@@ -1,3 +1,26 @@
+## Whole originals under the actual fifth source claim (2026-10-17, inactive)
+
+A dedicated normal-fifth FIRST owner reopens every whole source, CAD,
+stock, required subject and all-date transaction original, ENTIRE neutral
+and CAD caches and complete native member/key sets under the actual fifth5
+claim. Native original17, birth18, owned1, failure1, second2, failure2, third3,
+failure3, fourth4, failure4 and FIRST/member parents remain independent. The
+separate initial4 and recovered5 readers still refuse this normal fifth claim.
+
+Current and ending source-purpose, CAD-purpose, actor, assignment, private
+draft, subject and workspace decisions repeat around the actual originals.
+Retained candidate bytes must equal private whole-original reproduction.
+The existing A/B lineage adds before-I/O refusals, ten real ending faults,
+full rollback, lost actual read-only COMMIT ACK and identical fresh reopen.
+Every original parent, claim, grant, role, report, appraiser choice and pin
+remains unchanged. Existing aggregate256-SQL/32MB/60s, single-use250-original
+child bounds, all prior native cases, deadlines and failure ceiling remain.
+
+Fresh complete cloud/native validation is pending. No source NEXT cursor,
+fresh EMPTY, durable economic progress, complete statistics, publication,
+terminal pins, licensed acquisition or live-speed proof is established.
+No migration, route, worker or scheduler is activated.
+
 ## Actual final fifth source claim (2026-10-17, inactive)
 
 A separate unregistered native claim consumes committed normal failure4 only

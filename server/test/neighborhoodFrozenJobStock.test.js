@@ -1325,6 +1325,30 @@ test('paired originals reconcile two different accounts, omit blocked fallback a
   assert.equal(empty.next,null);assert.equal(empty.subject,null);assert.equal(empty.distinct_original_count,0);
 });
 
+test('paired capacity refusal is nonretryable and cannot reset its single-use budget (DATA fixture only)',async()=>{
+  for(const [changes,reason]of [
+    [{account_id:'STOCK-B',next_parcels:125,next_accounts:1,subject_parcels:124,subject_accounts:1,
+      original_count:251,page_count:0,page_json:'[]'},/account_package_row_limit/],
+    [{packet_oversize:true},/account_package_byte_limit/],
+  ]){
+    const f=await stockOriginalCellFixture(({text,rows})=>text===NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL
+      ?result({account_id:'STOCK-A',geographic_parcel_count:'1',subject_account_id:'STOCK-A',subject_geographic_parcel_count:'1',
+        next_parcels:2,next_accounts:1,subject_parcels:2,subject_accounts:1,original_count:3,page_count:3,
+        invalid_count:0,packet_oversize:false,page_json:JSON.stringify([...rows.accounts,...rows.parcels]),...changes}):null);
+    const reader=f.pages();let failure;
+    await assert.rejects(reader.subjectAndRecordedGroupHousingAccountPackage({cursor:''},{includeSubject:true}),error=>{
+      failure=error;return error instanceof TypeError&&reason.test(error.message)&&error.retryable===false;
+    });
+    assert.deepEqual(Object.getOwnPropertyDescriptor(failure,'retryable'),
+      {value:false,writable:false,enumerable:false,configurable:false});
+    assert.equal(f.calls.filter(c=>c.text===NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL).length,1);
+    const count=f.calls.length;
+    await assert.rejects(reader.subjectAndRecordedGroupHousingAccountPackage({cursor:''},{includeSubject:true}),/single_use/);
+    assert.equal(f.calls.length,count,'a refusal does not create a second account or subject budget');
+    assert.deepEqual(Object.keys(failure),[],'the exception delivers no original facts or receipt');
+  }
+});
+
 test('paired original guards refuse aggregate overflow, absent/wrong subject, forged metadata/cache and changed ending source',async()=>{
   const valid={account_id:'STOCK-A',geographic_parcel_count:'1',subject_account_id:'STOCK-A',subject_geographic_parcel_count:'1',
     next_parcels:2,next_accounts:1,subject_parcels:2,subject_accounts:1,original_count:3,page_count:3,invalid_count:0,packet_oversize:false};

@@ -65,6 +65,17 @@ admission, 8MB transport / 2.1MB output and the existing single-use child / whol
 owner SQL, byte and deadline budgets. Same-account originals are deduplicated
 before counting or delivery, not reopened under a reset budget. An aggregate
 251 rows refuses the entire packet even if each account fits separately.
+This combined refusal is a deliberate capacity tradeoff: a next account that
+fits alone can be refused when the required subject does not also fit. The
+exception is explicitly nonretryable and issues no semantic output or success
+continuation. The owner performs no retry or subject-semantic persistence.
+This does not mark the native job failed, rewrite its initial claim or spend a
+failure attempt. Retained selection intents are excluded from generic worker
+claims/recovery; the actual initial-nine-root guard also rejects generic failure
+and reclaim. No selected-union worker is activated. Any later worker must honor
+this whole-step refusal as nonretryable before its activation, with its own
+native terminal/retirement proof. These limits are not a promise that every
+individually admissible account is admissible with a required subject.
 Missing subject stock membership admits no original payload. Explicit null or
 other preferred observations do not request the separate subject packet.
 
@@ -83,8 +94,8 @@ Initial component head `30191519e8e1df9914b82f61655e38a3f186f998` passed
 cloud native job 114249645171 (417/12/1/1/2 tests, zero failures/skips),
 plus full server/frontend/bootstrap checks. That is historical component proof.
 Fresh protected-parent integration and exact-head cloud checks are required.
-The actual native assertions cover
-union progress exercises same-account deduplication, two-account replay,
+The actual native union-progress assertions exercise
+same-account deduplication, two-account replay,
 subject-only cache forgery while the next account remains correct, original
 and ending-fence faults, native DML rollback and lost real COMMIT acknowledgment.
 Separate TEMP SQL DATA assertions exercise four indexed cap+1 count loops,

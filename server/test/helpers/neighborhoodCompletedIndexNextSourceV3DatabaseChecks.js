@@ -50,7 +50,7 @@ export async function runNeighborhoodCompletedIndexNextSourceV3DatabaseChecks({o
     ['owned_source_subject',/subject_changed/],['next_source_native_ending',/native_plan_changed/],
     ['next_source_assignment_ending',/assignment_access_denied/],['next_source_draft_ending',/private_source_read_only/]]){
     reads=originalReads();setFault(fault);
-    try{await assert.rejects(run(),reason);assert.equal(readFault(),null);assert.equal(originalReads(),reads+1);}
+    try{await assert.rejects(run(),reason,fault);assert.equal(readFault(),null);assert.equal(originalReads(),reads+1);}
     finally{if(fault==='union_role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);}
     await preserved();
   }

@@ -122,14 +122,14 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({sourceR
     const result=await raw.query(c);
     // Ending revocation follows the complete actual NEXT original packet;
     // the existing ending target/draft reads must refuse and roll it back.
-    if((text===NEXT_SOURCE_PACKET||text===OWNED_NEXT_SOURCE_PACKET)&&['next_source_assignment_ending','next_source_draft_ending'].includes(fault)){
+    if((text===NEXT_SOURCE_PACKET||text===OWNED_NEXT_SOURCE_PACKET||text===RECOVERED_NEXT_SOURCE_PACKET)&&['next_source_assignment_ending','next_source_draft_ending'].includes(fault)){
       const mode=fault;fault=null;
       const changed=mode==='next_source_assignment_ending'
         ?await raw.query('UPDATE app.assignment_files SET assigned_appraiser_user_id=NULL WHERE id=$1 RETURNING id',[scope.assignment_file_id])
         :await raw.query("UPDATE app.custom_appraisal_workfiles SET status='archived' WHERE assignment_file_id=$1 RETURNING assignment_file_id",[scope.assignment_file_id]);
       assert.equal(changed.rowCount,1);
     }
-    if((text===NEXT_SOURCE_PACKET||text===OWNED_NEXT_SOURCE_PACKET)&&fault==='next_source_native_ending')fault='next_source_native_ending_after_original';
+    if((text===NEXT_SOURCE_PACKET||text===OWNED_NEXT_SOURCE_PACKET||text===RECOVERED_NEXT_SOURCE_PACKET)&&fault==='next_source_native_ending')fault='next_source_native_ending_after_original';
     if(fault==='next_source_native_ending_after_original'&&text.includes('custom-cohort-completed-index-next-source-v3:native-next')){
       assert.equal(result.rowCount,1);assert.equal(result.rows[0].native_key,'503');
       fault=null;return {...result,rows:[{...result.rows[0],native_key:'504'}]};
@@ -199,7 +199,7 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({sourceR
       const envelope=JSON.parse(result.rows[0].page_json);envelope[0].typed.original.payload_utf8_bytes++;
       return {...result,rows:[{...result.rows[0],page_json:JSON.stringify(envelope)}]};}
     if(originalPacket)stockReads++;
-    if((text===OWNED_SOURCE_PACKET||text===RECOVERED_SOURCE_PACKET||text===NEXT_SOURCE_PACKET||text===OWNED_NEXT_SOURCE_PACKET)&&fault==='owned_source_subject'){
+    if((text===OWNED_SOURCE_PACKET||text===RECOVERED_SOURCE_PACKET||text===NEXT_SOURCE_PACKET||text===OWNED_NEXT_SOURCE_PACKET||text===RECOVERED_NEXT_SOURCE_PACKET)&&fault==='owned_source_subject'){
       fault=null;const changed=await raw.query(`UPDATE app.appraisal_subject_snapshots s
         SET subject_data=jsonb_set(s.subject_data,'{custom_property_snapshot,improvement,living_area_sqft}',
           CASE WHEN s.subject_data#>'{custom_property_snapshot,improvement,living_area_sqft}'='2001'::jsonb THEN '2002'::jsonb ELSE '2001'::jsonb END)

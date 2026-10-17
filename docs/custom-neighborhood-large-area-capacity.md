@@ -1,3 +1,17 @@
+## Recovered NEXT native fault injection correction (2026-10-17, validation pending)
+
+The exact `61d00c97` native prefix run passed 24 of 28 cases and failed four
+normal recovered-source A/B cases with a missing expected rejection. The test
+observer recognized the recovered packet as an original read but omitted it
+from subject, ending assignment/draft and ending native-NEXT fault selectors.
+These probes therefore never injected their intended mutation for this owner.
+The observer now recognizes that exact packet in all three selectors; every
+original read, real target-row DML/rollback, native member comparison and refusal
+assertion remains required. Failure messages identify the specific fault.
+Runtime, DDL, source permissions, failure ceilings, leases, deadlines and all
+budgets are unchanged. The failed head is not rerun; this correction requires
+fresh exact-head full native and application checks in cloud CI.
+
 ## Recovered-claim NEXT source originals (2026-10-17, inactive; native validation pending)
 
 A separate closed read-only owner reopens native NEXT under the actual recovered

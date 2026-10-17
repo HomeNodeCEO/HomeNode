@@ -1,3 +1,34 @@
+## Original-owned FIRST resolution row and head (2026-10-17, unregistered)
+
+A separate closed entry point now stores the private resolution candidate from
+the actual whole-original owner after every existing current and ending fence.
+It retains the native17 parent, exact native FIRST binding, canonical candidate
+blob, immutable source row and matching head in the SAME bounded transaction.
+All writer queries remain inside the existing aggregate budget. Caller source,
+candidate, row, head, reference, resolution, checkpoint and callbacks are refused.
+
+Unregistered migration `20261221_custom_cohort_source_first_resolution_v3.sql`
+binds the entire candidate metadata to the actual retained17/FIRST and its exact
+first-seen selected member. The canonical blob reference is representation only;
+native guards do not replace actual original reads or source-purpose authority.
+The row and head are immutable and all four provisional tables retain an
+unconditional deferred COMMIT refusal. No tentative value can be delivered.
+Exact18 checkpoint admission, atomic continuation, durable coherent issuance,
+server-owned NEXT and separate fresh EMPTY remain unfinished. Nothing is
+registered or activated, and no grant, lease, deadline, failure ceiling, report,
+appraiser choice or pin changes.
+
+The independent A-first and B-after-empty-A probes are extended to observe real
+row/head inserts and the actual stored candidate on the owner's PostgreSQL
+transaction. They check exact original unsafe decimal/date observations, forged
+canonical blobs, row/head mutation refusals, all seven ending faults, real
+COMMIT rejection and identical fresh same-claim reopen. Every provisional row
+AND blob must roll back with all prior state unchanged. These native probes
+require full current-head cloud execution; authored probes are not execution
+proof. Eleven writer protocol tests and seventeen changed owner/resolution tests
+pass (148.9458 and 857.7836 ms, zero failures/cancellations/skips); syntax and diff
+checks pass. This is not complete licensed acquisition or map/speed acceptance.
+
 ## Original-owned provisional FIRST writes (2026-10-17, unregistered)
 
 A separate internal entry point now reaches the native parent and FIRST writers

@@ -81,6 +81,22 @@ export function createCustomCohortSourceResolutionParentV3Repository(...args){
       return Object.freeze({...p,index_reference:reference(p.index_reference,4096),entry_reference:reference(p.entry_reference,1000000),
         metric_row_reference:reference(p.metric_row_reference,4096),contribution_row_reference:reference(p.contribution_row_reference,4096)});
     };
+  const candidateFields=['operation_id','organization_id','sequence','candidate_reference','issued_transaction_id'],
+    prepareCandidateRow=(v,id,expected)=>{
+      const p=data(v,candidateFields),r=Object.freeze({...p,candidate_reference:reference(p.candidate_reference,12000)});
+      if(p.operation_id!==claim.operation_id||p.organization_id!==scope.organization_id||p.sequence!==1
+        ||p.issued_transaction_id!==id||json(r.candidate_reference)!==json(expected))fail('native_candidate_changed');return r;
+    },
+    candidateSelected=`SELECT b.operation_id,b.organization_id,1::integer AS sequence,$9::jsonb AS candidate_reference,b.issued_transaction_id
+      FROM (${firstSelected}) b JOIN app.neighborhood_custom_cohort_source_resolution_v3_first saved
+        ON saved.operation_id=b.operation_id AND to_jsonb(saved)=to_jsonb(b)`,
+    headSelected=`SELECT r.* FROM (${firstSelected}) b
+      JOIN app.neighborhood_custom_cohort_source_resolution_v3_first saved
+        ON saved.operation_id=b.operation_id AND to_jsonb(saved)=to_jsonb(b)
+      JOIN app.neighborhood_custom_cohort_source_resolution_v3_rows r
+        ON r.operation_id=b.operation_id AND r.organization_id=b.organization_id
+        AND r.issued_transaction_id=b.issued_transaction_id AND r.sequence=1`;
+  let candidateRow=null;
   return Object.freeze({async insertActual17Parent(...a){
     if(a.length)fail('invalid_input');
     const id=await tx();if(await tx()!==id)fail('caller_transaction_required');
@@ -98,6 +114,29 @@ export function createCustomCohortSourceResolutionParentV3Repository(...args){
     const retained=prepareFirst(one(await o.client.query(`/* custom-cohort-source-resolution-parent-v3:first-insert */
       INSERT INTO app.neighborhood_custom_cohort_source_resolution_v3_first ${firstSelected} RETURNING *`,values)),id);
     if(json(retained)!==json(expected))fail('native_first_changed');
+    if(await tx()!==id)fail('caller_transaction_required');return retained;
+  },async insertActualFirstSourceCandidate(...a){
+    // Representation only: the actual bounded original owner derives and
+    // stores this blob itself. SQL independently binds its entire metadata to
+    // retained17/FIRST; it does not infer source rights from the reference.
+    if(a.length!==1||candidateRow!==null)fail('invalid_input');const candidate=reference(a[0],12000);
+    const id=await tx();if(await tx()!==id)fail('caller_transaction_required');
+    prepareFirst(one(await o.client.query('/* custom-cohort-source-resolution-parent-v3:candidate-native */ '+firstSelected,values)),id);
+    if(await tx()!==id)fail('caller_transaction_required');
+    const retained=prepareCandidateRow(one(await o.client.query(`/* custom-cohort-source-resolution-parent-v3:candidate-insert */
+      INSERT INTO app.neighborhood_custom_cohort_source_resolution_v3_rows ${candidateSelected} RETURNING *`,
+    [...values,json(candidate)])),id,candidate);
+    if(await tx()!==id)fail('caller_transaction_required');candidateRow=retained;return retained;
+  },async insertActualFirstSourceHead(...a){
+    if(a.length||candidateRow===null)fail('candidate_row_required');
+    const id=await tx();if(await tx()!==id)fail('caller_transaction_required');
+    const current=prepareCandidateRow(one(await o.client.query(
+      '/* custom-cohort-source-resolution-parent-v3:head-native */ '+headSelected,values)),id,candidateRow.candidate_reference);
+    if(json(current)!==json(candidateRow))fail('native_candidate_changed');
+    if(await tx()!==id)fail('caller_transaction_required');
+    const retained=prepareCandidateRow(one(await o.client.query(`/* custom-cohort-source-resolution-parent-v3:head-insert */
+      INSERT INTO app.neighborhood_custom_cohort_source_resolution_v3_heads ${headSelected} RETURNING *`,values)),id,candidateRow.candidate_reference);
+    if(json(retained)!==json(candidateRow))fail('native_candidate_changed');
     if(await tx()!==id)fail('caller_transaction_required');return retained;
   }});
 }

@@ -192,17 +192,19 @@ test('provisional FIRST owner refuses caller bindings, executable inputs and mis
     id=n=>`70000000-0000-4000-8000-${String(n).padStart(12,'0')}`,
     input={auth:{userId:id(1),organizations:[]},accountId:'SUBJECT',assignmentFileId:'7',operationId:id(2),observationPeriod:period,
       discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
-    options={captureJobClaim:{operation_id:id(2),claim_token:id(3),attempts:5}},
-    method='retainCoveredOriginalFrozenCaptureJobFirstSourceBindingReferencesV3';
+    options={captureJobClaim:{operation_id:id(2),claim_token:id(3),attempts:5}};
+  for(const method of ['retainCoveredOriginalFrozenCaptureJobFirstSourceBindingReferencesV3',
+    'retainCoveredOriginalFrozenCaptureJobFirstSourceResolutionReferencesV3']){
   await assert.rejects(capture(dependencies)[method](input,options),/CAD_source_policy_required/);
   const service=capture({...dependencies,authorizeCadImprovementData:hostile});
   for(const args of [[],[input],[input,options,{}]])assert.throws(()=>service[method](...args),/invalid_options/);
-  for(const key of ['source','native_key','plan','candidate','binding','resolution','checkpoint','ordinal','cursor','done','sourceAuthority'])
+  for(const key of ['source','native_key','plan','candidate','binding','resolution','candidateReference','row','head','checkpoint','ordinal','cursor','done','sourceAuthority'])
     await assert.rejects(service[method](input,{...options,[key]:hostile}),/invalid_options/);
   await assert.rejects(service[method](input,{get captureJobClaim(){return hostile();}}),/invalid_options/);
   await assert.rejects(service[method](input,{captureJobClaim:new Proxy({},{getPrototypeOf:hostile})}),/invalid_options/);
   const controller=new AbortController();controller.abort();
   await assert.rejects(service[method](input,{...options,signal:controller.signal}),/cancelled/);
+  }
   assert.equal(calls,0);
 });
 

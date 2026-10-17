@@ -1,3 +1,6 @@
+import { NEIGHBORHOOD_SECOND_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL as SECOND_PACKAGE } from './neighborhoodSelectedTransactionOriginalPackageV2.js';
+import { SECOND_FIRST_SOURCE_CONTEXT_V3_SQL as SECOND_FIRST } from './completedIndexFirstSourceV3Sql.js';
+import { SECOND_NEXT_SOURCE_CONTEXT_V3_SQL as SECOND_NEXT } from './completedIndexNextSourceV3Sql.js';
 import { NEIGHBORHOOD_FIRST_COMPLETED_INDEX_SOURCE_ORIGINAL_PACKAGE_V3_SQL as FIRST_PACKAGE,
   NEIGHBORHOOD_OWNED_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL as OWNED_PACKAGE,
   NEIGHBORHOOD_RECOVERED_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL as RECOVERED_PACKAGE } from './neighborhoodSelectedTransactionOriginalPackageV2.js';
@@ -33,3 +36,15 @@ function recoveredNextPackage(){
   return sql;
 }
 export const NEIGHBORHOOD_RECOVERED_NEXT_SOURCE_ORIGINAL_PACKAGE_V3_SQL=recoveredNextPackage();
+
+// ENTIRE existing WHOLE-original/ENTIRE-cache package; fixed second2 NEXT only.
+function secondNextPackage(){
+ let sql=SECOND_PACKAGE;
+ for(const [from,to]of [[SECOND_FIRST,SECOND_NEXT],
+  ['neighborhood-second-first-source-original-package-v3','neighborhood-second-next-source-original-package-v3']]){
+  if(sql.split(from).length!==2)throw new TypeError('neighborhood_second_next_source_original_sql_shape');
+  sql=sql.replace(from,to);
+ }
+ return sql;
+}
+export const NEIGHBORHOOD_SECOND_NEXT_SOURCE_ORIGINAL_PACKAGE_V3_SQL=secondNextPackage();

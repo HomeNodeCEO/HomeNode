@@ -1,3 +1,4 @@
+import { createCustomCohortSecondNextSourceAccountV3Repository } from './customCohortCompletedIndexNextSourceAccountV3Repository.js';
 import { createCustomCohortCompletedIndexNextSourceAccountV3Repository,createCustomCohortOwnedNextSourceAccountV3Repository,createCustomCohortRecoveredNextSourceAccountV3Repository } from './customCohortCompletedIndexNextSourceAccountV3Repository.js';
 import { performance } from 'node:perf_hooks';
 import { setImmediate as yieldToRequests } from 'node:timers/promises';
@@ -652,6 +653,15 @@ const FROZEN_SOURCE_STAGES = freeze({
     progressingSelectedSemantic:true,readingSelectedTransactionSource:true,readingSelectedTransactionIndex:true,
     readingCompletedIndexFirstSource:true,readingCompletedIndexNextSource:true,ownedCompletedIndexFirstSource:true,
     ownedNextSource:true,resolvingCompletedIndexFirstSource:true,coveredNeutralOriginals:true,catalogBatchLineage:true,
+    allowedPhases:['frozen_selected_transaction_index_refs_v2'] },
+  covered_second_next_source_original_refs_v3: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
+    catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,
+    readingSelectedUnionSubjectHousing:true,readingSelectedUnionFirstEligibility:true,
+    readingSelectedUnionFirstAmenities:true,readingSelectedUnionFirstTransactions:true,readingSelectedMetricSource:true,
+    readingSelectedStatisticsSource:true,readingSelectedFrequencySource:true,readingSelectedNumericSource:true,
+    progressingSelectedSemantic:true,readingSelectedTransactionSource:true,readingSelectedTransactionIndex:true,
+    readingCompletedIndexFirstSource:true,readingCompletedIndexNextSource:true,ownedCompletedIndexFirstSource:true,
+    ownedNextSource:true,recoveredOwnedFirstSource:true,secondOwnedFirstSource:true,secondNextSource:true,resolvingCompletedIndexFirstSource:true,coveredNeutralOriginals:true,catalogBatchLineage:true,
     allowedPhases:['frozen_selected_transaction_index_refs_v2'] },
   covered_completed_index_next_source_resolution_refs_v3: { referencesV2:true,verifying:true,stockVerifying:true,identityVerifying:true,
     catalogingRecordedGroups:true,readingRecordedCatalog:true,replayingSelectedUnion:true,
@@ -2144,7 +2154,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       readingCadPages=false,projectingCadAccounts=false,reconcilingCadAccounts=false,cachingCadOriginals=false,cachingCadCoverage=false,yieldingCadProgress=false,readingCoveredCadAmenities=false,resolvingCadAmenities=false,readingTransactionPages=false,projectingTransactionTemporal=false,
       readingTransactionPackages=false,reconcilingTransactionPackages=false,readingStockOriginalCells=false,readingStockAccountPackages=false,readingStockWholeAccountBatch=false,coveredNeutralOriginals=false,cacheStockHandoff=false,
       resolvingStockAccountHousing=false,resolvingStockAccountRecordedGroup=false,traversingStock=false,batchingStock=false,batchingPartition=false,batchingCatalog=false,catalogBatchLineage=false,partitioningRecordedGroups=false,
-      readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,readingSelectedUnionFirstEligibility=false,readingSelectedUnionFirstAmenities=false,readingSelectedUnionFirstTransactions=false,progressingSelectedEligibility=false,progressingSelectedEvidence=false,readingSelectedMetricSource=false,progressingSelectedMetrics=false,readingSelectedStatisticsSource=false,progressingSelectedStatistics=false,readingSelectedFrequencySource=false,readingSelectedNumericSource=false,progressingSelectedNumeric=false,readingSelectedRankCandidates=false,progressingSelectedSemantic=false,readingSelectedTransactionSource=false,preparingSelectedTransactionFirstCandidate=false,readingSelectedTransactionIndex=false,progressingSelectedTransactionIndex=false,readingCompletedIndexFirstSource=false,readingCompletedIndexNextSource=false,ownedNextSource=false,recoveredNextSource=false,ownedCompletedIndexFirstSource=false,recoveredOwnedFirstSource=false,secondOwnedFirstSource=false,resolvingCompletedIndexFirstSource=false,preparingCompletedIndexSourceCandidate=false,retainingCompletedIndexSourceBinding=false,retainingCompletedIndexSourceRow=false,savingCompletedIndexSourceCheckpoint=false,yieldingCompletedIndexSourceCheckpoint=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
+      readingRecordedPartition=false,readingRecordedCatalog=false,readingSelectionWorkspaceTarget=false,yieldingV2Progress=false,catalogingRecordedGroups=false,awaitingSelection=false,selectingCatalogIntent=false,readingRetainedSelectionIntent=false,replayingSelectedUnion=false,readingSelectedUnionSubjectHousing=false,readingSelectedUnionFirstEligibility=false,readingSelectedUnionFirstAmenities=false,readingSelectedUnionFirstTransactions=false,progressingSelectedEligibility=false,progressingSelectedEvidence=false,readingSelectedMetricSource=false,progressingSelectedMetrics=false,readingSelectedStatisticsSource=false,progressingSelectedStatistics=false,readingSelectedFrequencySource=false,readingSelectedNumericSource=false,progressingSelectedNumeric=false,readingSelectedRankCandidates=false,progressingSelectedSemantic=false,readingSelectedTransactionSource=false,preparingSelectedTransactionFirstCandidate=false,readingSelectedTransactionIndex=false,progressingSelectedTransactionIndex=false,readingCompletedIndexFirstSource=false,readingCompletedIndexNextSource=false,ownedNextSource=false,recoveredNextSource=false,ownedCompletedIndexFirstSource=false,recoveredOwnedFirstSource=false,secondOwnedFirstSource=false,secondNextSource=false,resolvingCompletedIndexFirstSource=false,preparingCompletedIndexSourceCandidate=false,retainingCompletedIndexSourceBinding=false,retainingCompletedIndexSourceRow=false,savingCompletedIndexSourceCheckpoint=false,yieldingCompletedIndexSourceCheckpoint=false,allowedPhases}=FROZEN_SOURCE_STAGES[stage];
     const readingCadSource=readingCadPages||readingSelectedUnionFirstAmenities;
     if(referencesV2){
       if(!options||utilTypes.isProxy(options)||Object.getPrototypeOf(options)!==Object.prototype)fail('invalid_options');
@@ -3039,7 +3049,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
               generation_id:stock.generation_id,selected_stock_count:unionCounts.selected_count};
             const parentKeys=['union_reference','eligibility_reference','evidence_reference','metrics_reference','statistics_reference','numeric_reference','semantic_reference'];
             selectedTransactionIndexStore=readingCompletedIndexFirstSource
-              ?(recoveredNextSource?createCustomCohortRecoveredNextSourceAccountV3Repository:ownedNextSource?createCustomCohortOwnedNextSourceAccountV3Repository:readingCompletedIndexNextSource?createCustomCohortCompletedIndexNextSourceAccountV3Repository:secondOwnedFirstSource?createCustomCohortSecondFirstSourceAccountV3Repository:recoveredOwnedFirstSource?createCustomCohortRecoveredFirstSourceAccountV3Repository:ownedCompletedIndexFirstSource?createCustomCohortOwnedFirstSourceAccountV3Repository:createCustomCohortCompletedIndexSourceAccountV3Repository)({client,claim,scope,actorUserId:input.auth.userId})
+              ?(secondNextSource?createCustomCohortSecondNextSourceAccountV3Repository:recoveredNextSource?createCustomCohortRecoveredNextSourceAccountV3Repository:ownedNextSource?createCustomCohortOwnedNextSourceAccountV3Repository:readingCompletedIndexNextSource?createCustomCohortCompletedIndexNextSourceAccountV3Repository:secondOwnedFirstSource?createCustomCohortSecondFirstSourceAccountV3Repository:recoveredOwnedFirstSource?createCustomCohortRecoveredFirstSourceAccountV3Repository:ownedCompletedIndexFirstSource?createCustomCohortOwnedFirstSourceAccountV3Repository:createCustomCohortCompletedIndexSourceAccountV3Repository)({client,claim,scope,actorUserId:input.auth.userId})
               :createCustomCohortSelectedTransactionIndexV2Repository({client,claim,scope,
               actorUserId:input.auth.userId,command_id:issuedSelectionIntent.command_id,
               ...Object.fromEntries(parentKeys.map(k=>[k,selectedTransactionIndexExpected[k]]))});
@@ -3106,7 +3116,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             paired=await (coveredNeutralOriginals&&readingSelectedUnionFirstAmenities?createNeighborhoodCoveredCadStockOriginalCellsV2
               :coveredNeutralOriginals?createNeighborhoodCoveredStockOriginalCellsV2:createNeighborhoodSharedStockOriginalCellsV2)(client,stockOptions,graph,context.effective_date,
                 ...(coveredNeutralOriginals&&readingSelectedUnionFirstAmenities?[{purpose:cadPurpose,decision:cadDecision}]:[]))
-              [recoveredNextSource?'subjectAndRecoveredNextSourceAccountPackageV3':ownedNextSource?'subjectAndOwnedNextSourceAccountPackageV3':readingCompletedIndexNextSource?'subjectAndNextCompletedIndexSourceAccountPackageV3':secondOwnedFirstSource?'subjectAndSecondFirstSourceAccountPackageV3':recoveredOwnedFirstSource?'subjectAndRecoveredFirstSourceAccountPackageV3':ownedCompletedIndexFirstSource?'subjectAndOwnedFirstSourceAccountPackageV3':readingCompletedIndexFirstSource?'subjectAndFirstCompletedIndexSourceAccountPackageV3':readingSelectedTransactionIndex?'subjectAndNextSelectedTransactionIndexAccountPackage':readingSelectedTransactionSource?'subjectAndFirstCompletedSemanticAccountPackage':progressingSelectedSemantic?'subjectAndNextSelectedSemanticAccountPackage':readingSelectedRankCandidates?'subjectAndFirstCompletedNumericAccountPackage':progressingSelectedNumeric?'subjectAndNextSelectedNumericAccountPackage':readingSelectedFrequencySource?'subjectAndFirstSelectedFrequencyAccountPackage':progressingSelectedStatistics?'subjectAndNextSelectedStatisticsAccountPackage':readingSelectedStatisticsSource?'subjectAndFirstSelectedStatisticsAccountPackage':progressingSelectedMetrics?'subjectAndNextSelectedMetricAccountPackage':readingSelectedMetricSource?'subjectAndFirstSelectedMetricAccountPackage':progressingSelectedEvidence?'subjectAndNextSelectedCombinedAccountPackage':
+              [secondNextSource?'subjectAndSecondNextSourceAccountPackageV3':recoveredNextSource?'subjectAndRecoveredNextSourceAccountPackageV3':ownedNextSource?'subjectAndOwnedNextSourceAccountPackageV3':readingCompletedIndexNextSource?'subjectAndNextCompletedIndexSourceAccountPackageV3':secondOwnedFirstSource?'subjectAndSecondFirstSourceAccountPackageV3':recoveredOwnedFirstSource?'subjectAndRecoveredFirstSourceAccountPackageV3':ownedCompletedIndexFirstSource?'subjectAndOwnedFirstSourceAccountPackageV3':readingCompletedIndexFirstSource?'subjectAndFirstCompletedIndexSourceAccountPackageV3':readingSelectedTransactionIndex?'subjectAndNextSelectedTransactionIndexAccountPackage':readingSelectedTransactionSource?'subjectAndFirstCompletedSemanticAccountPackage':progressingSelectedSemantic?'subjectAndNextSelectedSemanticAccountPackage':readingSelectedRankCandidates?'subjectAndFirstCompletedNumericAccountPackage':progressingSelectedNumeric?'subjectAndNextSelectedNumericAccountPackage':readingSelectedFrequencySource?'subjectAndFirstSelectedFrequencyAccountPackage':progressingSelectedStatistics?'subjectAndNextSelectedStatisticsAccountPackage':readingSelectedStatisticsSource?'subjectAndFirstSelectedStatisticsAccountPackage':progressingSelectedMetrics?'subjectAndNextSelectedMetricAccountPackage':readingSelectedMetricSource?'subjectAndFirstSelectedMetricAccountPackage':progressingSelectedEvidence?'subjectAndNextSelectedCombinedAccountPackage':
                 readingSelectedUnionFirstTransactions&&readingSelectedUnionFirstAmenities?'subjectAndFirstSelectedCombinedAccountPackage':
                 readingSelectedUnionFirstTransactions?'subjectAndFirstSelectedTransactionAccountPackage':
                 readingSelectedUnionFirstAmenities?'subjectAndFirstSelectedAmenityAccountPackage':
@@ -3915,7 +3925,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
               coverage:'first_registered_native_package_and_whole_first_seen_selected_account_only_after_actual_index_fresh_EMPTY',
               complete_original_reconciled_source:true,transaction_index_issued:false,economic_progress_retained:false}:{}),
             ...(resolvingCompletedIndexFirstSource&&!preparingCompletedIndexSourceCandidate?{
-              status:recoveredNextSource?'current_authorized_recovered_next_source_originals_reconciled':ownedNextSource?'current_authorized_owned_next_source_originals_reconciled':readingCompletedIndexNextSource?'current_authorized_next_completed_index_source_observations_resolved'
+              status:secondNextSource?'current_authorized_second_next_source_originals_reconciled':recoveredNextSource?'current_authorized_recovered_next_source_originals_reconciled':ownedNextSource?'current_authorized_owned_next_source_originals_reconciled':readingCompletedIndexNextSource?'current_authorized_next_completed_index_source_observations_resolved'
                 :'current_authorized_first_completed_index_source_observations_resolved',
               ...(readingCompletedIndexNextSource?{source_cursor_advanced:false,
                 coverage:'next_registered_native_package_after_actual_FIRST_without_durable_traversal',
@@ -3931,12 +3941,13 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
               retained_birth_candidate_compared_to_whole_originals:true,
               original_birth_rebound:false,source_cursor_advanced:false,economic_progress_retained:false}:{}),
             ...(recoveredNextSource?{recovered_source_failure_attempt:claim.attempts,original_birth_rebound:false}:{}),
+            ...(secondNextSource?{second_source_failure_attempt:claim.attempts,original_birth_rebound:false}:{}),
             ...(recoveredOwnedFirstSource&&!recoveredNextSource&&!secondOwnedFirstSource?{
               status:'current_authorized_recovered_first_source_originals_reconciled',
               retained_source_retry_transaction:recoveredSourceTransactions.retry,
               retained_source_recovery_transaction:recoveredSourceTransactions.recovery,
               recovered_source_failure_attempt:claim.attempts}:{}),
-            ...(secondOwnedFirstSource?{
+            ...(secondOwnedFirstSource&&!secondNextSource?{
               status:'current_authorized_second_first_source_originals_reconciled',
               retained_source_retry_transaction:recoveredSourceTransactions.retry,
               retained_source_second_claim_transaction:recoveredSourceTransactions.recovery,
@@ -4866,6 +4877,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     readCoveredOriginalFrozenCaptureJobRecoveredNextSourceReferencesV3(...args){
       if(args.length!==2)fail('invalid_options');
       return frozenCaptureJobSourceStage(args[0],args[1],'covered_recovered_next_source_original_refs_v3');
+    },
+    readCoveredOriginalFrozenCaptureJobSecondNextSourceReferencesV3(...args){
+      if(args.length!==2)fail('invalid_options');
+      return frozenCaptureJobSourceStage(args[0],args[1],'covered_second_next_source_original_refs_v3');
     },
     readCoveredOriginalFrozenCaptureJobOwnedNextSourceReferencesV3(...args){
       if(args.length!==2)fail('invalid_options');

@@ -1,3 +1,26 @@
+## Native NEXT whole originals under second2 (2026-10-17, inactive)
+
+A separate closed owner selects native NEXT after actual FIRST under the
+committed initial1/failure1/second2 graph. Both native key namespaces retain
+their existing order, FIRST/member/edge is independently reopened, and every
+next-account source/CAD/stock/all-date transaction and required-subject original
+and ENTIRE cache is reconciled again under all current and ending fences.
+It retains the existing aggregate256-SQL/32MB/60s and single-use250-original
+child limits. The FIRST candidate is only a native parent; NEXT never presents
+a copied birth or claims to reproduce FIRST from its different account.
+
+Both actual independent A/B graphs require native503 after FIRST501, its real
+first-seen second account, unresolved associations and SQL-NULL payload reasons
+without borrowed dates, quarters or prices. Current actor/assignment/private
+draft refusals precede original I/O; eleven ending failures include real
+assignment/private-draft DML and a same-count changed native NEXT result.
+Actual read-only COMMIT acknowledgment loss, identical reopen and every original
+claim/failure/parent/blob/grant/role/report/choice/pin remain preserved, including
+entire native role rows on restoration. Fresh exact-head early-pair and complete
+prefix/prepared cloud execution is required. This read-only slice establishes
+no durable cursor, fresh EMPTY, repeated2/3 retry, economic progress, publication,
+pin transfer, activation, licensed acquisition or production-speed proof.
+
 ## Whole-original replay under the actual second claim (2026-10-17, inactive)
 
 The dedicated second-claim FIRST owner reopens every real chosen source, CAD,

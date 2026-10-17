@@ -78,10 +78,20 @@ A fresh terminal EMPTY returns no previous account decision.
 
 269 focused synthetic tests passed, zero failures/skips (1648.4677ms), including
 actual neutral-compiler replay with a future outside-part year invalidated
-before account resolution. Full issued native union assertions for selected
-and explicit-empty unions are AUTHORED NOT EXECUTED for this new change. They
-require unresolved subject/account reasons, native selected ordinal, terminal
-EMPTY and unchanged source/typed copies and all existing native safeguards.
+before account resolution. A separate serial focused run on the protected
+integration passed 98 checks, zero failures/cancellations/skips (2194.2549ms).
+These counts describe distinct synthetic and focused scopes.
+
+Full issued native union assertions for selected and explicit-empty unions
+executed successfully on `e92139ca176af3f4c309c7d78290af295970ae88` in native
+PostgreSQL job `117458960640`. The complete job passed 417/1/1/15/1/2 tests,
+with zero failures/cancellations/skips; the prepared suite took 914340.195695ms.
+Both independently built unions checked unresolved subject/account reasons,
+native selected ordinal, fresh terminal EMPTY and rollback of a forged selected
+delta after real DML. Whole originals, ENTIRE caches, unchanged source/typed
+copies, current and ending fences, aggregate budgets and existing native
+recovery/expiry/COMMIT safeguards remained required. This documentation-only
+follow-up requires fresh checks on its new exact head before merge.
 
 This is ONE-account decision groundwork, NOT an issued eligibility pass or
 complete selected-population eligibility. Decisions are not copied into blobs,

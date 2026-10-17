@@ -1,5 +1,96 @@
 # Complete larger-area Custom neighborhood studies
 
+## Selection-wait deployment validation (2026-10-16, not released)
+
+The actual included review of a664fb2 identified the widened status CHECK's
+validation scan under ACCESS EXCLUSIVE. The production API is still manually
+pinned to c777de9, whose registered migrations end at 20261122; the new 20261123
+files have not been released. The installation now uses NOT VALID, so the
+superset CHECK immediately enforces every new or updated row without scanning
+old rows during installation. A separate registered validation migration runs
+after the installation file commits. The existing runner commits each file
+independently, releasing the installation lock before validation takes its
+SHARE UPDATE EXCLUSIVE lock. See the official
+[PostgreSQL ALTER TABLE notes](https://www.postgresql.org/docs/current/sql-altertable.html#SQL-ALTERTABLE-NOTES).
+
+Review of `41f53ff9` found that normal fixture bootstrap had already validated
+the CHECK, so its passing native probe established lock compatibility without
+exercising the first validation scan. The corrected test-only fixture replays
+the exact status-constraint DDL extracted from the registered installation file
+and commits it without validation. It refuses any database other than the
+independently created disposable CI child. The production migration runner and
+registered SQL are unchanged; no general partial-migration option is added.
+
+The native probe runs after a genuine fixture job has been enqueued and requires
+its complete job tuple to remain identical afterward. It requires
+`convalidated=false` after installation and again
+immediately before executing the exact registered validation SQL while an
+independent connection holds ROW EXCLUSIVE. It then requires
+`convalidated=true`, a granted ShareUpdateExclusiveLock and no
+AccessExclusiveLock. Successful validation commits, restoring the bootstrapped
+fixture's validated state; both clients are released, including refusal paths.
+No job/evidence rows are changed. Nine focused checks pass, including refusal
+of prevalidated fixtures, unexpected databases, exclusive validation locks and
+lost validation-COMMIT acknowledgments. Those doubles are protocol checks, not
+native scan proof. Fresh exact-head cloud native/full-suite checks and actual
+included review remain required before a protected merge and release.
+All prior original reads,
+source-purpose decisions, actor/workspace fences, guards, failure histories,
+budgets, deadlines, waiting semantics and inactive stage routing are unchanged.
+
+## Issued-catalog selection waiting boundary (2026-10-10, not activated)
+
+The actual bounded original owner now has a separate internal waiting stage.
+It admits only its actual completed nine-reference V2 catalog checkpoint,
+reopens the server-derived terminal original/entire neutral-cache and partition
+empty probes, and checks all current actor, assignment, private draft, subject,
+source purpose, claim, issued prerequisite heads, catalog and pending V7
+workspace/prior-head fences at both ends. Only then, in that same transaction
+and under the unchanged whole-owner budget, does it release its worker lease
+into the explicit `awaiting_selection` state. It does not park an automatically
+claimable retry, invent a human choice or carry forward prior selected groups.
+
+An additive native guard requires the live claim and actual issued catalog
+DONE receipt with the exact stock/source/graph/geography/identity/traversal/
+partition/catalog checkpoint references. Request, nine roots, attempts, error
+history, schedule, context-null state and generation pins remain unchanged.
+Both worker claimers exclude waiting jobs. Until a later immutable authenticated
+NEW-study command and native resume protocol are implemented, only scoped
+cancellation can leave waiting; direct requeue, success, attempt reset,
+checkpoint/error/schedule mutation and deletion refuse. Completed-catalog
+cancellation also freezes the terminal job tuple so cancellation cannot become
+a two-step escape back to retry/running. Cancellation retains the evidence and
+pins, and is not terminal pin retirement.
+
+Current-main integration uses the actual protected combined-account-facts
+parent merged as `c777de99`. The waiting stage remains unreachable from any
+route, default worker or dispatcher. Its additive guard completes only this
+dormant boundary; it does not activate an unfinished selection workflow.
+Fresh integrated focused validation passes 166 tests with zero failures,
+cancellations or skips (3162.9347ms). Cloud-native and full-suite checks on the
+integrated head remain required. The independent prior failure/attempt2,
+current-ending refusals, actual release rollback, lost real COMMIT
+acknowledgment, stale-claim exclusion, native mutation refusal and scoped
+cancellation fixture is preserved alongside the original five-failure fixture.
+No local database or heavy local suite was run.
+This is a dormant lease boundary, NOT genuine selection intent/resumption,
+complete original-reconciled catalog semantics, a selected union, statistic,
+coherent publication, full V2 dispatcher, terminal pin transfer/retirement,
+licensed acquisition or production-speed/live acceptance. No route/default/
+worker activation, source grants, accepted reports, genuine Hardy choices or
+Apply changes. Protected dependency integration and fresh exact-head checks
+plus actual included review are still mandatory before protected merges.
+
+Parent combined-facts exact `a8b2239a` is now independently cloud-verified:
+Foundation 38049037213 all four jobs and Sales 38049037140 succeeded. Native
+114204272412 passed 417 migration / 8 index / 1 subject / 1 edge / 2 bootstrap
+tests with zero failures/skips; its 11:47:35Z marker confirms the same original
+packet supplies housing/full recorded labels/retained-date metrics and outside
+conflict/unknown housing is not made eligible by an assigned group. Frontend
+114204272366 passed 3959 tests with zero failures/skips plus type/lint/source/
+build checks. These small parent receipts are not new-head or licensed/live
+acceptance. Same heartbeat remains active.
+
 ## One original packet for pending-target account facts (2026-10-10, not activated)
 
 The actual completed-catalog pending workspace-target reader now derives the

@@ -1,3 +1,53 @@
+## Clean first-attempt source native producer (2026-10-17, inactive)
+
+The `4e144300` native prefix run passed28 of30 cases; both new clean cases
+stopped at the CAD adversarial claim probe. That probe hard-coded forged attempt
+four, which reaches deferred COMMIT from the previous actual attempt three but
+is rejected by the immediate claim guard from actual attempt one. It now derives
+the forged attempt as the actual CAD claim plus one. The real lease-expiry DML,
+native deferred COMMIT refusal and whole-state rollback assertions remain
+required. No refusal pattern, deadline, failure counter, native guard or runtime
+code is relaxed. Fresh exact-head native execution remains required.
+
+The child `01ef9d73` early pair then reached the separate bridge probe and
+failed both cases in28.811s because that probe also hard-coded forged attempt
+four. It now uses the actual adopted native claim plus one, retaining its exact
+deferred `cache_stock_v2_commit_conflict` requirement, genuine expiry DML and
+full rollback. The original attempt-three probes still forge four. Both complete
+prefix/prepared suites were skipped after this failure; no completion is claimed
+and the failed head is not rerun.
+
+The `4e144300` server run exposed four fixture-shape checks that still expected
+the previous 41-case matrix. Their explicit expectations now include the two
+appended clean cases and the extended later-account selector. All previous
+scenario ordering, original-source invariants and deadline checks remain.
+The failed head is not rerun; its successor needs fresh exact-head cloud checks.
+
+Two additional independent A/B cases require attempt one and a null prior error
+through the actual initial dispatcher, source prefix, neutral/CAD caches, whole
+stock/partition/catalog, explicit fixture selection, selected union and complete
+transaction index. The real original owner then retains birth17/FIRST18, and a
+distinct native claim reopens FIRST and NEXT against every original and ENTIRE
+cache. The B case still reaches its first source only after empty account A.
+
+These separate cases do not spend the earlier fixtures' deliberate neutral and
+bridge failures. They use their already-issued native claim for the actual
+owner transaction, including real lost COMMIT acknowledgment and ending-role
+refusal/rollback, then continue the same successful native handoff. Expected
+attempt/error checks follow the actual clean lineage through every later owner.
+Adversarial claim, original/cache, target, workspace, native-member, orphan and
+COMMIT probes remain. Their real negative DML rolls back; no persisted attempt,
+lease, clock, schedule, native parent or root is rewritten to manufacture a
+lower claim. Existing failure4, recovered5 and natural-expiry cases are retained
+separately with their original probes, deadlines and failure ceilings.
+
+This test-only producer stops after the current-authorized owned FIRST/NEXT
+original proofs. It does not implement attempts two/three retry lineage,
+durable source traversal/fresh EMPTY, economic progress, publication, pin
+transfer, activation, licensed acquisition or live speed. Small local syntax
+and boundary checks cannot establish this proof: full exact-head native and
+application cloud results are required under the existing limits.
+
 ## Recovered NEXT native fault injection correction (2026-10-17, validation pending)
 
 The exact `61d00c97` native prefix run passed 24 of 28 cases and failed four

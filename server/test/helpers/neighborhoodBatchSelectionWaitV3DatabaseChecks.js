@@ -14,7 +14,8 @@ import { runNeighborhoodBatchSelectionIntentV3DatabaseChecks } from './neighborh
  * stays real; a missing appraiser command is never supplied by this worker. */
 export async function runNeighborhoodBatchSelectionWaitV3DatabaseChecks({sourceRecoveryFixture=false,pool,input,scope,actor,service,args,job,parent,blobs,
   catalogHead,groups,assertParents,setFault,readFault,originalReads,batchSelectionIntentFixture=false,batchSelectedUnionFixture=false,batchSelectedWorkersFixture=false,batchRecordedEligibilityFixture=false,batchSelectedEvidenceFixture=false,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false,batchSelectedTransactionIndexFixture=false,batchSelectedRecoveryFixture=false,batchSelectedProgressRecoveryFixture=false}){
-  const expectedAttempts=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture||sourceRecoveryFixture)?4:5,expectedError=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture||sourceRecoveryFixture)?'capture_failed':'access_revoked';
+  const expectedAttempts=sourceRecoveryFixture==='clean-first1'?1:(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture||sourceRecoveryFixture)?4:5,
+    expectedError=sourceRecoveryFixture==='clean-first1'?null:(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture||sourceRecoveryFixture)?'capture_failed':'access_revoked';
   const operation=input.operationId,method='awaitCoveredOriginalFrozenCaptureJobBatchSelectionReferencesV3',
     before={catalog:await catalogHead(),groups:await groups(),blobs:await blobs()},
     intents=async()=>(await pool.query('SELECT * FROM app.neighborhood_custom_cohort_v2_selection_intents WHERE operation_id=$1',[operation])).rows;

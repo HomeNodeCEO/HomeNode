@@ -14,7 +14,8 @@ import { runNeighborhoodCompletedIndexFirstSourceV3DatabaseChecks } from './neig
  * Registry keys and edges never establish economic identity or source rights. */
 export async function runNeighborhoodBatchSelectedTransactionIndexV3DatabaseChecks({sourceRecoveryFixture=false,pool,input,scope,actor,service,job,parent,blobs,
   catalogHead,groups,assertParents,setFault,readFault,originalReads,command,laterFirstSource=false}){
-  const sourceFailureAttempt=sourceRecoveryFixture?4:5,sourceFailureCode=sourceRecoveryFixture?'capture_failed':'access_revoked';
+  const sourceFailureAttempt=sourceRecoveryFixture==='clean-first1'?1:sourceRecoveryFixture?4:5,
+    sourceFailureCode=sourceRecoveryFixture==='clean-first1'?null:sourceRecoveryFixture?'capture_failed':'access_revoked';
   const operation=input.operationId,method='progressCoveredOriginalFrozenCaptureJobBatchSelectedTransactionIndexReferencesV3',
     tables=['selected_transaction_index_v2_heads','selected_transaction_index_v2_rows',
       'selected_transaction_source_v2_keys','selected_transaction_legacy_v2_keys','selected_transaction_index_v2_edges'],

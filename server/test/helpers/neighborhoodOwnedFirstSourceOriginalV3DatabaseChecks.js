@@ -26,7 +26,7 @@ export async function runNeighborhoodOwnedFirstSourceOriginalV3DatabaseChecks({s
     finally{if(fault==='union_role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);}
     await unchanged();
   }
-  for(const invalid of [{...claim,claim_token:randomUUID()},{...claim,attempts:claim.attempts-1}]){
+  for(const invalid of [{...claim,claim_token:randomUUID()},{...claim,attempts:claim.attempts===1?2:claim.attempts-1}]){
     count=originalReads();await assert.rejects(service.readCoveredOriginalFrozenCaptureJobOwnedFirstSourceReferencesV3(input,
       {captureJobClaim:invalid}),/claim_lost/);assert.equal(originalReads(),count);await unchanged();
   }
@@ -57,6 +57,20 @@ export async function runNeighborhoodOwnedFirstSourceOriginalV3DatabaseChecks({s
   // original reads above and the original4/5 failure/terminal graph below stay.
   await runNeighborhoodCompletedIndexNextSourceV3DatabaseChecks({ownedSource:true,pool,input,scope,actor,service,claim,
     originalReads,laterFirstSource,setFault,readFault,unchanged});
+  if(sourceRecoveryFixture==='clean-first1'){
+    assert.equal(claim.attempts,1);await unchanged();
+    console.info('[native-clean-owned18-initial1-source-originals-v3]',{
+      independent_capture:laterFirstSource?'B_ordinal2_after_empty_A':'A_ordinal1',
+      independently_issued_initial_prefix_neutral_CAD_stock_partition_catalog_choice_union_and_complete_index:true,
+      actual_attempt1_and_null_error_preserved_through_entire_native17_birth18_and_distinct_owned18_claim:true,
+      every_FIRST_and_NEXT_whole_original_ENTIRE_cache_native_member_current_and_ending_fence_preserved:true,
+      actual_readonly_lost_COMMIT_ACK_and_all_parent_job_blob_report_choice_grant_pin_preservation:true,
+      no_persisted_failure_attempt_clock_lease_schedule_native_parent_or_root_rewrite:true,
+      original_deadlines_and_aggregate_SQL_byte_runtime_limits_unchanged:true,
+      lower_attempt2_or3_retry_lineage:false,fresh_EMPTY:false,source_cursor_advanced:false,
+      activation:false,licensed_large_area:false,production_speed:false});
+    return;
+  }
   if(sourceRecoveryFixture)await runNeighborhoodOwnedSourceLastRetryV3DatabaseChecks({sourceRecoveryFixture,pool,input,scope,actor,service,claim,
     originalReads,laterFirstSource,setFault,readFault});
   else await runNeighborhoodOwnedSourceTerminalFailureV3DatabaseChecks({pool,input,scope,actor,service,claim,

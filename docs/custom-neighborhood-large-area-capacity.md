@@ -1,3 +1,23 @@
+## Compatible read-only assignment fences (2026-10-17, native validation pending)
+
+Read-only closing assignment fences now request `FOR SHARE NOWAIT`, retaining
+the assignment through delivery while allowing overlapping viewport, catalog
+and member readers. Write permissions retain `FOR UPDATE NOWAIT`. Every
+current and ending assignment/subject/source-policy check is unchanged.
+The raw viewport loader returns to its prior two-request ceiling; its separate
+checked-port owner remains one lane. The complete-map, per-response, caller
+signal, deadline and settlement limits are unchanged.
+
+The new native fixture holds an actual viewport assignment fence open while
+another complete viewport, prepared catalog and member page finish. It also
+requires a genuine assignment UPDATE to fail while the shared read is held,
+and the reverse-order writer lock to refuse viewport delivery immediately.
+After rollback, the identical viewport must reopen with every assignment,
+report, subject, workfile, manual/workspace section and original blob unchanged.
+Only small serial checks have run locally; actual cloud native/full-suite,
+review, deployment and saved Hardy speed measurements remain required.
+No large-area capacity or production-speed acceptance is established.
+
 ## Initial9 native assertion correction (2026-10-17, fresh full validation pending)
 
 Exact head 7354 passed 417 migrations, subject and account-quality checks, then

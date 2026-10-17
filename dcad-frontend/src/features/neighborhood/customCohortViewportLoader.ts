@@ -18,11 +18,10 @@ interface TileOptions extends Options {
 // Each authenticated response still has the independent 4 MB transport guard.
 const LIMITS = { leaves: 32, requests: 63, depth: 8, features: 100_000,
   coordinates: 1_000_000, geojsonBytes: 32_000_000 };
-// Every tile rechecks the same assignment/subject under native NOWAIT locks.
-// Different API instances can therefore contend even though each has its own
-// execution gate. Finish each response before admitting the next tile; keep the
-// caller's one signal/deadline and every complete-map ceiling unchanged.
-const MAX_CONCURRENT_TILES = 1;
+// Read-only assignment fences use compatible native SHARE locks while still
+// excluding assignment writers. Keep just two complete tiles in flight with
+// the caller's one signal/deadline and every complete-map ceiling unchanged.
+const MAX_CONCURRENT_TILES = 2;
 const utf8 = new TextEncoder();
 const capacity = () => { throw Object.assign(new Error('viewport_detail_capacity_exceeded'),
   { code: 'viewport_detail_capacity_exceeded' }); };
@@ -120,7 +119,7 @@ export async function loadCustomCohortViewportMap(group: CustomCohortPreviewGrou
 /** Shared exact-geometry kernel for already checked reference ports. Admission
  * stays in that port; this is not a raw HTTP/source API. Sequential leaves use
  * one caller-owned finite lane and retain its actual in-flight settlement.
- * The legacy raw-response reader also admits one tile at a time. */
+ * The raw-response reader above retains its separate two-tile ceiling. */
 export async function loadCustomCohortCheckedViewportTiles(manifest: CustomCohortPreviewGroup['map_manifest'],
   viewport: CustomCohortViewportBounds, options: {
     readonly signal: AbortSignal;

@@ -586,11 +586,13 @@ async function transaction(pool, mode, budget, execute) {
 }
 
 async function resolveTarget(client, input, locked, permission = 'write', lockReport = false) {
+  // Delivery reads hold a shared assignment fence until COMMIT, allowing
+  // overlapping viewers while excluding assignment updates and deletion.
   const assignment = one(await client.query(`/* custom-cohort-capture:assignment */
     SELECT id::text AS assignment_file_id,account_id,organization_id,
       assigned_appraiser_user_id,supervisory_appraiser_user_id
     FROM app.assignment_files WHERE id=$1::bigint AND account_id=$2
-    ${locked ? 'FOR UPDATE NOWAIT' : ''}`, [input.assignmentFileId, input.accountId]));
+    ${locked ? (permission === 'read' ? 'FOR SHARE NOWAIT' : 'FOR UPDATE NOWAIT') : ''}`, [input.assignmentFileId, input.accountId]));
   if (assignment.assignment_file_id !== input.assignmentFileId || assignment.account_id !== input.accountId
     || !hasApplicationPermission(input.auth, 'custom_appraisal', permission, assignment.organization_id)
     || !decideAssignmentAccess(input.auth, assignment, permission)) fail('assignment_access_denied');

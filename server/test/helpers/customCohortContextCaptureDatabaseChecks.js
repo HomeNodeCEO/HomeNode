@@ -33,6 +33,7 @@ import { runCohortPagedGroupSelectionDatabaseChecks } from './cohortPagedGroupSe
 import { runCustomCohortGroupSelectionHeadDatabaseChecks } from './customCohortGroupSelectionHeadDatabaseChecks.js';
 import { runCustomCohortRecordedGroupOwnerDatabaseChecks } from './customCohortRecordedGroupOwnerDatabaseChecks.js';
 import { buildMarketConditionsAnalyses } from '../../src/services/marketConditions.js';
+import { runCustomCohortReadFenceConcurrencyDatabaseChecks } from './customCohortReadFenceConcurrencyDatabaseChecks.js';
 
 /** New disposable migrated test database only; no cleanup of shared tables,
  * fake CI, external provider, live organization, or production credentials. */
@@ -128,13 +129,14 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     } };
     const grant = { allowed: true, decision_id: 'synthetic_all_cached_rows_and_retention', policy_revision: 'synthetic-test-v1' };
     let policyCalls = 0; const exposures = [];
-    const capture = createCustomCohortContextCapture({ pool: observed, authorizeMarketData: async (_client, actualAuth, context, purpose, options) => {
+    const authorizeMarketData = async (_client, actualAuth, context, purpose, options) => {
       assert.equal(actualAuth.userId, actor); assert.equal(context.scope.organization_id, organization);
       assert.equal(purpose.event_date_scope, 'all_available_dates_for_seeded_transactions'); assert.equal(options.retention, true);
       exposures.push(options.exposure);
       if (++policyCalls === 1) await pool.query('UPDATE core.sales SET sale_price=400000 WHERE id=100');
       return grant;
-    } });
+    };
+    const capture = createCustomCohortContextCapture({ pool: observed, authorizeMarketData });
     const request = makeInput();
     const result = await capture.capture(request);
     assert.equal(result.status, 'registered'); assert.equal(result.reused, false); assert.equal(policyCalls, 2);
@@ -304,6 +306,10 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     const sameRevisionReopen = await capture.catalog(preparedCatalogInput);
     assert.deepEqual(sameRevisionReopen, preparedCatalogOriginal,
       'the prepared all-group opening must preserve the complete original response');
+    checks.push(await runCustomCohortReadFenceConcurrencyDatabaseChecks({pool,authorizeMarketData,
+      request:previewRequest,catalogRequest:preparedCatalogInput,
+      scope:{organization_id:organization,report_file_id:report,assignment_file_id:assignment},
+      expectedViewport:tiledVisible,expectedCatalog:preparedCatalogOriginal}));
     const compactFrom = calls.length;
     const compactOpening = await capture.catalog({ ...preparedCatalogInput, initialMapMode: 'manifest' });
     assert.deepEqual(compactOpening.initial_preview.summary, preparedCatalogOriginal.initial_preview.summary);

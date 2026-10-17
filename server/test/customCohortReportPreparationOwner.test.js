@@ -48,7 +48,7 @@ async function setup({ assignmentFileId = '41', effectiveDate, reviewed = false,
       if (text === 'COMMIT' && phase === 1 && afterFirstCommit) await afterFirstCommit({ f, state, request });
       if (/^(?:BEGIN |SET LOCAL |COMMIT$|ROLLBACK$)/.test(text)) return one(null);
       if (text.includes('custom-cohort-capture:assignment')) {
-        assert.match(text, /FOR UPDATE NOWAIT/); assert.deepEqual(values, [assignmentFileId, target.account_id]);
+        assert.match(text, /FOR SHARE NOWAIT/); assert.deepEqual(values, [assignmentFileId, target.account_id]);
         return one(state.assignment);
       }
       if (text.includes('custom-cohort-capture:report */')) return one(state.report);

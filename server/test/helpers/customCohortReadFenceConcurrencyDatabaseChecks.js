@@ -60,7 +60,7 @@ export async function runCustomCohortReadFenceConcurrencyDatabaseChecks({pool,au
     assert.deepEqual(await reader.viewport(request,viewport),expectedViewport);
     assert.deepEqual(await reader.catalog(catalogRequest),expectedCatalog);
     const members=await reader.inspect(request,{population:{group:'all',kind:'stock'},
-      page:{limit:100,after_member_id:null}});
+      page:{limit:50,after_member_id:null}});
     assert.equal(members.status,'members');
     assert.equal(members.page.total_count,expectedCatalog.catalog.coverage.stock_member_count);
     const writer=await pool.connect();

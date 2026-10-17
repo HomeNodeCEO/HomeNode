@@ -1,3 +1,43 @@
+## Final normal source recovery claim (2026-10-17, unregistered; native validation pending)
+
+Unregistered `20261229_custom_cohort_source_final_recovery_claim_v3.sql` and a
+separate closed queue consume only the actual committed normal retry at four.
+They wait for its native schedule, lock with `SKIP LOCKED` and spend the final
+attempt five once. A new immutable record retains the ENTIRE retry job and its
+actual retry transaction. The update changes only running status, fresh token,
+attempt count, bounded native lease and update time. It retains the original
+failure code, schedule, checkpoint, original17 birth, initial owned4 claim,
+recorded failure4, every earlier native parent and all other job fields.
+
+Independent native functions reopen the complete original birth, preclaim,
+initial claim, recorded failure and FIRST key/member/edge graph before claiming
+and at genuine COMMIT. The old claim was live at the recorded failure; its
+spent lease supplies no current ownership. The fresh claim must have a distinct
+token, attempt five and a live 15–900 second lease. All three COMPLETE earlier
+immediate guard bodies and the entire earlier job deferred body remain after
+one closed recovery branch. All nine older deferred events remain enabled;
+the tenth rejects an orphan recovery record at real PostgreSQL COMMIT.
+
+Authored native probes follow ALL previous actual retry4 COMMIT and preservation
+checks on both independent captures. They require malformed tuple, transaction,
+scope, token, count and lease refusal; actual orphan COMMIT/full rollback;
+explicit rollback of a complete tentative fresh claim; two competing recoverers
+with one committed winner; A acknowledged COMMIT and B acknowledgment lost after
+its actual winning COMMIT. Full native parent/FIRST and complete retry/current
+job tuples are compared. All previous rows/blobs/claims/failures, report/assignment,
+subject snapshot/manual sections, workspace/choices and pins must remain intact.
+Duplicate/old queues and the initial original owner cannot adopt the new claim
+or perform original I/O. Existing deadlines and aggregate budgets are unchanged.
+
+Five detached boundary checks passed serially in 99.1191 ms with zero failures,
+cancellations or skips. Both source-prefix and full prepared native execution
+remain required. This claim explicitly establishes no source authority. Actual
+fresh5 original replay, terminal closure of the recovered claim, lower1–3 and
+expired recovery, NEXT/fresh EMPTY, full economic resolution/publication,
+terminal pin transfer/retirement and coherent activation remain unfinished.
+No registry, worker, route, production activation or licensed capacity/speed
+acceptance is claimed.
+
 ## Reserved fourth-attempt source retry (2026-10-17, unregistered; native validation pending)
 
 Two additional independent native captures reserve the fourth failure attempt

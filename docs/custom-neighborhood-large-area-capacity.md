@@ -1,3 +1,47 @@
+## Single-consume initial owned18 FIRST claim (2026-10-17, unregistered; native execution pending)
+
+Unregistered `20261226_custom_cohort_source_first_owned_claim_v3.sql` adds a
+closed initial success claim for an already committed actual FIRST birth18.
+The bounded scheduler locks at most four due native jobs with SKIP LOCKED,
+independently reopens the retained17/FIRST graph, captures the ENTIRE actual
+preclaim18 job in an immutable single-consume record, and changes only status,
+token, lease and update time. The new native transaction and token differ from
+the original birth; attempts, error history, schedule, all roots and every
+other job field stay identical. Success remains possible at failure attempt5
+without spending or refunding a failure. The original17 birth transaction,
+token, attempt and lease remain unchanged.
+
+Separate owned-parent/FIRST readers use the actual current18 claim plus the
+immutable preclaim18 and ENTIRE original17 birth. They independently reselect
+the native FIRST key, first-seen member and edge and compare the complete
+retained FIRST row. They return original birth metadata, never a projected18
+with one root removed or a parent rebound to the new claim. All three immediate
+job guards retain their previous complete bodies with one closed native claim
+branch. All six birth deferred events remain enabled; the job event also checks
+this exact later initial claim, and a seventh deferred event rejects an orphan
+claim INSERT without the paired whole-job transition at genuine COMMIT.
+
+New native probes run AFTER all earlier refusal and actual birth COMMIT/lost-ACK
+probes in both independent captured graphs. They require forged metadata and
+real orphan COMMIT rejection with full rollback, two overlapping real claimers
+with one winner, A acknowledged COMMIT and B lost winning COMMIT acknowledgment,
+unchanged fifth failure/error history and every prior native parent/blob/report/
+workspace/choice/pin, exact original parent/FIRST under the new owned claim,
+foreign/stale-token/attempt refusal and no generic or old-continuation adoption.
+Owned renewal, failure refund, root resets and claim-record mutation still
+refuse. These are authored probes; current-head native prefix and full prepared
+execution are required before claiming success.
+
+This is structural scheduling and metadata only. The claim explicitly says
+source authority is not established. A new18 actual original owner still must
+reopen every real original, ENTIRE neutral cache, independent native parent and
+all current/ending source-purpose/actor/assignment/private-draft/subject/workspace
+fences under the existing aggregate and stricter child budgets. No source grant,
+ordinary checkpoint codec, default worker or registry is changed. Owned recovery
+through failure5, NEXT/fresh EMPTY, independent legacy-only acquisition, full
+economics/publication/terminal pins and licensed large-area/live-speed acceptance
+remain unfinished. Nothing in this slice is activated.
+
 ## Coherent FIRST birth COMMIT (2026-10-17, unregistered; native execution pending)
 
 Unregistered `20261225_custom_cohort_source_first_birth_commit_v3.sql` keeps all

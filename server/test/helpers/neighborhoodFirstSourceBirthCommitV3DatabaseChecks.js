@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { createCustomCohortCaptureJobRepository as jobs } from '../../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
 import { createCustomCohortV2ContinuationRepository as continuations } from '../../src/services/neighborhoodAssessment/customCohortV2ContinuationRepository.js';
 import { withCustomCohortJobTransaction as transaction } from '../../src/services/neighborhoodAssessment/customCohortJobTransaction.js';
+import { runNeighborhoodFirstSourceOwnedClaimV3DatabaseChecks } from './neighborhoodFirstSourceOwnedClaimV3DatabaseChecks.js';
 
 // Run only after the unchanged earlier six-refusal probes in this independently
 // captured disposable database. The real service owns originals/BEGIN/COMMIT.
@@ -120,4 +121,5 @@ export async function runNeighborhoodFirstSourceBirthCommitV3DatabaseChecks({poo
     stale_claim_no_original_IO_no_duplicate_generic_and_old_continuation_excluded:true,
     every_prior_native_parent_full_job_other_fields_workspace_reports_choices_and_pins_preserved:true,
     fresh18_claim:false,recovery:false,NEXT_or_EMPTY:false,activation:false,licensed_large_area:false,production_speed:false});
+  await runNeighborhoodFirstSourceOwnedClaimV3DatabaseChecks({pool,input,scope,actor,service,claim,originalReads,laterFirstSource});
 }

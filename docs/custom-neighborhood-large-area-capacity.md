@@ -74,6 +74,16 @@ Owned renewal, failure refund, root resets and claim-record mutation still
 refuse. These are authored probes; current-head native prefix and full prepared
 execution are required before claiming success.
 
+Exactdc054 cloud native417/1/2 passed, then prefix20/22 passed and both independent
+captures failed at the attempt-refund negative probe. Actual birth COMMIT,
+orphan rejection, fresh claim and owned parent/FIRST reads reached that probe;
+the earlier independent CAD success guard correctly returned
+`neighborhood_cad_success_v2_binding_conflict` before the later source guard.
+The correction requires that exact55000 refusal only for `attempts=4`, retaining
+every trigger and complete job/record/parent preservation assertion. No runtime
+protocol, migration, authority, budget or deadline changes. The failed head is
+not rerun; corrected-head prefix AND full prepared validation remain required.
+
 This is structural scheduling and metadata only. The claim explicitly says
 source authority is not established. A new18 actual original owner still must
 reopen every real original, ENTIRE neutral cache, independent native parent and

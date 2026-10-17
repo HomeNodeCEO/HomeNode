@@ -6,6 +6,8 @@ import { canonicalAssessmentJson } from '../../src/services/neighborhoodAssessme
 import { createNeighborhoodCohortBlobRepository } from '../../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
 import { runNeighborhoodCoveredSelectedEvidenceV2DatabaseChecks } from './neighborhoodCoveredSelectedEvidenceV2DatabaseChecks.js';
 import { observeNeighborhoodFirstSourceResolutionRowV3 } from './neighborhoodFirstSourceResolutionRowV3DatabaseChecks.js';
+import { observeNeighborhoodFirstSourceCheckpointBeforeSaveV3,observeNeighborhoodFirstSourceCheckpointAfterSaveV3 }
+  from './neighborhoodFirstSourceCheckpointV3DatabaseChecks.js';
 import { randomUUID } from 'node:crypto';
 import { createCustomCohortContextCapture } from '../../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { createCustomCohortCaptureJobRepository as jobs } from '../../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
@@ -67,7 +69,7 @@ import { NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL as TRAN
  * queries, native issuance, savepoint rollback and COMMITs are real. */
 export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,input:sourceInput,scope,actor,authorizeMarketData,authorizeCadImprovementData,coveredTransactionIndexFixture=false,stockBatchFixture=false,partitionBatchFixture=false,catalogBatchFixture=false,catalogBatchReplayFixture=false,batchSelectionWaitFixture=false,batchSelectionIntentFixture=false,batchSelectedUnionFixture=false,batchSelectedWorkersFixture=false,batchRecordedEligibilityFixture=false,batchSelectedEvidenceFixture=false,batchSelectedMetricsFixture=false,batchSelectedStatisticsFixture=false,batchSelectedNumericFixture=false,batchSelectedSemanticFixture=false,batchSelectedTransactionIndexFixture=false,batchSelectedRecoveryFixture=false,batchSelectedProgressRecoveryFixture=false}){
   const batchFailureAttempt=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture)?4:5,batchFailureCode=(batchSelectedRecoveryFixture||batchSelectedProgressRecoveryFixture)?'capture_failed':'access_revoked';
-  const input={...sourceInput,operationId:randomUUID()},operation=input.operationId;let fault=null,stockReads=0;
+  const input={...sourceInput,operationId:randomUUID()},operation=input.operationId;let fault=null,stockReads=0,sourceCheckpointBefore=null;
   const observed={async connect(){const raw=await pool.connect();return {release:raw.release.bind(raw),async query(c){
     const text=typeof c==='string'?c:c.text,originalPacket=text===COMPLETED_SOURCE_PACKET||text===BATCH_PACKET||text===STOCK_PACKET||text===PAIRED_STOCK_PACKET||text===TRANSACTION_PACKET||text===AMENITY_PACKET||(batchRecordedEligibilityFixture&&text===ELIGIBILITY_PACKET)||(batchSelectedEvidenceFixture&&text===EVIDENCE_PACKET)||(batchSelectedMetricsFixture&&[METRIC_PACKET,FIRST_METRIC_PACKET].includes(text))||(batchSelectedStatisticsFixture&&[STATISTICS_PACKET,FIRST_STATISTICS_PACKET].includes(text))||(batchSelectedNumericFixture&&[NUMERIC_PACKET,FIRST_NUMERIC_PACKET].includes(text))||(batchSelectedSemanticFixture&&text===SEMANTIC_PACKET)||(batchSelectedTransactionIndexFixture&&text===TRANSACTION_INDEX_PACKET),
       orphan=fault==='orphan'&&text.includes('custom-cohort-neutral-success-v2:yield')
@@ -98,6 +100,13 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
       return raw.query({...c,text:text.replace(selected,'job.organization_id,$9,$10,$11,1,($12::integer+1)')});
     }
     const result=await raw.query(c);
+    if(fault==='source_checkpoint_observe'&&text.includes('custom-cohort-source-resolution-parent-v3:head-insert */')){
+      sourceCheckpointBefore=await observeNeighborhoodFirstSourceCheckpointBeforeSaveV3({raw,result,scope});
+    }
+    if(fault==='source_checkpoint_observe'&&text.includes('custom-cohort-source-resolution-parent-v3:checkpoint-save */')){
+      assert.ok(sourceCheckpointBefore);await observeNeighborhoodFirstSourceCheckpointAfterSaveV3({raw,result,scope,before:sourceCheckpointBefore});
+      sourceCheckpointBefore=null;fault=null;
+    }
     if(fault==='source_resolution_observe'&&text.includes('custom-cohort-source-resolution-parent-v3:head-insert */')){
       await observeNeighborhoodFirstSourceResolutionRowV3({raw,result,scope,
         expectedOrdinal:batchSelectedTransactionIndexFixture==='later-first-source'?2:1});

@@ -1,3 +1,36 @@
+## Original-owned provisional first source checkpoint (2026-10-17, unregistered)
+
+The closed original owner now has a separate birth-only checkpoint entry point.
+After its unchanged whole-original/ENTIRE-cache/current and ending authority
+and native member checks, it retains actual17/FIRST/blob/row/head and asks a
+zero-argument writer to save the actual eighteenth reference. SQL derives this
+checkpoint from the actual job17, immutable retained parent and matching native
+FIRST/row/head. No caller checkpoint, source, cursor or reference is accepted.
+The complete native old job tuple is compared: only checkpoint and updated_at
+may change. Token, lease, attempts, failure history, schedule, scope, request,
+context and cancellation state stay identical. No ordinary codec is widened.
+
+Unregistered migration `20261222_custom_cohort_source_first_checkpoint_v3.sql`
+preserves the prior selection guard except for this exact birth-only branch;
+the independent initial-intent claim guard is untouched. Every later mutation
+of the provisional18 job refuses, including free yield and lease changes. All
+four existing deferred COMMIT refusals remain, with an additional job COMMIT
+refusal. This is actual provisional checkpoint DML, not durable issuance or
+atomic continuation. No tentative value can be delivered. A future fresh18
+reader must independently admit its current claim/continuation and reopen the
+immutable actual17 birth snapshot; it must never reconstruct17 from projected18.
+
+The existing independent A-first and B-after-empty-A captures additionally
+observe real job18 UPDATE, forged-root/shape and other job-field refusals,
+unchanged retained17 snapshot and birth-reader refusal after18, all seven
+ending faults, real rejected COMMIT, fresh same-claim reopen and complete
+rollback. Their full current-head cloud execution is pending. Focused writer15
+and owner/resolution17 checks pass (164.9543 and 1504.8973 ms, zero failures,
+cancellations or skips); five syntax checks and diff check pass. Earlier970
+parent proof is separate. Atomic yield, fresh18 recovery, NEXT/fresh EMPTY,
+independent legacy-only native acceptance and activation remain unfinished;
+licensed large-area and production-speed acceptance are not established.
+
 ## Original-owned FIRST resolution row and head (2026-10-17, unregistered)
 
 A separate closed entry point now stores the private resolution candidate from

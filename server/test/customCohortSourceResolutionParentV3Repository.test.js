@@ -12,11 +12,15 @@ const id=n=>`70000000-0000-4000-8000-${String(n).padStart(12,'0')}`,ref=n=>({con
     selected_account_id:'SELECTED-B',partition_ordinal:2,entry_reference:ref(5),metric_row_reference:ref(6),
     contribution_row_reference:ref(7),issued_transaction_id:'101'},
   candidateRow={operation_id:claim.operation_id,organization_id:scope.organization_id,sequence:1,candidate_reference:ref(4),issued_transaction_id:'101'};
+const sourceCheckpoint=()=>({phase:'frozen_selected_source_resolution_refs_v3',
+  evidence_refs:[...copy(row.parent_checkpoint.evidence_refs),copy(candidateRow.candidate_reference)]});
 function fixture({transactions=['101'],native=copy(row),inserted=copy(row),firstNative=copy(first),firstInserted=copy(first),
-  candidateInserted=copy(candidateRow),headNative=copy(candidateRow),headInserted=copy(candidateRow),raw}={}){
+  candidateInserted=copy(candidateRow),headNative=copy(candidateRow),headInserted=copy(candidateRow),
+  checkpointNative={checkpoint:sourceCheckpoint()},checkpointInserted={checkpoint:sourceCheckpoint()},raw}={}){
   let reads=0;const queries=[],client={async query(sql,values){queries.push({sql,values});
     if(sql.includes(':transaction */'))return {rowCount:1,rows:[{transaction_id:transactions[Math.min(reads++,transactions.length-1)]}]};
-    return raw??{rowCount:1,rows:[sql.includes(':candidate-insert */')?candidateInserted:sql.includes(':head-native */')?headNative:
+    return raw??{rowCount:1,rows:[sql.includes(':checkpoint-native */')?checkpointNative:sql.includes(':checkpoint-save */')?checkpointInserted:
+      sql.includes(':candidate-insert */')?candidateInserted:sql.includes(':head-native */')?headNative:
       sql.includes(':head-insert */')?headInserted:sql.includes(':candidate-native */')?firstNative:
       sql.includes(':first-insert */')?firstInserted:sql.includes(':first-native */')?firstNative:
       sql.includes(':insert */')?inserted:native]};}},input={client,claim,scope,actorUserId:id(5)};
@@ -31,6 +35,44 @@ test('actual native parent is scoped and frozen; INSERT derives it again without
   for(const q of queries.filter(q=>!q.sql.includes(':transaction */'))){assert.deepEqual(q.values,expected);
     assert.match(q.sql,/p\.issued_claim_token=\$7::uuid AND p\.issued_attempts=\$8::integer/);assert.doesNotMatch(q.sql,/ON CONFLICT|jsonb_populate_record|VALUES\s*\(/i);}
   assert.equal(queries.filter(q=>q.sql.includes(':insert */')).length,1);
+});
+
+async function checkpointWriter(options){const f=fixture(options);
+  await f.repo.insertActual17Parent();await f.repo.insertActualFirstSourceBinding();
+  await f.repo.insertActualFirstSourceCandidate(ref(4));await f.repo.insertActualFirstSourceHead();return f;
+}
+test('birth checkpoint save uses privately retained actual17 and native head; no caller roots or ordinary codec widening',async()=>{
+  const {repo,queries}=await checkpointWriter(),saved=await repo.saveActualFirstSourceCheckpoint();
+  assert.deepEqual(saved,sourceCheckpoint());assert.ok(Object.isFrozen(saved)&&Object.isFrozen(saved.evidence_refs));
+  const q=queries.find(q=>q.sql.includes(':checkpoint-save */'));assert.ok(q);
+  assert.deepEqual(q.values,[id(1),id(3),id(4),'7','SUBJECT',id(5),id(2),5]);
+  assert.match(q.sql,/SET checkpoint=app\.neighborhood_source_resolution_v3_first_checkpoint\(job\.operation_id,job\.organization_id\)/);
+  assert.doesNotMatch(q.sql,/SET.*(?:claim_token|attempts|lease_expires_at|run_after|last_error_code)=/);
+  assert.equal(q.values.length,8);await assert.rejects(repo.saveActualFirstSourceCheckpoint(),/native_checkpoint_required/);
+});
+test('checkpoint save requires native parent and head in this writer, and rejects all caller checkpoint arguments before SQL',async()=>{
+  const f=fixture();await assert.rejects(f.repo.saveActualFirstSourceCheckpoint(),/native_checkpoint_required/);assert.equal(f.queries.length,0);
+  const ready=await checkpointWriter(),count=ready.queries.length;
+  await assert.rejects(ready.repo.saveActualFirstSourceCheckpoint(sourceCheckpoint()),/native_checkpoint_required/);
+  assert.equal(ready.queries.length,count);
+});
+test('changed or executable native18 and lost birth transaction refuse before job UPDATE',async()=>{
+  for(const change of [p=>p.evidence_refs[0]=ref(4),p=>p.evidence_refs[17]=ref(8),p=>p.evidence_refs.pop(),
+    p=>p.evidence_refs.push(ref(4)),p=>p.extra=true,p=>p.phase=row.parent_checkpoint.phase]){
+    const p=sourceCheckpoint();change(p);const f=await checkpointWriter({checkpointNative:{checkpoint:p}});
+    await assert.rejects(f.repo.saveActualFirstSourceCheckpoint());assert.ok(!f.queries.some(q=>q.sql.includes(':checkpoint-save */')));
+  }
+  let touched=false;const p=sourceCheckpoint();Object.defineProperty(p.evidence_refs,'0',{enumerable:true,get(){touched=true;throw Error('getter');}});
+  const f=await checkpointWriter({checkpointNative:{checkpoint:p}});await assert.rejects(f.repo.saveActualFirstSourceCheckpoint());assert.equal(touched,false);
+  assert.ok(!f.queries.some(q=>q.sql.includes(':checkpoint-save */')));
+  const transactions=['101'],lost=await checkpointWriter({transactions});transactions[0]='102';
+  await assert.rejects(lost.repo.saveActualFirstSourceCheckpoint(),/caller_transaction_required/);
+  assert.ok(!lost.queries.some(q=>q.sql.includes(':checkpoint-save */')));
+});
+test('changed native result after checkpoint UPDATE requires owner rollback, never success adoption',async()=>{
+  const p=sourceCheckpoint();p.evidence_refs[17]=ref(8);const f=await checkpointWriter({checkpointInserted:{checkpoint:p}});
+  await assert.rejects(f.repo.saveActualFirstSourceCheckpoint(),/native_checkpoint_changed/);
+  assert.equal(f.queries.filter(q=>q.sql.includes(':checkpoint-save */')).length,1);
 });
 
 test('source candidate reference is representation only; row and head retain the same scoped native transaction without caller row or head',async()=>{

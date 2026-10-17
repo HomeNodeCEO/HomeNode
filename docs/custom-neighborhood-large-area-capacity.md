@@ -82,6 +82,13 @@ before proving that duplicate retries, generic/old queues and the stale original
 owner cannot adopt it or perform original I/O. Error bookkeeping grants no
 source authority, refunds no failure and publishes no data.
 
+The two additional native captures extend the fixture list from 35 to 37.
+The existing fixture-boundary assertions retain every earlier case in order
+and verify both appended reserved-attempt captures and their closed mapping.
+All 23 affected fixture checks pass serially in 445.9428 ms with zero failures,
+cancellations or skips. This corrects four stale fixture-structure expectations;
+it changes no runtime, native DDL, original query, counter, budget or deadline.
+
 Five detached boundary checks pass serially (97.1234 ms, zero failures,
 cancellations or skips). Static checks preserve the complete prior guard bodies;
 native prefix and full prepared execution on both additional captures remain

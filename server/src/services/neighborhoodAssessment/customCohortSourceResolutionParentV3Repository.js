@@ -32,8 +32,9 @@ function checkpoint(v){
 // Dormant storage primitive inside the future actual original owner's bounded
 // transaction. This does NOT authorize sources/actors, reconcile originals,
 // issue durable18, yield progress or remove the unconditional COMMIT refusal.
-// The separate provisional checkpoint method can change only the actual birth
-// job's roots before that mandatory refusal rolls the entire transaction back.
+// The separate provisional checkpoint changes only roots. Its atomic birth
+// handoff also clears the exact claim after retaining the ENTIRE old job; it
+// still cannot COMMIT, admit a fresh18 claim or deliver durable success.
 // No caller checkpoint, cursor, source, reference, generation or row is input.
 export function createCustomCohortSourceResolutionParentV3Repository(...args){
   if(args.length!==1)fail('invalid_input');
@@ -183,5 +184,44 @@ export function createCustomCohortSourceResolutionParentV3Repository(...args){
         AND birth.issued_transaction_id=txid_current() AND birth.parent_checkpoint=job.checkpoint
       RETURNING job.checkpoint,txid_current()::text AS transaction_id`,values)));
     savedCheckpoint=true;return retained;
+  },async saveAndYieldActualFirstSourceCheckpoint(...a){
+    // A separate provisional atomic birth handoff. The native INSERT captures
+    // the ENTIRE actual17 job and independently derives18 before one UPDATE
+    // clears this exact claim. All six deferred COMMIT refusals remain.
+    if(a.length||retainedParent===null||retainedHead===null||savedCheckpoint)fail('native_checkpoint_required');
+    const id=retainedParent.issued_transaction_id,expected={phase:'frozen_selected_source_resolution_refs_v3',
+      evidence_refs:[...retainedParent.parent_checkpoint.evidence_refs,retainedHead.candidate_reference]};
+    const r=data(one(await o.client.query(`/* custom-cohort-source-resolution-parent-v3:handoff-save */
+      WITH issued AS (
+        INSERT INTO app.neighborhood_custom_cohort_source_resolution_v3_handoffs
+        SELECT h.* FROM app.neighborhood_source_resolution_v3_native_first_handoff($1::uuid,$2::uuid) h
+        WHERE h.birth_job->>'report_file_id'=$3 AND h.birth_job->>'assignment_file_id'=$4
+          AND h.birth_job->>'account_id'=$5 AND h.birth_job->>'actor_user_id'=$6
+          AND h.issued_claim_token=$7::uuid AND h.issued_attempts=$8::integer
+        RETURNING *
+      ) UPDATE app.neighborhood_custom_cohort_capture_jobs job
+        SET checkpoint=issued.checkpoint,status='retry',claim_token=NULL,lease_expires_at=NULL,
+          run_after=clock_timestamp(),updated_at=clock_timestamp()
+        FROM issued WHERE job.operation_id=issued.operation_id AND job.organization_id=issued.organization_id
+          AND to_jsonb(job)=issued.birth_job AND issued.issued_transaction_id=txid_current()
+        RETURNING job.checkpoint,job.status,job.claim_token::text,job.lease_expires_at,job.attempts,
+          issued.sequence,issued.issued_claim_token::text,issued.issued_attempts,
+          txid_current()::text AS transaction_id`,values)),
+    ['checkpoint','status','claim_token','lease_expires_at','attempts','sequence','issued_claim_token','issued_attempts','transaction_id']);
+    if(r.transaction_id!==id)fail('caller_transaction_required');
+    const cp=data(r.checkpoint,['phase','evidence_refs']),refs=cp.evidence_refs;
+    if(!Array.isArray(refs)||isProxy(refs)||Object.getPrototypeOf(refs)!==Array.prototype
+      ||refs.length!==18||Reflect.ownKeys(refs).length!==19)fail('native_checkpoint_changed');
+    const prepared=[];for(let i=0;i<18;i++){
+      const d=Object.getOwnPropertyDescriptor(refs,String(i));if(!d?.enumerable||!Object.hasOwn(d,'value'))fail('native_checkpoint_changed');
+      prepared.push(reference(d.value,i===17?12000:i===16?4096:999999999));
+    }
+    const checkpoint=Object.freeze({phase:cp.phase,evidence_refs:Object.freeze(prepared)});
+    if(Buffer.byteLength(json(checkpoint))>4096||json(checkpoint)!==json(expected)
+      ||r.status!=='retry'||r.claim_token!==null||r.lease_expires_at!==null||r.attempts!==claim.attempts
+      ||r.sequence!==1||r.issued_claim_token!==claim.claim_token||r.issued_attempts!==claim.attempts)fail('native_handoff_changed');
+    savedCheckpoint=true;
+    return Object.freeze({checkpoint,status:'provisional_source_handoff',attempts:claim.attempts,continuation_sequence:1,
+      durable_source_resolution_issued:false,fresh_claim_admitted:false,context_complete:false,pin_transfer:false});
   }});
 }

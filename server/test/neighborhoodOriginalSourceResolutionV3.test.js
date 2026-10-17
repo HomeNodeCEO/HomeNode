@@ -195,7 +195,8 @@ test('provisional FIRST owner refuses caller bindings, executable inputs and mis
     options={captureJobClaim:{operation_id:id(2),claim_token:id(3),attempts:5}};
   for(const method of ['retainCoveredOriginalFrozenCaptureJobFirstSourceBindingReferencesV3',
     'retainCoveredOriginalFrozenCaptureJobFirstSourceResolutionReferencesV3',
-    'retainCoveredOriginalFrozenCaptureJobFirstSourceCheckpointReferencesV3']){
+    'retainCoveredOriginalFrozenCaptureJobFirstSourceCheckpointReferencesV3',
+    'retainCoveredOriginalFrozenCaptureJobFirstSourceHandoffReferencesV3']){
   await assert.rejects(capture(dependencies)[method](input,options),/CAD_source_policy_required/);
   const service=capture({...dependencies,authorizeCadImprovementData:hostile});
   for(const args of [[],[input],[input,options,{}]])assert.throws(()=>service[method](...args),/invalid_options/);

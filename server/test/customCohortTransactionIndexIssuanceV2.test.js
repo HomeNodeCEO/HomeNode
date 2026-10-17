@@ -119,7 +119,7 @@ test('dedicated yield rejects caller phase/receipt/checkpoint/count/authority/to
 });
 
 test('atomic owner writes blob, native bounded delta/head, exact17 checkpoint and dedicated single-use yield ONLY after ALL ending original/authority fences',()=>{
-  const s=service('customCohortContextCapture'),ending=s.indexOf("!same(await jobs[ownedCompletedIndexFirstSource?'readOwnedFirstSourceBirthCheckpoint':'readTransactionIndexCheckpoint'](claim,jobOptions),checkpoint)"),
+  const s=service('customCohortContextCapture'),ending=s.indexOf("!same(await jobs[recoveredOwnedFirstSource?'readRecoveredFirstSourceBirthCheckpoint':ownedCompletedIndexFirstSource?'readOwnedFirstSourceBirthCheckpoint':'readTransactionIndexCheckpoint'](claim,jobOptions),checkpoint)"),
     next=s.indexOf("!same(await selectedTransactionIndexStore[readingCompletedIndexFirstSource?'readFirstAccount':'readNext'](),selectedTransactionIndexPacket)",ending),
     start=s.indexOf('if(progressingSelectedTransactionIndex){',next),put=s.indexOf('await blobs.put(canonicalAssessmentJson(plan))',start),
     advance=s.indexOf('await selectedTransactionIndexStore.advance(receiptReference)',put),save=s.indexOf('await jobs.saveTransactionIndexCheckpoint(',advance),

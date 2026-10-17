@@ -101,7 +101,13 @@ export async function runNeighborhoodNeutralCacheV2WorkerDatabaseChecks({pool,in
       assert.equal(text.split(selected).length,2);
       return raw.query({...c,text:text.replace(selected,'job.organization_id,$9,$10,$11,1,($12::integer+1)')});
     }
+    if(fault==='source_birth_orphan'&&text.includes('custom-cohort-source-resolution-parent-v3:handoff-save */'))
+      await raw.query('SAVEPOINT source_birth_handoff');
     const result=await raw.query(c);
+    if(fault==='source_birth_orphan'&&text.includes('custom-cohort-source-resolution-parent-v3:handoff-retained-read */')){
+      assert.equal(result.rowCount,1);await raw.query('ROLLBACK TO SAVEPOINT source_birth_handoff');
+      await raw.query('RELEASE SAVEPOINT source_birth_handoff');fault=null;
+    }
     if(fault==='source_handoff_observe'&&text.includes('custom-cohort-source-resolution-parent-v3:head-insert */')){
       sourceCheckpointBefore=await observeNeighborhoodFirstSourceHandoffBeforeSaveV3({raw,result,scope});
     }

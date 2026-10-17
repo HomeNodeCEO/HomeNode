@@ -1,3 +1,41 @@
+## Coherent FIRST birth COMMIT (2026-10-17, unregistered; native execution pending)
+
+Unregistered `20261225_custom_cohort_source_first_birth_commit_v3.sql` keeps all
+six existing deferred events and every immediate/immutable trigger. Each event
+now independently requires the actual retained ENTIRE17 birth, actual18 retry
+job, native completed index, stock/generation pin, original consumed
+continuation, independently reselected FIRST/member/edge, candidate row/head
+and actual blob. Birth and handoff must belong to this same native transaction,
+and the original issued lease must still be live at COMMIT. Partial parent,
+FIRST, row/head or checkpoint saves continue to refuse. No guard is disabled,
+dropped or forced; the previous migration files remain unchanged.
+
+The existing closed original owner retains every whole original, ENTIRE neutral
+cache, native member and current/ending source-purpose/actor/assignment/private
+draft/subject/workspace fence under its unchanged 256-query / 32MB / 60s budget
+and narrower limits. Its success response is withheld until real COMMIT. It
+then reports one retained FIRST birth; source cursor completion, context
+completion and pin transfer remain false.
+
+New native probes run only after the unchanged earlier six unconditional
+refusal probes in each independent A-first and B-after-empty-A graph. With the
+new conditional DDL installed they repeat partial-owner refusal, current actor
+and all seven ending faults, and genuine orphan COMMIT refusal with complete
+rollback. A then requires actual acknowledged COMMIT; B loses the acknowledgment
+after the real COMMIT. Both require durable entire birth/FIRST/row/head/blob/
+job18, no stale-claim original I/O or duplicate, unchanged failure history and
+every prior native parent/workspace/report/choice/pin, and generic/old
+continuation exclusion. These are authored probes; fresh exact-head prefix and
+full prepared execution are required before claiming native success.
+
+Nothing is registered or activated. Fresh18 original-owner admission and owned
+recovery through failure5, NEXT/fresh EMPTY, independent legacy-only native
+acquisition, complete economics/publication/terminal pins and licensed
+large-area/live-speed acceptance remain open. Parent4713 corrected the FIRST
+field projection and has its own separate pending native result. Parent4c62
+independently passed full417/1/2/22/42/1/2 with both atomic A/B markers in both
+suites; that saved feature proof is not current-main release acceptance.
+
 ## Retained source birth read after the actual handoff (2026-10-17, unregistered)
 
 The atomic original-owner writer now performs one additional native metadata

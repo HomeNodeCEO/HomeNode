@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { observeNeighborhoodFirstSourceCheckpointBeforeSaveV3 } from './neighborhoodFirstSourceCheckpointV3DatabaseChecks.js';
 import { createCustomCohortCaptureJobRepository } from '../../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
 import { createCustomCohortV2ContinuationRepository } from '../../src/services/neighborhoodAssessment/customCohortV2ContinuationRepository.js';
+import { runNeighborhoodFirstSourceBirthCommitV3DatabaseChecks } from './neighborhoodFirstSourceBirthCommitV3DatabaseChecks.js';
 
 const jobs='app.neighborhood_custom_cohort_capture_jobs',handoffs='app.neighborhood_custom_cohort_source_resolution_v3_handoffs';
 async function refuse(raw,sql,values,reason){
@@ -153,4 +154,6 @@ export async function runNeighborhoodFirstSourceHandoffV3DatabaseChecks({pool,in
     fresh_same_claim_repeat_and_all_rows_blobs_whole_job_workspace_choices_reports_pins_rollback:true,
     six_unconditional_COMMIT_refusals_unchanged:true,fresh18_claim:false,durable_issuance:false,
     recovery:false,NEXT_or_EMPTY:false,activation:false,licensed_large_area:false,production_speed:false});
+  await runNeighborhoodFirstSourceBirthCommitV3DatabaseChecks({pool,input,scope,actor,service,claim,
+    empty:unchanged,setFault,readFault,originalReads,laterFirstSource});
 }

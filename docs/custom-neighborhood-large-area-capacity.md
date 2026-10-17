@@ -1,11 +1,14 @@
 # Complete larger-area Custom neighborhood studies
 
-## Selection-wait deployment validation (2026-10-16, not released)
+## Selection-wait deployment validation (2026-10-16, released in 92b5b084)
 
 The actual included review of a664fb2 identified the widened status CHECK's
-validation scan under ACCESS EXCLUSIVE. The production API is still manually
-pinned to c777de9, whose registered migrations end at 20261122; the new 20261123
-files have not been released. The installation now uses NOT VALID, so the
+validation scan under ACCESS EXCLUSIVE. At that review, the production API was
+manually pinned to c777de9 and the new 20261123 files were not released. Those
+files subsequently shipped in protected release 92b5b084; the API and frontend
+were verified live at that commit at 02:50 UTC on 2026-10-17. Deployment ownership,
+health, readiness and rollback must be read again before any further release.
+The installation uses NOT VALID, so the
 superset CHECK immediately enforces every new or updated row without scanning
 old rows during installation. A separate registered validation migration runs
 after the installation file commits. The existing runner commits each file
@@ -37,6 +40,159 @@ included review remain required before a protected merge and release.
 All prior original reads,
 source-purpose decisions, actor/workspace fences, guards, failure histories,
 budgets, deadlines, waiting semantics and inactive stage routing are unchanged.
+
+## Explicit NEW-study intent and native resume (2026-10-10, not activated)
+
+The actual bounded original database owner has a new, separate internal command
+stage. Its caller must supply an authenticated principal separately from body
+fields and an explicit command ID, exact issued catalog reference, expected
+pending-workspace revision and bounded recorded-group IDs. Explicit empty is
+preserved; IDs are neither inferred from the old active choice nor selected by
+a worker claim. No caller roster, claim, profile, head, source callback, lease,
+schedule or retry reset is admitted. There is no HTTP/default/worker activation.
+
+Current database actor, writable private draft, assignment/subject target and
+the exact pending V7 workspace/prior active head are checked first. In that
+SAME transaction a provisional immutable command binds the actual job request,
+all nine issued roots, actual recorded-group profile, entire tiny prior V7
+checkpoint/revision and explicit IDs. Native guards require the actual catalog
+DONE receipt and known distinct catalog IDs (2048 recorded plus unassigned),
+but those structural checks are NOT catalog/membership semantic authority.
+The one command per operation installs one fresh native 120-second claim while
+preserving attempts, prior error, schedule, request, roots and generation pins.
+An orphan command cannot commit; update/delete/truncate, free success, root
+change, re-wait and cancelled-job retry escape are refused.
+
+The actual original owner then reopens issued graph/geography/identity/stock/
+traversal/partition/catalog, checks current source policy, performs a fresh
+server-chosen terminal whole-original/ENTIRE-neutral-cache/ENTIRE-partition
+empty probe, and repeats ALL current rights/actor/assignment/private draft/
+subject/claim/cache/head/count/workspace/prior-head checks. Ending command and
+claim equality are checked too. Every failure rolls back BOTH command and
+lease; one unchanged 256-query/32MB/60s executor includes command/native work
+and every authority/original/ending query, with stricter child limits intact.
+Known catalog-ID existence is checked only AFTER current source policy at BOTH
+ends, with a native deferred commit safeguard. Pure ID syntax can be checked
+earlier, but a revoked license cannot probe known versus unknown group IDs
+through a provisional native error. This is still not membership semantics.
+
+Lost real COMMIT acknowledgment may replay only the identical command against
+the same still-live claim and unchanged pending workspace, with all original
+and current ending fences again. Replay is read-only: it never extends the
+lease, erases attempts/errors or changes choices. An expired/replaced claim,
+changed command/IDs/catalog/workspace refuses. Later bounded worker execution
+must reopen the retained intent and current authority; it is not implemented
+or activated by this slice.
+
+Integrated head `88cc200e` passed 73 focused checks and all 16 exact-head cloud
+checks, including native PostgreSQL run `38985823052` / job `117256929790`.
+The independently read native log passed 417 migration, 1 subject, 1 account
+quality, 10 prepared, 1 edge and 2 bootstrap checks without failures,
+cancellations or skips. The third independently built actual CI graph executed
+orphan COMMIT refusal, native known-ID checks, provisional command/lease rollback
+under every ending fault, lost real COMMIT acknowledgment, exact read-only
+replay, immutable commands, native success/root/re-wait refusal and retention of
+attempt 2, prior error, schedule, roots, pins, workspace, history and reports.
+
+Actual included review `1afe4d67` found that the generic worker could replace an
+expired intent claim and consume attempts. The correction rejects attempt
+increments and non-null token replacements after the one permitted resume.
+Generic claim and non-cancellation exhaustion selectors skip retained intents;
+an expired intent stays unchanged, including at the fifth-attempt ceiling.
+Native guards also refuse an unowned expired failure or lease renewal. Scoped
+cancellation and its ordinary expired-claim cleanup remain available. The
+initial-intent claim checks use a separate trigger, bound to the actual
+retained command checkpoint. Later native phase migrations may replace the
+phase dispatcher without erasing this fence; later checkpoints retain their
+own continuation/recovery guards. The native mutation probes require this
+independent trigger's specific refusal, rather than the dispatcher's error.
+Explicit expired-intent recovery and source dispatch still require a separate
+complete owner before activation; neither an automatic retry nor a new lease
+is added.
+
+Actual included review `9eba1a26` of `c944cc89` found that a live heartbeat
+could still change the initial lease without changing its token, attempt or
+checkpoint. The correction freezes every lease change while the actual issued
+nine-root command checkpoint remains, except its exact initial resume and
+scoped cancellation cleanup. Native probes now require a real pre-expiry
+heartbeat refusal, including shortening/clearing refusals, and restore the full
+job tuple with explicit PostgreSQL ROLLBACK. The expiry probe no longer rewrites
+the issued lease: a separate 180-second native lifetime test retains the same
+independently built graph and waits outside any transaction for real expiry.
+It performs the actual original read before expiry, requires the ending claim
+refusal within the unchanged query/owner budgets, then checks expired reclaim,
+renewal, replay and cancellation cleanup. Every previous graph assertion still
+runs; existing deadlines, source grants and native parents are unchanged.
+The lifetime test first requires a successful fresh read-only replay with all
+both-end actor/subject aggregate checks and full tuple preservation. Its later
+expiry call must refuse at the live-claim fence before delivery; it cannot be
+required to execute outer ending-role reads after that refusal. Every aggregate
+and parameter shape in both calls remains checked, and the refused call retains
+its own current actor/subject, actual original I/O and query-ceiling assertions.
+Implementation `2233b7f9` passed all 16 exact-head checks, including security,
+CodeQL, full server/frontend and native PostgreSQL run `38999364889` / job
+`117298818629`. The complete independently inspected 2,028,115-character native
+log passed 417 migration, 1 subject, 1 account-quality, 11 prepared, 1 edge and
+2 bootstrap checks, with zero failures, cancellations or skips (prepared
+734450.381616 ms). The 03:48:17Z live-lease marker and 03:50:17Z natural-expiry
+marker prove the safeguards above, including real cancellation cleanup and
+explicit PostgreSQL rollback restoring the full original job tuple. The
+frontend suite passed 3,972 tests without failures, cancellations or skips,
+plus type/lint/source/build and rendered report-order checks.
+
+These completed results identify that exact implementation. This documentation
+revision retains identical production and test files; its own required checks
+and actual included review must pass before the protected merge. The earlier
+`0ffe38e4` native run failed only the new test's incorrect expectation of outer
+ending-role reads after an early expiry refusal. The correction adds the fresh
+successful both-end replay above, preserving the shared aggregate checker,
+all production guards and deadlines; the failed head was not rerun.
+
+Corrected implementation `d498ab57` passes 46 focused repository/worker checks,
+zero failures, cancellations or skips (5609.9087 ms), and changed JavaScript
+syntax/diff checks. All 16 checks passed on that exact head, including security,
+CodeQL, full server/frontend and native PostgreSQL run `38993334702` / job
+`117280270948`. Its independently inspected native log passed 417 migration,
+1 subject, 1 account-quality, 10 prepared, 1 edge and 2 bootstrap checks without
+failures, cancellations or skips (prepared 422155.291698 ms).
+
+Those historical executed native probes expire the same issued claim in a guarded
+disposable transaction, require generic claim/sweep and direct mutation/renewal
+refusals with the whole tuple unchanged, refuse expired replay, exercise scoped
+cancellation cleanup, execute explicit PostgreSQL ROLLBACK and compare the
+complete original tuple. Token substitution requires the independent trigger's
+specific refusal; a separate actual lease-expiry fault exercises the ending
+live-claim refusal. Every provisional refusal restores the full waiting-job
+tuple. The initial probe's obsolete token-error expectation was corrected
+without changing production safeguards or deadlines or rerunning the failed
+head. The earlier `88cc200e` results are separate historical evidence.
+
+These results identify their exact verified implementation. Before release,
+the final integrated head must pass fresh required security/native/full-suite
+checks and actual included review. No heavy local database/server/frontend
+suite was run.
+
+This command establishes explicit intent ONLY. Complete original-reconciled
+catalog semantic replay, exact distinct COMPLETE selected union/eligibility
+and metric ordinals, medians/COD/calendar-quarter statistics, coherent
+publication, finite whole-run dispatcher, terminal pin transfer/retirement,
+licensed >50k/5-mile/10-mile/city/retrospective and live Hardy saved-map reload
+acceptance all remain. No original/source or job-typed copies, full-population
+arrays, source grants, accepted-report changes, genuine Hardy-choice changes
+or Apply. Protected parents integrate in order; retarget main BEFORE sync,
+then fresh required integrated-head security/native/full checks and actual
+included review, without paid/forced/early/quota/check bypass.
+
+Parent waiting exact `86d5c5bc` is independently cloud-verified: Foundation
+`38050249985` all four jobs, Sales `38050249953` / Mobile `38050249954` / GSE `38050249965`
+succeeded. Native `114207768169` passed 417 migration / 9 index / 1 subject /
+1 edge / 2 bootstrap tests with zero failures/skips; the 12:10:07Z waiting
+marker verifies actual release rollback/lost real COMMIT acknowledgment,
+current both-end fences, stale-claim/both-claimer exclusion and retained native
+roots/history/pins/workspace/reports. Frontend `114207768294` passed 3959 tests,
+zero failures/skips plus type/lint/source/build. Small parent protocol evidence
+is not new-head, protected-integration, licensed, speed or live acceptance.
+Same heartbeat remains ACTIVE; the roadmap is incomplete.
 
 ## Issued-catalog selection waiting boundary (2026-10-10, not activated)
 

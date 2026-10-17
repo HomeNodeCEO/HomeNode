@@ -95,6 +95,8 @@ import { runNeighborhoodOriginalTransactionPackageDatabaseChecks }
   from './helpers/neighborhoodOriginalTransactionPackageDatabaseChecks.js';
 import { runNeighborhoodOriginalCadAccountPackageDatabaseChecks }
   from './helpers/neighborhoodOriginalCadAccountPackageDatabaseChecks.js';
+import { runNeighborhoodSelectionIntentReclaimV2DatabaseChecks }
+  from './helpers/neighborhoodSelectionIntentReclaimV2DatabaseChecks.js';
 import { createCustomNeighborhoodCadImprovementSourcePolicy,CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_RIGHTS_KEY as CAD_RIGHTS_KEY,
   CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_PURPOSE as CAD_PURPOSE,CUSTOM_NEIGHBORHOOD_CAD_IMPROVEMENT_SOURCE_DATASET as CAD_DATASET }
   from '../src/security/customNeighborhoodCadImprovementSourcePolicy.js';
@@ -4194,6 +4196,9 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
         assert.equal(replayed.selected_union,'not_established');assert.equal(replayed.complete_catalog_semantic_replay,'not_established');
         assert.ok(!refsCalls.slice(replayFrom).some(sql=>sql.includes('selection-intent:insert')||sql.includes('selection-intent:resume')));
         assert.deepEqual(await continuationJob(),resumedJob,'exact replay does not extend the lease or erase history');
+        await runNeighborhoodSelectionIntentReclaimV2DatabaseChecks({pool,scope,operationId:refsOperation,actorUserId:actor,intent:selectionIntent,
+          workspaceTarget:{authority:'prior_workspace_target_only_not_new_selection',workspace_revision:1,workspace_checkpoint:pendingTarget},
+          expectedJob:resumedJob});
         for(const bad of [{...selectionIntent,command_id:randomUUID()},{...selectionIntent,included_recorded_group_ids:[]}])
           await assert.rejects(freshRefsOwner()[intentMethod](refsInput,{selectionIntent:bad}),/command_conflict/);
         await pool.query("UPDATE app.custom_appraisal_workfile_sections SET revision=2 WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'",[assignment]);
@@ -4228,6 +4233,8 @@ for(const selectionWaitFixture of [false,true,'intent']) test('isolated PostgreS
           native_orphan_resume_immutable_command_update_delete_truncate_and_free_success_root_change_refused:true,
           real_resume_DML_rollback_lost_real_COMMIT_ack_and_exact_read_only_replay:true,
           fresh_single_claim_retains_attempt2_prior_error_schedule_roots_pins:true,
+          actual_expired_intent_generic_claim_sweep_direct_reclaim_and_lease_renewal_refused_without_tuple_mutation:true,
+          expired_exact_replay_refused_and_scoped_cancellation_cleanup_then_actual_probe_rollback_preserves_original_job:true,
           changed_command_IDs_catalog_workspace_and_group_choices_refuse:true,
           workspace_history_prior_choices_reports_and_original_blob_count_unchanged:true,
           complete_catalog_semantics:false,selected_union:false,statistics:false,publication:false,

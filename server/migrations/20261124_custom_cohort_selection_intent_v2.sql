@@ -126,6 +126,17 @@ BEGIN
       AND NEW.lease_expires_at<=clock_timestamp()+interval '120 seconds' AND NEW.cancellation_requested_at IS NULL
       AND (to_jsonb(NEW)-ARRAY['status','claim_token','lease_expires_at','updated_at'])
         IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['status','claim_token','lease_expires_at','updated_at']) THEN RETURN NEW; END IF;
+    IF NEW.attempts>OLD.attempts
+      OR (NEW.claim_token IS DISTINCT FROM OLD.claim_token AND NEW.claim_token IS NOT NULL) THEN
+      RAISE EXCEPTION 'neighborhood_v2_selection_intent_job_conflict' USING ERRCODE='55000'; END IF;
+    -- An expired intent is retained for explicit handling, never a generic
+    -- retry, lease renewal or attempts-exhausted failure. A scoped cancellation
+    -- request is still admitted; its ordinary cancellation cleanup may follow.
+    IF OLD.lease_expires_at<=clock_timestamp() AND OLD.cancellation_requested_at IS NULL
+      AND (NEW.cancellation_requested_at IS NULL
+        OR (to_jsonb(NEW)-ARRAY['cancellation_requested_at','updated_at'])
+          IS DISTINCT FROM (to_jsonb(OLD)-ARRAY['cancellation_requested_at','updated_at'])) THEN
+      RAISE EXCEPTION 'neighborhood_v2_selection_intent_job_conflict' USING ERRCODE='55000'; END IF;
   END IF;
   IF OLD.status='cancelled' AND OLD.checkpoint->>'phase'='frozen_recorded_catalog_refs_v2' THEN
     IF (to_jsonb(NEW)-'updated_at') IS DISTINCT FROM (to_jsonb(OLD)-'updated_at') THEN

@@ -81,14 +81,36 @@ changed command/IDs/catalog/workspace refuses. Later bounded worker execution
 must reopen the retained intent and current authority; it is not implemented
 or activated by this slice.
 
-130 focused tests pass, zero failures/skips (670.525ms); source/native-fixture
-syntax and diff checks pass. SQL doubles are storage mechanics only. A third
-independently built actual CI graph is AUTHORED to test orphan COMMIT refusal,
-native known-ID checks, provisional command/lease rollback under every ending
-fault, lost real COMMIT acknowledgment, exact read-only replay, immutable
-commands, native success/root/re-wait refusal and retained attempt2/prior error/
-schedule/roots/pins/workspace/history/reports. New-head native/full execution is
-PENDING. No heavy local database/server/frontend suite was run.
+Integrated head `88cc200e` passed 73 focused checks and all 16 exact-head cloud
+checks, including native PostgreSQL run `38985823052` / job `117256929790`.
+The independently read native log passed 417 migration, 1 subject, 1 account
+quality, 10 prepared, 1 edge and 2 bootstrap checks without failures,
+cancellations or skips. The third independently built actual CI graph executed
+orphan COMMIT refusal, native known-ID checks, provisional command/lease rollback
+under every ending fault, lost real COMMIT acknowledgment, exact read-only
+replay, immutable commands, native success/root/re-wait refusal and retention of
+attempt 2, prior error, schedule, roots, pins, workspace, history and reports.
+
+Actual included review `1afe4d67` found that the generic worker could replace an
+expired intent claim and consume attempts. The correction rejects attempt
+increments and non-null token replacements after the one permitted resume.
+Generic claim and non-cancellation exhaustion selectors skip retained intents;
+an expired intent stays unchanged, including at the fifth-attempt ceiling.
+Native guards also refuse an unowned expired failure or lease renewal. Scoped
+cancellation and its ordinary expired-claim cleanup remain available. Explicit
+expired-intent recovery and source dispatch still require a separate complete
+owner before activation; neither an automatic retry nor a new lease is added.
+
+The corrected code passes 46 focused repository/worker checks, zero failures,
+cancellations or skips (5607.9599 ms), and changed JavaScript syntax/diff checks.
+New native probes are authored against that actual issued graph: expire the
+same native claim inside a guarded disposable transaction, require generic
+claim/sweep and direct mutation refusals with the whole tuple unchanged,
+refuse expired replay, exercise scoped cancellation cleanup, then actually
+roll back and compare the complete original tuple. Execution of those new
+probes, fresh corrected-head security/full suites and included review remain
+required; the prior `88cc200e` results are not corrected-head proof. No heavy
+local database/server/frontend suite was run.
 
 This command establishes explicit intent ONLY. Complete original-reconciled
 catalog semantic replay, exact distinct COMPLETE selected union/eligibility
@@ -102,12 +124,12 @@ then fresh required integrated-head security/native/full checks and actual
 included review, without paid/forced/early/quota/check bypass.
 
 Parent waiting exact `86d5c5bc` is independently cloud-verified: Foundation
-38050249985 all four jobs, Sales38050249953/Mobile38050249954/GSE38050249965
-succeeded. Native114207768169 passed 417 migration / 9 index / 1 subject /
+`38050249985` all four jobs, Sales `38050249953` / Mobile `38050249954` / GSE `38050249965`
+succeeded. Native `114207768169` passed 417 migration / 9 index / 1 subject /
 1 edge / 2 bootstrap tests with zero failures/skips; the 12:10:07Z waiting
 marker verifies actual release rollback/lost real COMMIT acknowledgment,
 current both-end fences, stale-claim/both-claimer exclusion and retained native
-roots/history/pins/workspace/reports. Frontend114207768294 passed3959 tests,
+roots/history/pins/workspace/reports. Frontend `114207768294` passed 3959 tests,
 zero failures/skips plus type/lint/source/build. Small parent protocol evidence
 is not new-head, protected-integration, licensed, speed or live acceptance.
 Same heartbeat remains ACTIVE; the roadmap is incomplete.

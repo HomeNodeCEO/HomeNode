@@ -70,5 +70,7 @@ test('additive native guard binds all nine roots, exact workspace and one immuta
   for(let i=1;i<=8;i++)assert.ok(sql.includes(`job.checkpoint->'evidence_refs'->${i}`));
   for(const s of ['DEFERRABLE INITIALLY DEFERRED','orphan_resume','BEFORE TRUNCATE','intent_immutable',
     'NEW.resume_claim_token','workspace.section_value IS DISTINCT FROM NEW.workspace_checkpoint',
-    "NEW.status IN ('succeeded','awaiting_selection')",'NEW.attempts<OLD.attempts','NEW.checkpoint IS DISTINCT FROM command.checkpoint'])assert.ok(sql.includes(s),s);
+    "NEW.status IN ('succeeded','awaiting_selection')",'NEW.attempts<OLD.attempts','NEW.checkpoint IS DISTINCT FROM command.checkpoint',
+    'NEW.attempts>OLD.attempts','NEW.claim_token IS DISTINCT FROM OLD.claim_token AND NEW.claim_token IS NOT NULL',
+    'OLD.lease_expires_at<=clock_timestamp() AND OLD.cancellation_requested_at IS NULL'])assert.ok(sql.includes(s),s);
 });

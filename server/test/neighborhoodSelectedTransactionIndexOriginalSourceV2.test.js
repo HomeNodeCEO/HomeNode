@@ -22,7 +22,7 @@ test('all twelve previous original SQL constants stay byte-identical, including 
     NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL:'3abdca68742b24b75321ca88e7fd979ed6b9afa7c0636dc8f121adcf1c60a7b3',
     NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL:'ac0740fb66f30a6c3b8496f35e2816b5ec13a73b0d5ff76c61a1534a00695894',
   };
-  assert.equal(Object.keys(plans).length,14);
+  assert.equal(Object.keys(plans).length,15);
   for(const [key,sha] of Object.entries(expected))assert.equal(createHash('sha256').update(plans[key]).digest('hex'),sha,key);
 });
 

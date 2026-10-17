@@ -35,3 +35,18 @@ export const COMPLETED_INDEX_FIRST_SOURCE_CONTEXT_V3_SQL=`
   AND body.canonical_utf8::jsonb->>'format'='cohort_selected_transaction_index_receipt_v2'
   AND body.canonical_utf8::jsonb->>'sequence'=h.sequence::text
   AND body.canonical_utf8::jsonb->'after'->>'done'='true'`;
+
+// Separate actual owned18 seam. Native functions reopen the ENTIRE immutable
+// birth/preclaim/current-claim tuple and reselect FIRST/member/edge. The old17
+// literal above remains unchanged; no caller root/ordinal/source SQL is input.
+export const OWNED_FIRST_SOURCE_CONTEXT_V3_SQL=`
+ SELECT p.generation_id,f.selected_account_id AS account_id,f.first_selected_ordinal AS ordinal,
+  f.partition_ordinal,f.entry_reference,f.metric_row_reference,f.contribution_row_reference,
+  p.index_reference,p.index_sequence,f.kind,f.native_key,f.first_selected_ordinal
+ FROM app.neighborhood_custom_cohort_capture_jobs job
+ JOIN LATERAL app.neighborhood_source_resolution_v3_owned_first_parent(
+  job.operation_id,job.organization_id,job.claim_token,job.attempts) p ON true
+ JOIN LATERAL app.neighborhood_source_resolution_v3_owned_first(
+  job.operation_id,job.organization_id,job.claim_token,job.attempts) f
+  ON f.operation_id=p.operation_id AND f.organization_id=p.organization_id
+ WHERE job.operation_id=$1::uuid AND p.generation_id=$2::uuid`;

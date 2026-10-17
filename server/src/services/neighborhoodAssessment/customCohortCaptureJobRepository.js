@@ -381,6 +381,23 @@ export function createCustomCohortCaptureJobRepository(client) {
       return transactionIndexCheckpointOf(row.checkpoint);
     },
 
+    // Read the actual retained17 birth under the separately issued current18
+    // claim. This never decodes or strips the actual18 checkpoint as17.
+    async readOwnedFirstSourceBirthCheckpoint(...args){
+      if(args.length!==2)fail('invalid_input');
+      const claim=transactionIndexData(args[0],['operation_id','claim_token','attempts']);
+      const options=transactionIndexData(args[1],['scope','actorUserId']);
+      options.scope=transactionIndexData(options.scope,['organization_id','report_file_id','assignment_file_id','account_id']);
+      const row=one(await client.query(`/* custom-cohort-job:owned-first-source-birth-checkpoint-read */
+        SELECT p.parent_checkpoint AS checkpoint
+        FROM app.neighborhood_source_resolution_v3_owned_first_parent($1::uuid,$4::uuid,$2::uuid,$3::integer) p
+        WHERE p.report_file_id=$5::uuid AND p.assignment_file_id=$6::bigint
+          AND p.account_id=$7 AND p.actor_user_id=$8::uuid`,scopedClaimOf(claim,options)),'claim_lost');
+      const birth=transactionIndexCheckpointOf(row.checkpoint);
+      if(birth.phase!=='frozen_selected_transaction_index_refs_v2')fail('invalid_checkpoint');
+      return birth;
+    },
+
     async saveTransactionIndexCheckpoint(...args){
       if(args.length!==3)fail('invalid_input');
       const options=transactionIndexData(args[1],['scope','actorUserId']);

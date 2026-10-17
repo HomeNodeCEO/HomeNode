@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCustomCohortCompletedIndexFirstSourceV3Repository as create } from '../src/services/neighborhoodAssessment/customCohortCompletedIndexFirstSourceV3Repository.js';
+import { createCustomCohortCompletedIndexFirstSourceV3Repository as create,createCustomCohortOwnedFirstSourceV3Repository as owned } from '../src/services/neighborhoodAssessment/customCohortCompletedIndexFirstSourceV3Repository.js';
 
 const id=n=>`70000000-0000-4000-8000-${String(n).padStart(12,'0')}`,ref=n=>({content_sha256:String(n).repeat(64),canonical_utf8_bytes:'123'}),
   keys=['union_reference','eligibility_reference','evidence_reference','metrics_reference','statistics_reference','numeric_reference','semantic_reference'],
@@ -43,6 +43,16 @@ test('legacy-only index retains C-text native key and its actual later first-see
   const row=copy(first);row.kind='legacy_sale';row.native_key='10';row.first_selected_ordinal=2;
   row.selected_entry.account_id='B';row.selected_entry.ordinal=2;row.receipt.before.source_record_keys=0;row.receipt.after.source_record_keys=0;
   const p=await fixture([row]).repo.readFirst();assert.equal(p.source.native_key,'10');assert.equal(p.selected_entry.ordinal,2);
+});
+
+test('separate owned18 constructor retains FIRST interpretation and closed input while native birth proves its origin',async()=>{
+  const {input,queries}=fixture(),plan=await owned(input).readFirst();
+  assert.deepEqual(plan.source,{kind:'source_record',native_key:'501',first_selected_ordinal:1});
+  assert.equal(plan.source_authority,false);assert.equal(plan.originals_reconciled,false);
+  const sql=queries.find(q=>q.sql.includes(':native-first */')).sql;
+  assert.match(sql,/neighborhood_source_resolution_v3_owned_first_parent/);assert.match(sql,/neighborhood_source_resolution_v3_owned_first\(/);
+  assert.doesNotMatch(sql,/phase=job.checkpoint|continuation.phase=job.checkpoint|INSERT|DELETE|UPDATE app\./);
+  assert.throws(()=>owned({...input,checkpoint:{}}),/invalid_input/);assert.throws(()=>owned(input,{mode:'free'}),/invalid_input/);
 });
 
 test('no registered packages is distinct from an empty selected stock and requires both global namespaces empty',async()=>{

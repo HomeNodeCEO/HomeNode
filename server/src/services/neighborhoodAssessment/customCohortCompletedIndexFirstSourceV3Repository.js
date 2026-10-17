@@ -26,7 +26,7 @@ function integer(v,max){if(!Number.isSafeInteger(v)||Object.is(v,-0)||v<1||v>max
 // originals, ENTIRE caches and all native members, then repeat this native read
 // AFTER both ending source-purpose/actor/assignment/draft/subject/workspace
 // fences in the SAME bounded transaction. No route or worker calls this module.
-export function createCustomCohortCompletedIndexFirstSourceV3Repository(...args){
+function createRepository(args,owned){
   if(args.length!==1)fail('invalid_input');
   const o=data(args[0],['client','claim','scope','actorUserId']),
     claim=prepareCustomCohortCaptureJobClaim(data(o.claim,['operation_id','claim_token','attempts'])),
@@ -46,7 +46,23 @@ export function createCustomCohortCompletedIndexFirstSourceV3Repository(...args)
     }
     const r=data(one(await o.client.query(`/* custom-cohort-completed-index-first-source-v3:native-first */
       WITH bound_context AS MATERIALIZED (
-        SELECT h.*,b.canonical_utf8::jsonb AS receipt,job.claim_token,job.attempts
+${owned?`        SELECT h.*,b.canonical_utf8::jsonb AS receipt,job.claim_token,job.attempts
+        FROM app.neighborhood_custom_cohort_capture_jobs job
+        JOIN LATERAL app.neighborhood_source_resolution_v3_owned_first_parent(
+          job.operation_id,job.organization_id,job.claim_token,job.attempts) p ON true
+        JOIN LATERAL app.neighborhood_source_resolution_v3_owned_first(
+          job.operation_id,job.organization_id,job.claim_token,job.attempts) f ON f.operation_id=p.operation_id
+        JOIN app.neighborhood_custom_cohort_selected_transaction_index_v2_heads h
+          ON h.operation_id=p.operation_id AND h.organization_id=p.organization_id
+          AND h.command_id=p.command_id AND h.generation_id=p.generation_id
+          AND h.receipt_reference=p.index_reference AND h.sequence=p.index_sequence
+        JOIN app.neighborhood_cohort_evidence_blobs b ON b.organization_id=h.organization_id
+          AND b.content_sha256=h.receipt_reference->>'content_sha256'
+          AND b.canonical_utf8_bytes::text=h.receipt_reference->>'canonical_utf8_bytes' AND b.canonical_utf8_bytes<=4096
+        WHERE job.operation_id=$1::uuid AND job.claim_token=$2::uuid AND job.attempts=$3::integer
+          AND job.organization_id=$4::uuid AND job.report_file_id=$5::uuid AND job.assignment_file_id=$6::bigint
+          AND job.account_id=$7 AND job.actor_user_id=$8::uuid
+        FOR UPDATE OF job NOWAIT`:`        SELECT h.*,b.canonical_utf8::jsonb AS receipt,job.claim_token,job.attempts
         FROM app.neighborhood_custom_cohort_capture_jobs job
         JOIN app.neighborhood_custom_cohort_selected_transaction_index_v2_heads h USING(operation_id,organization_id)
         JOIN app.neighborhood_cohort_evidence_blobs b ON b.organization_id=h.organization_id
@@ -77,7 +93,7 @@ export function createCustomCohortCompletedIndexFirstSourceV3Repository(...args)
           AND job.lease_expires_at>clock_timestamp() AND job.cancellation_requested_at IS NULL AND job.context_sha256 IS NULL
           AND app.neighborhood_selected_transaction_index_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)
           AND b.canonical_utf8::jsonb->'after'->>'done'='true'
-        FOR UPDATE OF job NOWAIT
+        FOR UPDATE OF job NOWAIT`}
       ), first_source AS MATERIALIZED (
         SELECT k.kind,k.native_key,k.first_selected_ordinal FROM bound_context c
         CROSS JOIN LATERAL (
@@ -156,3 +172,7 @@ export function createCustomCohortCompletedIndexFirstSourceV3Repository(...args)
     observed=plan;return plan;
   }});
 }
+
+export function createCustomCohortCompletedIndexFirstSourceV3Repository(...args){return createRepository(args,false);}
+// Separate closed constructor; the caller cannot supply a mode or native SQL.
+export function createCustomCohortOwnedFirstSourceV3Repository(...args){return createRepository(args,true);}

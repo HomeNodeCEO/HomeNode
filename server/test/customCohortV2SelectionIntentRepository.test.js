@@ -122,6 +122,34 @@ function retainedSetup({patch={},auto=false,endAuto=false,missing=false}={}){
   }})};
 }
 
+test('separate owned18 intent reader takes actual retained17, exact pending workspace and fresh claim without changing original readers',async()=>{
+  const fresh={operation_id:id(4),claim_token:id(9),attempts:5},birth={phase:'frozen_selected_transaction_index_refs_v2',
+    evidence_refs:[...checkpoint.evidence_refs,...Array(8).fill(ref)]};
+  const fixture=(patch={},auto=false,missing=false)=>{let transaction=0;const calls=[];
+    return {calls,owner:repository({async query(sql,values){calls.push({sql,values});
+      if(sql.includes(':transaction'))return {rowCount:1,rows:[{transaction_id:String(auto?++transaction:8)}]};
+      return {rowCount:missing?0:1,rows:missing?[]:[{...structuredClone(command),retained_birth_checkpoint:birth,...patch}]};
+    }})};};
+  const {owner,calls}=fixture(),admitted=await owner.readForOwnedFirstSource(fresh,workerOptions);
+  assert.deepEqual(admitted.claim,fresh);assert.deepEqual(admitted.included_recorded_group_ids,intent.included_recorded_group_ids);
+  const query=calls.find(q=>q.sql.includes(':owned-first-source-read'));
+  assert.match(query.sql,/owned_first_parent/);assert.match(query.sql,/owned_first\(/);
+  assert.match(query.sql,/p.actor_user_id=\$8::uuid/);assert.doesNotMatch(query.sql,/UPDATE app\.|DELETE|INSERT/);
+  assert.deepEqual(query.values,[fresh.operation_id,scope.organization_id,fresh.claim_token,5,scope.report_file_id,'7','A',id(5)]);
+  for(const patch of [{retained_birth_checkpoint:{...birth,phase:'frozen_selected_source_resolution_refs_v3'}},
+    {retained_birth_checkpoint:{...birth,evidence_refs:[{...ref,content_sha256:'e'.repeat(64)},...birth.evidence_refs.slice(1)]}},
+    {retained_birth_checkpoint:{...birth,evidence_refs:Array(17)}},{workspace_revision:2},
+    {issued_attempts:6},{resume_claim_token:fresh.claim_token},{profile_reference:ref}])
+    await assert.rejects(fixture(patch).owner.readForOwnedFirstSource(fresh,workerOptions));
+  const trapped=Array.from({length:17},()=>ref);Object.defineProperty(trapped,'0',{get(){assert.fail('native getter');},enumerable:true});
+  await assert.rejects(fixture({retained_birth_checkpoint:{...birth,evidence_refs:trapped}}).owner.readForOwnedFirstSource(fresh,workerOptions),/checkpoint_changed/);
+  await assert.rejects(fixture({},false,true).owner.readForOwnedFirstSource(fresh,workerOptions),/operation_unavailable/);
+  const auto=fixture({},true);await assert.rejects(auto.owner.readForOwnedFirstSource(fresh,workerOptions),/caller_transaction_required/);
+  assert.ok(!auto.calls.some(q=>q.sql.includes(':owned-first-source-read')));
+  const denied=fixture();await assert.rejects(denied.owner.readForOwnedFirstSource(fresh,{...workerOptions,checkpoint:birth}),/invalid_input/);
+  assert.equal(denied.calls.length,0);
+});
+
 test('retained command reopens read-only for its original claim or a fresh ordinary replacement attempt, never a new choice',async()=>{
   for(const [claim,patch] of [[currentClaim,{}],[{...currentClaim,claim_token:id(9)},{issued_attempts:4}]]){
     const {owner,calls}=retainedSetup({patch}),result=await owner.readRetained(claim,workerOptions);

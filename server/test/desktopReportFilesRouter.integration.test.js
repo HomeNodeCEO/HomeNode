@@ -202,6 +202,45 @@ test("desktop report-file creation preserves canonical inputs and idempotent sta
   )));
 });
 
+test("address-only creation uses the Custom Appraisal policy and a bounded subject payload", async (context) => {
+  const calls = [];
+  const options = baseOptions({
+    createAddressFile: async (pool, auth, input) => {
+      calls.push({ pool, auth, input });
+      return { reportFile: { account_id: "HNMANUAL_123", target_id: "42" }, created: true };
+    },
+  });
+  const server = await startRouter(options, identity);
+  context.after(server.close);
+  const response = await fetch(`${server.baseUrl}/api/address-subjects/report-files`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      workflow_type: "custom_appraisal", organization_id: "org-1",
+      client_request_id: "request-1", effective_date: "2026-10-07",
+      subject: { address: "123 Main St", city: "Plano" },
+      account_id: "ATTACKER_ACCOUNT", previous_report_file_id: "ATTACKER_FILE",
+    }),
+  });
+  assert.equal(response.status, 201);
+  assert.deepEqual(await response.json(), {
+    report_file: { account_id: "HNMANUAL_123", target_id: "42" }, created: true,
+  });
+  assert.deepEqual(calls.map(({ input }) => input), [{
+    workflow_type: "custom_appraisal", organization_id: "org-1",
+    client_request_id: "request-1", effective_date: "2026-10-07",
+    subject: { address: "123 Main St", city: "Plano" },
+  }]);
+
+  const invalid = await fetch(`${server.baseUrl}/api/address-subjects/report-files`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workflow_type: "property_tax_protest", subject: { address: "123 Main St" } }),
+  });
+  assert.equal(invalid.status, 400);
+  assert.deepEqual(await invalid.json(), { error: "invalid_workflow_type" });
+  assert.equal(calls.length, 1);
+});
+
 test("desktop report-file error mapping preserves stable client and conflict statuses", () => {
   assert.equal(desktopReportFileErrorStatus(new Error("report_file_not_found")), 404);
   assert.equal(desktopReportFileErrorStatus(new Error("organization_access_denied")), 403);

@@ -3,6 +3,7 @@ import express from "express";
 import { resolveCanonicalAccountId } from "../../services/accountQuality.js";
 import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import {
+  createAddressReportFile,
   createReportFile,
   listReportFiles,
 } from "../mobile/reportFiles.js";
@@ -39,6 +40,7 @@ const REPORT_FILE_BAD_REQUEST = new Set([
   "organization_required",
   "uad_account_scope_required",
   "same_assignment_confirmation_required",
+  "invalid_subject_address",
 ]);
 
 function reportFileErrorMessage(error) {
@@ -76,6 +78,7 @@ export function createDesktopReportFilesRouter({
   resolveAccountId = resolveCanonicalAccountId,
   listFiles = listReportFiles,
   createFile = createReportFile,
+  createAddressFile = createAddressReportFile,
   logger = console,
 } = {}) {
   if (
@@ -96,6 +99,9 @@ export function createDesktopReportFilesRouter({
   }
   if (typeof createFile !== "function") {
     throw new TypeError("desktop_report_files_create_service_required");
+  }
+  if (typeof createAddressFile !== "function") {
+    throw new TypeError("desktop_address_report_files_create_service_required");
   }
 
   const router = express.Router();
@@ -151,6 +157,37 @@ export function createDesktopReportFilesRouter({
     } catch (error) {
       const { status, message } = desktopReportFileErrorDetails(error);
       if (status === 500) logUnexpectedReportFileFailure(logger, "desktop report file create failed", error);
+      return res.status(status).json({
+        error: status === 500 ? "report_file_create_failed" : message,
+      });
+    }
+  });
+
+  /** Create a Custom Appraisal from an address without claiming a CAD match. */
+  router.post("/api/address-subjects/report-files", async (req, res) => {
+    const workflowType = String(req.body?.workflow_type || "").trim();
+    if (workflowType !== "custom_appraisal") {
+      return res.status(400).json({ error: "invalid_workflow_type" });
+    }
+    if (!requireWorkflowAccess(req, res, workflowType, "write")) return undefined;
+    if (!req.mobileAuth) {
+      return res.status(401).json({ error: "authentication_required" });
+    }
+    try {
+      const result = await createAddressFile(pool, req.mobileAuth, {
+        workflow_type: workflowType,
+        organization_id: req.body?.organization_id,
+        client_request_id: req.body?.client_request_id,
+        effective_date: req.body?.effective_date,
+        subject: req.body?.subject,
+      });
+      return res.status(result.created ? 201 : 200).json({
+        report_file: result.reportFile,
+        created: result.created,
+      });
+    } catch (error) {
+      const { status, message } = desktopReportFileErrorDetails(error);
+      if (status === 500) logUnexpectedReportFileFailure(logger, "desktop address report file create failed", error);
       return res.status(status).json({
         error: status === 500 ? "report_file_create_failed" : message,
       });

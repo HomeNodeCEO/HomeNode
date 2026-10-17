@@ -35,8 +35,9 @@ function baseOptions(database, overrides = {}) {
   };
 }
 
-async function startRouter(options) {
+async function startRouter(options, auth = null) {
   const app = express();
+  if (auth) app.use((req, _res, next) => { req.mobileAuth = auth; next(); });
   app.use(createPropertySearchRouter(options));
   const server = await new Promise((resolve, reject) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
@@ -98,11 +99,32 @@ test("city-only searches remain canonical-only, ordered, capped, and paginated",
   const [{ sql, params }] = database.queries;
   assert.deepEqual(params, ["PLANO%", 100, 0]);
   assert.ok(sql.includes("a.canonical_account_id IS NULL"));
+  assert.ok(sql.includes("a.data_quality_status IS DISTINCT FROM 'manual_subject'"));
   assert.ok(sql.includes("'city_prefix' AS search_match"));
   assert.ok(sql.includes("LIMIT $2 OFFSET $3"));
   assert.ok(sql.includes("FROM app.county_account_identifiers identifier"));
   assert.ok(sql.includes("LEFT JOIN core.value_summary_current"));
   assert.ok(sql.includes("SELECT m.* FROM core.market_values"));
+});
+
+test("entered address subjects are searchable only within readable appraisal organizations", async (context) => {
+  const org = "27cba590-5229-4650-a9fe-60029bef8d72";
+  const auth = { userId: "appraiser-1", organizations: [{ organizationId: org }] };
+  const database = createPool(async () => ({ rows: [] }));
+  const server = await startRouter(baseOptions(database, {
+    hasPermission: (_auth, workflow, permission, organizationId) => (
+      workflow === "custom_appraisal" && permission === "read" && organizationId === org
+    ),
+  }), auth);
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/search?city=plano`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  const [{ sql, params }] = database.queries;
+  assert.deepEqual(params, ["PLANO%", [org], 25, 0]);
+  assert.match(sql, /manual_file\.organization_id = ANY\(\$2::uuid\[\]\)/);
+  assert.match(sql, /manual_file\.workflow_type = 'custom_appraisal'/);
 });
 
 test("malformed search limits fail before a database query", async (context) => {

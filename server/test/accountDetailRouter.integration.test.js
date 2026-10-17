@@ -193,6 +193,34 @@ test("account detail returns not found before launching optional loaders", async
   assert.equal(optionalCalls, 0);
 });
 
+test("manually entered subjects require assignment scope for account detail", async (context) => {
+  let detailLoads = 0;
+  const pool = {
+    async query(sql) {
+      if (/FROM core\.accounts a/.test(sql)) return { rows: [{
+        account_id: "HNMANUAL_123", address: "123 Main St", data_quality_status: "manual_subject",
+      }] };
+      if (/FROM core\.account_census_geographies/.test(sql)) return { rows: [] };
+      throw new Error("unexpected_query");
+    },
+  };
+  const server = await startRouter(baseOptions({
+    pool,
+    loadDetailSections: async () => { detailLoads += 1; return sections(); },
+  }));
+  context.after(server.close);
+
+  const unscoped = await fetch(`${server.baseUrl}/api/accounts/HNMANUAL_123`);
+  assert.equal(unscoped.status, 404);
+  assert.deepEqual(await unscoped.json(), { error: "not_found" });
+  assert.equal(detailLoads, 0);
+
+  const scoped = await fetch(`${server.baseUrl}/api/accounts/HNMANUAL_123?assignment_file_id=42`);
+  assert.equal(scoped.status, 200);
+  assert.equal((await scoped.json()).account.address, "123 Main St");
+  assert.equal(detailLoads, 1);
+});
+
 test("enforced account detail rejects identities without an application read role before database access", async (context) => {
   let queries = 0;
   const server = await startRouter(baseOptions({

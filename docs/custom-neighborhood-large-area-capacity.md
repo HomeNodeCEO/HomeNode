@@ -1,3 +1,26 @@
+## Fenced native source-parent writer (2026-10-17, inactive)
+
+The source-parent storage primitive now has a closed claim/scope/actor-bound
+writer with a zero-argument insert method. It refuses an autocommit or changing
+transaction before DML, reads the actual locked native17 parent under every
+scope and live-claim predicate, and derives it again for INSERT. Every returned
+field must equal the earlier native read in that same transaction. There is no
+caller checkpoint, source key, cursor, generation, replacement row or conflict
+adoption. The whole parent snapshot remains internal and bounded at8 KB.
+
+Five focused protocol checks pass, covering transaction loss before/after DML,
+closed descriptors, missing native bindings and changed scope/claim/checkpoint/
+reference/results. The independent32/A-first and35/B-first cloud probes now
+exercise actual wrong native claim, attempt, organization, report, assignment,
+subject and actor refusals with zero provisional rows, then use this writer for
+the positive provisional insert. Current-head native execution is pending.
+
+The unregistered parent migration and unconditional durable COMMIT refusal are
+unchanged. This is a storage primitive for the future complete original owner;
+it does not perform source-purpose authorization, issue18 or NEXT/EMPTY, extend
+a lease, save a checkpoint, yield a continuation, publish or transfer pins. No
+route, worker, default codec, grants, deadlines or failure ceilings change.
+
 ## Actual issued17 parent for source progress (2026-10-16, unregistered)
 
 Unregistered migration `20261219_custom_cohort_source_resolution_parent_v3.sql`

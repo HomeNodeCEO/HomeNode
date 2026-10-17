@@ -22,7 +22,13 @@ test('all twelve previous original SQL constants stay byte-identical, including 
     NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL:'3abdca68742b24b75321ca88e7fd979ed6b9afa7c0636dc8f121adcf1c60a7b3',
     NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL:'ac0740fb66f30a6c3b8496f35e2816b5ec13a73b0d5ff76c61a1534a00695894',
   };
-  assert.equal(Object.keys(plans).length,16);
+  assert.deepEqual(Object.keys(plans).sort(),[...Object.keys(expected),
+    'NEIGHBORHOOD_NEXT_SELECTED_TRANSACTION_INDEX_ORIGINAL_PACKAGE_V2_SQL',
+    'NEIGHBORHOOD_FIRST_COMPLETED_INDEX_SOURCE_ORIGINAL_PACKAGE_V3_SQL',
+    'NEIGHBORHOOD_OWNED_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL',
+    'NEIGHBORHOOD_RECOVERED_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL',
+    'NEIGHBORHOOD_SECOND_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL'].sort());
+  assert.equal(typeof plans.NEIGHBORHOOD_SECOND_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL,'string');
   assert.equal(typeof plans.NEIGHBORHOOD_RECOVERED_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL,'string');
   for(const [key,sha] of Object.entries(expected))assert.equal(createHash('sha256').update(plans[key]).digest('hex'),sha,key);
 });

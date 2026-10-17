@@ -52,7 +52,7 @@ export async function runNeighborhoodOwnedFirstSourceOriginalV3DatabaseChecks({s
     entire_job_claim_birth_parents_blobs_history_report_choices_workspace_and_pins_unchanged:true,
     existing_aggregate_256queries_32MB_60s_and_stricter_single_use_child_250_limits_unchanged:true,
     recovery:false,NEXT_or_EMPTY:false,publication:false,activation:false,licensed_large_area:false,production_speed:false});
-  if(sourceRecoveryFixture)await runNeighborhoodOwnedSourceLastRetryV3DatabaseChecks({pool,input,scope,actor,service,claim,
+  if(sourceRecoveryFixture)await runNeighborhoodOwnedSourceLastRetryV3DatabaseChecks({sourceRecoveryFixture,pool,input,scope,actor,service,claim,
     originalReads,laterFirstSource,setFault,readFault});
   else await runNeighborhoodOwnedSourceTerminalFailureV3DatabaseChecks({pool,input,scope,actor,service,claim,
     originalReads,laterFirstSource,setFault,readFault});

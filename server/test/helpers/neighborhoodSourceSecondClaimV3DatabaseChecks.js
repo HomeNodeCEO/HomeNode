@@ -142,7 +142,7 @@ export async function runNeighborhoodSourceSecondClaimV3DatabaseChecks({sourceRe
   const preserved=async()=>{assert.deepEqual(await job(),recovered);assert.deepEqual(await immutable(),before.immutable);
     assert.deepEqual(await recoveryRows(),[{body:durable}]);};
   for(const sql of [`UPDATE ${table} SET attempts=attempts WHERE operation_id=$1`,`DELETE FROM ${table} WHERE operation_id=$1`]){
-    await assert.rejects(transaction(pool,c=>c.query(sql,[op])),/recovery_immutable/);await preserved();
+    await assert.rejects(transaction(pool,c=>c.query(sql,[op])),/neighborhood_source_resolution_v3_second_claim_immutable/);await preserved();
   }
   await assert.rejects(transaction(pool,c=>c.query(`TRUNCATE ${table}`)),/immutable/);await preserved();
   for(const owner of [second_claims,jobs,initialClaims,continuations]){

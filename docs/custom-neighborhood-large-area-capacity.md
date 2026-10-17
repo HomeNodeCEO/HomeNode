@@ -1,3 +1,39 @@
+## Recovered fifth-attempt terminal failure (2026-10-17, unregistered; native validation pending)
+
+Unregistered `20261231_custom_cohort_source_recovered_terminal_failure_v3.sql`
+and a separate closed terminal repository retain normal failure of the actual
+live recovered5 claim. The immutable record captures the ENTIRE running job
+and its actual recovery transaction. The paired transition changes only failed
+status, token/lease clearing, closed error and native update time. Attempt five,
+schedule, all roots, original17 birth, initial owned4 claim, recorded retry4,
+recovery5 and every other historical field remain intact.
+
+Independent native functions reopen the complete original/retry/recovery parent
+and FIRST key/member/edge graph through the captured recovered lease. That
+lease must remain live through genuine COMMIT. All three COMPLETE prior
+immediate guard bodies and the entire earlier job deferred body remain after
+one closed terminal branch. All ten earlier deferred events remain enabled;
+the eleventh refuses an orphan terminal record at real PostgreSQL COMMIT.
+The initial owned5 terminal path and every prior recovery rule are unchanged.
+
+Authored native probes run LAST after actual fresh5 COMMIT and all recovered
+whole-original proofs on both independent captures. They require forged tuple,
+transaction, scope and token refusal; genuine orphan COMMIT/full rollback;
+actual original I/O followed by ending role loss; A acknowledged terminal
+COMMIT and B acknowledgment lost after actual COMMIT. Full captured running
+job and terminal tuple, all prior rows/blobs/claims/failures, report/assignment,
+subject/manual sections, workspace/choices and pins must remain intact.
+Duplicate failure, sixth claim, old queues and stale original I/O must refuse.
+
+Five focused boundary checks passed serially in 110.9863 ms with zero failures,
+cancellations or skips. Prefix AND full prepared native execution remain
+required. Existing deadlines, failure ceiling and aggregate original-owner
+budgets are unchanged. This is structural closure; it grants no source authority,
+transfers no pin and publishes no context. Lower1–3 and expired recovery,
+NEXT/fresh EMPTY, full economic resolution/publication, terminal pin transfer/
+retirement and coherent activation remain unfinished. No licensed capacity or
+production speed proof is claimed.
+
 ## Recovered fifth-attempt original owner (2026-10-17, inactive; native validation pending)
 
 A separate closed original owner reads under the actual recovered attempt-five

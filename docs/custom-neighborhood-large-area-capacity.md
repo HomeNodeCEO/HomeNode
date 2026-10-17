@@ -1,11 +1,14 @@
 # Complete larger-area Custom neighborhood studies
 
-## Selection-wait deployment validation (2026-10-16, not released)
+## Selection-wait deployment validation (2026-10-16, released in 92b5b084)
 
 The actual included review of a664fb2 identified the widened status CHECK's
-validation scan under ACCESS EXCLUSIVE. The production API is still manually
-pinned to c777de9, whose registered migrations end at 20261122; the new 20261123
-files have not been released. The installation now uses NOT VALID, so the
+validation scan under ACCESS EXCLUSIVE. At that review, the production API was
+manually pinned to c777de9 and the new 20261123 files were not released. Those
+files subsequently shipped in protected release 92b5b084; the API and frontend
+were verified live at that commit at 02:50 UTC on 2026-10-17. Deployment ownership,
+health, readiness and rollback must be read again before any further release.
+The installation uses NOT VALID, so the
 superset CHECK immediately enforces every new or updated row without scanning
 old rows during installation. A separate registered validation migration runs
 after the installation file commits. The existing runner commits each file
@@ -126,7 +129,24 @@ expiry call must refuse at the live-claim fence before delivery; it cannot be
 required to execute outer ending-role reads after that refusal. Every aggregate
 and parameter shape in both calls remains checked, and the refused call retains
 its own current actor/subject, actual original I/O and query-ceiling assertions.
-Fresh exact-head native/full-suite proof and actual included review are pending.
+Implementation `2233b7f9` passed all 16 exact-head checks, including security,
+CodeQL, full server/frontend and native PostgreSQL run `38999364889` / job
+`117298818629`. The complete independently inspected 2,028,115-character native
+log passed 417 migration, 1 subject, 1 account-quality, 11 prepared, 1 edge and
+2 bootstrap checks, with zero failures, cancellations or skips (prepared
+734450.381616 ms). The 03:48:17Z live-lease marker and 03:50:17Z natural-expiry
+marker prove the safeguards above, including real cancellation cleanup and
+explicit PostgreSQL rollback restoring the full original job tuple. The
+frontend suite passed 3,972 tests without failures, cancellations or skips,
+plus type/lint/source/build and rendered report-order checks.
+
+These completed results identify that exact implementation. This documentation
+revision retains identical production and test files; its own required checks
+and actual included review must pass before the protected merge. The earlier
+`0ffe38e4` native run failed only the new test's incorrect expectation of outer
+ending-role reads after an early expiry refusal. The correction adds the fresh
+successful both-end replay above, preserving the shared aggregate checker,
+all production guards and deadlines; the failed head was not rerun.
 
 Corrected implementation `d498ab57` passes 46 focused repository/worker checks,
 zero failures, cancellations or skips (5609.9087 ms), and changed JavaScript

@@ -1,5 +1,11 @@
 ## Clean first-attempt source native producer (2026-10-17, inactive)
 
+The `4e144300` server run exposed four fixture-shape checks that still expected
+the previous 41-case matrix. Their explicit expectations now include the two
+appended clean cases and the extended later-account selector. All previous
+scenario ordering, original-source invariants and deadline checks remain.
+The failed head is not rerun; its successor needs fresh exact-head cloud checks.
+
 Two additional independent A/B cases require attempt one and a null prior error
 through the actual initial dispatcher, source prefix, neutral/CAD caches, whole
 stock/partition/catalog, explicit fixture selection, selected union and complete

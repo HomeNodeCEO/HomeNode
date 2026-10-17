@@ -72,8 +72,8 @@ const PROFILE = freeze({ profile_ref: { id: DEFINITION.id, revision: '1', conten
 /** Return the immutable exact native-association profile, never source or publication authority. */
 export function getNeighborhoodTransactionPackageV1Profile() { return PROFILE; }
 
-// Only fixed SQL fragments are interpolated. Counts use the installed source/key
-// indexes; payloads are materialized only when the complete package fits the cap.
+// Only fixed SQL fragments are interpolated. Indexed per-kind counts stop at
+// cap+1; admitted counts remain exact, and oversized packages render no payloads.
 const SOURCE_CHOSEN = `SELECT source_record_id::text AS package_key FROM app.neighborhood_custom_cohort_source_seeds
   WHERE operation_id=$1::uuid AND generation_id=$2::uuid
     AND source_record_id>coalesce(nullif($4::text,''),'0')::bigint ORDER BY source_record_id LIMIT 1`;
@@ -87,7 +87,8 @@ function packageSql(legacy) {
     : 't.source_record_id=(SELECT package_key::bigint FROM chosen)';
   const scoped = `t.generation_id=$2::uuid AND t.profile_sha256=$3 AND ${predicate}`;
   const totals = KINDS.map(kind => `SELECT '${kind}' AS kind,count(*)::text AS n
-    FROM app.neighborhood_frozen_typed_v2_rows t WHERE ${scoped} AND t.kind='${kind}'`).join('\nUNION ALL\n');
+    FROM (SELECT 1 FROM app.neighborhood_frozen_typed_v2_rows t WHERE ${scoped} AND t.kind='${kind}'
+      LIMIT ($5::integer + 1)) bounded`).join('\nUNION ALL\n');
   const members = KINDS.map(kind => `SELECT t.kind,t.row_key,jsonb_build_object('row',jsonb_build_object(
       'kind',t.kind,'row_key',t.row_key,'account_id',t.account_id,'source_record_id',t.source_record_id::text,
       'original_payload_sha256',t.original_payload_sha256,'typed',t.typed),

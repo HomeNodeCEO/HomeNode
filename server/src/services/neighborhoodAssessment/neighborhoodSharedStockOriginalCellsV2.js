@@ -17,6 +17,13 @@ const L=NEIGHBORHOOD_STOCK_ORIGINAL_CELLS_V2_LIMITS, TYPED=getNeighborhoodFrozen
 const KINDS=Object.freeze(['parcels','accounts']), ALL=['parcels','accounts','source_records','sales','sale_links','sync_state','sync_runs'];
 /** Refuse without including retained private observations in the error. */
 const fail=reason=>{throw new TypeError(`neighborhood_stock_original_cells_v2_${reason}`);};
+/** A fixed whole-packet capacity refusal has no retry/continuation semantics.
+ * This diagnostic does not mutate a native job or authorize a failure claim. */
+const refusePacketCapacity=reason=>{
+  const error=new TypeError(`neighborhood_stock_original_cells_v2_${reason}`);
+  Object.defineProperty(error,'retryable',{value:false});
+  throw error;
+};
 /** Compare detached validated DATA, never an authorization claim. */
 const same=(a,b)=>canonicalAssessmentJson(a)===canonicalAssessmentJson(b);
 /** Freeze only the owned result tree after validation and original replay. */
@@ -447,8 +454,8 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
     if(duplicated&&!same(nextCounts,subjectCounts))fail('invalid_result');
     const total=nextCounts.parcels+nextCounts.accounts+(duplicated?0:subjectCounts.parcels+subjectCounts.accounts);
     if(result.original_count!==total)fail('invalid_result');
-    if(total>L.rows){if(result.page_count!==0||result.page_json!=='[]')fail('invalid_result');fail('account_package_row_limit');}
-    if(result.packet_oversize)fail('account_package_byte_limit');
+    if(total>L.rows){if(result.page_count!==0||result.page_json!=='[]')fail('invalid_result');refusePacketCapacity('account_package_row_limit');}
+    if(result.packet_oversize)refusePacketCapacity('account_package_byte_limit');
     if(result.page_count!==total||Buffer.byteLength(result.page_json)>L.page_utf8_bytes)fail('invalid_result');
     function member(id,geographic,counts,subject=false){
       if(id===null){if(geographic!==null||counts.parcels!==0||counts.accounts!==0)fail('invalid_result');return;}
@@ -491,7 +498,7 @@ export function createNeighborhoodSharedStockOriginalCellsV2(client,rawOptions,r
       subject_included:includeSubject,subject_equals_next:duplicated,distinct_original_count:total,
       original_reconciliation:'every_distinct_original_once_entire_neutral_cache',selected_union:'not_established',
       eligibility:'not_established',source_acquisition:'not_established',report_update:'none'};
-    if(Buffer.byteLength(JSON.stringify(output))>L.output_utf8_bytes)fail('byte_limit');
+    if(Buffer.byteLength(JSON.stringify(output))>L.output_utf8_bytes)refusePacketCapacity('byte_limit');
     await context.finish();return freeze(output);
   }
   return Object.freeze({

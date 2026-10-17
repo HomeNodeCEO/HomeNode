@@ -88,6 +88,7 @@ const MIGRATIONS = Object.freeze([
   "20261121_custom_cohort_recorded_catalog_v2.sql",
   "20261122_custom_cohort_catalog_continuations_v2.sql",
   "20261123_custom_cohort_selection_wait_v2.sql",
+  "20261123_custom_cohort_selection_wait_validate_status_v2.sql",
   "20261124_custom_cohort_selection_intent_v2.sql",
   "20261125_custom_cohort_selected_union_replay_v2.sql",
   "20261126_custom_cohort_selected_recorded_eligibility_v2.sql",

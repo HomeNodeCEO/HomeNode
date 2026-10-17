@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 
-// Independent golden shapes for the ONLY two aggregates allowed in this owner.
+// Independent golden shapes for the two authority aggregates and the bounded
+// whole-original transports for one account or one deduplicated subject/next pair.
 // Checking the whole SQL and its bound values prevents a comment/tag alone from
 // exempting a population aggregate. This is a test assertion, not authorization.
 const normalize = sql => sql.replace(/\s+/g, ' ').trim();
@@ -29,12 +30,141 @@ const SECTIONS_SQL = normalize(`/* custom-cohort-subject:sections */
     FROM unnest($2::text[]) WITH ORDINALITY AS keys(k,ord) LEFT JOIN held ON held.section_key=k)
   SELECT CASE WHEN octet_length(value)<=$3 THEN value ELSE NULL END AS original_json FROM encoded`);
 const SECTION_KEYS = ['report.land_details', 'report.property_characteristics', 'report.subject_identification'];
+const ORIGINAL_ACCOUNT_SQL = normalize(`/* neighborhood-stock-account-original-package-v2 */
+WITH chosen AS MATERIALIZED (
+  SELECT account_id,parcel_count FROM app.neighborhood_custom_cohort_stock_accounts
+  WHERE operation_id=$1::uuid AND account_id>$4::text COLLATE "C" ORDER BY account_id LIMIT 1
+), totals AS MATERIALIZED (
+  SELECT kind,(SELECT count(*)::integer FROM (SELECT 1 FROM app.neighborhood_frozen_source_rows o
+    WHERE o.generation_id=$2::uuid AND o.kind=k.kind AND o.account_id=(SELECT account_id FROM chosen)
+    LIMIT ($5::integer+1)) bounded) AS n FROM (VALUES ('parcels'),('accounts')) k(kind)
+), members AS MATERIALIZED (
+  SELECT o.kind,o.row_key,t.row_key IS NULL OR t.account_id IS DISTINCT FROM o.account_id
+      OR t.source_record_id IS DISTINCT FROM o.source_record_id AS invalid,
+    octet_length(o.payload::text) AS original_bytes,octet_length(t.typed::text) AS typed_bytes,
+    jsonb_build_object('kind',o.kind,'row_key',o.row_key,'account_id',o.account_id,
+      'source_record_id',o.source_record_id::text,'original_text',o.payload::text,
+      'cached_account_id',t.account_id,'cached_source_record_id',t.source_record_id::text,
+      'original_payload_sha256',t.original_payload_sha256,'typed',t.typed)::text AS encoded
+  FROM chosen a CROSS JOIN (VALUES ('parcels'),('accounts')) k(kind)
+  CROSS JOIN LATERAL (SELECT o.kind,o.row_key,o.account_id,o.source_record_id,o.payload
+    FROM app.neighborhood_frozen_source_rows o WHERE o.generation_id=$2::uuid AND o.kind=k.kind AND o.account_id=a.account_id
+      AND (SELECT sum(n) FROM totals)<=$5::integer OFFSET 0) o
+  LEFT JOIN LATERAL (SELECT t.row_key,t.account_id,t.source_record_id,t.original_payload_sha256,t.typed
+    FROM app.neighborhood_frozen_typed_v2_rows t WHERE t.generation_id=$2::uuid AND t.profile_sha256=$3
+      AND t.kind=o.kind AND t.row_key=o.row_key OFFSET 0) t ON true
+), sized AS MATERIALIZED (SELECT *,octet_length(encoded) AS bytes FROM members)
+SELECT (SELECT account_id FROM chosen) AS account_id,(SELECT parcel_count::text FROM chosen) AS geographic_parcel_count,
+  (SELECT jsonb_object_agg(kind,n) FROM totals) AS original_counts,count(*)::integer AS page_count,
+  coalesce(sum(CASE WHEN invalid THEN 1 ELSE 0 END),0)::integer AS invalid_count,
+  coalesce(max(bytes),0)>$7::integer OR coalesce(max(original_bytes),0)>$8::integer
+    OR coalesce(sum(bytes+1),0)+2>$6::integer OR coalesce(sum(2*coalesce(typed_bytes,0)+1024),0)+2>$9::integer AS packet_oversize,
+  CASE WHEN coalesce(max(bytes),0)<=$7::integer AND coalesce(max(original_bytes),0)<=$8::integer
+    AND coalesce(sum(bytes+1),0)+2<=$6::integer AND coalesce(sum(2*coalesce(typed_bytes,0)+1024),0)+2<=$9::integer
+    THEN coalesce('['||string_agg(encoded,',' ORDER BY kind COLLATE "C",row_key COLLATE "C")||']','[]') ELSE '[]' END AS page_json
+FROM sized`);
+// Independent golden account packet, bound to the actual job's subject rather
+// than a caller cursor. Every original/cache/row/byte constraint stays exact.
+const SUBJECT_ORIGINAL_SQL = ORIGINAL_ACCOUNT_SQL
+  .replace('/* neighborhood-stock-account-original-package-v2 */', '/* neighborhood-stock-subject-housing-original-package-v2 */')
+  .replace('account_id>$4::text COLLATE "C" ORDER BY account_id LIMIT 1',
+    'account_id=(SELECT job.account_id FROM app.neighborhood_custom_cohort_capture_jobs job WHERE job.operation_id=$1::uuid AND job.account_id=$4::text) LIMIT 1');
 
-export function assertBoundedCohortAuthorityAggregates(calls, { actorUserId, organizationId, assignmentFileId }) {
+// Independent whole paired packet: native job subject, one next account,
+// deduplicated counts and one aggregate original/transport/output allowance.
+const SUBJECT_AND_NEXT_SQL = normalize(`/* neighborhood-stock-subject-and-next-original-package-v2 */
+WITH next_account AS MATERIALIZED (
+  SELECT account_id,parcel_count FROM app.neighborhood_custom_cohort_stock_accounts
+  WHERE operation_id=$1::uuid AND account_id>$4::text COLLATE "C" ORDER BY account_id LIMIT 1
+), subject_account AS MATERIALIZED (
+  SELECT a.account_id,a.parcel_count FROM app.neighborhood_custom_cohort_capture_jobs job
+  JOIN app.neighborhood_custom_cohort_stock_accounts a USING(operation_id)
+  WHERE job.operation_id=$1::uuid AND a.account_id=job.account_id AND $10::boolean
+), chosen AS MATERIALIZED (
+  SELECT * FROM next_account UNION SELECT * FROM subject_account
+), totals AS MATERIALIZED (
+  SELECT a.account_id,k.kind,(SELECT count(*)::integer FROM (SELECT 1 FROM app.neighborhood_frozen_source_rows o
+    WHERE o.generation_id=$2::uuid AND o.kind=k.kind AND o.account_id=a.account_id
+    LIMIT ($5::integer+1)) bounded) AS n FROM chosen a CROSS JOIN (VALUES ('parcels'),('accounts')) k(kind)
+), members AS MATERIALIZED (
+  SELECT o.account_id,o.kind,o.row_key,t.row_key IS NULL OR t.account_id IS DISTINCT FROM o.account_id
+      OR t.source_record_id IS DISTINCT FROM o.source_record_id AS invalid,
+    octet_length(o.payload::text) AS original_bytes,octet_length(t.typed::text) AS typed_bytes,
+    jsonb_build_object('kind',o.kind,'row_key',o.row_key,'account_id',o.account_id,
+      'source_record_id',o.source_record_id::text,'original_text',o.payload::text,
+      'cached_account_id',t.account_id,'cached_source_record_id',t.source_record_id::text,
+      'original_payload_sha256',t.original_payload_sha256,'typed',t.typed)::text AS encoded
+  FROM chosen a CROSS JOIN (VALUES ('parcels'),('accounts')) k(kind)
+  CROSS JOIN LATERAL (SELECT o.kind,o.row_key,o.account_id,o.source_record_id,o.payload
+    FROM app.neighborhood_frozen_source_rows o WHERE o.generation_id=$2::uuid AND o.kind=k.kind AND o.account_id=a.account_id
+      AND (SELECT sum(n) FROM totals)<=$5::integer
+      AND (NOT $10::boolean OR EXISTS(SELECT 1 FROM subject_account)) OFFSET 0) o
+  LEFT JOIN LATERAL (SELECT t.row_key,t.account_id,t.source_record_id,t.original_payload_sha256,t.typed
+    FROM app.neighborhood_frozen_typed_v2_rows t WHERE t.generation_id=$2::uuid AND t.profile_sha256=$3
+      AND t.kind=o.kind AND t.row_key=o.row_key OFFSET 0) t ON true
+), sized AS MATERIALIZED (SELECT *,octet_length(encoded) AS bytes FROM members)
+SELECT (SELECT account_id FROM next_account) AS account_id,
+  (SELECT parcel_count::text FROM next_account) AS geographic_parcel_count,
+  (SELECT account_id FROM subject_account) AS subject_account_id,
+  (SELECT parcel_count::text FROM subject_account) AS subject_geographic_parcel_count,
+  coalesce((SELECT n FROM totals WHERE account_id=(SELECT account_id FROM next_account) AND kind='parcels'),0) AS next_parcels,
+  coalesce((SELECT n FROM totals WHERE account_id=(SELECT account_id FROM next_account) AND kind='accounts'),0) AS next_accounts,
+  coalesce((SELECT n FROM totals WHERE account_id=(SELECT account_id FROM subject_account) AND kind='parcels'),0) AS subject_parcels,
+  coalesce((SELECT n FROM totals WHERE account_id=(SELECT account_id FROM subject_account) AND kind='accounts'),0) AS subject_accounts,
+  coalesce((SELECT sum(n)::integer FROM totals),0) AS original_count,count(*)::integer AS page_count,
+  coalesce(sum(CASE WHEN invalid THEN 1 ELSE 0 END),0)::integer AS invalid_count,
+  coalesce(max(bytes),0)>$7::integer OR coalesce(max(original_bytes),0)>$8::integer
+    OR coalesce(sum(bytes+1),0)+2>$6::integer OR coalesce(sum(2*coalesce(typed_bytes,0)+1024),0)+2>$9::integer AS packet_oversize,
+  CASE WHEN coalesce(max(bytes),0)<=$7::integer AND coalesce(max(original_bytes),0)<=$8::integer
+    AND coalesce(sum(bytes+1),0)+2<=$6::integer AND coalesce(sum(2*coalesce(typed_bytes,0)+1024),0)+2<=$9::integer
+    THEN coalesce('['||string_agg(encoded,',' ORDER BY account_id COLLATE "C",kind COLLATE "C",row_key COLLATE "C")||']','[]') ELSE '[]' END AS page_json
+FROM sized`);
+
+// Independently fixed native ordinal-one selector; reuse only the golden paired
+// transport so every original, deduplication and aggregate byte cap stays exact.
+const SUBJECT_AND_FIRST_SELECTED_SQL = SUBJECT_AND_NEXT_SQL
+  .replace('/* neighborhood-stock-subject-and-next-original-package-v2 */',
+    '/* neighborhood-stock-subject-and-first-selected-original-package-v2 */')
+  .replace('SELECT account_id,parcel_count FROM app.neighborhood_custom_cohort_stock_accounts WHERE operation_id=$1::uuid AND account_id>$4::text COLLATE "C" ORDER BY account_id LIMIT 1', normalize(`
+    SELECT a.account_id,a.parcel_count FROM app.neighborhood_custom_cohort_capture_jobs job
+    JOIN app.neighborhood_custom_cohort_selected_union_v2_heads head USING(operation_id,organization_id)
+    JOIN app.neighborhood_cohort_evidence_blobs body ON body.organization_id=head.organization_id
+      AND body.content_sha256=head.receipt_reference->>'content_sha256'
+      AND body.canonical_utf8_bytes::text=head.receipt_reference->>'canonical_utf8_bytes' AND body.canonical_utf8_bytes<=16000
+    JOIN app.neighborhood_custom_cohort_selected_union_v2_rows r
+      ON r.operation_id=job.operation_id AND r.organization_id=job.organization_id
+    JOIN app.neighborhood_custom_cohort_stock_accounts a ON a.operation_id=r.operation_id AND a.account_id=r.account_id
+    WHERE job.operation_id=$1::uuid AND r.ordinal=1 AND $4::text=''
+      AND app.neighborhood_selected_union_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)
+      AND body.canonical_utf8::jsonb->>'format'='cohort_selected_union_receipt_v2'
+      AND body.canonical_utf8::jsonb->'after'->>'done'='true'`));
+
+// Independently fixed next native eligibility ordinal. The original paired
+// transport, aggregate caps and all ending authority assertions stay intact.
+const SUBJECT_AND_NEXT_ELIGIBILITY_SQL = SUBJECT_AND_NEXT_SQL
+  .replace('/* neighborhood-stock-subject-and-next-original-package-v2 */',
+    '/* neighborhood-stock-subject-and-next-eligibility-original-package-v2 */')
+  .replace('SELECT account_id,parcel_count FROM app.neighborhood_custom_cohort_stock_accounts WHERE operation_id=$1::uuid AND account_id>$4::text COLLATE "C" ORDER BY account_id LIMIT 1', normalize(`
+    SELECT a.account_id,a.parcel_count FROM app.neighborhood_custom_cohort_capture_jobs job
+    JOIN app.neighborhood_custom_cohort_selected_union_v2_heads u USING(operation_id,organization_id)
+    JOIN app.neighborhood_cohort_evidence_blobs body ON body.organization_id=u.organization_id
+      AND body.content_sha256=u.receipt_reference->>'content_sha256'
+      AND body.canonical_utf8_bytes::text=u.receipt_reference->>'canonical_utf8_bytes' AND body.canonical_utf8_bytes<=16000
+    LEFT JOIN app.neighborhood_custom_cohort_selected_eligibility_v2_heads h ON h.operation_id=job.operation_id AND h.organization_id=job.organization_id
+    JOIN app.neighborhood_custom_cohort_selected_union_v2_rows r
+      ON r.operation_id=job.operation_id AND r.organization_id=job.organization_id AND r.ordinal=coalesce(h.sequence,0)+1
+    JOIN app.neighborhood_custom_cohort_stock_accounts a ON a.operation_id=r.operation_id AND a.account_id=r.account_id
+    WHERE job.operation_id=$1::uuid AND $4::text=''
+      AND ((h.operation_id IS NULL AND app.neighborhood_selected_union_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint))
+        OR app.neighborhood_selected_eligibility_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint))
+      AND body.canonical_utf8::jsonb->>'format'='cohort_selected_union_receipt_v2'
+      AND body.canonical_utf8::jsonb->'after'->>'done'='true'`));
+
+function validateShapes(calls, { actorUserId, organizationId, assignmentFileId, originals }) {
   let actors = 0, sections = 0;
   for (const { text, values } of calls) {
     assert.doesNotMatch(text, /ST_DWithin|job-typed:/, 'catalog must not use spatial/job-typed population paths');
-    if (!/\b(?:array_agg|jsonb_agg)\s*\(/i.test(text)) continue;
+    if (!/\b(?:array_agg|jsonb?_agg|jsonb?_object_agg|string_agg|xmlagg)\s*\(|\bARRAY\s*\(\s*SELECT\b/i.test(text)) continue;
     const sql = normalize(text);
     if (sql === ACTOR_SQL) {
       assert.deepEqual(values, [actorUserId, organizationId], 'exact current actor and organization only');
@@ -43,10 +173,45 @@ export function assertBoundedCohortAuthorityAggregates(calls, { actorUserId, org
       assert.deepEqual(values, [assignmentFileId, SECTION_KEYS, 1_500_000],
         'only the three fixed material sections for the exact assignment, with the existing byte cap');
       sections++;
+    } else if (sql === ORIGINAL_ACCOUNT_SQL) {
+      assert.ok(originals, 'whole-original packet requires the exact retained stock scope');
+      const afterAccount = values?.[3];
+      assert.ok(typeof afterAccount === 'string' && afterAccount.length <= 64 && Buffer.byteLength(afterAccount) <= 256
+        && afterAccount === afterAccount.trim() && !/[\u0000-\u001f\u007f]/.test(afterAccount), 'bounded original account cursor only');
+      assert.deepEqual(values, [originals.operationId, originals.generationId, originals.profileSha256, afterAccount,
+        250, 8_000_000, 2_100_000, 1_000_000, 2_100_000], 'exact original stock, generation, profile and existing row/byte caps only');
+    } else if (sql === SUBJECT_ORIGINAL_SQL) {
+      assert.ok(originals && typeof originals.subjectAccountId === 'string' && originals.subjectAccountId.length > 0,
+        'subject original packet requires the actual retained job subject');
+      assert.deepEqual(values, [originals.operationId, originals.generationId, originals.profileSha256, originals.subjectAccountId,
+        250, 8_000_000, 2_100_000, 1_000_000, 2_100_000], 'exact subject stock, generation, profile and existing row/byte caps only');
+    } else if (sql === SUBJECT_AND_NEXT_SQL || sql === SUBJECT_AND_FIRST_SELECTED_SQL || sql === SUBJECT_AND_NEXT_ELIGIBILITY_SQL) {
+      assert.ok(originals && typeof originals.subjectAccountId === 'string' && originals.subjectAccountId.length > 0,
+        'paired original packet requires the actual retained job subject');
+      const afterAccount = values?.[3], includeSubject = values?.[9];
+      assert.ok(typeof afterAccount === 'string' && afterAccount.length <= 64 && Buffer.byteLength(afterAccount) <= 256
+        && afterAccount === afterAccount.trim() && !/[\u0000-\u001f\u007f]/.test(afterAccount), 'bounded paired original account cursor only');
+      if (sql === SUBJECT_AND_FIRST_SELECTED_SQL) assert.equal(afterAccount, '', 'fixed native first-selected ordinal requires the empty cursor');
+      if (sql === SUBJECT_AND_NEXT_ELIGIBILITY_SQL) assert.equal(afterAccount, '', 'native eligibility ordinal requires the empty cursor');
+      assert.equal(typeof includeSubject, 'boolean', 'closed retained-subject fallback decision only');
+      assert.deepEqual(values, [originals.operationId, originals.generationId, originals.profileSha256, afterAccount,
+        250, 8_000_000, 2_100_000, 1_000_000, 2_100_000, includeSubject],
+      'exact paired stock, generation, profile and unchanged aggregate row/byte caps only');
     } else {
       assert.fail(`unexpected catalog aggregate SQL: ${sql.slice(0, 180)}`);
     }
   }
+  return { actors, sections };
+}
+
+// A rejected owner can stop before the ending subject/role reads. Validate
+// EVERY aggregate and parameter in that failed call without claiming delivery.
+export function assertBoundedCohortAuthorityAggregateShapes(calls, scope) {
+  validateShapes(calls, scope);
+}
+
+export function assertBoundedCohortAuthorityAggregates(calls, scope) {
+  const { actors, sections } = validateShapes(calls, scope);
   assert.ok(actors >= 2, 'both-end current actor role reads remain mandatory');
   assert.ok(sections >= 2, 'both-end current bounded subject-section reads remain mandatory');
 }

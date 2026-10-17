@@ -237,15 +237,20 @@ export function createCustomCohortCaptureJobRepository(client) {
         request_sha256: digest });
     },
 
+    /** Claim ordinary work only. A retained new-study intent keeps its fixed
+     * claim/history until its own owner handles it; expiry is not a retry.
+     * Explicit cancellation remains eligible for the normal cleanup below. */
     async claimDue({ limit = 1, leaseSeconds = 120 } = {}) {
       if (!Number.isInteger(limit) || limit < 1 || limit > 4) fail('invalid_limit');
       lease(leaseSeconds);
       // A crashed worker must not strand a cancellation. Skip rows held by
       // another worker and leave unexpired claims untouched.
       await client.query(`/* custom-cohort-job:expire */ WITH expired AS (
-          SELECT operation_id FROM app.neighborhood_custom_cohort_capture_jobs
-          WHERE status='running' AND lease_expires_at<=clock_timestamp()
-            AND (cancellation_requested_at IS NOT NULL OR attempts>=5)
+          SELECT job.operation_id FROM app.neighborhood_custom_cohort_capture_jobs job
+          WHERE job.status='running' AND job.lease_expires_at<=clock_timestamp()
+            AND (job.cancellation_requested_at IS NOT NULL OR (job.attempts>=5
+              AND NOT EXISTS (SELECT 1 FROM app.neighborhood_custom_cohort_v2_selection_intents intent
+                WHERE intent.operation_id=job.operation_id AND intent.organization_id=job.organization_id)))
           ORDER BY lease_expires_at,operation_id LIMIT 64 FOR UPDATE SKIP LOCKED
         ) UPDATE app.neighborhood_custom_cohort_capture_jobs job
           SET status=CASE WHEN job.cancellation_requested_at IS NULL THEN 'failed' ELSE 'cancelled' END,
@@ -257,6 +262,8 @@ export function createCustomCohortCaptureJobRepository(client) {
       const result = await client.query(`/* custom-cohort-job:claim */ WITH due AS (
           SELECT operation_id FROM app.neighborhood_custom_cohort_capture_jobs job
           WHERE attempts<5 AND cancellation_requested_at IS NULL
+            AND NOT EXISTS (SELECT 1 FROM app.neighborhood_custom_cohort_v2_selection_intents intent
+              WHERE intent.operation_id=job.operation_id AND intent.organization_id=job.organization_id)
             AND NOT EXISTS (SELECT 1 FROM app.neighborhood_custom_cohort_v2_continuations c
               WHERE c.operation_id=job.operation_id AND c.consumed_claim_token IS NULL) AND
             ((status IN ('queued','retry') AND run_after<=clock_timestamp())

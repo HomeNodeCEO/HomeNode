@@ -62,3 +62,20 @@ test('whole-owner limits and clock cannot be supplied or reset through dependenc
     new Proxy({ checkBudget() {} }, {}), { get checkBudget() { assert.fail('getter'); } },
     { checkBudget() {}, [Symbol('hidden')]: true }]) assert.throws(() => createBudget(raw, options), /owner_required/);
 });
+
+test('first completed SQL failure survives later overlapping rejection or success without new SQL', async () => {
+  const pending = new Map(), firstFailure = Error('first completed SQL failure'), laterFailure = Error('later SQL failure'),
+    owner = createBudget({ query(sql) { return new Promise((resolve, reject) => pending.set(sql, { resolve, reject })); } },
+      { checkBudget() {} }),
+    first = owner.query('started first'), second = owner.query('failed first'), third = owner.query('later success'),
+    settled = Promise.allSettled([first, second, third]);
+  assert.equal(pending.size, 3);
+  pending.get('failed first').reject(firstFailure);
+  await assert.rejects(second, error => error === firstFailure);
+  pending.get('started first').reject(laterFailure);
+  pending.get('later success').resolve({ rows: [] });
+  const results = await settled;
+  for (const result of results) { assert.equal(result.status, 'rejected'); assert.equal(result.reason, firstFailure); }
+  await assert.rejects(owner.query('no SQL after failure'), error => error === firstFailure);
+  assert.equal(pending.size, 3);
+});

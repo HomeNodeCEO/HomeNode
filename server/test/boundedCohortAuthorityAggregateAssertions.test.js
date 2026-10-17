@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { assertBoundedCohortAuthorityAggregates as check } from './helpers/boundedCohortAuthorityAggregateAssertions.js';
+import { assertBoundedCohortAuthorityAggregates as check, assertBoundedCohortAuthorityAggregateShapes as shapes } from './helpers/boundedCohortAuthorityAggregateAssertions.js';
 import { customCohortRepositoryFixture } from './fixtures/customCohortRepositoryFixture.js';
 import { loadCurrentCustomCohortJobActor } from '../src/services/neighborhoodAssessment/customCohortJobActor.js';
+import { NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL, NEIGHBORHOOD_STOCK_SUBJECT_HOUSING_PACKAGE_V2_SQL,
+  NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,
+  NEIGHBORHOOD_STOCK_SUBJECT_AND_FIRST_SELECTED_PACKAGE_V2_SQL,
+  NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_ELIGIBILITY_PACKAGE_V2_SQL } from '../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
 
 async function actualQueries() {
   const { state, repo } = customCohortRepositoryFixture();
@@ -23,6 +27,156 @@ test('catalog aggregate assertion accepts actual bounded actor and three-section
   check([actor, section, { text: 'SELECT count(*) FROM app.example', values: [] }, actor, section], scope);
 });
 
+test('paired original aggregate keeps native subject choice, deduplication and one whole-packet budget', async () => {
+  const { scope, actor, section } = await actualQueries();
+  scope.originals = { operationId:'stock-operation', generationId:'retained-generation',
+    profileSha256:'retained-profile', subjectAccountId:'ACTUAL-SUBJECT' };
+  const baseline=[actor,section,actor,section], packet={text:NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,
+    values:['stock-operation','retained-generation','retained-profile','ACCOUNT-A',250,8_000_000,2_100_000,1_000_000,2_100_000,true]};
+  check([...baseline,packet],scope);
+  check([...baseline,{...packet,values:[...packet.values.slice(0,9),false]}],scope);
+  for (const index of [0,1,2,4,5,6,7,8]) {
+    const values=[...packet.values]; values[index]=index<3?'foreign-scope':values[index]+1;
+    assert.throws(()=>check([...baseline,{...packet,values}],scope),/exact paired stock/);
+  }
+  for (const cursor of [[], 'ACCOUNT-A\n', 'x'.repeat(65)]) {
+    const values=[...packet.values]; values[3]=cursor;
+    assert.throws(()=>check([...baseline,{...packet,values}],scope),/bounded paired original account cursor/);
+  }
+  for (const fallback of [undefined,null,0,'true',{}]) {
+    const values=[...packet.values]; values[9]=fallback;
+    assert.throws(()=>check([...baseline,{...packet,values}],scope),/closed retained-subject fallback decision/);
+  }
+  for (const text of [packet.text.replace('AND a.account_id=job.account_id',''),
+    packet.text.replace('job.operation_id=$1::uuid','true'),packet.text.replace('UNION SELECT','UNION ALL SELECT'),
+    packet.text.replace('LIMIT 1','LIMIT 2'),packet.text.replace('LIMIT ($5::integer+1)','LIMIT ($5::integer+2)'),
+    packet.text.replace('AND (SELECT sum(n) FROM totals)<=$5::integer',''),
+    packet.text.replace('AND (NOT $10::boolean OR EXISTS(SELECT 1 FROM subject_account))',''),
+    packet.text.replace('AND o.account_id=a.account_id',''),packet.text+', json_agg(account_id)']) {
+    assert.throws(()=>check([...baseline,{...packet,text}],scope),/unexpected catalog aggregate/);
+  }
+  assert.throws(()=>check([...baseline,packet],{...scope,originals:{...scope.originals,subjectAccountId:undefined}}),
+    /actual retained job subject/);
+  assert.throws(()=>check([actor,section,packet],scope),/both-end current actor/);
+  assert.throws(()=>check([actor,actor,section,packet],scope),/both-end current bounded subject/);
+});
+
+test('first-selected aggregate requires the exact completed native ordinal and unchanged paired packet bounds', async () => {
+  const { scope, actor, section } = await actualQueries();
+  scope.originals = { operationId:'stock-operation', generationId:'retained-generation',
+    profileSha256:'retained-profile', subjectAccountId:'ACTUAL-SUBJECT' };
+  const baseline=[actor,section,actor,section], packet={text:NEIGHBORHOOD_STOCK_SUBJECT_AND_FIRST_SELECTED_PACKAGE_V2_SQL,
+    values:['stock-operation','retained-generation','retained-profile','',250,8_000_000,2_100_000,1_000_000,2_100_000,true]};
+  check([...baseline,packet],scope);
+  check([...baseline,{...packet,values:[...packet.values.slice(0,9),false]}],scope);
+  shapes([actor,section,packet],scope);
+  for (const index of [0,1,2,4,5,6,7,8]) {
+    const values=[...packet.values]; values[index]=index<3?'foreign-scope':values[index]+1;
+    assert.throws(()=>check([...baseline,{...packet,values}],scope),/exact paired stock/);
+  }
+  assert.throws(()=>check([...baseline,{...packet,values:[...packet.values,'extra']}],scope),/exact paired stock/);
+  for (const cursor of ['ACCOUNT-A',[], 'ACCOUNT-A\n','x'.repeat(65)]) {
+    const values=[...packet.values]; values[3]=cursor;
+    assert.throws(()=>check([...baseline,{...packet,values}],scope),/fixed native first-selected ordinal|bounded paired original account cursor/);
+  }
+  for (const fallback of [undefined,null,0,'true',{}]) {
+    const values=[...packet.values]; values[9]=fallback;
+    assert.throws(()=>check([...baseline,{...packet,values}],scope),/closed retained-subject fallback decision/);
+  }
+  const mutations=[
+    ['USING(operation_id,organization_id)','USING(operation_id)'],
+    ['body.organization_id=head.organization_id','true'],
+    ["body.content_sha256=head.receipt_reference->>'content_sha256'",'true'],
+    ["body.canonical_utf8_bytes::text=head.receipt_reference->>'canonical_utf8_bytes'",'true'],
+    ['body.canonical_utf8_bytes<=16000','body.canonical_utf8_bytes<=16001'],
+    ['r.organization_id=job.organization_id','true'], ['a.operation_id=r.operation_id','true'],
+    ['a.account_id=r.account_id','true'], ['job.operation_id=$1::uuid','true'],
+    ['r.ordinal=1','r.ordinal=2'], ["AND $4::text=''",''],
+    ['app.neighborhood_selected_union_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)','true'],
+    ["'format'='cohort_selected_union_receipt_v2'","'format'='other'"],
+    ["'after'->>'done'='true'","'after'->>'done'='false'"],
+    ['AND a.account_id=job.account_id',''], ['UNION SELECT','UNION ALL SELECT'],
+    ['LIMIT ($5::integer+1)','LIMIT ($5::integer+2)'], ['AND (SELECT sum(n) FROM totals)<=$5::integer',''],
+    ['AND (NOT $10::boolean OR EXISTS(SELECT 1 FROM subject_account))',''], ['AND o.account_id=a.account_id',''],
+  ];
+  for (const [before,after] of mutations) {
+    assert.ok(packet.text.includes(before),`mutation must change actual SQL: ${before}`);
+    const text=packet.text.replace(before,after);
+    assert.throws(()=>check([...baseline,{...packet,text}],scope),/unexpected catalog aggregate/);
+    assert.throws(()=>shapes([actor,section,{...packet,text}],scope),/unexpected catalog aggregate/);
+  }
+  assert.throws(()=>check([...baseline,{...packet,text:packet.text+', json_agg(account_id)'}],scope),/unexpected catalog aggregate/);
+  assert.throws(()=>check([...baseline,packet],{...scope,originals:{...scope.originals,subjectAccountId:undefined}}),/actual retained job subject/);
+  assert.throws(()=>check([actor,section,packet],scope),/both-end current actor/);
+  assert.throws(()=>check([actor,actor,section,packet],scope),/both-end current bounded subject/);
+});
+
+test('next eligibility aggregate requires its exact native progress ordinal and preserves paired and ending bounds', async () => {
+  const {scope,actor,section}=await actualQueries();
+  scope.originals={operationId:'stock-operation',generationId:'retained-generation',profileSha256:'retained-profile',subjectAccountId:'ACTUAL-SUBJECT'};
+  const baseline=[actor,section,actor,section],packet={text:NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_ELIGIBILITY_PACKAGE_V2_SQL,
+    values:['stock-operation','retained-generation','retained-profile','',250,8_000_000,2_100_000,1_000_000,2_100_000,true]};
+  check([...baseline,packet],scope);shapes([actor,section,packet],scope);
+  for(const index of [0,1,2,4,5,6,7,8]){
+    const values=[...packet.values];values[index]=index<3?'foreign-scope':values[index]+1;
+    assert.throws(()=>check([...baseline,{...packet,values}],scope),/exact paired stock/);
+  }
+  for(const cursor of ['ACCOUNT-A',[], 'ACCOUNT-A\n','x'.repeat(65)]){
+    const values=[...packet.values];values[3]=cursor;
+    assert.throws(()=>check([...baseline,{...packet,values}],scope),/native eligibility ordinal|bounded paired original account cursor/);
+  }
+  for(const fallback of [undefined,null,0,'true',{}]){
+    const values=[...packet.values];values[9]=fallback;
+    assert.throws(()=>check([...baseline,{...packet,values}],scope),/closed retained-subject fallback decision/);
+  }
+  const mutations=[['USING(operation_id,organization_id)','USING(operation_id)'],['body.organization_id=u.organization_id','true'],
+    ["body.content_sha256=u.receipt_reference->>'content_sha256'",'true'],["body.canonical_utf8_bytes::text=u.receipt_reference->>'canonical_utf8_bytes'",'true'],
+    ['body.canonical_utf8_bytes<=16000','body.canonical_utf8_bytes<=16001'],['h.operation_id=job.operation_id','true'],['h.organization_id=job.organization_id','true'],
+    ['r.operation_id=job.operation_id','true'],['r.organization_id=job.organization_id','true'],['r.ordinal=coalesce(h.sequence,0)+1','r.ordinal=coalesce(h.sequence,0)+2'],
+    ['a.operation_id=r.operation_id','true'],['a.account_id=r.account_id','true'],['job.operation_id=$1::uuid','true'],["AND $4::text=''",''],
+    ['h.operation_id IS NULL','true'],['app.neighborhood_selected_union_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)','true'],
+    ['app.neighborhood_selected_eligibility_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)','true'],
+    ["'format'='cohort_selected_union_receipt_v2'","'format'='other'"],["'after'->>'done'='true'","'after'->>'done'='false'"],
+    ['AND a.account_id=job.account_id',''],['UNION SELECT','UNION ALL SELECT'],['LIMIT ($5::integer+1)','LIMIT ($5::integer+2)'],
+    ['AND (SELECT sum(n) FROM totals)<=$5::integer',''],['AND (NOT $10::boolean OR EXISTS(SELECT 1 FROM subject_account))',''],['AND o.account_id=a.account_id','']];
+  for(const [before,after]of mutations){
+    assert.ok(packet.text.includes(before),'mutation must change actual SQL: '+before);const text=packet.text.replace(before,after);
+    assert.throws(()=>check([...baseline,{...packet,text}],scope),/unexpected catalog aggregate/);
+    assert.throws(()=>shapes([actor,section,{...packet,text}],scope),/unexpected catalog aggregate/);
+  }
+  assert.throws(()=>check([...baseline,{...packet,values:[...packet.values,'extra']}],scope),/exact paired stock/);
+  assert.throws(()=>check([...baseline,{...packet,text:packet.text+', json_agg(account_id)'}],scope),/unexpected catalog aggregate/);
+  assert.throws(()=>check([...baseline,packet],{...scope,originals:{...scope.originals,subjectAccountId:undefined}}),/actual retained job subject/);
+  assert.throws(()=>check([actor,section,packet],scope),/both-end current actor/);
+  assert.throws(()=>check([actor,actor,section,packet],scope),/both-end current bounded subject/);
+});
+
+test('subject original aggregate requires the actual job subject and every unchanged whole-packet cap', async () => {
+  const { scope, actor, section } = await actualQueries();
+  scope.originals = { operationId:'stock-operation', generationId:'retained-generation', profileSha256:'retained-profile', subjectAccountId:'ACTUAL-SUBJECT' };
+  const baseline=[actor,section,actor,section], packet={text:NEIGHBORHOOD_STOCK_SUBJECT_HOUSING_PACKAGE_V2_SQL,
+    values:['stock-operation','retained-generation','retained-profile','ACTUAL-SUBJECT',250,8_000_000,2_100_000,1_000_000,2_100_000]};
+  check([...baseline,packet],scope);
+  for (let index=0;index<packet.values.length;index++) {
+    const values=[...packet.values];values[index]=index<4?'foreign-scope':values[index]+1;
+    assert.throws(()=>check([...baseline,{...packet,values}],scope),/exact subject stock/);
+  }
+  for (const text of [packet.text.replace('AND job.account_id=$4::text',''),packet.text.replace('job.operation_id=$1::uuid','true'),
+    packet.text.replace('LIMIT 1','LIMIT 2'),packet.text.replace('AND o.account_id=a.account_id',''),packet.text+', jsonb_agg(account_id)']) {
+    assert.throws(()=>check([...baseline,{...packet,text}],scope),/unexpected catalog aggregate/);
+  }
+  assert.throws(()=>check([...baseline,packet],{...scope,originals:{...scope.originals,subjectAccountId:undefined}}),/actual retained job subject/);
+  assert.throws(()=>check([actor,section,packet],scope),/both-end current actor/);
+});
+
+test('early-refusal shape checks retain exact aggregate bounds without claiming ending authority', async () => {
+  const { scope, actor, section } = await actualQueries();
+  shapes([actor, section], scope);
+  assert.throws(() => check([actor, section], scope), /both-end current actor/);
+  assert.throws(() => shapes([actor, { ...section, values: [scope.assignmentFileId, section.values[1], 1_500_001] }], scope), /three fixed material/);
+  assert.throws(() => shapes([actor, { text: 'SELECT jsonb_agg(account_id) FROM app.accounts', values: [] }], scope), /unexpected catalog aggregate/);
+});
+
 test('catalog aggregate assertion refuses tag spoofing, extra aggregates, widened scope/cap and missing end reads', async () => {
   const { scope, actor, section } = await actualQueries();
   const baseline = [actor, section, actor, section];
@@ -40,4 +194,36 @@ test('catalog aggregate assertion refuses tag spoofing, extra aggregates, widene
   ]) assert.throws(() => check([...baseline, bad], scope), /unexpected catalog aggregate|exact current actor|three fixed material|spatial\/job-typed/);
   assert.throws(() => check([actor, section, section], scope), /both-end current actor/);
   assert.throws(() => check([actor, section, actor], scope), /both-end current bounded subject/);
+});
+
+for (const expression of ['array_agg(account_id)', 'jsonb_agg(account_id)', 'json_agg(account_id)',
+  'jsonb_object_agg(account_id, payload)', 'json_object_agg(account_id, payload)',
+  "string_agg(account_id, ',')", 'xmlagg(payload)', 'ARRAY(SELECT account_id FROM app.accounts)']) {
+  test(`catalog aggregate assertion refuses population construction with ${expression}`, async () => {
+    const { scope, actor, section } = await actualQueries();
+    const text = `/* custom-cohort-subject:sections */ SELECT ${expression} FROM app.accounts`;
+    assert.throws(() => check([actor, section, actor, section, { text, values: [] }], scope), /unexpected catalog aggregate/);
+  });
+}
+
+test('catalog aggregate assertion admits only the unchanged single-account original packet and exact bounded parameters', async () => {
+  const { scope, actor, section } = await actualQueries();
+  scope.originals = { operationId: 'stock-operation', generationId: 'retained-generation', profileSha256: 'retained-profile' };
+  const baseline = [actor, section, actor, section], packet = { text: NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL,
+    values: ['stock-operation', 'retained-generation', 'retained-profile', 'ACCOUNT-A', 250, 8_000_000, 2_100_000, 1_000_000, 2_100_000] };
+  check([...baseline, packet], scope);
+  check([...baseline, { text: 'SELECT count(*), sum(member_count) FROM app.example', values: [] }], scope);
+  for (const index of [0, 1, 2, 4, 5, 6, 7, 8]) {
+    const values = [...packet.values]; values[index] = index < 3 ? 'foreign-scope' : values[index] + 1;
+    assert.throws(() => check([...baseline, { ...packet, values }], scope), /exact original stock/);
+  }
+  for (const cursor of [[], 'ACCOUNT-A\n', 'x'.repeat(65)]) {
+    const values = [...packet.values]; values[3] = cursor;
+    assert.throws(() => check([...baseline, { ...packet, values }], scope), /bounded original account cursor/);
+  }
+  for (const text of [packet.text.replace('LIMIT 1', 'LIMIT 2'), packet.text.replace('AND o.account_id=a.account_id', ''),
+    packet.text + ', json_agg(account_id)']) {
+    assert.throws(() => check([...baseline, { ...packet, text }], scope), /unexpected catalog aggregate/);
+  }
+  assert.throws(() => check([...baseline, packet], { ...scope, originals: undefined }), /exact retained stock scope/);
 });

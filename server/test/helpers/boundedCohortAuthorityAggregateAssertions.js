@@ -120,6 +120,25 @@ SELECT (SELECT account_id FROM next_account) AS account_id,
     THEN coalesce('['||string_agg(encoded,',' ORDER BY account_id COLLATE "C",kind COLLATE "C",row_key COLLATE "C")||']','[]') ELSE '[]' END AS page_json
 FROM sized`);
 
+// Independently fixed native ordinal-one selector; reuse only the golden paired
+// transport so every original, deduplication and aggregate byte cap stays exact.
+const SUBJECT_AND_FIRST_SELECTED_SQL = SUBJECT_AND_NEXT_SQL
+  .replace('/* neighborhood-stock-subject-and-next-original-package-v2 */',
+    '/* neighborhood-stock-subject-and-first-selected-original-package-v2 */')
+  .replace('SELECT account_id,parcel_count FROM app.neighborhood_custom_cohort_stock_accounts WHERE operation_id=$1::uuid AND account_id>$4::text COLLATE "C" ORDER BY account_id LIMIT 1', normalize(`
+    SELECT a.account_id,a.parcel_count FROM app.neighborhood_custom_cohort_capture_jobs job
+    JOIN app.neighborhood_custom_cohort_selected_union_v2_heads head USING(operation_id,organization_id)
+    JOIN app.neighborhood_cohort_evidence_blobs body ON body.organization_id=head.organization_id
+      AND body.content_sha256=head.receipt_reference->>'content_sha256'
+      AND body.canonical_utf8_bytes::text=head.receipt_reference->>'canonical_utf8_bytes' AND body.canonical_utf8_bytes<=16000
+    JOIN app.neighborhood_custom_cohort_selected_union_v2_rows r
+      ON r.operation_id=job.operation_id AND r.organization_id=job.organization_id
+    JOIN app.neighborhood_custom_cohort_stock_accounts a ON a.operation_id=r.operation_id AND a.account_id=r.account_id
+    WHERE job.operation_id=$1::uuid AND r.ordinal=1 AND $4::text=''
+      AND app.neighborhood_selected_union_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)
+      AND body.canonical_utf8::jsonb->>'format'='cohort_selected_union_receipt_v2'
+      AND body.canonical_utf8::jsonb->'after'->>'done'='true'`));
+
 function validateShapes(calls, { actorUserId, organizationId, assignmentFileId, originals }) {
   let actors = 0, sections = 0;
   for (const { text, values } of calls) {
@@ -145,12 +164,13 @@ function validateShapes(calls, { actorUserId, organizationId, assignmentFileId, 
         'subject original packet requires the actual retained job subject');
       assert.deepEqual(values, [originals.operationId, originals.generationId, originals.profileSha256, originals.subjectAccountId,
         250, 8_000_000, 2_100_000, 1_000_000, 2_100_000], 'exact subject stock, generation, profile and existing row/byte caps only');
-    } else if (sql === SUBJECT_AND_NEXT_SQL) {
+    } else if (sql === SUBJECT_AND_NEXT_SQL || sql === SUBJECT_AND_FIRST_SELECTED_SQL) {
       assert.ok(originals && typeof originals.subjectAccountId === 'string' && originals.subjectAccountId.length > 0,
         'paired original packet requires the actual retained job subject');
       const afterAccount = values?.[3], includeSubject = values?.[9];
       assert.ok(typeof afterAccount === 'string' && afterAccount.length <= 64 && Buffer.byteLength(afterAccount) <= 256
         && afterAccount === afterAccount.trim() && !/[\u0000-\u001f\u007f]/.test(afterAccount), 'bounded paired original account cursor only');
+      if (sql === SUBJECT_AND_FIRST_SELECTED_SQL) assert.equal(afterAccount, '', 'fixed native first-selected ordinal requires the empty cursor');
       assert.equal(typeof includeSubject, 'boolean', 'closed retained-subject fallback decision only');
       assert.deepEqual(values, [originals.operationId, originals.generationId, originals.profileSha256, afterAccount,
         250, 8_000_000, 2_100_000, 1_000_000, 2_100_000, includeSubject],

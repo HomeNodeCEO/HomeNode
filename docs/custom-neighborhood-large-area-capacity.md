@@ -55,6 +55,37 @@ and genuine included review before merge.
 
 # Complete larger-area Custom neighborhood studies
 
+## First native selected-ordinal original eligibility admission (2026-10-10, not activated)
+
+A distinct READ-ONLY internal owner reopens ordinal1 of the ACTUAL completed
+native selected union. It does not choose the first C-sorted stock account or
+accept a caller account, ordinal, cursor, decision, receipt or callback. It
+requires the exact ten issued roots, complete native union, immutable human
+command, current database actor/assignment/private draft/subject/source rights
+and exact pending workspace, with all existing ending fences.
+
+The selected account and required subject CAD share ONE aggregate 250-original
+packet, including all outside parts and ENTIRE neutral cache reconciliation.
+Retained subject precedence still permits CAD ONLY for genuine absence; explicit
+null/unknown/conflicting preferred observations do not fall through. Full
+partition-entry bytes, native selected/partition ordinals, exact catalog literals
+and immutable chosen-group membership are compared independently of counts.
+The first native member is re-read at the end. The compact transient decision
+retains unresolved housing and every metric-part denominator; it does not infer
+currency, sums, economic units, GLA or historical housing. Explicit-empty returns
+null member/decision after a fresh native read, not a previous account result.
+
+This read-only component adds no migration, progress head, checkpoint,
+decision copy, lease, continuation or activation. Fixed-first admission does
+not establish the complete selected-population eligibility pass. The actual
+protected #1263 parent was normally merged as `f58c16d0b8f79b72fb156ac305537308af4402e9`
+after current exact-head native/security/full suites and genuine included
+review. #1264 was retargeted to main BEFORE fetching and integrating that
+actual parent. Its complete protected document, shared-capacity refusal and
+activation contract remain intact. This integrated child requires fresh
+exact-head native/security/full suites and genuine review. Licensed acquisition,
+complete eligibility, statistics, publication and live speed remain unproven.
+
 ## Original-backed per-account recorded eligibility (2026-10-10, not activated)
 
 The actual native union-progress owner now derives a transient decision for

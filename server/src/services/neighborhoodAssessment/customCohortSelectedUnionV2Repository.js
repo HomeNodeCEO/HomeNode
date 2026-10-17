@@ -54,7 +54,39 @@ export function createCustomCohortSelectedUnionV2Repository(raw){
     if(!Object.values(r).every(n=>Number.isInteger(n)&&n>=0&&n<=2000000)||r.assigned_accounts+r.unassigned_accounts>2000000
       ||r.assigned_groups>2048||r.assigned_groups>r.assigned_accounts||r.selected_count>r.assigned_accounts+r.unassigned_accounts)fail('corrupt');
     return Object.freeze(r);};
-  return Object.freeze({read,counts,async contribute(rawExpected,rawEntry){
+  return Object.freeze({read,counts,
+  /** Exact first selected ordinal of the issued DONE union, never a caller
+   * cursor/roster. Structural DATA only; actual owner must compare EVERY
+   * original/ENTIRE cache and full partition entry/catalog literals both ends. */
+  async readFirstSelectedEntry(...args){
+    if(args.length)fail('invalid_input');
+    const row=data(one(await client.query(`/* custom-cohort-selected-union-v2:first-selected-entry */
+      SELECT r.account_id,r.ordinal,r.partition_ordinal,r.entry_reference,entry.state,entry.assigned_group_id
+      FROM app.neighborhood_custom_cohort_capture_jobs job
+      JOIN app.neighborhood_custom_cohort_v2_selection_intents command USING(operation_id,organization_id)
+      JOIN app.neighborhood_custom_cohort_selected_union_v2_heads head USING(operation_id,organization_id)
+      JOIN app.neighborhood_cohort_evidence_blobs body ON body.organization_id=head.organization_id
+        AND body.content_sha256=head.receipt_reference->>'content_sha256'
+        AND body.canonical_utf8_bytes::text=head.receipt_reference->>'canonical_utf8_bytes' AND body.canonical_utf8_bytes<=16000
+      LEFT JOIN app.neighborhood_custom_cohort_selected_union_v2_rows r
+        ON r.operation_id=job.operation_id AND r.organization_id=job.organization_id AND r.ordinal=1
+      LEFT JOIN app.neighborhood_custom_cohort_recorded_partition_v2_rows entry
+        ON entry.operation_id=r.operation_id AND entry.organization_id=r.organization_id AND entry.account_id=r.account_id
+          AND entry.ordinal=r.partition_ordinal AND entry.entry_reference=r.entry_reference
+      WHERE ${FENCE} AND command.command_id=$9::uuid AND head.command_id=command.command_id
+        AND app.neighborhood_selected_union_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)
+        AND body.canonical_utf8::jsonb->>'format'='cohort_selected_union_receipt_v2'
+        AND body.canonical_utf8::jsonb->'after'->>'done'='true'`,[...values,o.command_id])),
+    ['account_id','ordinal','partition_ordinal','entry_reference','state','assigned_group_id']);
+    if(Object.values(row).every(v=>v===null))return null;
+    if(typeof row.account_id!=='string'||!row.account_id||row.account_id.length>64||!row.account_id.isWellFormed()
+      ||row.account_id.trim()!==row.account_id||/[\u0000-\u001f\u007f]/.test(row.account_id)||row.ordinal!==1
+      ||!Number.isInteger(row.partition_ordinal)||row.partition_ordinal<1||row.partition_ordinal>2000000
+      ||!['assigned','unassigned'].includes(row.state)
+      ||(row.state==='assigned'?typeof row.assigned_group_id!=='string'||!/^recorded-cad:[a-f0-9]{64}$/.test(row.assigned_group_id)
+        :row.assigned_group_id!==null))fail('corrupt');
+    return Object.freeze({...row,entry_reference:ref(row.entry_reference,1000000)});
+  },async contribute(rawExpected,rawEntry){
     const expected=anchor(rawExpected),e=data(rawEntry,['account_id','partition_ordinal','entry_reference','group_id']);
     if(typeof e.account_id!=='string'||!e.account_id||e.account_id.length>64||!e.account_id.isWellFormed()
       ||e.account_id.trim()!==e.account_id||/[\u0000-\u001f\u007f]/.test(e.account_id)

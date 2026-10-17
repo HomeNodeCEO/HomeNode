@@ -1,3 +1,47 @@
+## Initial owned source failure at one (2026-10-17, unregistered; validation pending)
+
+An additive closed repository and unregistered
+`20270102_custom_cohort_source_initial_retry_v3.sql` retain normal failure of an
+actual clean owned attempt-one claim with a null prior error. They retain the
+ENTIRE running job, independent original17/birth18/initial claim/FIRST graph,
+original claim transaction, bounded one-to-900-second native retry schedule,
+failure code and actual failure transaction before clearing the live claim.
+Only status, token, lease, error, update time and the bounded schedule may change.
+The failure counter, checkpoint, roots, source permissions and all other fields
+remain identical. Structural failure bookkeeping grants no original-read rights.
+
+The three latest complete row guards and deferred job guard retain every
+earlier expiry, recovery, retry4, terminal5, claim, birth and continuation branch
+after one closed attempt-one transition. All twelve prior deferred events remain
+enabled, and a thirteenth requires the actual paired retry COMMIT. Immutable
+failure rows, forged scope/claim/transaction/schedule tuples and genuine orphan
+COMMITs must refuse with full rollback.
+
+The two existing independent clean A/B captures now require this failure after
+every FIRST and NEXT whole-original, ENTIRE-cache, native-member, current and
+ending fence proof. A delivers the real retry COMMIT; B loses its acknowledgment
+only after the actual COMMIT. Both preserve every prior row/blob/report/choice/
+pin, wait for the actual native one-second schedule, and refuse duplicate failure,
+generic or old-continuation adoption and stale original I/O. Earlier4/5/recovery/
+natural-expiry/terminal cases and original case deadlines remain unchanged.
+
+Ten serial initial/last-retry boundary checks pass with zero failures,
+cancellations or skips in176.6969ms; changed JavaScript syntax and diff checks
+pass. The source audit verifies all four complete latest guard bodies and
+unchanged43-case matrix, original deadlines and earlier4/5/recovery/expiry/
+terminal helper bytes. These are validation only. Full fresh exact-head native
+and application cloud execution is required. This slice does
+not issue a fresh attempt-two claim, implement repeated2/3 recovery, advance a
+source cursor, prove fresh EMPTY, resolve economic values, publish, transfer pins,
+register or activate a stage, or establish licensed acquisition/live speed.
+
+Cloud CI also executes the two clean A/B cases before the complete prefix
+matrix. The same cases still run in both the complete prefix and prepared
+suites, and every prior workflow step remains verbatim. The earlier CAD failure
+was discovered only after roughly23 minutes; this additional early check gives
+faster failure feedback while retaining all original deadlines and complete
+native proofs. Passing the early pair cannot replace either complete pass.
+
 ## Clean first-attempt source native producer (2026-10-17, inactive)
 
 The `4e144300` native prefix run passed28 of30 cases; both new clean cases

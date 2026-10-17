@@ -1,5 +1,44 @@
 # Complete larger-area Custom neighborhood studies
 
+## Retained new-study intent under its current initial claim (2026-10-17, not activated)
+
+A separate read-only entry point reopens the immutable human command inside
+the actual bounded original database owner. Current database actor, private
+draft, assignment/subject, pending V7 workspace/prior head and source-purpose
+authority are checked before command IDs or originals. The command must match
+the actual request, all nine issued roots, profile and entire pending workspace.
+IDs, including an explicit empty choice, come only from that command.
+
+The reader admits only the command's still-live initial token and issued
+attempt. Generic failure, reclaim, replacement attempts and lease changes
+remain refused by the protected initial-claim guard. Read-only reopening does
+not establish an owned recovery protocol. It changes no command, attempt,
+failure history, schedule, lease, checkpoint, choice or pin.
+
+The SAME transaction reopens the complete issued original graph, performs one
+fresh terminal whole-original/ENTIRE-neutral-cache/ENTIRE-partition empty probe,
+and repeats all current and ending source, actor, assignment, draft, subject,
+claim, native head/count, workspace and command checks. All actual reads share
+the unchanged 256-query / 32MB / 60s owner budget and stricter child limits.
+This is not complete catalog semantic replay or a complete selected union.
+
+The native fixture preserves the independent original human-resume graph and
+its natural 120-second expiry test unchanged. Added probes cover read-only
+initial-claim reopening, current-source denial before command/ID reads, ending
+faults, lost real COMMIT acknowledgment, generic failure/reclaim refusal and
+foreign-claim refusal, with the complete job and all prior evidence, workspace,
+reports and pins unchanged. Scoped cancellation remains in the original
+natural-expiry test. The 69 focused owner/repository checks pass with zero
+failures, cancellations or skips (1019.9507 ms); changed syntax checks pass.
+Current integrated cloud execution and genuine included
+review are pending; prior unprotected replacement-claim results do not prove
+this head. No worker/route/default, source grant or unfinished stage activates.
+
+Complete original-reconciled catalog/selected union, medians/COD/calendar
+quarters, coherent publication, bounded whole-run workers, terminal pin
+transfer/retirement, licensed >50k / 5-mile / 10-mile / city / retrospective
+and saved Hardy map/speed acceptance remain unfinished.
+
 ## Retained-map viewport admission (2026-10-17, not released)
 
 Two bounded, read-only Hardy reloads on release `92b5b084` retained the saved

@@ -1,3 +1,29 @@
+## Whole-original replay under the actual second claim (2026-10-17, inactive)
+
+The dedicated second-claim FIRST owner reopens every real chosen source, CAD,
+stock, required subject and all-date transaction original and ENTIRE neutral
+and CAD caches. Independent native parent and FIRST/member selectors bind only
+the actual committed initial1 failure and fresh second2 claim. The retained
+original17 birth and candidate are never copied, rebound or promoted to source
+authority; the retained candidate bytes must equal private whole-original
+reproduction after all ending fences. Initial and ending actor, assignment,
+private-draft, source-purpose, CAD-purpose, subject and workspace decisions and
+all native member/key comparisons remain in the same aggregate256-SQL/32MB/60s
+budget with the stricter single-use250-original child. No lease or deadline is
+renewed. Every earlier owner, query and native fixture remains independent.
+
+Both independently issued clean A/B graphs require real current actor,
+assignment and draft refusals before original I/O; ten ending refusals after
+real originals, full state rollback, actual read-only COMMIT acknowledgment
+loss and a fresh identical reopen. Every actual claim, failure, native parent,
+original blob, source grant, role, report, assignment, private workfile, subject,
+manual/workspace choice and pin is unchanged. The native assertions are authored
+and require fresh exact-head early-pair and complete prefix/prepared cloud
+execution; detached checks establish boundary behavior only. This slice is
+read-only and inactive: no NEXT cursor, fresh EMPTY, repeated2/3 retry, economic
+progress, publication, terminal pin transfer, licensed acquisition or live-speed
+proof is established.
+
 ## Native second source claim (2026-10-17, unregistered)
 
 The closed second-claim repository and additive unregistered

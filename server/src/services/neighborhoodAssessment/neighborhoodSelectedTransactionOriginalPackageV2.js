@@ -428,3 +428,18 @@ function recoveredFirstSourceOriginalPackageSql(){
  return sql;
 }
 export const NEIGHBORHOOD_RECOVERED_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL=recoveredFirstSourceOriginalPackageSql();
+
+// Closed native second2 query. Preserve all earlier WHOLE-original package
+// queries byte for byte. Only fixed native identifiers and diagnostic tag differ.
+function secondFirstSourceOriginalPackageSql(){
+ let sql=NEIGHBORHOOD_RECOVERED_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL;
+ for(const [from,to,count]of [
+  ['neighborhood-recovered-first-source-original-package-v3','neighborhood-second-first-source-original-package-v3',1],
+  ['app.neighborhood_source_resolution_v3_recovered_parent(','app.neighborhood_source_resolution_v3_second_parent(',1],
+  ['app.neighborhood_source_resolution_v3_recovered_first(','app.neighborhood_source_resolution_v3_second_first(',2]]){
+  if(sql.split(from).length!==count+1)throw new TypeError('neighborhood_second_first_source_original_sql_shape');
+  sql=sql.split(from).join(to);
+ }
+ return sql;
+}
+export const NEIGHBORHOOD_SECOND_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL=secondFirstSourceOriginalPackageSql();

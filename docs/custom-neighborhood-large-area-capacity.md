@@ -1,3 +1,25 @@
+## Actual final fifth source claim (2026-10-17, inactive)
+
+A separate unregistered native claim consumes committed normal failure4 only
+after its genuine schedule is due, spending final attempt5 once. It preserves
+every independent original17/birth18/owned1/failure1/second2/failure2/third3/
+failure3/fourth4/failure4/FIRST/member/index parent. Full native claim-plus-job
+DML reusing any earlier3/2/1 or birth token must fail at real deferred COMMIT.
+The immediate4 token is refused before insertion. All twenty deferred events,
+prior whole guard bodies, native cases, deadlines, budgets and five-failure
+ceiling remain. No original, lease, schedule or history is copied or rewritten.
+
+Existing independent A/B graphs add orphan COMMIT/full rollback, tentative
+rollback, competing owners and B actual winning COMMIT acknowledgment loss.
+Every parent, role row, grant, report, genuine choice and pin stays exact.
+Old normal4 and owned1/initial4 readers refuse before original I/O. This normal5
+lineage cannot borrow separate initial4/recovered5 original authority.
+
+Fresh exact-head full cloud/native validation is pending. Fifth original
+reconciliation/terminal handling, durable all-source cursor/freshEMPTY, economic
+statistics, publication, pins, licensed acquisition and live speed remain open.
+No route, worker, scheduler or native migration is activated.
+
 ## Actual fourth source failure ledger (2026-10-17, inactive)
 
 A closed unregistered failure owner preserves the ENTIRE actual normal-fourth4

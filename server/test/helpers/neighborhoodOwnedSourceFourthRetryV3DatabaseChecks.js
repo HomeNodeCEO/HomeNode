@@ -1,3 +1,4 @@
+import { runNeighborhoodSourceFifthClaimV3DatabaseChecks } from './neighborhoodSourceFifthClaimV3DatabaseChecks.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -168,4 +169,6 @@ export async function runNeighborhoodOwnedSourceFourthRetryV3DatabaseChecks({sou
     all_prior_native_rows_blobs_claim_source_grants_report_assignment_private_workfile_subject_manual_sections_workspace_choices_pins_unchanged:true,
     fresh5_claim:false,repeated_attempt5_retry:false,expired_recovery:false,NEXT_or_EMPTY:false,publication:false,
     pin_transfer:false,activation:false,licensed_large_area:false,production_speed:false});
+  await runNeighborhoodSourceFifthClaimV3DatabaseChecks({pool,input,scope,actor,service,claim,
+    originalReads,laterFirstSource,setFault,readFault});
 }

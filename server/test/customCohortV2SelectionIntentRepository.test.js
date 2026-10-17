@@ -70,5 +70,14 @@ test('additive native guard binds all nine roots, exact workspace and one immuta
   for(let i=1;i<=8;i++)assert.ok(sql.includes(`job.checkpoint->'evidence_refs'->${i}`));
   for(const s of ['DEFERRABLE INITIALLY DEFERRED','orphan_resume','BEFORE TRUNCATE','intent_immutable',
     'NEW.resume_claim_token','workspace.section_value IS DISTINCT FROM NEW.workspace_checkpoint',
-    "NEW.status IN ('succeeded','awaiting_selection')",'NEW.attempts<OLD.attempts','NEW.checkpoint IS DISTINCT FROM command.checkpoint'])assert.ok(sql.includes(s),s);
+    "NEW.status IN ('succeeded','awaiting_selection')",'NEW.attempts<OLD.attempts','NEW.checkpoint IS DISTINCT FROM command.checkpoint',
+    'NEW.attempts>OLD.attempts','NEW.claim_token IS DISTINCT FROM OLD.claim_token AND NEW.claim_token IS NOT NULL',
+    'NEW.lease_expires_at IS DISTINCT FROM OLD.lease_expires_at',
+    "AND NEW.status='cancelled' AND NEW.claim_token IS NULL",
+    'AND NEW.lease_expires_at IS NULL AND NEW.cancellation_requested_at IS NOT NULL',
+    'OLD.lease_expires_at<=clock_timestamp() AND OLD.cancellation_requested_at IS NULL',
+    'CREATE FUNCTION app.guard_neighborhood_cohort_v2_initial_intent_claim()',
+    'CREATE TRIGGER neighborhood_cohort_v2_initial_intent_claim_guard BEFORE UPDATE',
+    'OLD.checkpoint IS DISTINCT FROM command.checkpoint THEN RETURN NEW',
+    'selection_intent_job_conflict_initial_claim'])assert.ok(sql.includes(s),s);
 });

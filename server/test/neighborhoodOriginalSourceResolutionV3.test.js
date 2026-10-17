@@ -4,11 +4,19 @@ import { readFileSync } from 'node:fs';
 import { CACHED_SALE_WITNESS_V2_FIELDS } from '../src/services/neighborhoodAssessment/cachedSaleWitnessV2.js';
 import { compileNeighborhoodFrozenTypedOriginalV2 as compile } from '../src/services/neighborhoodAssessment/neighborhoodFrozenTypedOriginalV1.js';
 import { projectNeighborhoodTransactionPackageV1 as project } from '../src/services/neighborhoodAssessment/neighborhoodSharedTransactionPackagesV1.js';
-import { resolveNeighborhoodOriginalSourceResolutionV3 as resolve } from '../src/services/neighborhoodAssessment/neighborhoodOriginalSourceResolutionV3.js';
+import { resolveNeighborhoodOriginalSourceResolutionV3 as resolve,resolveNeighborhoodNextOriginalSourceResolutionV3 as resolveNext } from '../src/services/neighborhoodAssessment/neighborhoodOriginalSourceResolutionV3.js';
 import { prepareNeighborhoodFirstSourceResolutionCandidateV3 as candidate } from '../src/services/neighborhoodAssessment/neighborhoodFirstSourceResolutionCandidateV3.js';
 import { createCustomCohortContextCapture as capture } from '../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 
 const effective='2026-10-07',period={start_date:'2025-01-01',end_date:effective},copy=v=>structuredClone(v),check=()=>{};
+
+test('NEXT and FIRST DATA interpretation keep distinct coverage and identical conservative observation rules',()=>{
+  const {packet,membership}=fixture(),first=resolve(packet,membership,check),
+    nextMembership={...membership,coverage:'whole_native_packages_for_next_registered_source_first_seen_account_only'};
+  assert.deepEqual(resolveNext(packet,nextMembership,check),first);
+  assert.throws(()=>resolveNext(packet,membership,check),/invalid_membership/);
+  assert.throws(()=>resolve(packet,nextMembership,check),/invalid_membership/);
+});
 function witness(changes={}){
   const values={MlsStatus:'closed',CloseDate:'2025-01-01',ClosePrice:'9007199254740993.01',ClosePriceCurrency:'USD',
     LivingArea:'1000.01',LivingAreaUnits:'sqft',YearBuilt:'2050',...changes};
@@ -173,7 +181,7 @@ test('actual candidate owner derives inside the original transaction and deliver
   const text=readFileSync(new URL('../src/services/neighborhoodAssessment/customCohortContextCapture.js',import.meta.url),'utf8'),
     derive=text.indexOf('selectedTransactionSourceCandidate=prepareNeighborhoodFirstSourceResolutionCandidateV3('),
     ending=text.indexOf('const ending=await createCustomCohortV2SelectionIntentRepository(client)',derive),
-    repeat=text.indexOf("selectedTransactionIndexStore[readingCompletedIndexFirstSource?'readFirstAccount':'readNext']()",ending),
+    repeat=text.indexOf("selectedTransactionIndexStore[readingCompletedIndexNextSource?'readNextAccount':readingCompletedIndexFirstSource?'readFirstAccount':'readNext']()",ending),
     output=text.indexOf('selected_source_resolution_candidate:selectedTransactionSourceCandidate',repeat);
   assert.ok(derive>0&&ending>derive&&repeat>ending&&output>repeat);
   let calls=0;const hostile=()=>{calls++;assert.fail('no IO');},service=capture({pool:{connect:hostile},sourceMode:'combined-witness2-v1',authorizeMarketData:hostile,authorizeCadImprovementData:hostile}),
@@ -250,9 +258,9 @@ test('candidate membership snapshot rejects hostile association descriptors and 
 
 test('actual closed owner exposes compact resolution only after complete original replay and both ending native/authority fences',async()=>{
   const text=readFileSync(new URL('../src/services/neighborhoodAssessment/customCohortContextCapture.js',import.meta.url),'utf8'),
-    derive=text.indexOf('selectedTransactionSourceResolution=resolveNeighborhoodOriginalSourceResolutionV3('),
+    derive=text.indexOf('selectedTransactionSourceResolution=(readingCompletedIndexNextSource'),
     ending=text.indexOf('const ending=await createCustomCohortV2SelectionIntentRepository(client)',derive),
-    repeat=text.indexOf("selectedTransactionIndexStore[readingCompletedIndexFirstSource?'readFirstAccount':'readNext']()",ending),
+    repeat=text.indexOf("selectedTransactionIndexStore[readingCompletedIndexNextSource?'readNextAccount':readingCompletedIndexFirstSource?'readFirstAccount':'readNext']()",ending),
     output=text.indexOf('selected_source_resolution:selectedTransactionSourceResolution',repeat);
   assert.ok(derive>0&&ending>derive&&repeat>ending&&output>repeat);
   let calls=0;const hostile=()=>{calls++;assert.fail('no IO');},service=capture({pool:{connect:hostile},sourceMode:'combined-witness2-v1',authorizeMarketData:hostile,authorizeCadImprovementData:hostile}),

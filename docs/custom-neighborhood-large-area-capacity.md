@@ -1,3 +1,40 @@
+## Native NEXT source original owner (2026-10-17, inactive; native validation pending)
+
+A separate closed two-argument read-only owner selects the next registered
+package after the completed index's actual native FIRST. Source IDs retain
+BIGINT order; only after that namespace is exhausted do source-less legacy
+keys use C-text order. The database selects the real first-seen account and
+edge. No caller supplies a source key, account, cursor, ordinal, roster or SQL.
+No second package is an explicit refusal, not fabricated EMPTY progress.
+
+The actual owner reopens that account's WHOLE stock/CAD/all-date transaction
+originals, required subject and ENTIRE neutral/CAD caches in one existing
+aggregate256SQL/32MB/60s owner and single-use child250. It compares every native
+member field and the full account key set in BOTH directions against a separate
+original query. All source-purpose, database actor/assignment/private-draft/
+subject/workspace and exact17 claim/native parent fences remain at both ends.
+Only after the ending fences does it repeat the exact complete NEXT plan.
+The initial FIRST, owned18 and recovered5 queries and guards are unchanged.
+
+Two additional independent A/B captures preserve all39 earlier variants and
+their original180s deadlines. They must complete every prior native/original
+stage and FIRST proof before NEXT503 is reopened from its actual first-seen B
+account, then finish all subsequent original18/claim4/retry4/recovery5/terminal
+proofs. Authored probes require current actor refusal before I/O, full cache and
+nine ending refusals, same-count ending NEXT replacement refusal, missing503
+sale/date/quarter retention, actual lost read-only COMMIT acknowledgment,
+identical reopen, and full native history/blobs/source grants/report/assignment/
+subject/manual/workspace/choice/pin preservation.
+
+Small serial checks passed38 existing/new source tests (1890.6971 ms) and46
+source/affected fixture tests (1544.1266 ms), with zero failures, cancellations or
+skips. Actual prefix AND full native execution on the new head remain required.
+This owner retains no source cursor, receipt, economic progress or lease change.
+Durable complete source traversal/fresh EMPTY, economic eligibility and full
+selected-union quarter statistics, coherent publication, terminal pin transfer/
+retirement and licensed capacity/live-speed acceptance remain unfinished.
+No route, dispatcher, worker, migration, stage or source grant is activated.
+
 ## Naturally expired recovered fifth-attempt closure (2026-10-17, unregistered; native validation pending)
 
 The separate closed expired-recovery repository and unregistered

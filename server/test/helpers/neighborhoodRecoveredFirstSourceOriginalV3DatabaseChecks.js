@@ -1,6 +1,7 @@
 import { runNeighborhoodRecoveredSourceTerminalFailureV3DatabaseChecks } from './neighborhoodRecoveredSourceTerminalFailureV3DatabaseChecks.js';
 import { runNeighborhoodExpiredSourceRecoveryFailureV3DatabaseChecks } from './neighborhoodExpiredSourceRecoveryFailureV3DatabaseChecks.js';
 import assert from 'node:assert/strict';
+import { runNeighborhoodCompletedIndexNextSourceV3DatabaseChecks } from './neighborhoodCompletedIndexNextSourceV3DatabaseChecks.js';
 import { randomUUID } from 'node:crypto';
 // No copied graph or fixture substitute: each independent capture has REALLY
 // committed birth17/FIRST18 and its distinct fresh18 claim, preserving the
@@ -54,6 +55,11 @@ export async function runNeighborhoodRecoveredFirstSourceOriginalV3DatabaseCheck
     entire_job_claim_birth_parents_blobs_history_report_choices_workspace_and_pins_unchanged:true,
     existing_aggregate_256queries_32MB_60s_and_stricter_single_use_child_250_limits_unchanged:true,
     recovery:false,NEXT_or_EMPTY:false,publication:false,activation:false,licensed_large_area:false,production_speed:false});
+  // Existing15s natural-expiry captures keep every original proof and timing.
+  // Normal actual120s recovery captures additionally reopen NEXT from all real
+  // originals, with the same eleven ending and rollback/lost-COMMIT probes.
+  if(sourceRecoveryFixture!=='expired-final5')await runNeighborhoodCompletedIndexNextSourceV3DatabaseChecks({
+    recoveredSource:true,pool,input,scope,actor,service,claim,originalReads,laterFirstSource,setFault,readFault,unchanged});
   const terminal=sourceRecoveryFixture==='expired-final5'?runNeighborhoodExpiredSourceRecoveryFailureV3DatabaseChecks
     :runNeighborhoodRecoveredSourceTerminalFailureV3DatabaseChecks;
   await terminal({pool,input,scope,actor,service,claim,

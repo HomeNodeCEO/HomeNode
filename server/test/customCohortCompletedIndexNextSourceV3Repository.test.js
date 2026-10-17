@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCustomCohortCompletedIndexNextSourceV3Repository as create,
-  createCustomCohortOwnedNextSourceV3Repository as createOwned } from '../src/services/neighborhoodAssessment/customCohortCompletedIndexNextSourceV3Repository.js';
-import { NEIGHBORHOOD_OWNED_NEXT_SOURCE_ORIGINAL_PACKAGE_V3_SQL as OWNED_NEXT_PACKET } from '../src/services/neighborhoodAssessment/neighborhoodNextCompletedIndexSourceOriginalPackageV3.js';
+  createCustomCohortOwnedNextSourceV3Repository as createOwned,
+  createCustomCohortRecoveredNextSourceV3Repository as createRecovered } from '../src/services/neighborhoodAssessment/customCohortCompletedIndexNextSourceV3Repository.js';
+import { NEIGHBORHOOD_OWNED_NEXT_SOURCE_ORIGINAL_PACKAGE_V3_SQL as OWNED_NEXT_PACKET,
+  NEIGHBORHOOD_RECOVERED_NEXT_SOURCE_ORIGINAL_PACKAGE_V3_SQL as RECOVERED_NEXT_PACKET } from '../src/services/neighborhoodAssessment/neighborhoodNextCompletedIndexSourceOriginalPackageV3.js';
 import { createCustomCohortContextCapture as capture } from '../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 
 const id=n=>`70000000-0000-4000-8000-${String(n).padStart(12,'0')}`,ref=n=>({content_sha256:String(n).repeat(64),canonical_utf8_bytes:'123'}),
@@ -27,6 +29,29 @@ function fixture(rows=[copy(next)],predecessor=copy(first),factory=create){
   }},input={client,claim:{...claim},scope:{...scope},actorUserId:id(7)};
   return {repo:factory(input),calls,input};
 }
+
+test('recovered5 NEXT requires recovered parent and FIRST for both independent selectors; lost parent, changed NEXT and expired/missing result refuse',async()=>{
+  const {repo,calls,input}=fixture([copy(next)],copy(first),createRecovered);
+  for(const attempts of [1,2,3,4])assert.throws(()=>createRecovered({...input,claim:{...claim,attempts}}),/invalid_scope/);
+  assert.equal(calls.length,0,'lower failure attempts cannot enter recovered5 native selection');
+  const result=await repo.readNextSource();assert.equal(result.source.native_key,'503');
+  assert.equal(result.read_only,true);assert.equal(result.source_authority,false);assert.equal(result.originals_reconciled,false);
+  for(const {sql}of calls.filter(c=>!c.sql.includes(':transaction */'))){
+    assert.match(sql,/app\.neighborhood_source_resolution_v3_recovered_parent\(/);
+    assert.match(sql,/app\.neighborhood_source_resolution_v3_recovered_first\(/);
+    assert.doesNotMatch(sql,/app\.neighborhood_source_resolution_v3_owned_first_parent\(|neighborhood_selected_transaction_index_v2_checkpoint_matches|jsonb_set|\b(?:INSERT|DELETE|OFFSET)\b/i);
+  }
+  assert.match(RECOVERED_NEXT_PACKET,/source_record_id>first_source.native_key::bigint/);
+  assert.match(RECOVERED_NEXT_PACKET,/legacy_sale_key COLLATE "C">first_source.native_key COLLATE "C"/);
+  assert.match(RECOVERED_NEXT_PACKET,/app\.neighborhood_source_resolution_v3_recovered_parent\(/);
+  assert.doesNotMatch(RECOVERED_NEXT_PACKET,/app\.neighborhood_source_resolution_v3_owned_first_parent\(|jsonb_set/);
+  await assert.rejects(fixture([null],copy(first),createRecovered).repo.readNextSource(),/no_next_registered_source/);
+  const missing=fixture([copy(next)],null,createRecovered);
+  await assert.rejects(missing.repo.readNextSource(),/claim_or_completed_index_lost/);
+  assert.equal(missing.calls.some(c=>c.sql.includes(':native-next */')),false);
+  const changed=fixture([copy(next),{...copy(next),native_key:'504'}],copy(first),createRecovered);
+  await changed.repo.readNextSource();await assert.rejects(changed.repo.readNextSource(),/native_plan_changed/);
+});
 
 test('owned18 NEXT requires actual native owned birth/preclaim/current claim for both independent selectors, without17 projection or progress',async()=>{
   const {repo,calls}=fixture([copy(next)],copy(first),createOwned);
@@ -99,7 +124,8 @@ test('closed NEXT API snapshots scope and refuses caller keys, cursors, callback
 });
 
 for(const method of ['readCoveredOriginalFrozenCaptureJobCompletedIndexNextSourceResolutionReferencesV3',
-  'readCoveredOriginalFrozenCaptureJobOwnedNextSourceReferencesV3'])test(`${method} admits only input, exact claim and budget, requiring both source policies before connection`,async()=>{
+  'readCoveredOriginalFrozenCaptureJobOwnedNextSourceReferencesV3',
+  'readCoveredOriginalFrozenCaptureJobRecoveredNextSourceReferencesV3'])test(`${method} admits only input, exact claim and budget, requiring both source policies before connection`,async()=>{
   let calls=0;const hostile=()=>{calls++;assert.fail('no IO');},
     input={auth:{userId:id(7),organizations:[]},accountId:'SUBJECT',assignmentFileId:'7',operationId:claim.operation_id,
       observationPeriod:{start_date:'2025-01-01',end_date:'2026-10-07'},discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},

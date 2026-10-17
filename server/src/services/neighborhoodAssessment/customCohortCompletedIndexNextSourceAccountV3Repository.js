@@ -2,9 +2,9 @@ import { isProxy } from 'node:util/types';
 import { canonicalAssessmentJson as json } from './contract.js';
 import { prepareNeighborhoodCohortBlobReference } from './cohortEvidenceBlobRepository.js';
 import { createCustomCohortCompletedIndexNextSourceV3Repository,
-  createCustomCohortOwnedNextSourceV3Repository } from './customCohortCompletedIndexNextSourceV3Repository.js';
+  createCustomCohortOwnedNextSourceV3Repository,createCustomCohortRecoveredNextSourceV3Repository } from './customCohortCompletedIndexNextSourceV3Repository.js';
 import { COMPLETED_INDEX_NEXT_SOURCE_CONTEXT_V3_SQL as NATIVE_NEXT,
-  OWNED_NEXT_SOURCE_CONTEXT_V3_SQL as OWNED_NEXT } from './completedIndexNextSourceV3Sql.js';
+  OWNED_NEXT_SOURCE_CONTEXT_V3_SQL as OWNED_NEXT, RECOVERED_NEXT_SOURCE_CONTEXT_V3_SQL as RECOVERED_NEXT } from './completedIndexNextSourceV3Sql.js';
 
 const MEMBER=['account_id','ordinal','partition_ordinal','entry_reference','metric_row_reference','contribution_row_reference'];
 const ORIGINAL_MEMBER=['account_id','ordinal','partition_ordinal','entry_reference','state','assigned_group_id','row_reference',
@@ -48,14 +48,14 @@ function compare(a,b){return a.kind===b.kind?(a.kind==='source_record'
 // NEXT after FIRST. The context owner must separately reopen WHOLE originals and ENTIRE
 // caches, reconcile every field/key in both directions and repeat this query
 // after ALL ending fences. No receipt, economic progress or source grant.
-function createRepository(args,owned){
+function createRepository(args,owned,recovered=false){
   if(args.length!==1)fail('invalid_input');
   const raw=data(args[0],['client','claim','scope','actorUserId']),o={...raw,
     claim:Object.freeze(data(raw.claim,['operation_id','claim_token','attempts'])),
     scope:Object.freeze(data(raw.scope,['organization_id','report_file_id','assignment_file_id','account_id']))};
   // The prerequisite validates the closed scope/claim without accepting any
   // account, source key, ordinal, generation, callback or caller cursor.
-  const first=(owned?createCustomCohortOwnedNextSourceV3Repository:createCustomCohortCompletedIndexNextSourceV3Repository)(o);
+  const first=(recovered?createCustomCohortRecoveredNextSourceV3Repository:owned?createCustomCohortOwnedNextSourceV3Repository:createCustomCohortCompletedIndexNextSourceV3Repository)(o);
   let observed=null,transaction=null;
   return Object.freeze({async readNextAccount(...a){
     if(a.length)fail('invalid_input');
@@ -68,7 +68,7 @@ function createRepository(args,owned){
     const source=await first.readNextSource();
     if(source.source===null||source.selected_entry===null)fail('no_registered_source');
     const result=await o.client.query(`/* custom-cohort-completed-index-next-source-account-v3:native-account */
-     WITH selected AS MATERIALIZED (${owned?OWNED_NEXT:NATIVE_NEXT}
+     WITH selected AS MATERIALIZED (${recovered?RECOVERED_NEXT:owned?OWNED_NEXT:NATIVE_NEXT}
       AND job.claim_token=$3::uuid AND job.attempts=$4::integer AND job.organization_id=$5::uuid
       AND job.report_file_id=$6::uuid AND job.assignment_file_id=$7::bigint AND job.account_id=$8 AND job.actor_user_id=$9::uuid
      ), anchors AS MATERIALIZED (
@@ -151,3 +151,4 @@ function createRepository(args,owned){
 // UNREGISTERED recovered5 first account. No cursor or original/source authority.
 export function createCustomCohortCompletedIndexNextSourceAccountV3Repository(...args){return createRepository(args,false);}
 export function createCustomCohortOwnedNextSourceAccountV3Repository(...args){return createRepository(args,true);}
+export function createCustomCohortRecoveredNextSourceAccountV3Repository(...args){return createRepository(args,true,true);}

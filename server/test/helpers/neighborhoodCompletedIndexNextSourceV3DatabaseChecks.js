@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 // Additional independently captured A/B graphs only. The actual complete17
 // claim and FIRST original proofs precede this owner; all native birth18,
 // initial4/retry4/recovery5/terminal proofs still follow on THIS same graph.
-export async function runNeighborhoodCompletedIndexNextSourceV3DatabaseChecks({ownedSource=false,pool,input,scope,actor,service,claim,
+export async function runNeighborhoodCompletedIndexNextSourceV3DatabaseChecks({ownedSource=false,recoveredSource=false,pool,input,scope,actor,service,claim,
   originalReads,laterFirstSource,setFault,readFault,unchanged}){
   const names=(await pool.query(`SELECT c.table_name FROM information_schema.columns c
     JOIN information_schema.tables t USING(table_schema,table_name)
@@ -26,7 +26,7 @@ export async function runNeighborhoodCompletedIndexNextSourceV3DatabaseChecks({o
       WHERE assignment_file_id=$1 ORDER BY section_key`,[scope.assignment_file_id])).rows,
     source_grants:(await pool.query('SELECT to_jsonb(r) AS body FROM app_auth.organizations r WHERE id=$1',[scope.organization_id])).rows}),
     before=await all(),preserved=async()=>{await unchanged();assert.deepEqual(await all(),before);},
-    method=ownedSource?'readCoveredOriginalFrozenCaptureJobOwnedNextSourceReferencesV3'
+    method=recoveredSource?'readCoveredOriginalFrozenCaptureJobRecoveredNextSourceReferencesV3':ownedSource?'readCoveredOriginalFrozenCaptureJobOwnedNextSourceReferencesV3'
       :'readCoveredOriginalFrozenCaptureJobCompletedIndexNextSourceResolutionReferencesV3',
     run=(owned=claim)=>service[method](input,{captureJobClaim:owned});
   let reads=originalReads();
@@ -50,18 +50,24 @@ export async function runNeighborhoodCompletedIndexNextSourceV3DatabaseChecks({o
     ['owned_source_subject',/subject_changed/],['next_source_native_ending',/native_plan_changed/],
     ['next_source_assignment_ending',/assignment_access_denied/],['next_source_draft_ending',/private_source_read_only/]]){
     reads=originalReads();setFault(fault);
-    try{await assert.rejects(run(),reason);assert.equal(readFault(),null);assert.equal(originalReads(),reads+1);}
+    try{await assert.rejects(run(),reason,fault);assert.equal(readFault(),null);assert.equal(originalReads(),reads+1);}
     finally{if(fault==='union_role')await pool.query("INSERT INTO app_auth.membership_roles(organization_id,user_id,role_code) VALUES($1,$2,'appraiser')",[scope.organization_id,actor]);}
     await preserved();
   }
   reads=originalReads();const result=await run();assert.equal(originalReads(),reads+1);await preserved();
-  assert.equal(result.status,ownedSource?'current_authorized_owned_next_source_originals_reconciled'
+  assert.equal(result.status,recoveredSource?'current_authorized_recovered_next_source_originals_reconciled':ownedSource?'current_authorized_owned_next_source_originals_reconciled'
     :'current_authorized_next_completed_index_source_observations_resolved');
-  if(ownedSource){
+  if(ownedSource||recoveredSource){
     // The retained FIRST candidate is a native parent binding, never semantic
     // authority for NEXT. This owner does not claim to reproduce FIRST from B.
     assert.equal(Object.hasOwn(result,'retained_birth_candidate_compared_to_whole_originals'),false);
     assert.equal(Object.hasOwn(result,'retained_original_birth_transaction'),false);
+  }
+  if(recoveredSource){
+    assert.equal(claim.attempts,5);
+    assert.equal(result.recovered_source_failure_attempt,5);
+    assert.equal(result.original_birth_rebound,false);
+    assert.equal(Object.hasOwn(result,'retained_source_recovery_transaction'),false);
   }
   assert.deepEqual(result.selected_source,{kind:'source_record',native_key:'503',first_selected_ordinal:2});
   assert.equal(result.selected_entry.account_id,'CLOSURE-B');assert.equal(result.selected_entry.ordinal,2);
@@ -90,12 +96,13 @@ export async function runNeighborhoodCompletedIndexNextSourceV3DatabaseChecks({o
   reads=originalReads();setFault('completed_source_ack');await assert.rejects(run(),e=>e.outcome_unknown===true);
   assert.equal(readFault(),null);assert.equal(originalReads(),reads+1);await preserved();
   reads=originalReads();assert.deepEqual(await run(),result);assert.equal(originalReads(),reads+1);await preserved();
-  console.info(ownedSource?'[native-owned18-NEXT-source-whole-original-owner-v3]'
+  console.info(recoveredSource?'[native-recovered18-NEXT-source-whole-original-owner-v3]':ownedSource?'[native-owned18-NEXT-source-whole-original-owner-v3]'
     :'[native-completed-index-NEXT-source-whole-original-owner-v3]',{
     independent_capture:laterFirstSource?'B_FIRST_ordinal2_after_empty_A':'A_FIRST_ordinal1',
     actual_native_NEXT503_after_FIRST501_and_real_first_seen_B_ordinal2:true,
     actual_owned18_claim_entire_immutable17_birth_preclaim_claim_FIRST_member_edge:ownedSource,
     actual_failure_attempt:claim.attempts,
+    ...(recoveredSource?{entire_native_original17_initial4_retry4_recovered5_FIRST_member_edge:true}:{}),
     every_whole_B_source_CAD_stock_all_date_original_required_subject_ENTIRE_caches_and_all_native_members_reconciled:true,
     entire_native_B_keyset_bidirectional_equal_and_unresolved503_without_borrowed_sale_date_quarter_or_price:true,
     current_actor_assignment_private_draft_refused_before_IO_with_real_target_DML_rolled_back:true,

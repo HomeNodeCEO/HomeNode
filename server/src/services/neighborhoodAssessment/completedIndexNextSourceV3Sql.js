@@ -1,4 +1,5 @@
-import { COMPLETED_INDEX_FIRST_SOURCE_CONTEXT_V3_SQL as FIRST } from './completedIndexFirstSourceV3Sql.js';
+import { COMPLETED_INDEX_FIRST_SOURCE_CONTEXT_V3_SQL as FIRST,
+  OWNED_FIRST_SOURCE_CONTEXT_V3_SQL as OWNED_FIRST } from './completedIndexFirstSourceV3Sql.js';
 
 // Fixed NEXT after the actual completed-index FIRST. This is a read-only
 // selection, never a durable cursor or source grant. Both namespaces retain
@@ -37,3 +38,14 @@ export const COMPLETED_INDEX_NEXT_SOURCE_CONTEXT_V3_SQL=`
   ON edge.operation_id=m.operation_id AND edge.organization_id=m.organization_id AND edge.generation_id=m.generation_id
   AND edge.ordinal=m.ordinal AND edge.account_id=m.account_id AND edge.kind=k.kind AND edge.native_key=k.native_key
  WHERE job.operation_id=$1::uuid AND h.generation_id=$2::uuid`;
+
+// A separate closed read under the real fresh18 claim. The native owned-FIRST
+// functions independently reopen the entire immutable birth17/preclaim18/current
+// claim and actual FIRST/member/edge. No18 projection is admitted as a new17,
+// and neither the retained first candidate nor a caller key chooses NEXT.
+function ownedNext(){
+  const sql=COMPLETED_INDEX_NEXT_SOURCE_CONTEXT_V3_SQL;
+  if(sql.split(FIRST).length!==2)throw new TypeError('completed_index_owned_next_source_v3_sql_shape');
+  return sql.replace(FIRST,OWNED_FIRST);
+}
+export const OWNED_NEXT_SOURCE_CONTEXT_V3_SQL=ownedNext();

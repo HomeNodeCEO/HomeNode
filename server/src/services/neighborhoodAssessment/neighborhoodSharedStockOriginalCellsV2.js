@@ -1,4 +1,4 @@
-import { NEIGHBORHOOD_NEXT_COMPLETED_INDEX_SOURCE_ORIGINAL_PACKAGE_V3_SQL } from './neighborhoodNextCompletedIndexSourceOriginalPackageV3.js';
+import { NEIGHBORHOOD_NEXT_COMPLETED_INDEX_SOURCE_ORIGINAL_PACKAGE_V3_SQL, NEIGHBORHOOD_OWNED_NEXT_SOURCE_ORIGINAL_PACKAGE_V3_SQL } from './neighborhoodNextCompletedIndexSourceOriginalPackageV3.js';
 import { performance } from 'node:perf_hooks';
 import { NEIGHBORHOOD_STOCK_WHOLE_ACCOUNT_BATCH_V2_SQL } from './neighborhoodStockWholeAccountBatchV2.js';
 import { isProxy } from 'node:util/types';
@@ -697,13 +697,13 @@ function stockOriginalCells(client,rawOptions,rawGraph,effectiveDate,covered,cad
   /** Both complete accounts share every original/transport/output/SQL bound.
    * This is source DATA only; actual issued owner chooses the next cursor and
    * independently fences the full native graph, intent and current authority. */
-  async function subjectAndNextPackage(rawPage,rawSubject,firstSelected=false,nextEligibility=false,amenities=false,transactionPeriod=null,nextEvidence=false,completedEvidence=false,nextMetrics=false,completedMetrics=false,nextStatistics=false,completedStatistics=false,nextNumeric=false,completedNumeric=false,nextSemantic=false,completedSemantic=false,nextTransactionIndex=false,completedTransactionSource=false,ownedCompletedTransactionSource=false,recoveredCompletedTransactionSource=false,nextCompletedTransactionSource=false){
+  async function subjectAndNextPackage(rawPage,rawSubject,firstSelected=false,nextEligibility=false,amenities=false,transactionPeriod=null,nextEvidence=false,completedEvidence=false,nextMetrics=false,completedMetrics=false,nextStatistics=false,completedStatistics=false,nextNumeric=false,completedNumeric=false,nextSemantic=false,completedSemantic=false,nextTransactionIndex=false,completedTransactionSource=false,ownedCompletedTransactionSource=false,recoveredCompletedTransactionSource=false,nextCompletedTransactionSource=false,ownedNextCompletedTransactionSource=false){
     const page=prepareNeighborhoodStockAccountPackagePageV2(rawPage),{includeSubject}=data(rawSubject,['includeSubject']);
     if(typeof includeSubject!=='boolean')fail('invalid_input');
     const context=await open(),{stock,source}=context,cadContext=amenities?await openCad(stock,context.coverage):null,
       values=[stock.operation_id,stock.generation_id,TYPED.profile_ref.content_sha256,page.cursor,L.rows,L.page_utf8_bytes,
         L.row_utf8_bytes,L.original_utf8_bytes,L.output_utf8_bytes,includeSubject],
-      result=one(await execute(nextCompletedTransactionSource?NEIGHBORHOOD_NEXT_COMPLETED_INDEX_SOURCE_ORIGINAL_PACKAGE_V3_SQL:recoveredCompletedTransactionSource?NEIGHBORHOOD_RECOVERED_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL:ownedCompletedTransactionSource?NEIGHBORHOOD_OWNED_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL:completedTransactionSource?NEIGHBORHOOD_FIRST_COMPLETED_INDEX_SOURCE_ORIGINAL_PACKAGE_V3_SQL:nextTransactionIndex?NEIGHBORHOOD_NEXT_SELECTED_TRANSACTION_INDEX_ORIGINAL_PACKAGE_V2_SQL:completedSemantic?NEIGHBORHOOD_FIRST_COMPLETED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL:nextSemantic?NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL:completedNumeric?NEIGHBORHOOD_FIRST_COMPLETED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL:nextNumeric?NEIGHBORHOOD_NEXT_SELECTED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL:completedStatistics?NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL:nextStatistics?NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL:completedMetrics?NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL:nextMetrics?NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL:completedEvidence?NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL
+      result=one(await execute(ownedNextCompletedTransactionSource?NEIGHBORHOOD_OWNED_NEXT_SOURCE_ORIGINAL_PACKAGE_V3_SQL:nextCompletedTransactionSource?NEIGHBORHOOD_NEXT_COMPLETED_INDEX_SOURCE_ORIGINAL_PACKAGE_V3_SQL:recoveredCompletedTransactionSource?NEIGHBORHOOD_RECOVERED_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL:ownedCompletedTransactionSource?NEIGHBORHOOD_OWNED_FIRST_SOURCE_ORIGINAL_PACKAGE_V3_SQL:completedTransactionSource?NEIGHBORHOOD_FIRST_COMPLETED_INDEX_SOURCE_ORIGINAL_PACKAGE_V3_SQL:nextTransactionIndex?NEIGHBORHOOD_NEXT_SELECTED_TRANSACTION_INDEX_ORIGINAL_PACKAGE_V2_SQL:completedSemantic?NEIGHBORHOOD_FIRST_COMPLETED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL:nextSemantic?NEIGHBORHOOD_NEXT_SELECTED_SEMANTIC_ORIGINAL_PACKAGE_V2_SQL:completedNumeric?NEIGHBORHOOD_FIRST_COMPLETED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL:nextNumeric?NEIGHBORHOOD_NEXT_SELECTED_NUMERIC_ORIGINAL_PACKAGE_V2_SQL:completedStatistics?NEIGHBORHOOD_FIRST_SELECTED_FREQUENCY_ORIGINAL_PACKAGE_V2_SQL:nextStatistics?NEIGHBORHOOD_NEXT_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL:completedMetrics?NEIGHBORHOOD_FIRST_SELECTED_STATISTICS_ORIGINAL_PACKAGE_V2_SQL:nextMetrics?NEIGHBORHOOD_NEXT_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL:completedEvidence?NEIGHBORHOOD_FIRST_SELECTED_METRIC_ORIGINAL_PACKAGE_V2_SQL
       :nextEvidence?NEIGHBORHOOD_NEXT_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL
       :transactionPeriod&&amenities?NEIGHBORHOOD_FIRST_SELECTED_COMBINED_ORIGINAL_PACKAGE_V2_SQL
       :transactionPeriod?NEIGHBORHOOD_FIRST_SELECTED_TRANSACTION_ORIGINAL_PACKAGE_V2_SQL:amenities?NEIGHBORHOOD_FIRST_SELECTED_AMENITY_ORIGINAL_PACKAGE_V2_SQL:nextEligibility
@@ -1034,6 +1034,13 @@ function stockOriginalCells(client,rawOptions,rawGraph,effectiveDate,covered,cad
       if(args.length!==2)fail('invalid_input');
       const period=prepareNeighborhoodTransactionRetainedPeriodV1(args[1],effective);
       return subjectAndNextPackage({cursor:''},args[0],false,false,true,period,false,false,false,false,false,false,false,false,false,false,false,true,false,false,true);
+    },
+    // Actual fresh18 claim, independently selected NEXT and the SAME single-use
+    // complete original/ENTIRE-cache/required-subject aggregate. Read only.
+    async subjectAndOwnedNextSourceAccountPackageV3(...args){
+      if(args.length!==2)fail('invalid_input');
+      const period=prepareNeighborhoodTransactionRetainedPeriodV1(args[1],effective);
+      return subjectAndNextPackage({cursor:''},args[0],false,false,true,period,false,false,false,false,false,false,false,false,false,false,false,true,true,false,true,true);
     },
     async subjectAndOwnedFirstSourceAccountPackageV3(...args){
       if(args.length!==2)fail('invalid_input');

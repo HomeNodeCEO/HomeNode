@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCustomCohortCompletedIndexNextSourceV3Repository as create } from '../src/services/neighborhoodAssessment/customCohortCompletedIndexNextSourceV3Repository.js';
+import { createCustomCohortCompletedIndexNextSourceV3Repository as create,
+  createCustomCohortOwnedNextSourceV3Repository as createOwned } from '../src/services/neighborhoodAssessment/customCohortCompletedIndexNextSourceV3Repository.js';
+import { NEIGHBORHOOD_OWNED_NEXT_SOURCE_ORIGINAL_PACKAGE_V3_SQL as OWNED_NEXT_PACKET } from '../src/services/neighborhoodAssessment/neighborhoodNextCompletedIndexSourceOriginalPackageV3.js';
 import { createCustomCohortContextCapture as capture } from '../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 
 const id=n=>`70000000-0000-4000-8000-${String(n).padStart(12,'0')}`,ref=n=>({content_sha256:String(n).repeat(64),canonical_utf8_bytes:'123'}),
@@ -17,14 +19,35 @@ const id=n=>`70000000-0000-4000-8000-${String(n).padStart(12,'0')}`,ref=n=>({con
     kind:'source_record',native_key:'503',first_selected_ordinal:2},
   claim={operation_id:id(3),claim_token:id(4),attempts:5},scope={organization_id:id(5),report_file_id:id(6),assignment_file_id:'7',account_id:'SUBJECT'},
   copy=v=>structuredClone(v);
-function fixture(rows=[copy(next)],predecessor=copy(first)){
+function fixture(rows=[copy(next)],predecessor=copy(first),factory=create){
   const calls=[];let reads=0;
   const client={async query(sql,values){calls.push({sql,values});
     const result=sql.includes(':transaction */')?{transaction_id:'101'}:sql.includes(':native-first */')?predecessor:rows[Math.min(reads++,rows.length-1)];
     return result===null?{rowCount:0,rows:[]}:{rowCount:1,rows:[result]};
   }},input={client,claim:{...claim},scope:{...scope},actorUserId:id(7)};
-  return {repo:create(input),calls,input};
+  return {repo:factory(input),calls,input};
 }
+
+test('owned18 NEXT requires actual native owned birth/preclaim/current claim for both independent selectors, without17 projection or progress',async()=>{
+  const {repo,calls}=fixture([copy(next)],copy(first),createOwned);
+  const result=await repo.readNextSource();assert.equal(result.source.native_key,'503');
+  assert.equal(result.read_only,true);assert.equal(result.source_authority,false);assert.equal(result.originals_reconciled,false);
+  for(const {sql}of calls.filter(c=>!c.sql.includes(':transaction */'))){
+    assert.match(sql,/app\.neighborhood_source_resolution_v3_owned_first_parent\(/);
+    assert.match(sql,/app\.neighborhood_source_resolution_v3_owned_first\(/);
+    assert.doesNotMatch(sql,/neighborhood_selected_transaction_index_v2_checkpoint_matches|jsonb_set|\b(?:INSERT|DELETE|OFFSET)\b/i);
+  }
+  assert.match(OWNED_NEXT_PACKET,/source_record_id>first_source.native_key::bigint/);
+  assert.match(OWNED_NEXT_PACKET,/legacy_sale_key COLLATE "C">first_source.native_key COLLATE "C"/);
+  assert.match(OWNED_NEXT_PACKET,/app\.neighborhood_source_resolution_v3_owned_first_parent\(/);
+  assert.doesNotMatch(OWNED_NEXT_PACKET,/neighborhood_selected_transaction_index_v2_checkpoint_matches|jsonb_set/);
+  await assert.rejects(fixture([null],copy(first),createOwned).repo.readNextSource(),/no_next_registered_source/);
+  const missingBirth=fixture([copy(next)],null,createOwned);
+  await assert.rejects(missingBirth.repo.readNextSource(),/claim_or_completed_index_lost/);
+  assert.equal(missingBirth.calls.some(c=>c.sql.includes(':native-next */')),false);
+  const changed=fixture([copy(next),{...copy(next),native_key:'504'}],copy(first),createOwned);
+  await changed.repo.readNextSource();await assert.rejects(changed.repo.readNextSource(),/native_plan_changed/);
+});
 
 test('NEXT follows actual native FIRST with one exact later first-seen member, retaining both namespaces without issuing progress',async()=>{
   const {repo,calls}=fixture(),plan=await repo.readNextSource();
@@ -75,8 +98,9 @@ test('closed NEXT API snapshots scope and refuses caller keys, cursors, callback
   assert.equal(calls.find(c=>c.sql.includes(':native-next */')).values[7],'SUBJECT');
 });
 
-test('actual original NEXT owner admits only input, exact claim and budget, requiring both source policies before connection',async()=>{
-  let calls=0;const hostile=()=>{calls++;assert.fail('no IO');},method='readCoveredOriginalFrozenCaptureJobCompletedIndexNextSourceResolutionReferencesV3',
+for(const method of ['readCoveredOriginalFrozenCaptureJobCompletedIndexNextSourceResolutionReferencesV3',
+  'readCoveredOriginalFrozenCaptureJobOwnedNextSourceReferencesV3'])test(`${method} admits only input, exact claim and budget, requiring both source policies before connection`,async()=>{
+  let calls=0;const hostile=()=>{calls++;assert.fail('no IO');},
     input={auth:{userId:id(7),organizations:[]},accountId:'SUBJECT',assignmentFileId:'7',operationId:claim.operation_id,
       observationPeriod:{start_date:'2025-01-01',end_date:'2026-10-07'},discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
     service=capture({pool:{connect:hostile},sourceMode:'combined-witness2-v1',authorizeMarketData:hostile,authorizeCadImprovementData:hostile});

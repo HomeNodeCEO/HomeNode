@@ -1,3 +1,4 @@
+import { runNeighborhoodFifthFirstSourceOriginalV3DatabaseChecks } from './neighborhoodFifthFirstSourceOriginalV3DatabaseChecks.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -202,4 +203,8 @@ export async function runNeighborhoodSourceFifthClaimV3DatabaseChecks({sourceRec
 
 
 
+  const history=(await read('neighborhood_custom_cohort_source_resolution_v3_claims'))[0].body;
+  await runNeighborhoodFifthFirstSourceOriginalV3DatabaseChecks({pool,input,scope,actor,service,claim:winner.claim,
+    originalReads,laterFirstSource,setFault,readFault,unchanged:preserved,originalBirthTransaction:String(history.birth_transaction_id),
+    retryTransaction:String(durable.retry_transaction_id),fifthClaimTransaction:String(durable.issued_transaction_id)});
 }

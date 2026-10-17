@@ -99,7 +99,7 @@ export function createCustomCohortSourceResolutionParentV3Repository(...args){
       JOIN app.neighborhood_custom_cohort_source_resolution_v3_rows r
         ON r.operation_id=b.operation_id AND r.organization_id=b.organization_id
         AND r.issued_transaction_id=b.issued_transaction_id AND r.sequence=1`;
-  let candidateRow=null,retainedParent=null,retainedHead=null,savedCheckpoint=false;
+  let candidateRow=null,retainedParent=null,retainedFirst=null,retainedHead=null,savedCheckpoint=false;
   return Object.freeze({async insertActual17Parent(...a){
     if(a.length)fail('invalid_input');
     const id=await tx();if(await tx()!==id)fail('caller_transaction_required');
@@ -117,7 +117,7 @@ export function createCustomCohortSourceResolutionParentV3Repository(...args){
     const retained=prepareFirst(one(await o.client.query(`/* custom-cohort-source-resolution-parent-v3:first-insert */
       INSERT INTO app.neighborhood_custom_cohort_source_resolution_v3_first ${firstSelected} RETURNING *`,values)),id);
     if(json(retained)!==json(expected))fail('native_first_changed');
-    if(await tx()!==id)fail('caller_transaction_required');return retained;
+    if(await tx()!==id)fail('caller_transaction_required');retainedFirst=retained;return retained;
   },async insertActualFirstSourceCandidate(...a){
     // Representation only: the actual bounded original owner derives and
     // stores this blob itself. SQL independently binds its entire metadata to
@@ -188,7 +188,7 @@ export function createCustomCohortSourceResolutionParentV3Repository(...args){
     // A separate provisional atomic birth handoff. The native INSERT captures
     // the ENTIRE actual17 job and independently derives18 before one UPDATE
     // clears this exact claim. All six deferred COMMIT refusals remain.
-    if(a.length||retainedParent===null||retainedHead===null||savedCheckpoint)fail('native_checkpoint_required');
+    if(a.length||retainedParent===null||retainedFirst===null||retainedHead===null||savedCheckpoint)fail('native_checkpoint_required');
     const id=retainedParent.issued_transaction_id,expected={phase:'frozen_selected_source_resolution_refs_v3',
       evidence_refs:[...retainedParent.parent_checkpoint.evidence_refs,retainedHead.candidate_reference]};
     const r=data(one(await o.client.query(`/* custom-cohort-source-resolution-parent-v3:handoff-save */
@@ -220,6 +220,24 @@ export function createCustomCohortSourceResolutionParentV3Repository(...args){
     if(Buffer.byteLength(json(checkpoint))>4096||json(checkpoint)!==json(expected)
       ||r.status!=='retry'||r.claim_token!==null||r.lease_expires_at!==null||r.attempts!==claim.attempts
       ||r.sequence!==1||r.issued_claim_token!==claim.claim_token||r.issued_attempts!==claim.attempts)fail('native_handoff_changed');
+    // Reopen the immutable ENTIRE actual17 birth under the real18 retry state.
+    // The new native reader independently rechecks the actual index, stock,
+    // generation pin, original consumed continuation and FIRST/member edge.
+    // Original birth TX/token/attempt stay unchanged;18 is never stripped or
+    // passed back as17. One extra metadata query shares the same owner budget.
+    const reopened=data(one(await o.client.query(`/* custom-cohort-source-resolution-parent-v3:handoff-retained-read */
+      SELECT to_jsonb(p)||jsonb_build_object('assignment_file_id',p.assignment_file_id::text,
+          'issued_transaction_id',p.issued_transaction_id::text) AS parent,
+        to_jsonb(f)||jsonb_build_object('issued_transaction_id',f.issued_transaction_id::text) AS first,
+        txid_current()::text AS transaction_id
+      FROM app.neighborhood_source_resolution_v3_retained_first_after_handoff($1::uuid,$2::uuid) f
+      JOIN app.neighborhood_custom_cohort_source_resolution_v3_parents p USING(operation_id,organization_id)
+      WHERE p.report_file_id=$3::uuid AND p.assignment_file_id=$4::bigint AND p.account_id=$5 AND p.actor_user_id=$6::uuid
+        AND p.issued_claim_token=$7::uuid AND p.issued_attempts=$8::integer AND p.issued_transaction_id=txid_current()`,values)),
+    ['parent','first','transaction_id']);
+    if(reopened.transaction_id!==id)fail('caller_transaction_required');
+    if(json(prepare(reopened.parent,id))!==json(retainedParent)
+      ||json(prepareFirst(reopened.first,id))!==json(retainedFirst))fail('retained_birth_changed');
     savedCheckpoint=true;
     return Object.freeze({checkpoint,status:'provisional_source_handoff',attempts:claim.attempts,continuation_sequence:1,
       durable_source_resolution_issued:false,fresh_claim_admitted:false,context_complete:false,pin_transfer:false});

@@ -18,10 +18,12 @@ function fixture({transactions=['101'],native=copy(row),inserted=copy(row),first
   candidateInserted=copy(candidateRow),headNative=copy(candidateRow),headInserted=copy(candidateRow),
   checkpointInserted={checkpoint:sourceCheckpoint(),transaction_id:'101'},
   handoffInserted={checkpoint:sourceCheckpoint(),status:'retry',claim_token:null,lease_expires_at:null,attempts:5,
-    sequence:1,issued_claim_token:claim.claim_token,issued_attempts:5,transaction_id:'101'},raw}={}){
+    sequence:1,issued_claim_token:claim.claim_token,issued_attempts:5,transaction_id:'101'},
+  handoffRead={parent:copy(row),first:copy(first),transaction_id:'101'},raw}={}){
   let reads=0;const queries=[],client={async query(sql,values){queries.push({sql,values});
     if(sql.includes(':transaction */'))return {rowCount:1,rows:[{transaction_id:transactions[Math.min(reads++,transactions.length-1)]}]};
-    return raw??{rowCount:1,rows:[sql.includes(':handoff-save */')?handoffInserted:sql.includes(':checkpoint-save */')?checkpointInserted:
+    return raw??{rowCount:1,rows:[sql.includes(':handoff-retained-read */')?handoffRead:
+      sql.includes(':handoff-save */')?handoffInserted:sql.includes(':checkpoint-save */')?checkpointInserted:
       sql.includes(':candidate-insert */')?candidateInserted:sql.includes(':head-native */')?headNative:
       sql.includes(':head-insert */')?headInserted:sql.includes(':candidate-native */')?firstNative:
       sql.includes(':first-insert */')?firstInserted:sql.includes(':first-native */')?firstNative:
@@ -53,8 +55,34 @@ test('atomic handoff derives its native birth and18 in one statement, preserving
   assert.deepEqual(q[0].values,[id(1),id(3),id(4),'7','SUBJECT',id(5),id(2),5]);
   assert.match(q[0].sql,/to_jsonb\(job\)=issued.birth_job AND issued.issued_transaction_id=txid_current\(\)/);
   assert.doesNotMatch(q[0].sql,/ON CONFLICT|SET attempts|SET last_error|jsonb_populate_record/);
+  const read=queries.filter(q=>q.sql.includes(':handoff-retained-read */'));assert.equal(read.length,1);
+  assert.deepEqual(read[0].values,q[0].values);assert.match(read[0].sql,/retained_first_after_handoff/);
+  assert.doesNotMatch(read[0].sql,/\b(?:INSERT|UPDATE|DELETE)\b|evidence_refs.*slice|evidence_refs.*-\s*17/);
   await assert.rejects(repo.saveActualFirstSourceCheckpoint(),/native_checkpoint_required/);
   await assert.rejects(repo.saveAndYieldActualFirstSourceCheckpoint(),/native_checkpoint_required/);
+});
+
+test('post-handoff retained birth preserves original transaction, token, attempt, roots and independent FIRST without adoption',async()=>{
+  for(const mutate of [r=>r.parent.issued_transaction_id='102',r=>r.parent.issued_claim_token=id(9),
+    r=>r.parent.issued_attempts=4,r=>r.parent.parent_checkpoint=sourceCheckpoint(),r=>r.parent.parent_checkpoint.evidence_refs[0]=ref(3),
+    r=>r.parent.request_sha256='b'.repeat(64),r=>r.parent.account_id='FOREIGN',
+    r=>r.first.native_key='502',r=>r.first.selected_account_id='OTHER',r=>r.first.issued_transaction_id='102',
+    r=>r.first.entry_reference=ref(3),r=>r.first.extra=true,r=>r.transaction_id='102',r=>r.extra=true]){
+    const handoffRead={parent:copy(row),first:copy(first),transaction_id:'101'};mutate(handoffRead);
+    const f=await checkpointWriter({handoffRead});await assert.rejects(f.repo.saveAndYieldActualFirstSourceCheckpoint());
+    assert.equal(f.queries.filter(q=>q.sql.includes(':handoff-save */')).length,1);
+    assert.equal(f.queries.filter(q=>q.sql.includes(':handoff-retained-read */')).length,1);
+  }
+});
+
+test('missing or executable retained birth after atomic handoff requires complete owner rollback',async()=>{
+  const f=await checkpointWriter(),query=f.input.client.query.bind(f.input.client);
+  f.input.client.query=(sql,values)=>sql.includes(':handoff-retained-read */')?Promise.resolve({rowCount:0,rows:[]}):query(sql,values);
+  await assert.rejects(f.repo.saveAndYieldActualFirstSourceCheckpoint(),/claim_or_actual17_parent_lost/);
+  let touched=false;const parent=copy(row);Object.defineProperty(parent,'parent_checkpoint',
+    {enumerable:true,get(){touched=true;assert.fail('getter must not run');}});
+  const g=await checkpointWriter({handoffRead:{parent,first:copy(first),transaction_id:'101'}});
+  await assert.rejects(g.repo.saveAndYieldActualFirstSourceCheckpoint());assert.equal(touched,false);
 });
 
 test('handoff requires this writer private actual17 and head, and refuses caller roots before SQL',async()=>{

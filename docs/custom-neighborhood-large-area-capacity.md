@@ -1,3 +1,48 @@
+## Retained source birth read after the actual handoff (2026-10-17, unregistered)
+
+The atomic original-owner writer now performs one additional native metadata
+read after its real18/retry/token-and-lease-clear statement. Unregistered
+`20261224_custom_cohort_source_retained_birth_read_v3.sql` reads the ENTIRE
+immutable actual17 birth job, compares every non-transition field with the
+actual18 job, and independently reopens the completed native index, command,
+stock, generation pin and original consumed continuation. It selects the FIRST
+source key, first-seen selected member and native edge again and compares the
+entire retained FIRST row. It never removes an eighteenth root to invent17 or
+changes the original birth transaction, token, attempt, lease or failure history.
+The typed conversion stays inside PostgreSQL using its documented
+[JSON record functions](https://www.postgresql.org/docs/current/functions-json.html).
+
+The same real original owner compares both returned parent and FIRST against
+its private actual birth records before attempting COMMIT. The additional
+metadata read shares the unchanged 256-query / 32MB / 60s owner and stricter
+child limits; no original, ENTIRE cache, native member or current/ending
+source-purpose/actor/assignment/draft/subject/workspace fence is removed.
+
+Native A-first and independent B-after-empty-A probes now require no retained
+read before the handoff, exact unchanged17/FIRST after the real18 save, foreign
+organization refusal and observation of the owner's actual post-handoff query.
+All seven ending faults, real rejected COMMIT, fresh same-claim repeat and
+complete provisional rows/blobs/job/workspace/report/choice/pin rollback remain.
+The 23 writer boundary tests and 17 original-owner/resolution checks pass
+(176.257 ms and 1797.2777 ms, zero failures/cancellations/skips); four changed
+JavaScript syntax checks and the diff check pass.
+Fresh current-head native prefix/full cloud execution is required; detached
+boundary checks and previously passing parent results do not prove this change.
+Actual535ac native prefix passed20/22 and failed both independent captures after
+the retained-parent read succeeded: the FIRST comparison returned no row. The
+CTE projected the native member as `account_id`, while the immutable FIRST row
+uses `selected_account_id`. The correction names that projection explicitly;
+the comparison of the ENTIRE native FIRST row remains exact. No guard, source
+read, budget, deadline or assertion is weakened. The failed head is not rerun;
+fresh corrected-head prefix and full prepared execution are required.
+
+This reads retained birth metadata under the provisional18 retry state. All six
+unconditional COMMIT refusals and all prior guards remain byte-for-byte unchanged.
+It admits no fresh18 claim and establishes no source permission or durable
+issuance. Coherent durable COMMIT, owned fresh18 recovery through the fifth
+failure ceiling, NEXT/fresh EMPTY, independent legacy-only native acquisition,
+activation and licensed large-area/live-speed acceptance remain unfinished.
+
 ## Original-owned provisional atomic first-source handoff (2026-10-17, unregistered)
 
 A separate closed original-owner entry point now retains actual17/FIRST/blob/

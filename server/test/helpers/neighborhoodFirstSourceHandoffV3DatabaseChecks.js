@@ -15,6 +15,9 @@ export async function observeNeighborhoodFirstSourceHandoffBeforeSaveV3({raw,res
   // birth. The new row must not manufacture17 from a projected18 checkpoint.
   const before=await observeNeighborhoodFirstSourceCheckpointBeforeSaveV3({raw,result,scope}),op=before.actual.operation_id;
   before.birthJob=(await raw.query(`SELECT to_jsonb(job) AS body FROM ${jobs} job WHERE operation_id=$1`,[op])).rows[0].body;
+  before.first=(await raw.query('SELECT * FROM app.neighborhood_custom_cohort_source_resolution_v3_first WHERE operation_id=$1',[op])).rows[0];
+  for(const fn of ['retained_parent_after_handoff','retained_first_after_handoff'])assert.equal(
+    (await raw.query(`SELECT * FROM app.neighborhood_source_resolution_v3_${fn}($1,$2)`,[op,scope.organization_id])).rowCount,0);
   const native=(await raw.query('SELECT * FROM app.neighborhood_source_resolution_v3_native_first_handoff($1,$2)',[op,scope.organization_id])).rows;
   assert.equal(native.length,1);assert.deepEqual(native[0].birth_job,before.birthJob);assert.deepEqual(native[0].checkpoint,before.expected);
   for(const [field,expression]of [
@@ -46,6 +49,15 @@ export async function observeNeighborhoodFirstSourceHandoffAfterSaveV3({raw,resu
   assert.equal(current.status,'retry');assert.equal(current.claim_token,null);assert.equal(current.lease_expires_at,null);
   assert.deepEqual((await raw.query('SELECT * FROM app.neighborhood_custom_cohort_source_resolution_v3_parents WHERE operation_id=$1',[op])).rows,[before.parent]);
   assert.deepEqual((await raw.query('SELECT * FROM app.neighborhood_custom_cohort_source_resolution_v3_heads WHERE operation_id=$1',[op])).rows,[before.head]);
+  // These are real database reads of the immutable entire17 birth under the
+  // actual18 retry state, with independently reselected native FIRST/member.
+  assert.deepEqual((await raw.query('SELECT * FROM app.neighborhood_source_resolution_v3_retained_parent_after_handoff($1,$2)',
+    [op,scope.organization_id])).rows,[before.parent]);
+  assert.deepEqual((await raw.query('SELECT * FROM app.neighborhood_source_resolution_v3_retained_first_after_handoff($1,$2)',
+    [op,scope.organization_id])).rows,[before.first]);
+  for(const fn of ['retained_parent_after_handoff','retained_first_after_handoff'])assert.equal(
+    (await raw.query(`SELECT * FROM app.neighborhood_source_resolution_v3_${fn}($1,$2)`,
+      [op,'00000000-0000-4000-8000-000000000001'])).rowCount,0);
   // A provisional18 cannot be treated as a new17 birth, generically claimed,
   // renewed or refunded. The future fresh18 protocol is still unfinished.
   assert.equal((await raw.query('SELECT * FROM app.neighborhood_source_resolution_v3_native_first_handoff($1,$2)',[op,scope.organization_id])).rowCount,0);
@@ -82,18 +94,22 @@ export async function observeNeighborhoodFirstSourceHandoffAfterSaveV3({raw,resu
 }
 
 export async function runNeighborhoodFirstSourceHandoffV3DatabaseChecks({pool,input,scope,actor,service,claim,empty,setFault,readFault,originalReads,laterFirstSource}){
-  const ddl=readFileSync(new URL('../../migrations/20261223_custom_cohort_source_first_handoff_v3.sql',import.meta.url),'utf8'),setup=await pool.connect();
+  const ddls=['20261223_custom_cohort_source_first_handoff_v3.sql','20261224_custom_cohort_source_retained_birth_read_v3.sql']
+    .map(name=>readFileSync(new URL(`../../migrations/${name}`,import.meta.url),'utf8')),setup=await pool.connect();
   let open=false,discard;
   try{
     assert.match((await setup.query('SELECT current_database() AS name')).rows[0].name,/^neighborhood_[a-f0-9]{32}_test$/);
     await setup.query('BEGIN');open=true;await setup.query("SET LOCAL statement_timeout='5000ms'; SET LOCAL lock_timeout='1000ms'");
-    await setup.query({text:ddl,query_timeout:6000});
+    for(const ddl of ddls)await setup.query({text:ddl,query_timeout:6000});
     await refuse(setup,`TRUNCATE ${handoffs}`,[],error=>error.code==='55000'&&error.message==='custom_cohort_context_immutable');
     await setup.query('COMMIT');open=false;
   }catch(error){discard=error;throw error;}
   finally{if(open)try{await setup.query({text:'ROLLBACK',query_timeout:1000});}catch(error){discard ||= error;}setup.release(discard||undefined);}
   const unchanged=async()=>{await empty();assert.equal((await pool.query(`SELECT * FROM ${handoffs} WHERE operation_id=$1 AND organization_id=$2`,
-    [claim.operation_id,scope.organization_id])).rowCount,0);},
+    [claim.operation_id,scope.organization_id])).rowCount,0);
+    for(const fn of ['retained_parent_after_handoff','retained_first_after_handoff'])assert.equal(
+      (await pool.query(`SELECT * FROM app.neighborhood_source_resolution_v3_${fn}($1,$2)`,
+        [claim.operation_id,scope.organization_id])).rowCount,0);},
     method='retainCoveredOriginalFrozenCaptureJobFirstSourceHandoffReferencesV3',options={captureJobClaim:claim},run=()=>service[method](input,options);
   await unchanged();
   for(const key of ['checkpoint','source','candidate','binding','row','head','candidateReference','continuation','birth_job','leaseSeconds']){
@@ -127,4 +143,14 @@ export async function runNeighborhoodFirstSourceHandoffV3DatabaseChecks({pool,in
     provisional18_birth_reconstruction_generic_claim_free_recovery_and_handoff_mutation_refuse:true,
     seven_ending_faults_real_COMMIT_rejection_fresh_same_claim_repeat_ALL_rows_blobs_job_workspace_reports_choices_pins_rollback:true,
     durable_issuance:false,fresh18_admission:false,recovery:false,NEXT_or_EMPTY:false,activation:false,licensed_large_area:false,production_speed:false});
+  console.info('[native-first-source-retained17-after-actual18-v3]',{
+    independent_capture:laterFirstSource?'B_ordinal2_after_empty_A':'A_ordinal1',
+    actual_original_owner_current_and_all_ending_fences_ENTIRE_caches_unchanged:true,
+    real_post_handoff_database_read_retains_ENTIRE_actual17_birth_original_TX_token_attempt_and_all_roots:true,
+    independent_native_index_pin_stock_consumed_continuation_FIRST_key_first_seen_member_and_edge_rechecked:true,
+    initial17_and_foreign_organization_refuse_without_projected18_to17_or_native_snapshot_rewrite:true,
+    actual_returned_parent_and_FIRST_metadata_compared_inside_owner_before_real_rejected_COMMIT:true,
+    fresh_same_claim_repeat_and_all_rows_blobs_whole_job_workspace_choices_reports_pins_rollback:true,
+    six_unconditional_COMMIT_refusals_unchanged:true,fresh18_claim:false,durable_issuance:false,
+    recovery:false,NEXT_or_EMPTY:false,activation:false,licensed_large_area:false,production_speed:false});
 }

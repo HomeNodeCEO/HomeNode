@@ -17,12 +17,15 @@ function data(v,keys){if(!v||isProxy(v)||Object.getPrototypeOf(v)!==Object.proto
   const ds=Object.getOwnPropertyDescriptors(v),names=Reflect.ownKeys(ds);
   if(names.length!==keys.length||!keys.every(k=>ds[k]?.enumerable&&Object.hasOwn(ds[k],'value')))fail('invalid_input');
   return Object.fromEntries(keys.map(k=>[k,ds[k].value]));}
+/** Validate a bounded detached blob reference without reading its contents. */
 function ref(raw,max=16000){const r=data(raw,['content_sha256','canonical_utf8_bytes']),
   result=prepareNeighborhoodCohortBlobReference(r.content_sha256,r.canonical_utf8_bytes);
   if(Number(result.canonical_utf8_bytes)>max)fail('invalid_reference');return result;}
+/** Validate the exact native head shape and immutable prerequisite references. */
 function anchorOf(raw){if(raw===null)return null;const a=data(raw,[...BINDINGS,'receipt_reference','sequence']);
   if(!Number.isInteger(a.sequence)||a.sequence<1||a.sequence>2000001)fail('corrupt');
   return Object.freeze({...Object.fromEntries([...BINDINGS,'receipt_reference'].map(k=>[k,ref(a[k])])),sequence:a.sequence});}
+/** Validate one derived entry; its original-backed meaning is checked by the owner. */
 function entryOf(raw){if(raw===null)return null;const e=data(raw,['account_id','ordinal','entry_reference','state','assigned_group_id']);
   if(typeof e.account_id!=='string'||!e.account_id||e.account_id.length>64||!e.account_id.isWellFormed()
     ||e.account_id.trim()!==e.account_id||/[\u0000-\u001f\u007f]/.test(e.account_id)
@@ -30,6 +33,7 @@ function entryOf(raw){if(raw===null)return null;const e=data(raw,['account_id','
     ||(e.state==='assigned'?typeof e.assigned_group_id!=='string'||!/^recorded-cad:[a-f0-9]{64}$/.test(e.assigned_group_id)
       :e.assigned_group_id!==null))fail('invalid_entry');
   return Object.freeze({...e,entry_reference:ref(e.entry_reference,1000000)});}
+/** Require exactly one claim-fenced database result before inspecting metadata. */
 function one(r){if(r?.rowCount!==1||r.rows?.length!==1)fail('claim_lost');return r.rows[0];}
 
 /** Fixed owner-only native CAS/ordinal store. This repository does NOT acquire
@@ -46,6 +50,7 @@ export function createCustomCohortRecordedPartitionV2Repository(raw){
     ||/[\u0000-\u001f\u007f]/.test(scope.account_id))fail('invalid_scope');
   const frozen=Object.fromEntries(BINDINGS.map(k=>[k,ref(input[k])])),values=[claim.operation_id,claim.claim_token,claim.attempts,
     scope.organization_id,scope.report_file_id,scope.assignment_file_id,scope.account_id,actorUserId];
+  /** Reopen the native head under the exact live claim and compare all bindings. */
   const read=async()=>{const row=one(await client.query(`/* custom-cohort-recorded-partition-v2:anchor-read */
     SELECT anchor.source_reference,anchor.root_reference,anchor.graph_reference,anchor.geographic_reference,
       anchor.identity_reference,anchor.stock_reference,anchor.traversal_reference,anchor.profile_reference,anchor.receipt_reference,anchor.sequence
@@ -54,6 +59,7 @@ export function createCustomCohortRecordedPartitionV2Repository(raw){
     WHERE ${FENCE}`,values));
     if([...BINDINGS,'receipt_reference','sequence'].every(k=>row[k]===null))return null;
     const anchor=anchorOf(row);if(!BINDINGS.every(k=>same(anchor[k],frozen[k])))fail('binding_changed');return anchor;};
+  /** Detect implicit autocommit so entry, head and checkpoint cannot split transactions. */
   const txid=async()=>{const id=one(await client.query('/* custom-cohort-recorded-partition-v2:transaction */ SELECT txid_current()::text AS transaction_id')).transaction_id;
     if(typeof id!=='string'||!/^[1-9][0-9]{0,19}$/.test(id))fail('caller_transaction_required');return id;};
   /** One immutable indexed prefix row, not a complete roster or membership

@@ -51,7 +51,8 @@ BEGIN
     RAISE EXCEPTION 'neighborhood_selected_union_v2_claim_conflict' USING ERRCODE='55000'; END IF;
   SELECT * INTO head FROM app.neighborhood_custom_cohort_selected_union_v2_heads WHERE operation_id=op AND organization_id=org;
   IF NOT FOUND THEN
-    IF job.checkpoint IS DISTINCT FROM command.checkpoint THEN
+    IF job.checkpoint IS DISTINCT FROM command.checkpoint
+      OR job.attempts<>command.issued_attempts OR job.claim_token IS DISTINCT FROM command.resume_claim_token THEN
       RAISE EXCEPTION 'neighborhood_selected_union_v2_checkpoint_conflict' USING ERRCODE='55000'; END IF;
     RETURN jsonb_build_object('after',jsonb_build_object('after_account','','account_count',0,'done',false),
       'after_counts',jsonb_build_object('assigned_accounts',0,'unassigned_accounts',0,'assigned_groups',0),'after_selected_count',0);

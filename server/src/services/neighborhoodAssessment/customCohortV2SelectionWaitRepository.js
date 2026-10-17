@@ -3,20 +3,26 @@ import { prepareCustomCohortCaptureJobClaim } from './customCohortCaptureJobRepo
 import { prepareNeighborhoodCohortBlobReference } from './cohortEvidenceBlobRepository.js';
 
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+/** Emit only the stable internal refusal namespace. */
 const fail=reason=>{throw new TypeError(`custom_cohort_v2_selection_wait_${reason}`);};
+/** Snapshot an exact plain data shape without executing accessors or proxies. */
 function data(v,keys){if(!v||isProxy(v)||Object.getPrototypeOf(v)!==Object.prototype)fail('invalid_input');
   const ds=Object.getOwnPropertyDescriptors(v),names=Reflect.ownKeys(ds);
   if(names.length!==keys.length||!keys.every(k=>ds[k]?.enumerable&&Object.hasOwn(ds[k],'value')))fail('invalid_input');
   return Object.fromEntries(keys.map(k=>[k,ds[k].value]));}
+/** Require one matching native claim result; missing or duplicated rows refuse. */
 function one(r){if(r?.rowCount!==1||r.rows?.length!==1)fail('claim_lost');return r.rows[0];}
 /** Closed storage primitive, NOT source/selection/current-human authority.
  * Only the actual original owner may call after ALL ending fences in SAME TX.
  * No caller DONE, checkpoint, head, group IDs, schedule, reset or source adapter. */
 export function createCustomCohortV2SelectionWaitRepository(client){
   if(typeof client?.query!=='function')fail('client_required');
+  /** Read the actual connection transaction; supplied transaction IDs are never admitted. */
   const tx=async()=>{const id=one(await client.query('/* custom-cohort-v2-selection-wait:transaction */ SELECT txid_current()::text AS transaction_id')).transaction_id;
     if(typeof id!=='string'||!/^[1-9][0-9]{0,19}$/.test(id))fail('caller_transaction_required');return id;};
-  return Object.freeze({async awaitSelection(rawClaim,rawOptions){
+  return Object.freeze({
+  /** Release only the live lease after the enclosing owner has passed every ending fence. */
+  async awaitSelection(rawClaim,rawOptions){
     const claim=prepareCustomCohortCaptureJobClaim(rawClaim),options=data(rawOptions,['scope','actorUserId']),
       scope=data(options.scope,['organization_id','report_file_id','assignment_file_id','account_id']);
     if(![scope.organization_id,scope.report_file_id,options.actorUserId].every(v=>typeof v==='string'&&UUID.test(v))

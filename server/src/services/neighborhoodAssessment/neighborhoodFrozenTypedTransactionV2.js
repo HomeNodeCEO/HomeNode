@@ -8,17 +8,23 @@ import { interpretCustomCohortDateNeutralReportedSaleWitnessV1 } from './customC
 const PROFILE=getNeighborhoodFrozenTypedOriginalV2Profile(),DEFINITION=JSON.parse(PROFILE.definition_blob.canonical_json);
 export const NEIGHBORHOOD_TYPED_TRANSACTION_V2_KINDS=Object.freeze(['source_records','sales','sale_links']);
 const HASH=/^[a-f0-9]{64}$/,JSON_NUMBER=/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/;
+/** Refuse a fixed validation reason without exposing retained source values. */
 const fail=r=>{throw new TypeError(`neighborhood_typed_transaction_v2_${r}`);};
+/** Compare closed DATA structurally using the common canonical encoding. */
 const same=(a,b)=>canonicalAssessmentJson(a)===canonicalAssessmentJson(b);
+/** Freeze the validated owned snapshot, not a caller's mutable object graph. */
 const freeze=v=>{if(v&&typeof v==='object'&&!Object.isFrozen(v)){Object.values(v).forEach(freeze);Object.freeze(v);}return v;};
+/** Snapshot exactly the expected enumerable own data properties; never invoke accessors. */
 function data(v,keys){
   if(!v||isProxy(v)||Object.getPrototypeOf(v)!==Object.prototype)fail('invalid_data');
   const d=Object.getOwnPropertyDescriptors(v),names=Reflect.ownKeys(d);
   if(names.length!==keys.length||!keys.every(k=>d[k]?.enumerable&&Object.hasOwn(d[k],'value')))fail('invalid_data');
   return Object.fromEntries(keys.map(k=>[k,d[k].value]));
 }
+/** Bound and snapshot the diagnostic graph before any retained values are interpreted. */
 function seal(value){
   let nodes=0,bytes=0;
+  /** Visit only supported finite scalars and plain objects within fixed depth/byte limits. */
   const visit=(v,depth)=>{
     if(++nodes>4000||depth>16)fail('input_limit');
     if(v===null||typeof v==='boolean')return v;
@@ -31,9 +37,12 @@ function seal(value){
   };
   return visit(value,0);
 }
+/** Retain a positive native BIGINT identity as exact text, without Number conversion. */
 function nativeId(v){if(typeof v!=='string'||!/^[1-9][0-9]{0,18}$/.test(v)||BigInt(v)>9223372036854775807n)fail('invalid_identity');return v;}
+/** Admit only a bounded exact account identity or an explicit missing account. */
 function account(v){if(v===null)return v;
   if(typeof v!=='string'||!v||!v.isWellFormed()||Buffer.byteLength(v)>64||v!==v.trim()||/[\u0000-\u001f\u007f]/.test(v))fail('invalid_identity');return v;}
+/** Reconcile diagnostic state, JSON type, literal bytes and hash before cell replay. */
 function raw(value){
   const r=data(value,['state','json_type','value_text','utf8_bytes','value_sha256']);
   if(['absent','json_null'].includes(r.state)){
@@ -57,8 +66,11 @@ function raw(value){
   }
   return r;
 }
+/** Recognize missing syntax without coercing false, zero or unsupported observations. */
 const missing=r=>['absent','json_null'].includes(r.state)||r.state==='scalar'&&r.json_type==='string'&&!r.value_text.trim();
+/** Replay the installed exact-decimal syntax policy without economic Number conversion. */
 function numeric(r,[,policy,unit,encoding]){
+  /** Build one closed numeric state; unsupported units never become observed units. */
   const cell=(state,exact_value,reason)=>({state,exact_value,unit:state==='observed'?unit:null,reason});
   if(missing(r))return cell('missing',null,`raw_value_${r.state==='scalar'?'blank':r.state}`);
   if(r.state==='oversize')return cell('unsupported',null,'raw_value_oversize');
@@ -72,7 +84,9 @@ function numeric(r,[,policy,unit,encoding]){
   }
   return exact===null?cell('invalid',null,'raw_value_invalid'):unit===null?cell('unsupported',exact,'unit_not_established'):cell('observed',exact,null);
 }
+/** Replay date-neutral calendar syntax only; retained-period admission happens later. */
 function calendar(r){
+  /** Preserve distinct missing, invalid, unsupported and observed calendar states. */
   const cell=(state,exact_value,reason)=>({state,exact_value,reason});
   if(missing(r))return cell('missing',null,'missing_date');
   if(r.state==='oversize')return cell('unsupported',null,'unsupported_date');
@@ -81,6 +95,7 @@ function calendar(r){
   try{assessmentDate(token);}catch{return cell('invalid',null,'invalid_date');}
   return cell('observed',token,null);
 }
+/** Reproduce the pinned same-payload interpreter from its exact consumed diagnostics. */
 function witnessed(value){
   const w=data(value,['interpretation_profile_ref','observation_basis','observations','record_type','close_date','diagnostics']);
   const d=data(w.diagnostics,['root_state','root_json_type','raw_fields','status_interpretations']);

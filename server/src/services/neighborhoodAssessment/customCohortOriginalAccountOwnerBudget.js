@@ -45,7 +45,7 @@ export function createCustomCohortOriginalAccountOwnerBudget(client, options) {
       return result;
     } catch (error) {
       failure ||= error;
-      throw error;
+      throw failure;
     }
   } });
 }

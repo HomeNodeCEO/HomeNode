@@ -134,8 +134,9 @@ function validDateContext(value: unknown): value is SfrepEffectiveDateContext {
 }
 function listingEvidenceDate(value: unknown): string | null {
   if (isoDate(value)) return value;
-  if (typeof value !== 'string' || !/^\d{2}\/\d{2}\/\d{4}$/.test(value)) return null;
-  const normalized = `${value.slice(6)}-${value.slice(0, 2)}-${value.slice(3, 5)}`;
+  const parts = typeof value === 'string' ? value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/) : null;
+  if (!parts) return null;
+  const normalized = `${parts[3]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
   return isoDate(normalized) ? normalized : null;
 }
 function validListingInterval(value: Record<string, unknown>, proof: Record<string, unknown>): boolean {

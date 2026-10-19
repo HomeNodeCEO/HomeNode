@@ -25,7 +25,14 @@ test('fields-only public preview carries historical No and Other assignment thro
   documents.saved_report = { accountId: context.accountId, assignmentFileId: 4, assignmentRevision: 1,
     assignmentDetails: applied.assignmentDetails, subject: { revision: 1, value: applied.subject },
     evidence: { value: applied.evidence }, documents: sources };
-  for (const formId of ['FNMA-1004-0911', 'FNMA-2055-0911']) {
+  for (const formId of ['FNMA-1004-0911', 'FNMA-2055-0911']) for (const [startDate, endDate] of [
+    ['2022-03-07', '06/22/2022'], ['3/7/2022', '6/2/2022'], ['2022-03-07', '6/22/2022'],
+  ]) {
+    sources[1].candidates.find(candidate => candidate.field_key === 'list_date').confirmed_value = startDate;
+    sources[1].candidates.find(candidate => candidate.field_key === 'listing_end_date').confirmed_value = endDate;
+    const refreshed = mergeCustomSubjectApplication({ projection: projectCustomSubjectDocuments(sources) });
+    documents.saved_report.subject.value = refreshed.subject;
+    documents.saved_report.evidence.value = refreshed.evidence;
     const { reportXml, pdfAddenda, imageAddenda, ...body } = previewSfrepDocuments(documents, {
       accountId: context.accountId, assignmentFileId: 4, documentIds: [], includeDocuments: false, includePhotos: false, formId,
     });

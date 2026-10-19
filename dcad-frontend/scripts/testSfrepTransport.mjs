@@ -61,14 +61,14 @@ function serverPreview({ saved = true, hoa = 'true', county = false, lenderPrese
       sourceDocumentIds: documents.map(document => document.id) } } : {}) }));
 }
 
-function intervalPreview({ saved = true, formId = SFREP_FORM_ID, endDate = '2022-06-22', duplicateSource = false } = {}) {
+function intervalPreview({ saved = true, formId = SFREP_FORM_ID, startDate = '2022-03-07', endDate = '2022-06-22', duplicateSource = false } = {}) {
   const subject = { accountId: 'SYNTHETIC-INTERVAL', address: '100 Example Dr', city: 'Arlington', postalCode: '76010', effectiveDate: '2026-10-18' };
   const documents = Array.from({ length: duplicateSource ? 2 : 1 }, (_, index) => ({
     id: index + 1, account_id: subject.accountId, assignment_file_id: 4, document_type: 'mls_sheet',
     processing_status: 'reviewed', property_role: 'subject', subject_context: subject,
     title: 'Historical MLS', file_name: `synthetic-${index + 1}.pdf`, file_size_bytes: 100,
     candidates: Object.entries({ subject_property_address: '100 Example Dr, Arlington, TX 76010',
-      list_date: '2022-03-07', listing_status: 'Closed', listing_end_date: endDate })
+      list_date: startDate, listing_status: 'Closed', listing_end_date: endDate })
       .map(([field_key, confirmed_value], offset) => ({ id: (index + 1) * 100 + offset, document_id: index + 1,
         field_key, confirmed_value, review_status: 'confirmed' })),
   }));
@@ -96,6 +96,21 @@ test('real saved and direct listing interval producers cross the strict browser 
   }
   const multi = intervalPreview({ duplicateSource: true });
   assert.equal(checkSfrepPreview(multi, []), multi);
+});
+
+test('listing evidence accepts the server supported M/D/YYYY forms without losing calendar validation', () => {
+  for (const formId of [SFREP_FORM_ID, SFREP_2055_FORM_ID]) for (const saved of [true, false]) {
+    for (const [startDate, endDate] of [['3/7/2022', '6/2/2022'], ['03/07/2022', '6/22/2022'], ['2022-03-07', '06/22/2022']]) {
+      const result = intervalPreview({ saved, formId, startDate, endDate });
+      assert.equal(checkSfrepPreview(result, saved ? [] : [1], formId), result);
+      assert.ok(result.fields.some(field => field.fieldId === 'CurrentPriorListingNoCheckBox'));
+    }
+    for (const invalidDate of ['2/30/2022', '0/1/2022', '13/1/2022', '6/0/2022', '6/22/22']) {
+      const result = intervalPreview({ saved, formId });
+      result.fields.find(field => field.fieldId === 'CurrentPriorListingNoCheckBox').provenance.sourceEvidence[2].value = invalidDate;
+      assert.throws(() => checkSfrepPreview(result, saved ? [] : [1], formId), /invalid/);
+    }
+  }
 });
 
 test('interval evidence rejects wrong dates, active status, missing/conflicting proof, unknown rules and source bindings', () => {

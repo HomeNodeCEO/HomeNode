@@ -48,7 +48,7 @@ const merge = (documents, rest = {}) => mergeCustomSubjectApplication({ projecti
 
 test('every canonical Subject/assignment descriptor round-trips exact reviewed values', () => {
   const result = merge([fullDocument()], { actorUserId: 'appraiser-1', reviewer: 'Example Appraiser' });
-  assert.equal(CUSTOM_SUBJECT_FIELD_DESCRIPTORS.length, 22);
+  assert.equal(CUSTOM_SUBJECT_FIELD_DESCRIPTORS.length, 23);
   assert.deepEqual(result.subject.legal_description.lines, ['EXAMPLE PARK\r', 'BLK 1\tLOT 2']);
   assert.equal(readCustomSubjectValue(result, 'legal_description'), 'EXAMPLE PARK\r\nBLK 1\tLOT 2');
   assert.equal(result.subject.urar_subject.tax_amount, '4321.50');
@@ -59,6 +59,7 @@ test('every canonical Subject/assignment descriptor round-trips exact reviewed v
   assert.deepEqual(result.subject.owner.parties, []);
   for (const definition of CUSTOM_SUBJECT_FIELD_DESCRIPTORS) {
     if (definition.key === 'listing_history_summary') continue; // Requires a separate reviewed listing-history upload.
+    if (definition.key === 'assignment_explanation') continue; // Only a reviewed Other purpose has an explanation.
     const receipt = result.evidence.fields[definition.key];
     assert.ok(receipt, definition.key);
     assert.deepEqual(receipt.value, readCustomSubjectValue(result, definition.key));

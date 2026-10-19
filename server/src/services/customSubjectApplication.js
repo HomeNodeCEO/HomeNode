@@ -29,6 +29,7 @@ export const CUSTOM_SUBJECT_FIELD_DESCRIPTORS = Object.freeze([
   descriptor('lender_client_name', 'assignment', ['lender_client_name'], 'LenderClientCompanyName'),
   descriptor('lender_client_address', 'assignment', ['lender_client_address'], 'LenderClientCompanyUnparsedAddress'),
   descriptor('assignment_type', 'assignment', ['assignment_types'], 'AssignmentTypePurchaseCheckBox', 'AssignmentTypeRefinanceCheckBox', 'AssignmentTypeOtherCheckBox', 'AssignmentTypeOtherDescription'),
+  descriptor('assignment_explanation', 'assignment', ['assignment_explanation'], 'AssignmentTypeOtherDescription'),
   descriptor('pud', 'assignment', ['pud'], 'PropertyTypePUDCheckBox'),
   descriptor('hoa_dues_amount', 'assignment', ['hoa_dues_amount'], 'AssessmentAmount'),
   descriptor('hoa_frequency', 'assignment', ['hoa_frequency'], 'AssessmentPerMonthCheckBox', 'AssessmentPerYearCheckBox'),
@@ -48,7 +49,7 @@ const CAD_FIELDS = new Set(['subject_property_address', 'subject_street_address'
   'subject_state', 'subject_zip', 'subject_zip_code', 'county', 'assessor_parcel_number',
   'assessors_parcel_number', 'owner_name', 'record_owner_name', 'legal_description',
   'neighborhood_name', 'subdivision_name']);
-const ENGAGEMENT_FIELDS = new Set(['borrower_name', 'assignment_type', 'lender_client_name', 'lender_client_address']);
+const ENGAGEMENT_FIELDS = new Set(['borrower_name', 'assignment_type', 'assignment_explanation', 'lender_client_name', 'lender_client_address']);
 const MLS_FIELDS = new Set(['pud', 'is_pud', 'hoa_dues_amount', 'hoa_frequency', 'list_date',
   'offered_for_sale_prior_12_months', 'subject_offered_for_sale_prior_12_months']);
 const REALIST_FIELDS = new Set(['tax_year', 'tax_amount', 'real_estate_tax_year', 'real_estate_tax_amount']);
@@ -136,6 +137,7 @@ export function projectCustomSubjectDocuments(documents = []) {
     if (definition.key === 'hoa_frequency') value = field.fieldId === 'AssessmentPerMonthCheckBox' ? 'per_month' : 'per_year';
     const document = scoped.find(item => item.id === field.documentId);
     const candidate = document?.candidates.find(item => Number(item.id) === field.candidateId);
+    if (definition.key === 'assignment_explanation' && candidate?.field_key !== 'assignment_explanation') continue;
     if (definition.key === 'assignment_type') {
       value = field.fieldId === 'AssignmentTypePurchaseCheckBox' ? 'purchase_transaction'
         : field.fieldId === 'AssignmentTypeRefinanceCheckBox' ? 'refinance'

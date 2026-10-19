@@ -183,6 +183,7 @@ const MAPPINGS = Object.freeze({
   hoa_dues_amount: ["AssessmentAmount", money],
   lender_client_name: ["LenderClientCompanyName", identity],
   lender_client_address: ["LenderClientCompanyUnparsedAddress", identity],
+  assignment_explanation: ['AssignmentTypeOtherDescription', value => value.length <= 1_000 ? value : null],
   contract_price: ["SalePriceAmount", money],
   contract_date: ["ContractDate", date],
   zoning_code: ["SpecificZoningClassification", identity],
@@ -231,7 +232,7 @@ const OTHER_ASSIGNMENT_DESCRIPTIONS = Object.freeze({
 export function canonicalSfrepAssignmentType(value) {
   if (typeof value !== "string") return null;
   const canonical = value.trim().toLowerCase().replace(/[ -]+/g, "_");
-  return canonical === "purchase_transaction" || canonical === "refinance"
+  return canonical === "purchase_transaction" || canonical === "refinance" || canonical === 'other'
     || Object.hasOwn(OTHER_ASSIGNMENT_DESCRIPTIONS, canonical) ? canonical : null;
 }
 
@@ -242,6 +243,48 @@ function booleanValue(value) {
 function isoDate(value) {
   const normalized = typeof value === "string" ? date(value) : null;
   return normalized ? `${normalized.slice(6)}-${normalized.slice(0, 2)}-${normalized.slice(3, 5)}` : null;
+}
+
+// An old start date alone cannot distinguish a closed listing from continuing
+// marketing. Use its reviewed terminal status AND end date on the same subject
+// MLS sheet for the user's requested date-window default. This is a source-
+// limited workflow conclusion, not a claim of a comprehensive MLS search.
+function confirmedListingEntries(document, key) {
+  return (document?.candidates || []).filter(candidate => candidate.review_status === 'confirmed'
+    && candidate.field_key === key && positiveId(candidate.id)
+    && (candidate.document_id == null || positiveId(candidate.document_id) === positiveId(document.id)))
+    .map(candidate => ({ documentId: positiveId(document.id), candidateId: positiveId(candidate.id), sourceField: key,
+      value: candidate.confirmed_value ?? candidate.normalized_value ?? candidate.raw_value }))
+    .sort((a, b) => a.candidateId - b.candidateId);
+}
+function endedListingEvidence(document, listedOn, fieldSelections) {
+  if (['listing_status', 'listing_end_date'].some(key => Object.hasOwn(fieldSelections, key)
+    && positiveId(fieldSelections[key]) !== positiveId(document?.id))) return null;
+  const statuses = confirmedListingEntries(document, 'listing_status'), ends = confirmedListingEntries(document, 'listing_end_date');
+  const normalized = statuses.map(entry => typeof entry.value === 'string' ? entry.value.replace(/[\s_-]/g, '').toLowerCase() : null);
+  const dates = ends.map(entry => typeof entry.value === 'string' ? isoDate(entry.value) : null);
+  if (!statuses.length || new Set(normalized).size !== 1
+    || !['offmarket', 'closed', 'sold', 'expired', 'cancelled', 'canceled', 'withdrawn', 'terminated'].includes(normalized[0])
+    || !dates.length || dates.some(value => !value) || new Set(dates).size !== 1 || dates[0] < listedOn) return null;
+  return { endedOn: dates[0], sourceEvidence: [...statuses, ...ends] };
+}
+
+function historicalListingEvidence(documents, windowStart, fieldSelections) {
+  const sheets = [...documents.values()].filter(document => document.document_type === 'mls_sheet'
+    && document.property_role === 'subject' && ['reviewed', 'review_required'].includes(document.processing_status))
+    .sort((a, b) => a.id - b.id);
+  const sourceEvidence = [];
+  for (const document of sheets) {
+    const starts = confirmedListingEntries(document, 'list_date');
+    const dates = starts.map(entry => typeof entry.value === 'string' ? isoDate(entry.value) : null);
+    if (!dates.length || dates.some(value => !value || value >= windowStart) || new Set(dates).size !== 1) return null;
+    const ended = endedListingEvidence(document, dates[0], fieldSelections);
+    // Every reviewed subject MLS must be historical. A second Active/undated
+    // source cannot be hidden by selecting an older, fully ended listing.
+    if (!ended || ended.endedOn >= windowStart) return null;
+    sourceEvidence.push(...starts, ...ended.sourceEvidence);
+  }
+  return sourceEvidence.length ? sourceEvidence : null;
 }
 
 /** A calendar-year lookback clamps February 29 to February 28, never March 1. */
@@ -310,6 +353,7 @@ function projectValue(sourceField, value) {
       : assignmentType === "refinance" ? "AssignmentTypeRefinanceCheckBox" : null;
     const choice = { group: "assignment_type", assignmentType };
     if (fieldId) return [{ ...choice, fieldId, value: "true", type: "CheckBoxField" }];
+    if (assignmentType === 'other') return [{ ...choice, fieldId: 'AssignmentTypeOtherCheckBox', value: 'true', type: 'CheckBoxField' }];
     if (!Object.hasOwn(OTHER_ASSIGNMENT_DESCRIPTIONS, assignmentType)) return [];
     return [
       { ...choice, fieldId: "AssignmentTypeOtherCheckBox", value: "true", type: "CheckBoxField" },
@@ -481,7 +525,7 @@ export function buildSfrepReportExport({
     'subject_state', 'subject_zip', 'subject_zip_code', 'borrower_name', 'owner_name', 'record_owner_name',
     'county', 'legal_description', 'assessor_parcel_number', 'assessors_parcel_number', 'tax_year',
     'tax_amount', 'real_estate_tax_year', 'real_estate_tax_amount', 'neighborhood_name', 'subdivision_name',
-    'pud', 'is_pud', 'property_type', 'property_rights', 'property_rights_appraised', 'assignment_type', 'lender_client_name',
+    'pud', 'is_pud', 'property_type', 'property_rights', 'property_rights_appraised', 'assignment_type', 'assignment_explanation', 'lender_client_name',
     'lender_client_address', 'offered_for_sale_prior_12_months', 'subject_offered_for_sale_prior_12_months',
     'list_date', 'hoa_dues_amount', 'hoa_frequency', 'census_tract', 'listing_history_summary']);
   if (savedReportFields !== undefined) {
@@ -492,6 +536,8 @@ export function buildSfrepReportExport({
         fail('sfrep_invalid_saved_report');
       const value = textValue(typeof saved.value === 'boolean' ? String(saved.value) : saved.value);
       if (value === null) continue;
+      if (saved.sourceField === 'assignment_explanation' && !savedReportFields.some(field =>
+        field.sourceField === 'assignment_type' && canonicalSfrepAssignmentType(field.value) === 'other')) continue;
       if (INVALID_XML.test(value)) fail('sfrep_invalid_xml_character');
       // Saved address components are independently editable. Composite source
       // parsing must not refill a city/state/ZIP the appraiser cleared or changed.
@@ -513,6 +559,10 @@ export function buildSfrepReportExport({
         && saved.provenance.rule === 'user_requested_texas_state_default_v1' && value === 'TX') {
         assumptions.push({ fieldId: 'State', value: 'TX', rule: saved.provenance.rule,
           reason: 'TX is the Texas-only workflow default, not verified document evidence. Confirm the subject location in HomeNode and review any conflicting source.' });
+      }
+      if (saved.sourceField === 'offered_for_sale_prior_12_months'
+        && saved.provenance.rule === 'user_requested_ended_mls_outside_12_months_v1') {
+        supplementalWarnings.push('Offered-for-sale No is based on the uploaded MLS showing an ended listing outside the prior 12 months; review any additional listing history.');
       }
       if (saved.sourceField === 'pud' && saved.provenance.rule === 'user_requested_hoa_workflow_proxy_v1') {
         assumptions.push({ fieldId: 'PropertyTypePUDCheckBox', value,
@@ -563,8 +613,19 @@ export function buildSfrepReportExport({
         omit(entry, 'Reviewed PDF APN differs from the canonical county account; quarantined pending review. County-backed identity is retained.');
         continue;
       }
-      if (sourceField === "assignment_type" && document.document_type !== "engagement_letter") {
+      if (['assignment_type', 'assignment_explanation'].includes(sourceField) && document.document_type !== "engagement_letter") {
         omit(entry, "Subject assignment type must come from reviewed engagement evidence; a purchase-contract classification is not the assignment instruction.");
+        continue;
+      }
+      if (sourceField === 'assignment_explanation' && !candidates.some(other => other.field_key === 'assignment_type'
+        && other.review_status === 'confirmed' && (other.document_id == null || positiveId(other.document_id) === documentId)
+        && canonicalSfrepAssignmentType(other.confirmed_value ?? other.normalized_value ?? other.raw_value) === 'other')) {
+        omit(entry, 'An Other assignment explanation requires the same reviewed assignment to select Other.');
+        continue;
+      }
+      if (sourceField === 'assignment_explanation' && Object.hasOwn(fieldSelections, 'assignment_type')
+        && positiveId(fieldSelections.assignment_type) !== documentId) {
+        omit(entry, 'A different assignment source was selected; its Other explanation must come from that source.');
         continue;
       }
       if (PROPERTY_RIGHTS_FIELDS.has(sourceField)) hasReviewedRights = true;
@@ -648,7 +709,30 @@ export function buildSfrepReportExport({
       if (!dateContext.effectiveDate) {
         omit(entry, "Effective date is unavailable; the preceding 12-calendar-month listing window cannot be determined.");
       } else if (entry.value < dateContext.windowStart || entry.value > dateContext.windowEnd) {
-        omit(entry, "Listing date is outside the preceding 12-calendar-month window; this does not establish offered-for-sale No.");
+        const ended = entry.value < dateContext.windowStart
+          ? endedListingEvidence(selected.get(entry.documentId), entry.value, fieldSelections) : null;
+        if (!ended || ended.endedOn > dateContext.windowEnd) {
+          omit(entry, 'Listing start date is outside the prior 12 months; a reviewed terminal status and end date are needed to determine its marketing interval.');
+          continue;
+        }
+        const offered = ended.endedOn >= dateContext.windowStart;
+        const historicalProof = offered ? null : historicalListingEvidence(selected, dateContext.windowStart, fieldSelections);
+        if (!offered && !historicalProof) {
+          omit(entry, 'Another reviewed subject MLS has recent, active, undated or conflicting marketing evidence; historical No was not inferred.');
+          continue;
+        }
+        const rule = offered ? 'subject_mls_listing_interval_overlaps_preceding_12_months_v1'
+          : 'user_requested_ended_mls_outside_12_months_v1';
+        projected.push({ ...entry, fieldId: offered ? 'CurrentPriorListingYesCheckBox' : 'CurrentPriorListingNoCheckBox',
+          value: 'true', type: 'CheckBoxField', group: 'offered_for_sale',
+          provenance: { ...entry.provenance, kind: 'derived_reviewed_document', rule, sourceValue: entry.value,
+            effectiveDate: dateContext.effectiveDate, effectiveDateSource: dateContext.source,
+            effectiveDateSourceDocumentId: dateContext.sourceDocumentId,
+            windowStart: dateContext.windowStart, windowEnd: dateContext.windowEnd,
+            sourceEvidence: historicalProof || [
+              { documentId: entry.documentId, candidateId: entry.candidateId, sourceField: 'list_date', value: entry.value },
+              ...ended.sourceEvidence] } });
+        if (!offered) supplementalWarnings.push('Offered-for-sale No is based on the uploaded MLS showing an ended listing outside the prior 12 months; review any additional listing history.');
       } else {
         projected.push({
           ...entry, fieldId: "CurrentPriorListingYesCheckBox", value: "true", type: "CheckBoxField", group: "offered_for_sale",
@@ -724,6 +808,21 @@ export function buildSfrepReportExport({
       // Destination-only monetary rounding and legal-text folding never modify
       // the persisted appraisal record.
       fields.push(forReportPersistence ? formatPresentationField(field) : formatSelectedField(field, supplementalWarnings));
+    }
+  }
+  // Other is a paired choice, not a catch-all for an unreadable purpose. Keep
+  // its checkbox and explicit explanation together after conflict resolution.
+  const otherChoice = fields.find(field => field.fieldId === 'AssignmentTypeOtherCheckBox');
+  const otherDescription = fields.find(field => field.fieldId === 'AssignmentTypeOtherDescription');
+  const assignmentSource = field => field?.documentId ?? field?.provenance?.sourceDocumentId ?? field?.provenance?.documentId;
+  const choiceSource = assignmentSource(otherChoice), descriptionSource = assignmentSource(otherDescription);
+  if (Boolean(otherChoice) !== Boolean(otherDescription)
+    || (choiceSource != null && descriptionSource != null && choiceSource !== descriptionSource)) {
+    for (let index = fields.length - 1; index >= 0; index--) {
+      if (['AssignmentTypeOtherCheckBox', 'AssignmentTypeOtherDescription'].includes(fields[index].fieldId)) {
+        omit(fields[index], 'Other assignment requires both an unambiguous choice and its explanation from the same source.');
+        fields.splice(index, 1);
+      }
     }
   }
   if (contractSection) {

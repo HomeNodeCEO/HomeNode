@@ -32,10 +32,10 @@ export function buildTarrantCadSubjectEvidence(pages, textItems = []) {
     result.unresolved.push({ reason: 'source_input_incomplete' }); return result;
   }
   const pid = headers[0][1];
-  const add = (key, value, evidence) => {
+  const add = (key, value, evidence, pageNumber = 1) => {
     if (!value || value.length > 2_000) return;
     result.candidates.push({ field_key: key, raw_value: value, normalized_value: value,
-      page_number: 1, confidence: 0.96, evidence_excerpt: evidence.slice(0, 2_000),
+      page_number: pageNumber, confidence: 0.96, evidence_excerpt: evidence.slice(0, 2_000),
       extraction_method: 'urar_subject_cad_tarrant_property_summary_geometry', source_kind: 'cad', review_status: 'suggested' });
   };
   const ownerHeadings = items.filter(item => item.text === 'OWNER');
@@ -67,7 +67,9 @@ export function buildTarrantCadSubjectEvidence(pages, textItems = []) {
   }
   add('assessor_parcel_number', pid, propertyId.evidence);
   const owner = read('Name:', true);
-  if (owner && /[A-Za-z]/.test(owner.value) && !/^\d/.test(owner.value)) add('owner_name', owner.value, `OWNER\n${owner.evidence}`);
+  // A business name may legitimately start with digits. Require letters so a
+  // numeric Property/Owner ID cannot become a name, not a letter-only prefix.
+  if (owner && /[A-Za-z]/.test(owner.value)) add('owner_name', owner.value, `OWNER\n${owner.evidence}`);
   const legal = read('Legal Description:');
   if (legal && /\b(?:BLK|BLOCK)\s+[A-Za-z0-9-]+\b/i.test(legal.value) && /\b(?:LT|LOT)\s+[A-Za-z0-9-]+\b/i.test(legal.value)) {
     add('legal_description', legal.value, legal.evidence);
@@ -82,7 +84,8 @@ export function buildTarrantCadSubjectEvidence(pages, textItems = []) {
       ['subject_state', 'TX'], ['subject_zip', postal[4]]]) add(key, value, `LOCATION\n${location.evidence}`);
   }
   // The provider's brand is not county evidence; the printed taxing unit is.
-  if (pages.some(page => /\b220\s+TARRANT COUNTY\s+/i.test(page))) add('county', 'Tarrant', 'TAXING UNITS\n220 TARRANT COUNTY');
+  const countyPage = pages.findIndex(page => /\b220\s+TARRANT COUNTY\s+/i.test(page));
+  if (countyPage >= 0) add('county', 'Tarrant', 'TAXING UNITS\n220 TARRANT COUNTY', countyPage + 1);
   for (const key of ['owner_name', 'legal_description', 'subject_property_address']) {
     if (!result.candidates.some(candidate => candidate.field_key === key)) result.unresolved.push({ field_key: key, reason: 'tarrant_labeled_value_unavailable' });
   }

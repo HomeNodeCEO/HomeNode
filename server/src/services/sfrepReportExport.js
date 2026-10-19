@@ -743,12 +743,15 @@ export function buildSfrepReportExport({
   }
   // Other is a paired choice, not a catch-all for an unreadable purpose. Keep
   // its checkbox and explicit explanation together after conflict resolution.
-  const otherChoice = fields.some(field => field.fieldId === 'AssignmentTypeOtherCheckBox');
-  const otherDescription = fields.some(field => field.fieldId === 'AssignmentTypeOtherDescription');
-  if (otherChoice !== otherDescription) {
+  const otherChoice = fields.find(field => field.fieldId === 'AssignmentTypeOtherCheckBox');
+  const otherDescription = fields.find(field => field.fieldId === 'AssignmentTypeOtherDescription');
+  const assignmentSource = field => field?.documentId ?? field?.provenance?.sourceDocumentId ?? field?.provenance?.documentId;
+  const choiceSource = assignmentSource(otherChoice), descriptionSource = assignmentSource(otherDescription);
+  if (Boolean(otherChoice) !== Boolean(otherDescription)
+    || (choiceSource != null && descriptionSource != null && choiceSource !== descriptionSource)) {
     for (let index = fields.length - 1; index >= 0; index--) {
       if (['AssignmentTypeOtherCheckBox', 'AssignmentTypeOtherDescription'].includes(fields[index].fieldId)) {
-        omit(fields[index], 'Other assignment requires both an unambiguous choice and its explanation.');
+        omit(fields[index], 'Other assignment requires both an unambiguous choice and its explanation from the same source.');
         fields.splice(index, 1);
       }
     }

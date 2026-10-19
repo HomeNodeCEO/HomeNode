@@ -64,7 +64,9 @@ test('Tarrant label coordinates separate Property ID, owner, legal, and situs fr
     legal_description: 'EXAMPLE WOODS ADDN, THE Block A Lot 9', neighborhood_name: 'EXAMPLE WOODS ADDN, THE',
     subject_property_address: '100 EXAMPLE DR, ARLINGTON, TX 76010', subject_street_address: '100 EXAMPLE DR',
     subject_city: 'ARLINGTON', subject_state: 'TX', subject_zip: '76010', county: 'Tarrant' });
-  assert.ok(result.candidates.every(candidate => candidate.review_status === 'suggested' && candidate.page_number === 1));
+  assert.ok(result.candidates.every(candidate => candidate.review_status === 'suggested'));
+  assert.equal(result.candidates.find(candidate => candidate.field_key === 'county').page_number, 2);
+  assert.ok(result.candidates.filter(candidate => candidate.field_key !== 'county').every(candidate => candidate.page_number === 1));
 });
 
 test('values-only county print cannot invent General Info or treat its PID as owner', () => {
@@ -73,6 +75,15 @@ test('values-only county print cannot invent General Info or treat its PID as ow
   const source = reviewed(1, 'other', result);
   assert.equal(sfrepDocumentPropertyRole(source), 'unknown', 'native PID alone cannot prove a namespaced internal account');
   assert.ok(result.unresolved.some(issue => issue.reason === 'tarrant_general_info_not_in_pdf'));
+});
+
+test('labeled owner business names may start with digits but bare numeric IDs are not names', () => {
+  for (const name of ['123 MAIN STREET LLC', '12345678']) {
+    const items = textItems().map(item => item.str === 'EXAMPLE TAYLOR and' ? { ...item, str: name }
+      : item.str === 'EXAMPLE ALEX' ? { ...item, str: '' } : item);
+    const values = byKey(buildTarrantCadSubjectEvidence(summaryPages(pid), items));
+    assert.equal(values.owner_name, name.includes('LLC') ? name : undefined);
+  }
 });
 
 test('Tarrant adapter rejects mixed records, damaged coordinates and oversized or mixed report input', () => {
@@ -165,4 +176,9 @@ test('Other description remains paired, engagement-scoped, confirmed, and confli
   const selected = buildSfrepReportExport({ documents: [source, second], subjectOnly: true, fieldSelections: { assignment_type: 2 } });
   assert.equal(selected.fields.find(field => field.fieldId === 'AssignmentTypeOtherDescription')?.value, 'REO');
   assert.ok(selected.fields.filter(field => /^AssignmentType/.test(field.fieldId)).every(field => field.documentId === 2));
+  const incompleteFirst = structuredClone(source);
+  incompleteFirst.candidates = incompleteFirst.candidates.filter(candidate => candidate.field_key !== 'assignment_explanation');
+  const unselected = buildSfrepReportExport({ documents: [incompleteFirst, second], subjectOnly: true });
+  assert.equal(unselected.fields.some(field => /^AssignmentTypeOther/.test(field.fieldId)), false,
+    'same Other enum cannot combine one document checkbox with a second document explanation');
 });

@@ -79,3 +79,30 @@ test('automatic historical No persists, invalidates changed date proof, and pres
     projection: projectCustomSubjectDocuments([mls()]), reviewedDocumentId: 1 });
   assert.equal(manual.subject.urar_subject.offered_for_sale_prior_12_months, true);
 });
+
+test('historical No considers every reviewed subject MLS, not just one complete older listing', () => {
+  const second = mls(); second.id = 2;
+  second.candidates = second.candidates.map(candidate => ({ ...candidate, id: candidate.id + 100, document_id: 2 }));
+  const complete = buildSfrepReportExport({ documents: [mls(), second], subjectContext });
+  assert.equal(listingFields(complete)[0].fieldId, 'CurrentPriorListingNoCheckBox');
+  assert.deepEqual([...new Set(listingFields(complete)[0].provenance.sourceEvidence.map(entry => entry.documentId))], [1, 2]);
+  for (const change of ['active_without_end', 'missing_start', 'conflicting_status']) {
+    const copy = structuredClone(second);
+    if (change === 'active_without_end') {
+      copy.candidates = copy.candidates.filter(candidate => candidate.field_key !== 'listing_end_date');
+      copy.candidates.find(candidate => candidate.field_key === 'listing_status').confirmed_value = 'Active';
+    }
+    if (change === 'missing_start') copy.candidates = copy.candidates.filter(candidate => candidate.field_key !== 'list_date');
+    if (change === 'conflicting_status') copy.candidates.push({ ...copy.candidates.find(candidate => candidate.field_key === 'listing_status'),
+      id: 299, confirmed_value: 'Active' });
+    assert.deepEqual(listingFields(buildSfrepReportExport({ documents: [mls(), copy], subjectContext })), [], change);
+  }
+  const documents = [mls(), structuredClone(second)];
+  const applied = mergeCustomSubjectApplication({ projection: projectCustomSubjectDocuments(documents) });
+  const saved = { accountId: 'QA123', assignmentFileId: 7001, assignmentRevision: 1,
+    assignmentDetails: applied.assignmentDetails, subject: { value: applied.subject, revision: 1 },
+    evidence: { value: applied.evidence }, documents };
+  documents[1].candidates.find(candidate => candidate.field_key === 'listing_status').confirmed_value = 'Active';
+  assert.equal(savedSfrepSubjectFields(saved, { accountId: 'QA123', assignmentFileId: 7001 }).fields
+    .some(field => field.sourceField === 'offered_for_sale_prior_12_months'), false, 'second-source change invalidates the saved No receipt');
+});

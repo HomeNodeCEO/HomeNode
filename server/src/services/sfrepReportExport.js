@@ -249,21 +249,42 @@ function isoDate(value) {
 // marketing. Use its reviewed terminal status AND end date on the same subject
 // MLS sheet for the user's requested date-window default. This is a source-
 // limited workflow conclusion, not a claim of a comprehensive MLS search.
-function endedListingEvidence(document, listedOn, fieldSelections) {
-  if (['listing_status', 'listing_end_date'].some(key => Object.hasOwn(fieldSelections, key)
-    && positiveId(fieldSelections[key]) !== positiveId(document?.id))) return null;
-  const entries = key => (document?.candidates || []).filter(candidate => candidate.review_status === 'confirmed'
+function confirmedListingEntries(document, key) {
+  return (document?.candidates || []).filter(candidate => candidate.review_status === 'confirmed'
     && candidate.field_key === key && positiveId(candidate.id)
     && (candidate.document_id == null || positiveId(candidate.document_id) === positiveId(document.id)))
     .map(candidate => ({ documentId: positiveId(document.id), candidateId: positiveId(candidate.id), sourceField: key,
-      value: candidate.confirmed_value ?? candidate.normalized_value ?? candidate.raw_value }));
-  const statuses = entries('listing_status'), ends = entries('listing_end_date');
+      value: candidate.confirmed_value ?? candidate.normalized_value ?? candidate.raw_value }))
+    .sort((a, b) => a.candidateId - b.candidateId);
+}
+function endedListingEvidence(document, listedOn, fieldSelections) {
+  if (['listing_status', 'listing_end_date'].some(key => Object.hasOwn(fieldSelections, key)
+    && positiveId(fieldSelections[key]) !== positiveId(document?.id))) return null;
+  const statuses = confirmedListingEntries(document, 'listing_status'), ends = confirmedListingEntries(document, 'listing_end_date');
   const normalized = statuses.map(entry => typeof entry.value === 'string' ? entry.value.replace(/[\s_-]/g, '').toLowerCase() : null);
   const dates = ends.map(entry => typeof entry.value === 'string' ? isoDate(entry.value) : null);
   if (!statuses.length || new Set(normalized).size !== 1
     || !['offmarket', 'closed', 'sold', 'expired', 'cancelled', 'canceled', 'withdrawn', 'terminated'].includes(normalized[0])
     || !dates.length || dates.some(value => !value) || new Set(dates).size !== 1 || dates[0] < listedOn) return null;
   return { endedOn: dates[0], sourceEvidence: [...statuses, ...ends] };
+}
+
+function historicalListingEvidence(documents, windowStart, fieldSelections) {
+  const sheets = [...documents.values()].filter(document => document.document_type === 'mls_sheet'
+    && document.property_role === 'subject' && ['reviewed', 'review_required'].includes(document.processing_status))
+    .sort((a, b) => a.id - b.id);
+  const sourceEvidence = [];
+  for (const document of sheets) {
+    const starts = confirmedListingEntries(document, 'list_date');
+    const dates = starts.map(entry => typeof entry.value === 'string' ? isoDate(entry.value) : null);
+    if (!dates.length || dates.some(value => !value || value >= windowStart) || new Set(dates).size !== 1) return null;
+    const ended = endedListingEvidence(document, dates[0], fieldSelections);
+    // Every reviewed subject MLS must be historical. A second Active/undated
+    // source cannot be hidden by selecting an older, fully ended listing.
+    if (!ended || ended.endedOn >= windowStart) return null;
+    sourceEvidence.push(...starts, ...ended.sourceEvidence);
+  }
+  return sourceEvidence.length ? sourceEvidence : null;
 }
 
 /** A calendar-year lookback clamps February 29 to February 28, never March 1. */
@@ -695,6 +716,11 @@ export function buildSfrepReportExport({
           continue;
         }
         const offered = ended.endedOn >= dateContext.windowStart;
+        const historicalProof = offered ? null : historicalListingEvidence(selected, dateContext.windowStart, fieldSelections);
+        if (!offered && !historicalProof) {
+          omit(entry, 'Another reviewed subject MLS has recent, active, undated or conflicting marketing evidence; historical No was not inferred.');
+          continue;
+        }
         const rule = offered ? 'subject_mls_listing_interval_overlaps_preceding_12_months_v1'
           : 'user_requested_ended_mls_outside_12_months_v1';
         projected.push({ ...entry, fieldId: offered ? 'CurrentPriorListingYesCheckBox' : 'CurrentPriorListingNoCheckBox',
@@ -703,7 +729,8 @@ export function buildSfrepReportExport({
             effectiveDate: dateContext.effectiveDate, effectiveDateSource: dateContext.source,
             effectiveDateSourceDocumentId: dateContext.sourceDocumentId,
             windowStart: dateContext.windowStart, windowEnd: dateContext.windowEnd,
-            sourceEvidence: [{ documentId: entry.documentId, candidateId: entry.candidateId, sourceField: 'list_date', value: entry.value },
+            sourceEvidence: historicalProof || [
+              { documentId: entry.documentId, candidateId: entry.candidateId, sourceField: 'list_date', value: entry.value },
               ...ended.sourceEvidence] } });
         if (!offered) supplementalWarnings.push('Offered-for-sale No is based on the uploaded MLS showing an ended listing outside the prior 12 months; review any additional listing history.');
       } else {

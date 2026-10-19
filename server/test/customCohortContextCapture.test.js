@@ -71,12 +71,13 @@ test('actual capture entry points refuse executable claim Proxies before connect
     'continueOriginalFrozenCaptureJobRecordedPartitionReferencesV2','continueOriginalFrozenCaptureJobRecordedCatalogReferencesV2',
     'awaitOriginalFrozenCaptureJobSelectionReferencesV2','readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2',
     'continueOriginalFrozenCaptureJobSelectedStockUnionReferencesV2','readOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2',
-    'readOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2']){
+    'readOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2','progressOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2']){
     assert.equal(typeof service[method],'function',method);
     const expected=method==='readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2'
       ||method==='continueOriginalFrozenCaptureJobSelectedStockUnionReferencesV2'
       ||method==='readOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2'
       ||method==='readOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2'
+      ||method==='progressOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2'
       ?{name:'Error',message:'custom_cohort_capture_invalid_options'}
       :{name:'TypeError',message:'custom_cohort_capture_job_invalid_input'};
     for(const value of values)await assert.rejects(service[method](base,{captureJobClaim:value}),expected,method);
@@ -329,7 +330,8 @@ for(const method of ['advanceOriginalFrozenCaptureJobStockTraversalReferencesV2'
   'continueOriginalFrozenCaptureJobStockTraversalReferencesV2','continueOriginalFrozenCaptureJobRecordedPartitionReferencesV2',
   'continueOriginalFrozenCaptureJobRecordedCatalogReferencesV2','awaitOriginalFrozenCaptureJobSelectionReferencesV2',
   'readOriginalFrozenCaptureJobRetainedSelectionIntentReferencesV2','continueOriginalFrozenCaptureJobSelectedStockUnionReferencesV2',
-  'readOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2','readOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2'])
+  'readOriginalFrozenCaptureJobSelectedUnionSubjectHousingReferencesV2','readOriginalFrozenCaptureJobFirstSelectedEligibilityReferencesV2',
+  'progressOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2'])
 test(`${method} admits only the live claim and bounded operation, not caller continuation`,async()=>{
   const base={...input(),discovery:{profile_id:'custom-suburban-radius-v2',radius_metres:'8046.72'}},
     claim={operation_id:base.operationId,claim_token:'70000000-0000-4000-8000-000000000002',attempts:1};

@@ -1,3 +1,32 @@
+## Separate eleven-root eligibility failure scheduling (2026-10-17, cloud validation pending)
+
+Integrated head 1e7 passed the complete applications and security checks, but its
+native index cases finished 14 passed and two failed. Both nonempty eligibility
+cases attempted the generic claimer after a real failure. Generic admission
+correctly excludes retained human intents, so no replacement claim existed.
+
+A separate inactive repository now schedules only an actual due failed
+eleven-root eligibility step. It binds the immutable command, completed native
+union, native eligibility head and compact pending receipt, exact checkpoint,
+consumed continuation and retained attempt/error history. Only status, fresh
+token, next attempt, bounded lease and update time change. It admits no caller
+roots, ordinal, phase or authority. Generic admission and the independent
+nine-root and ten-root recovery owners are unchanged. A successful scheduling
+claim still establishes no source authority: the actual original owner must
+reopen every original, entire neutral cache and all current/ending fences.
+
+Authored native assertions require tentative claim rollback, a second connection
+competing against the locked winning claim, actual winning COMMIT acknowledgment
+loss for the explicit-both graph, fresh job reopen and unchanged complete job
+fields outside those five scheduling fields. A real fourth failure admits the
+fifth claim; its real failure must become terminal and refuse attempt six, then
+the whole probe rolls back. Existing positive eligibility counts and fresh EMPTY
+completion remain required. No clock, counter, schedule, root, source grant,
+deadline or aggregate budget is rewritten. Expired-running eleven-root recovery
+is excluded from this slice and remains unfinished. Nothing is activated.
+The failed head is not rerun; the new exact head requires full cloud native,
+application and security validation and genuine included review before merge.
+
 ## Subject whole-original aggregate assertion (2026-10-17, fresh native validation pending)
 
 The integrated subject-housing head passed its migration checks and failed one
@@ -54,6 +83,93 @@ deadlines. The failed head is not rerun; a new exact head needs full cloud check
 and genuine included review before merge.
 
 # Complete larger-area Custom neighborhood studies
+
+## Durable original-backed selected recorded-comparison pass (2026-10-10, not activated)
+
+The actual bounded database owner has a separate fifth-pass internal method,
+`progressOriginalFrozenCaptureJobSelectedRecordedEligibilityReferencesV2`.
+It admits ONLY the actual DONE selected union and exactly ten or eleven issued
+roots, immutable human command, current scoped database actor/assignment/private
+draft/retained subject/source-purpose rights/pin and exact pending workspace.
+Old human resume, nine-root and ten-root readers remain strict. The next member
+comes ONLY from the native eligibility head and selected ordinal, never a caller
+account/cursor/ordinal, first stock account, callback, hash or count-derived roster.
+
+Each step reopens EVERY required subject and selected-account original, including
+outside parts, and compares the ENTIRE neutral cache, full partition-entry bytes,
+native ordinals, catalog literals and immutable chosen-group membership. Subject
+precedence is unchanged. One single-use child shares the aggregate 250-original,
+8 MB transport/2.1 MB output bounds; the complete actual owner retains its existing
+256 SQL/32 MB/60 s ceilings. Every current/ending fence precedes native progress.
+
+Additive migration 20261126 retains ONE native eligibility head. Immutable compact
+receipt blobs hold the exact union/command/selected-entry reference, subject
+housing state/category, three recorded-comparison bits and cumulative counts;
+there are NO exact value, whole-decision, original or typed copies. Head, exact
+eleven-root checkpoint and single-use continuation commit in the SAME transaction.
+The first ten roots are unchanged; successful continuation never resets attempts
+or failure history. Only a fresh native EMPTY probe after every selected ordinal
+finishes this recorded-comparison pass, including an explicit-empty selection.
+It does not return a preceding account decision on EMPTY. Cancellation, orphan
+COMMIT, deletion/truncation, backward phases and terminal progress remain refused.
+
+243 focused synthetic tests passed, zero failures/skips (1725.7983 ms). Actual issued PostgreSQL
+tests are AUTHORED NOT EXECUTED for this new slice: selected B/partition2 versus
+first stock A and explicit-empty; initial/ending original/cache/member/catalog/
+rights faults; real INSERT/UPDATE/yield rollback and orphan COMMIT; lost REAL
+COMMIT acknowledgment and fresh single-consume recovery; ordinary higher failure
+attempt, exact ten preserved roots, unknown denominator counts, forged correctly
+hashed terminal receipts, fresh EMPTY, strict old readers and unchanged all prior
+heads/union/intent/pins/workspace/history/reports. Native/full-server/frontend
+verification remains cloud-only; these authored assertions are NOT acceptance.
+
+Additional native assertions now independently build an explicit-both-group
+study, selecting unassigned A and assigned B only by immutable chosen IDs.
+They exercise selected ordinal 1 on A, ordinal 2 on B, second-member
+UPDATE/yield/orphan rollback, a second lost REAL COMMIT acknowledgment and
+fresh terminal EMPTY at ordinal 2. No roots or originals are copied/rebound.
+The latest authored fixture retains preferred observed subject housing and B's
+whole original A11 literal BEFORE capture. A's outside-part housing conflict
+contributes zero; B's matching recorded housing admits only the original reported
+site area of zero, incrementing that one count exactly once. B's future year,
+zero residential area and unsupported market-value currency remain ineligible.
+Preferred subject housing avoids unnecessary CAD fallback; each selected packet
+still reopens every original and the entire cache. Second-member original/cache
+faults, rollback and lost-COMMIT recovery must preserve the positive count through
+fresh EMPTY. Receipts retain no exact values or whole decisions. These assertions
+are AUTHORED NOT EXECUTED, not complete economic/historical eligibility, statistics,
+licensed-population acquisition or live acceptance.
+The TRUNCATE negative test includes the new eligibility FK child so it can
+reach unchanged immutable guards without removing any FK or trigger.
+
+Exact head e9245b49 cloud native job 114264744273 passed 417 migration tests
+and the subject test, but the index suite finished with 10 passes and three
+failures (zero skips). The single/empty selections reached real eligibility
+COMMIT while preserving attempt 3; their assertions incorrectly expected 2.
+The explicit-both selection's forged count was rejected by the earlier closed
+native count validator, before the later original-owner mismatch. Assertions
+now derive attempts from the prior native job (and increment only for actual
+failure reclaim), retain its error history, and require the exact earlier
+validator for that fixture. No implementation guard, trigger or right was
+changed. Fresh native execution of these repairs and the positive-count fixture
+remains required; no completed fifth-pass native proof is claimed yet.
+
+Bits/counts are audit DATA, NOT original, economic/historical eligibility or
+statistics authority. Every future semantic consumer must reopen originals again.
+Market-value currency, verified GLA, one economic unit, historical housing,
+amenity/transaction selection eligibility, complete selected-union medians/CODs/
+calendar-quarter checks, coherent publication, durable dispatch and terminal pin
+transfer/retirement, licensed >50k/5-mile/10-mile/city/retrospective acquisition and
+Hardy saved-map/live-speed acceptance remain unfinished. No worker/HTTP/default/
+schedule/source-grant/Render/report/Apply activation is added.
+
+The actual protected #1264 parent was normally merged as `98bb869e97dd986c3f62484ccbdca1a1da377dfa`
+after its exact-head native/security/full suites and genuine included review.
+#1265 was retargeted to main BEFORE fetching and integrating that actual
+parent. The complete protected parent document, shared-capacity refusal and
+activation contract remain intact. Fresh exact integrated-head native/security/
+full suites and genuine review remain required for this fifth-pass component.
+Earlier feature-child execution is separate from main release proof.
 
 ## First native selected-ordinal original eligibility admission (2026-10-10, not activated)
 

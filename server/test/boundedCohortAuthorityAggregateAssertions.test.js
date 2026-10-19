@@ -5,7 +5,8 @@ import { customCohortRepositoryFixture } from './fixtures/customCohortRepository
 import { loadCurrentCustomCohortJobActor } from '../src/services/neighborhoodAssessment/customCohortJobActor.js';
 import { NEIGHBORHOOD_STOCK_ACCOUNT_PACKAGE_V2_SQL, NEIGHBORHOOD_STOCK_SUBJECT_HOUSING_PACKAGE_V2_SQL,
   NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_PACKAGE_V2_SQL,
-  NEIGHBORHOOD_STOCK_SUBJECT_AND_FIRST_SELECTED_PACKAGE_V2_SQL } from '../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
+  NEIGHBORHOOD_STOCK_SUBJECT_AND_FIRST_SELECTED_PACKAGE_V2_SQL,
+  NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_ELIGIBILITY_PACKAGE_V2_SQL } from '../src/services/neighborhoodAssessment/neighborhoodSharedStockOriginalCellsV2.js';
 
 async function actualQueries() {
   const { state, repo } = customCohortRepositoryFixture();
@@ -104,6 +105,46 @@ test('first-selected aggregate requires the exact completed native ordinal and u
     assert.throws(()=>check([...baseline,{...packet,text}],scope),/unexpected catalog aggregate/);
     assert.throws(()=>shapes([actor,section,{...packet,text}],scope),/unexpected catalog aggregate/);
   }
+  assert.throws(()=>check([...baseline,{...packet,text:packet.text+', json_agg(account_id)'}],scope),/unexpected catalog aggregate/);
+  assert.throws(()=>check([...baseline,packet],{...scope,originals:{...scope.originals,subjectAccountId:undefined}}),/actual retained job subject/);
+  assert.throws(()=>check([actor,section,packet],scope),/both-end current actor/);
+  assert.throws(()=>check([actor,actor,section,packet],scope),/both-end current bounded subject/);
+});
+
+test('next eligibility aggregate requires its exact native progress ordinal and preserves paired and ending bounds', async () => {
+  const {scope,actor,section}=await actualQueries();
+  scope.originals={operationId:'stock-operation',generationId:'retained-generation',profileSha256:'retained-profile',subjectAccountId:'ACTUAL-SUBJECT'};
+  const baseline=[actor,section,actor,section],packet={text:NEIGHBORHOOD_STOCK_SUBJECT_AND_NEXT_ELIGIBILITY_PACKAGE_V2_SQL,
+    values:['stock-operation','retained-generation','retained-profile','',250,8_000_000,2_100_000,1_000_000,2_100_000,true]};
+  check([...baseline,packet],scope);shapes([actor,section,packet],scope);
+  for(const index of [0,1,2,4,5,6,7,8]){
+    const values=[...packet.values];values[index]=index<3?'foreign-scope':values[index]+1;
+    assert.throws(()=>check([...baseline,{...packet,values}],scope),/exact paired stock/);
+  }
+  for(const cursor of ['ACCOUNT-A',[], 'ACCOUNT-A\n','x'.repeat(65)]){
+    const values=[...packet.values];values[3]=cursor;
+    assert.throws(()=>check([...baseline,{...packet,values}],scope),/native eligibility ordinal|bounded paired original account cursor/);
+  }
+  for(const fallback of [undefined,null,0,'true',{}]){
+    const values=[...packet.values];values[9]=fallback;
+    assert.throws(()=>check([...baseline,{...packet,values}],scope),/closed retained-subject fallback decision/);
+  }
+  const mutations=[['USING(operation_id,organization_id)','USING(operation_id)'],['body.organization_id=u.organization_id','true'],
+    ["body.content_sha256=u.receipt_reference->>'content_sha256'",'true'],["body.canonical_utf8_bytes::text=u.receipt_reference->>'canonical_utf8_bytes'",'true'],
+    ['body.canonical_utf8_bytes<=16000','body.canonical_utf8_bytes<=16001'],['h.operation_id=job.operation_id','true'],['h.organization_id=job.organization_id','true'],
+    ['r.operation_id=job.operation_id','true'],['r.organization_id=job.organization_id','true'],['r.ordinal=coalesce(h.sequence,0)+1','r.ordinal=coalesce(h.sequence,0)+2'],
+    ['a.operation_id=r.operation_id','true'],['a.account_id=r.account_id','true'],['job.operation_id=$1::uuid','true'],["AND $4::text=''",''],
+    ['h.operation_id IS NULL','true'],['app.neighborhood_selected_union_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)','true'],
+    ['app.neighborhood_selected_eligibility_v2_checkpoint_matches(job.operation_id,job.organization_id,job.checkpoint)','true'],
+    ["'format'='cohort_selected_union_receipt_v2'","'format'='other'"],["'after'->>'done'='true'","'after'->>'done'='false'"],
+    ['AND a.account_id=job.account_id',''],['UNION SELECT','UNION ALL SELECT'],['LIMIT ($5::integer+1)','LIMIT ($5::integer+2)'],
+    ['AND (SELECT sum(n) FROM totals)<=$5::integer',''],['AND (NOT $10::boolean OR EXISTS(SELECT 1 FROM subject_account))',''],['AND o.account_id=a.account_id','']];
+  for(const [before,after]of mutations){
+    assert.ok(packet.text.includes(before),'mutation must change actual SQL: '+before);const text=packet.text.replace(before,after);
+    assert.throws(()=>check([...baseline,{...packet,text}],scope),/unexpected catalog aggregate/);
+    assert.throws(()=>shapes([actor,section,{...packet,text}],scope),/unexpected catalog aggregate/);
+  }
+  assert.throws(()=>check([...baseline,{...packet,values:[...packet.values,'extra']}],scope),/exact paired stock/);
   assert.throws(()=>check([...baseline,{...packet,text:packet.text+', json_agg(account_id)'}],scope),/unexpected catalog aggregate/);
   assert.throws(()=>check([...baseline,packet],{...scope,originals:{...scope.originals,subjectAccountId:undefined}}),/actual retained job subject/);
   assert.throws(()=>check([actor,section,packet],scope),/both-end current actor/);

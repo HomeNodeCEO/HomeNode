@@ -595,11 +595,13 @@ async function transaction(pool, mode, budget, execute) {
 }
 
 async function resolveTarget(client, input, locked, permission = 'write', lockReport = false) {
+  // Delivery reads hold a shared assignment fence until COMMIT, allowing
+  // overlapping viewers while excluding assignment updates and deletion.
   const assignment = one(await client.query(`/* custom-cohort-capture:assignment */
     SELECT id::text AS assignment_file_id,account_id,organization_id,
       assigned_appraiser_user_id,supervisory_appraiser_user_id
     FROM app.assignment_files WHERE id=$1::bigint AND account_id=$2
-    ${locked ? 'FOR UPDATE NOWAIT' : ''}`, [input.assignmentFileId, input.accountId]));
+    ${locked ? (permission === 'read' ? 'FOR SHARE NOWAIT' : 'FOR UPDATE NOWAIT') : ''}`, [input.assignmentFileId, input.accountId]));
   if (assignment.assignment_file_id !== input.assignmentFileId || assignment.account_id !== input.accountId
     || !hasApplicationPermission(input.auth, 'custom_appraisal', permission, assignment.organization_id)
     || !decideAssignmentAccess(input.auth, assignment, permission)) fail('assignment_access_denied');
@@ -844,9 +846,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const auth = await loadCurrentCustomCohortJobActor(client, originalInput.auth.userId, initial.organization_id);
         const input = { ...originalInput, auth };
         assertTarget(await resolveTarget(client, input, false, permission), initial);
-        // Match existing upload/sign/subject lock order without a SHARE upgrade.
-        // Read permission is NOT widened by taking the same NOWAIT parent lock.
-        const workfile = await privateCaptureWorkfile(client, input, { permission, writeLock: true });
+        // Keep upload/sign/subject lock order. The separate shared comparison
+        // requires native guards against new material and signature rows.
+        const workfile = await privateCaptureWorkfile(client, input, { permission, writeLock: writing });
         if (writing) privateDraft(workfile);
         const target = await resolveTarget(client, input, true, permission);
         assertTarget(target, initial);
@@ -858,7 +860,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         // Never inspect a shared derivative or compile a fallback for that case.
         if (licensed.privateAuthorization) fail('prepared_catalog_private_source_unsupported');
         if ((await createCustomCohortSubjectRepository(client, scopeJson)
-          .compareCurrent(licensed.subjectReference)).status !== 'matched') fail('subject_changed');
+          [writing ? 'compareCurrent' : 'compareCurrentReadOnly'](licensed.subjectReference)).status !== 'matched') fail('subject_changed');
         if (selecting && writing && projection === 'intent') {
           const versions = await client.query(`/* custom-cohort-group-workspace:legacy-guard */
             SELECT section_value->>'workspace_version' AS workspace_version
@@ -892,7 +894,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           || !same(ending.purpose, licensed.purpose) || !same(ending.decision, licensed.decision)
           || !same(ending.subjectReference, licensed.subjectReference)) fail('operation_conflict');
         if ((await createCustomCohortSubjectRepository(client, scopeJson)
-          .compareCurrent(ending.subjectReference)).status !== 'matched') fail('subject_changed');
+          [writing ? 'compareCurrent' : 'compareCurrentReadOnly'](ending.subjectReference)).status !== 'matched') fail('subject_changed');
         budget.check(); return freeze(result);
       });
   }
@@ -940,10 +942,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         assertTarget(await resolveTarget(client, input, false, permission), initial);
         // Match upload/signing lock order. A saved selection may never mutate a
         // signed workfile or its accepted report. Reads remain current-authorized.
-        // Subject freshness later locks this parent FOR UPDATE as well. Take
-        // that mode first so concurrent NOWAIT readers cannot both acquire
-        // SHARE and then fail while upgrading; permission still stays read.
-        const workfile = await privateCaptureWorkfile(client, input, { permission, writeLock: true });
+        // Shared readers retain that mode in the complete subject recheck;
+        // native write guards preserve the previously exclusive phantom fence.
+        const workfile = await privateCaptureWorkfile(client, input, { permission, writeLock: writing });
         if (writing) privateDraft(workfile);
         const target = await resolveTarget(client, input, true, permission);
         assertTarget(target, initial);
@@ -1087,7 +1088,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const finalInput = { ...input, auth: finalAuth };
         assertTarget(await resolveTarget(client, finalInput, true, permission), target);
         if ((await createCustomCohortSubjectRepository(client, scopeJson)
-          .compareCurrent(licensed.subjectReference)).status !== 'matched') fail('subject_changed');
+          [writing ? 'compareCurrent' : 'compareCurrentReadOnly'](licensed.subjectReference)).status !== 'matched') fail('subject_changed');
         for (const exposure of ['report_observation_catalog', ...additionalExposures]) {
           const decision = await boundedPolicy(authorizeMarketData, client, finalAuth, licensed.context,
             licensed.purpose, budget, exposure);
@@ -1404,7 +1405,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     return timed('recheck', () => transaction(pool, 'READ COMMITTED', budget, async client => {
       assertTarget(await resolveTarget(client, input, true, 'read'), cached.target);
       if ((await createCustomCohortSubjectRepository(client, cached.scopeJson)
-        .compareCurrent(cached.licensed.subjectReference)).status !== 'matched') fail('subject_changed');
+        .compareCurrentReadOnly(cached.licensed.subjectReference)).status !== 'matched') fail('subject_changed');
       for (const exposure of ['report_observation_catalog', 'report_observation_summary']) {
         const decision = await boundedPolicy(authorizeMarketData, client, input.auth,
           cached.licensed.context, cached.licensed.purpose, budget, exposure);
@@ -1457,7 +1458,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         return transaction(pool, 'READ COMMITTED', budget, async client => {
           assertTarget(await resolveTarget(client, input, true, 'read'), cached.target);
           if ((await createCustomCohortSubjectRepository(client, cached.scopeJson)
-            .compareCurrent(cached.licensed.subjectReference)).status !== 'matched') fail('subject_changed');
+            .compareCurrentReadOnly(cached.licensed.subjectReference)).status !== 'matched') fail('subject_changed');
           const decision = await boundedPolicy(authorizeMarketData, client, input.auth,
             cached.licensed.context, cached.licensed.purpose, budget, exposure);
           if (!same(decision, cached.licensed.decision)) fail('market_policy_changed');
@@ -1550,7 +1551,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     const response = await timed('authorization', () => transaction(pool, 'READ COMMITTED', budget, async client => {
       assertTarget(await resolveTarget(client, input, true, 'read'), loaded.target);
       if ((await createCustomCohortSubjectRepository(client, loaded.scopeJson)
-        .compareCurrent(loaded.retained.subject_reference)).status !== 'matched') fail('subject_changed');
+        .compareCurrentReadOnly(loaded.retained.subject_reference)).status !== 'matched') fail('subject_changed');
       const decision = await boundedPolicy(authorizeMarketData, client, input.auth, loaded.context, loaded.purpose, budget, exposure);
       if (!same(decision, loaded.decision)) fail('market_policy_changed');
       for (const additional of additionalExposures) {
@@ -3327,7 +3328,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         additionalExposures: exactSelection ? ['report_observation_catalog'] : [] });
       const selection = await workspaceSelection(client, currentInput, { scopeJson, workspace, retained }, budget);
       if ((await createCustomCohortSubjectRepository(client, scopeJson)
-        .compareCurrent(retained.retained.subject_reference)).status !== 'matched') fail('subject_changed');
+        .compareCurrentReadOnly(retained.retained.subject_reference)).status !== 'matched') fail('subject_changed');
       const review = await createCustomCohortReviewRepository(client, scopeJson)
         .getCurrent(canonicalAssessmentJson(input.contextRef), input.expectedReviewGeneration);
       // The existing read-only preparation supports full bigint assignment IDs.
@@ -3405,7 +3406,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if (loaded.reportEditor !== null && !same(await reportEditorState(client, input), loaded.reportEditor)) fail('report_editor_changed');
       if (loaded.savedBoundary !== null && !same(await reportGeographyState(client, input), loaded.savedBoundary)) fail('report_geography_changed');
       if ((await createCustomCohortSubjectRepository(client, loaded.scopeJson)
-        .compareCurrent(loaded.retained.retained.subject_reference)).status !== 'matched') fail('subject_changed');
+        .compareCurrentReadOnly(loaded.retained.retained.subject_reference)).status !== 'matched') fail('subject_changed');
       const review = await createCustomCohortReviewRepository(client, loaded.scopeJson)
         .getCurrent(canonicalAssessmentJson(input.contextRef), input.expectedReviewGeneration);
       if (review.state_sha256 !== loaded.review.state_sha256) fail('review_state_changed');
@@ -3525,7 +3526,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       });
       assertTarget(await resolveTarget(client, input, true, 'read'), target);
       if ((await createCustomCohortSubjectRepository(client, scopeJson)
-        .compareCurrent(licensed.subjectReference)).status !== 'matched') fail('subject_changed');
+        .compareCurrentReadOnly(licensed.subjectReference)).status !== 'matched') fail('subject_changed');
       const decision = await boundedPolicy(authorizeMarketData, client, input.auth,
         licensed.context, licensed.purpose, budget, 'report_observation_summary');
       if (!same(decision, licensed.decision)) fail('market_policy_changed');

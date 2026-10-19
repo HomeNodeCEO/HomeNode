@@ -146,18 +146,18 @@ export async function checkCustomCohortSubjectDatabase(pool, identity) {
     await holder.query('BEGIN');
     try {
       assert.equal((await createCustomCohortSubjectRepository(holder, scopeJson).compareCurrent(stableRef)).status, 'matched');
-      for (const sql of [
-        `UPDATE app.custom_appraisal_sections SET section_value='{}'
-          WHERE assignment_file_id=$1 AND section_key='report.property_characteristics'`,
-        `INSERT INTO app.custom_appraisal_sections (assignment_file_id,section_key,section_value)
-          VALUES ($1,'report.land_details','{}')`,
-        `UPDATE app.custom_appraisal_sections SET section_key='report.land_details'
-          WHERE assignment_file_id=$1 AND section_key='report.exemptions'`,
+      for (const [sql,code] of [
+        [`UPDATE app.custom_appraisal_sections SET section_value='{}'
+          WHERE assignment_file_id=$1 AND section_key='report.property_characteristics'`,'57014'],
+        [`INSERT INTO app.custom_appraisal_sections (assignment_file_id,section_key,section_value)
+          VALUES ($1,'report.land_details','{}')`,'55P03'],
+        [`UPDATE app.custom_appraisal_sections SET section_key='report.land_details'
+          WHERE assignment_file_id=$1 AND section_key='report.exemptions'`,'57014'],
       ]) {
         await contender.query('BEGIN');
         try {
           await contender.query("SET LOCAL statement_timeout='250ms'");
-          await assert.rejects(contender.query(sql, [scope.assignment_file_id]), error => error.code === '57014');
+          await assert.rejects(contender.query(sql, [scope.assignment_file_id]), error => error.code === code);
         } finally { await contender.query('ROLLBACK'); }
       }
     } finally { await holder.query('ROLLBACK'); }

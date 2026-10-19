@@ -1,5 +1,6 @@
 import { formatSubjectPresentationValue, titleCaseSubjectText } from '../util/subjectPresentation.js';
 import { isUrarStateCode } from '../util/urarScalarValidation.js';
+import { isInternalTarrantAccount } from '../util/countyParcelIdentity.js';
 
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = value => typeof value === 'string' && value.trim().length > 0 && value.length <= 500
@@ -18,6 +19,7 @@ export function buildCustomSubjectIdentity(context) {
   const fields = [];
   for (const [key, property, column] of definitions) {
     const raw = text(source[property]);
+    if (key === 'assessor_parcel_number' && isInternalTarrantAccount(context, raw)) continue;
     if (!raw || (key === 'subject_zip' && !/^\d{5}(?:-?\d{4})?$/.test(raw))
       || (key === 'subject_state' && !isUrarStateCode(raw))) continue;
     const value = key === 'county' ? titleCaseSubjectText(raw.replace(/\s+county$/i, ''))

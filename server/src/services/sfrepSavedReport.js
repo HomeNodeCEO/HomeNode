@@ -160,6 +160,8 @@ export function savedSfrepSubjectFields(saved, input) {
     }
   }
   for (const descriptor of CUSTOM_SUBJECT_FIELD_DESCRIPTORS) {
+    if (descriptor.key === 'assignment_explanation'
+      && readCustomSubjectValue({ subject, assignmentDetails: saved.assignmentDetails }, 'assignment_type') !== 'other') continue;
     const value = readCustomSubjectValue({ subject, assignmentDetails: saved.assignmentDetails }, descriptor.key);
     if (value == null || value === '') {
       // Only absent leaves can use canonical account identity. An explicit

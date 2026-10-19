@@ -2,13 +2,15 @@ import { inspectUrarReferenceLayout, extractUrarReferenceLayout } from "./urarRe
 import { isUrarPlaceholder, isUrarStateCode } from "../util/urarScalarValidation.js";
 import { extractMlsListingPriceHistory, isMlsListingHistory } from "./mlsListingPriceHistory.js";
 import { extractDwellingBlocksAssignment, isDwellingBlocksAssignment } from "./dwellingBlocksAssignment.js";
+import { extractAppraisalOrderAssignment } from './appraisalOrderAssignment.js';
+import { isTarrantCadSummary, buildTarrantCadSubjectEvidence } from './tarrantCadSubjectEvidence.js';
 
 /**
  * Conservative, page-cited Subject suggestions from already-extracted PDF text.
  * No OCR, network, model, report writes, or automatic confirmation occurs here.
  * The caller owns document authorization, identity, and source-role selection.
  */
-export const URAR_SUBJECT_EVIDENCE_VERSION = "2026-10-04-v1";
+export const URAR_SUBJECT_EVIDENCE_VERSION = "2026-10-18-v1";
 const LIMITS = Object.freeze({ pages: 250, pageChars: 500_000, totalChars: 4_000_000, lineChars: 4_000, lines: 50_000, candidates: 2_000, issues: 500 });
 const SOURCES = new Set(["engagement_letter", "mls_sheet", "cad", "realist"]);
 const NON_SUBJECT_DOCUMENT_TYPES = new Set(["purchase_contract", "district_evidence", "zoning_map", "zoning_ordinance", "map"]);
@@ -132,7 +134,7 @@ const RULES = {
   ],
 };
 export const URAR_SUBJECT_FIELD_KEYS = Object.freeze([...new Set([
-  ...Object.values(RULES).flatMap(rules => rules.map(([key]) => key)), "neighborhood_name", "listing_price_history",
+  ...Object.values(RULES).flatMap(rules => rules.map(([key]) => key)), "neighborhood_name", "listing_price_history", "assignment_explanation",
 ])]);
 const FIELD_BOUNDARIES = new Set([
   ...Object.values(RULES).flatMap(rules => rules.flatMap(([, labels]) => labels)),
@@ -361,7 +363,7 @@ function collectConflicts(candidates, conflicts) {
  * Realist; otherwise 'other' needs an explicit source heading in page text.
  * All candidates, including conflicting alternatives, remain 'suggested'.
  */
-export function buildUrarSubjectEvidence({ documentType = "other", pages = [], sourceKind = null } = {}) {
+export function buildUrarSubjectEvidence({ documentType = "other", pages = [], sourceKind = null, textItems = [] } = {}) {
   const unresolved = [], candidates = [], conflicts = [];
   // Explicit contract, zoning, district, and map types retain their own parsers.
   // Subject-only bounds or source hints must not veto or take over those types.
@@ -383,7 +385,19 @@ export function buildUrarSubjectEvidence({ documentType = "other", pages = [], s
     issue(unresolved, { reason: "source_input_incomplete" });
     return result;
   }
+  if (documentType === 'other' && isTarrantCadSummary(pages)) {
+    // A second report family must not bypass the normal mixed-source gate
+    // merely because the first page matches the Tarrant adapter.
+    if (reference.sourceKind || entries.some(entry => /^(?:(?:corelogic|cotality)\s+)?realist\b|^MLS\s*#|^DCAD:/i.test(entry.line))) {
+      issue(unresolved, { reason: 'source_input_incomplete' }); return result;
+    }
+    return buildTarrantCadSubjectEvidence(pages, textItems);
+  }
   if (!source) { issue(unresolved, { reason: entries.length ? "source_not_identified" : "no_readable_text" }); return result; }
+  if (source === 'engagement_letter') {
+    const order = extractAppraisalOrderAssignment(pages, assignment);
+    if (order) return { schema_version: URAR_SUBJECT_EVIDENCE_VERSION, ...order };
+  }
   if (source === 'engagement_letter' && isDwellingBlocksAssignment(pages)) {
     const assignmentPrint = extractDwellingBlocksAssignment(pages, assignment);
     result.source_layout = 'dwelling_blocks_assignment';

@@ -183,6 +183,7 @@ const MAPPINGS = Object.freeze({
   hoa_dues_amount: ["AssessmentAmount", money],
   lender_client_name: ["LenderClientCompanyName", identity],
   lender_client_address: ["LenderClientCompanyUnparsedAddress", identity],
+  assignment_explanation: ['AssignmentTypeOtherDescription', value => value.length <= 1_000 ? value : null],
   contract_price: ["SalePriceAmount", money],
   contract_date: ["ContractDate", date],
   zoning_code: ["SpecificZoningClassification", identity],
@@ -231,7 +232,7 @@ const OTHER_ASSIGNMENT_DESCRIPTIONS = Object.freeze({
 export function canonicalSfrepAssignmentType(value) {
   if (typeof value !== "string") return null;
   const canonical = value.trim().toLowerCase().replace(/[ -]+/g, "_");
-  return canonical === "purchase_transaction" || canonical === "refinance"
+  return canonical === "purchase_transaction" || canonical === "refinance" || canonical === 'other'
     || Object.hasOwn(OTHER_ASSIGNMENT_DESCRIPTIONS, canonical) ? canonical : null;
 }
 
@@ -310,6 +311,7 @@ function projectValue(sourceField, value) {
       : assignmentType === "refinance" ? "AssignmentTypeRefinanceCheckBox" : null;
     const choice = { group: "assignment_type", assignmentType };
     if (fieldId) return [{ ...choice, fieldId, value: "true", type: "CheckBoxField" }];
+    if (assignmentType === 'other') return [{ ...choice, fieldId: 'AssignmentTypeOtherCheckBox', value: 'true', type: 'CheckBoxField' }];
     if (!Object.hasOwn(OTHER_ASSIGNMENT_DESCRIPTIONS, assignmentType)) return [];
     return [
       { ...choice, fieldId: "AssignmentTypeOtherCheckBox", value: "true", type: "CheckBoxField" },
@@ -481,7 +483,7 @@ export function buildSfrepReportExport({
     'subject_state', 'subject_zip', 'subject_zip_code', 'borrower_name', 'owner_name', 'record_owner_name',
     'county', 'legal_description', 'assessor_parcel_number', 'assessors_parcel_number', 'tax_year',
     'tax_amount', 'real_estate_tax_year', 'real_estate_tax_amount', 'neighborhood_name', 'subdivision_name',
-    'pud', 'is_pud', 'property_type', 'property_rights', 'property_rights_appraised', 'assignment_type', 'lender_client_name',
+    'pud', 'is_pud', 'property_type', 'property_rights', 'property_rights_appraised', 'assignment_type', 'assignment_explanation', 'lender_client_name',
     'lender_client_address', 'offered_for_sale_prior_12_months', 'subject_offered_for_sale_prior_12_months',
     'list_date', 'hoa_dues_amount', 'hoa_frequency', 'census_tract', 'listing_history_summary']);
   if (savedReportFields !== undefined) {
@@ -492,6 +494,8 @@ export function buildSfrepReportExport({
         fail('sfrep_invalid_saved_report');
       const value = textValue(typeof saved.value === 'boolean' ? String(saved.value) : saved.value);
       if (value === null) continue;
+      if (saved.sourceField === 'assignment_explanation' && !savedReportFields.some(field =>
+        field.sourceField === 'assignment_type' && canonicalSfrepAssignmentType(field.value) === 'other')) continue;
       if (INVALID_XML.test(value)) fail('sfrep_invalid_xml_character');
       // Saved address components are independently editable. Composite source
       // parsing must not refill a city/state/ZIP the appraiser cleared or changed.
@@ -563,8 +567,19 @@ export function buildSfrepReportExport({
         omit(entry, 'Reviewed PDF APN differs from the canonical county account; quarantined pending review. County-backed identity is retained.');
         continue;
       }
-      if (sourceField === "assignment_type" && document.document_type !== "engagement_letter") {
+      if (['assignment_type', 'assignment_explanation'].includes(sourceField) && document.document_type !== "engagement_letter") {
         omit(entry, "Subject assignment type must come from reviewed engagement evidence; a purchase-contract classification is not the assignment instruction.");
+        continue;
+      }
+      if (sourceField === 'assignment_explanation' && !candidates.some(other => other.field_key === 'assignment_type'
+        && other.review_status === 'confirmed' && (other.document_id == null || positiveId(other.document_id) === documentId)
+        && canonicalSfrepAssignmentType(other.confirmed_value ?? other.normalized_value ?? other.raw_value) === 'other')) {
+        omit(entry, 'An Other assignment explanation requires the same reviewed assignment to select Other.');
+        continue;
+      }
+      if (sourceField === 'assignment_explanation' && Object.hasOwn(fieldSelections, 'assignment_type')
+        && positiveId(fieldSelections.assignment_type) !== documentId) {
+        omit(entry, 'A different assignment source was selected; its Other explanation must come from that source.');
         continue;
       }
       if (PROPERTY_RIGHTS_FIELDS.has(sourceField)) hasReviewedRights = true;
@@ -724,6 +739,18 @@ export function buildSfrepReportExport({
       // Destination-only monetary rounding and legal-text folding never modify
       // the persisted appraisal record.
       fields.push(forReportPersistence ? formatPresentationField(field) : formatSelectedField(field, supplementalWarnings));
+    }
+  }
+  // Other is a paired choice, not a catch-all for an unreadable purpose. Keep
+  // its checkbox and explicit explanation together after conflict resolution.
+  const otherChoice = fields.some(field => field.fieldId === 'AssignmentTypeOtherCheckBox');
+  const otherDescription = fields.some(field => field.fieldId === 'AssignmentTypeOtherDescription');
+  if (otherChoice !== otherDescription) {
+    for (let index = fields.length - 1; index >= 0; index--) {
+      if (['AssignmentTypeOtherCheckBox', 'AssignmentTypeOtherDescription'].includes(fields[index].fieldId)) {
+        omit(fields[index], 'Other assignment requires both an unambiguous choice and its explanation.');
+        fields.splice(index, 1);
+      }
     }
   }
   if (contractSection) {

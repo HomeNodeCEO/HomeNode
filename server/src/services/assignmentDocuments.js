@@ -446,6 +446,7 @@ function publicCandidateReview(row) {
 }
 
 const DOCUMENT_ASSIGNMENT_TYPES = new Set([
+  'other',
   "purchase_transaction",
   "refinance",
   "heloc",
@@ -457,6 +458,7 @@ const DOCUMENT_ASSIGNMENT_TYPES = new Set([
 ]);
 
 const DOCUMENT_ASSIGNMENT_FIELDS = Object.freeze({
+  assignment_explanation: 'assignment_explanation',
   lender_client_name: "lender_client_name",
   lender_client_address: "lender_client_address",
   contract_price: "contract_price",

@@ -1,6 +1,7 @@
 import { parseStructuredAddress } from '../util/structuredAddress.js';
 import { normalizePropertyCity } from '../util/propertySearch.js';
 import { isUrarStateCode } from '../util/urarScalarValidation.js';
+import { countyParcelIdentity } from '../util/countyParcelIdentity.js';
 
 const text = value => typeof value === 'string' ? value.trim() : '';
 const identifier = value => text(value).toUpperCase().replace(/[\s-]/g, '');
@@ -56,7 +57,7 @@ export function sfrepDocumentPropertyRole(document) {
   const parcelValues = confirmed(document, ['assessor_parcel_number', 'assessors_parcel_number']);
   // A routed/canonical account key is not necessarily the county's printed
   // parcel number. Prefer the separately supplied county APN when available.
-  const parcelId = identifier(context.assessorParcelNumber || context.accountId);
+  const parcelId = identifier(countyParcelIdentity(context));
   const parcelMatch = Boolean(parcelId && parcelValues.some(value => identifier(value) === parcelId));
   const parcelMismatch = parcelValues.some(value => parcelId && identifier(value) !== parcelId);
   // A dated CAD record for the exact account can legitimately carry an older
@@ -115,7 +116,7 @@ export function sfrepDocumentPropertyRole(document) {
 /** Diagnostic/quarantine only. This never proves document applicability. */
 export function sfrepDocumentParcelMismatch(document) {
   const context = document?.subject_context;
-  const parcelId = identifier(context?.assessorParcelNumber || context?.accountId);
+  const parcelId = identifier(countyParcelIdentity(context));
   return Boolean(parcelId && confirmed(document, ['assessor_parcel_number', 'assessors_parcel_number'])
     .some(value => identifier(value) !== parcelId));
 }
@@ -126,7 +127,7 @@ function workfileCadIdentity(document) {
       || document.candidates?.some(candidate => candidate.review_status === 'confirmed'
         && /^urar_subject_cad_/.test(String(candidate.extraction_method || ''))))
     || sfrepDocumentPropertyRole(document) !== 'subject') return null;
-  const parcelId = identifier(document.subject_context?.assessorParcelNumber || document.subject_context?.accountId);
+  const parcelId = identifier(countyParcelIdentity(document.subject_context));
   const apns = confirmed(document, ['assessor_parcel_number', 'assessors_parcel_number']);
   if (!parcelId || !apns.length || apns.some(value => identifier(value) !== parcelId)) return null;
   const full = confirmed(document, ['subject_property_address']).map(postalAddress);

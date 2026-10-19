@@ -2,6 +2,7 @@ import { extractText, getDocumentProxy } from "unpdf";
 import { buildUrarSubjectEvidence, identifyUrarSubjectSource } from "./urarSubjectEvidence.js";
 import { isDwellingBlocksAssignment } from './dwellingBlocksAssignment.js';
 import { trecContractSubjectIdentityCandidate } from "./trecContractSubjectIdentity.js";
+import { isTarrantCadSummary } from './tarrantCadSubjectEvidence.js';
 
 export const DOCUMENT_TYPES = Object.freeze([
   "zoning_map",
@@ -16,7 +17,7 @@ export const DOCUMENT_TYPES = Object.freeze([
 
 // Persist this with every extraction so documents created before a parser
 // improvement can be upgraded exactly once from their immutable source PDF.
-export const DOCUMENT_EXTRACTION_SCHEMA_VERSION = "2026-10-04-v2";
+export const DOCUMENT_EXTRACTION_SCHEMA_VERSION = "2026-10-18-v1";
 
 const DOCUMENT_TYPE_SET = new Set(DOCUMENT_TYPES);
 const MAX_PDF_PAGES = 250;
@@ -1068,7 +1069,8 @@ export function findZoningDescriptionInPages(pages, zoningCode) {
 
 export function buildDocumentFieldCandidates({ documentType, pages, subjectEvidence = buildUrarSubjectEvidence({ documentType, pages }) }) {
   if (subjectEvidence.unresolved.some(item => item.reason === "source_input_incomplete")) return [];
-  if (["matrix_listing_history", "dwelling_blocks_assignment"].includes(subjectEvidence.source_layout)) return [...subjectEvidence.candidates];
+  if (["matrix_listing_history", "dwelling_blocks_assignment", 'appraisal_order_assignment',
+    'tarrant_cad_property_summary'].includes(subjectEvidence.source_layout)) return [...subjectEvidence.candidates];
   if (subjectEvidence.unresolved.some(item => ["multiple_mls_listing_identities", "ambiguous_mls_listing_identity"].includes(item.reason))) return [];
   const entries = pageLines(pages);
   const mls = documentType === "mls_sheet" ? buildMlsSheetCandidates(entries) : null;
@@ -1341,7 +1343,13 @@ export async function extractPdfEvidence(buffer, {
     }
     if (textLength > MAX_EXTRACTED_TEXT_LENGTH) throw new Error("document_text_limit_exceeded");
     const documentType = classifyDocument({ requestedType, fileName, pages });
-    const subjectEvidence = buildUrarSubjectEvidence({ documentType, pages });
+    let textItems;
+    if (documentType === 'other' && isTarrantCadSummary(pages)) {
+      const firstPage = await pdf.getPage(1);
+      const content = await firstPage.getTextContent();
+      textItems = content.items;
+    }
+    const subjectEvidence = buildUrarSubjectEvidence({ documentType, pages, textItems });
     // Keep parser-rule provenance stable: downstream safety gates identify exact
     // specialized rules. OCR provenance belongs to the document/page metadata.
     const candidates = textLength >= 40

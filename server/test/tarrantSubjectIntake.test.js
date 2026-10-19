@@ -86,6 +86,16 @@ test('labeled owner business names may start with digits but bare numeric IDs ar
   }
 });
 
+test('recorded survey legal text is retained without inferring a subdivision and placeholders stay unresolved', () => {
+  for (const legal of ['EXAMPLE SURVEY ABSTRACT 123 TRACT 4 2.5 ACRES', 'Not Available']) {
+    const items = textItems().map(item => item.str === 'EXAMPLE WOODS ADDN, THE' ? { ...item, str: legal }
+      : item.str === 'Block A Lot 9' ? { ...item, str: '' } : item);
+    const values = byKey(buildTarrantCadSubjectEvidence(summaryPages(pid), items));
+    assert.equal(values.legal_description, legal === 'Not Available' ? undefined : legal);
+    assert.equal(values.neighborhood_name, undefined);
+  }
+});
+
 test('Tarrant adapter rejects mixed records, damaged coordinates and oversized or mixed report input', () => {
   for (const [pages, items] of [[summaryPages(pid).map((page, i) => i ? page.replace(pid, '87654321') : page), textItems()],
     [summaryPages(pid), textItems().map((item, i) => i === 0 ? { ...item, transform: [NaN] } : item)],
@@ -113,6 +123,9 @@ test('assignment order does not append Additional Resources, truncate client, or
   assert.equal(byKey(buildUrarSubjectEvidence({ documentType: 'engagement_letter', pages: assignmentPages('Refinance') })).assignment_type, 'refinance');
   assert.equal(byKey(buildUrarSubjectEvidence({ documentType: 'engagement_letter', pages: assignmentPages('Unknown') })).assignment_type, undefined);
   assert.equal(assignmentPostalAddress('100 DR EXAMPLE DR ARLINGTON TX 76010'), null, 'ambiguous suffix boundaries require review');
+  for (const tail of ['N ARLINGTON', 'NORTH ARLINGTON', 'UNIT B ARLINGTON', 'SUITE A ARLINGTON']) {
+    assert.equal(assignmentPostalAddress(`100 MAIN ST ${tail} TX 76010`), null, 'unit/post-directional text is not a proven city');
+  }
   assert.deepEqual(buildDocumentFieldCandidates({ documentType: 'engagement_letter',
     pages: [...assignmentPages('Foreclosure'), 'Property Address: 900 Different Dr, Arlington TX 76010'] }), []);
 });

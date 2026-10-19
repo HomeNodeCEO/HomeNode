@@ -1,3 +1,5 @@
+import { isUrarPlaceholder } from '../util/urarScalarValidation.js';
+
 const compact = value => String(value || '').replace(/\s+/g, ' ').trim();
 export function isTarrantCadSummary(pages) {
   return Array.isArray(pages) && pages.length <= 250 && pages.every(page => typeof page === 'string' && page.length <= 500_000)
@@ -33,7 +35,7 @@ export function buildTarrantCadSubjectEvidence(pages, textItems = []) {
   }
   const pid = headers[0][1];
   const add = (key, value, evidence, pageNumber = 1) => {
-    if (!value || value.length > 2_000) return;
+    if (!value || value.length > 2_000 || isUrarPlaceholder(value)) return;
     result.candidates.push({ field_key: key, raw_value: value, normalized_value: value,
       page_number: pageNumber, confidence: 0.96, evidence_excerpt: evidence.slice(0, 2_000),
       extraction_method: 'urar_subject_cad_tarrant_property_summary_geometry', source_kind: 'cad', review_status: 'suggested' });
@@ -71,8 +73,8 @@ export function buildTarrantCadSubjectEvidence(pages, textItems = []) {
   // numeric Property/Owner ID cannot become a name, not a letter-only prefix.
   if (owner && /[A-Za-z]/.test(owner.value)) add('owner_name', owner.value, `OWNER\n${owner.evidence}`);
   const legal = read('Legal Description:');
+  if (legal) add('legal_description', legal.value, legal.evidence);
   if (legal && /\b(?:BLK|BLOCK)\s+[A-Za-z0-9-]+\b/i.test(legal.value) && /\b(?:LT|LOT)\s+[A-Za-z0-9-]+\b/i.test(legal.value)) {
-    add('legal_description', legal.value, legal.evidence);
     const name = legal.value.split(/\s+(?:BLK|BLOCK)\s+/i)[0];
     if (name && !/\b(?:ABSTRACT|SURVEY|TRACT|THENCE|BEGINNING)\b/i.test(name)) add('neighborhood_name', name, legal.evidence);
   }

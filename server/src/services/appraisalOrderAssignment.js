@@ -17,7 +17,8 @@ export function assignmentPostalAddress(value) {
       const end = match.index + match[0].length;
       return [endings[1].slice(0, end).trim(), endings[1].slice(end).trim(), endings[2], endings[3]];
     }).filter(([street, city]) => /^\d+[A-Za-z]?\s+[A-Za-z]/.test(street)
-      && /^[A-Za-z][A-Za-z .'-]*$/.test(city));
+      && /^[A-Za-z][A-Za-z .'-]*$/.test(city)
+      && !/^(?:N|S|E|W|NE|NW|SE|SW|NORTH|SOUTH|EAST|WEST|UNIT|APT|APARTMENT|STE|SUITE|BLDG|BUILDING|FL|FLOOR|LOT|SPC|SPACE)\b/i.test(city));
     if (choices.length === 1) parts = choices[0];
   }
   if (!parts || !/^\d+[A-Za-z]?\s+\S/.test(parts[0]) || !isUrarStateCode(parts[2])) return null;

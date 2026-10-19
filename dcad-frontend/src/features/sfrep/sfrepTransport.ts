@@ -94,6 +94,8 @@ const feeSimpleField = 'PropertyRightsAppraisedFeeSimpleCheckBox';
 const feeSimpleRule = 'user_requested_fee_simple_default';
 const texasStateRule = 'user_requested_texas_state_default_v1';
 const listingRule = 'subject_mls_list_date_within_preceding_12_calendar_months';
+const listingIntervalRule = 'subject_mls_listing_interval_overlaps_preceding_12_months_v1';
+const historicalListingRule = 'user_requested_ended_mls_outside_12_months_v1';
 const historyRule = 'reviewed_subject_listing_history_template_v1';
 const censusRule = 'matched_account_census_tract_v1';
 const countyRule = 'canonical_county_subject_identity_v1';
@@ -129,6 +131,60 @@ function validDateContext(value: unknown): value is SfrepEffectiveDateContext {
   const [year, month, day] = value.effectiveDate.split('-').map(Number);
   const lastDay = new Date(Date.UTC(year - 1, month, 0)).getUTCDate();
   return value.windowStart === `${year - 1}-${String(month).padStart(2, '0')}-${String(Math.min(day, lastDay)).padStart(2, '0')}`;
+}
+function listingEvidenceDate(value: unknown): string | null {
+  if (isoDate(value)) return value;
+  if (typeof value !== 'string' || !/^\d{2}\/\d{2}\/\d{4}$/.test(value)) return null;
+  const normalized = `${value.slice(6)}-${value.slice(0, 2)}-${value.slice(3, 5)}`;
+  return isoDate(normalized) ? normalized : null;
+}
+function validListingInterval(value: Record<string, unknown>, proof: Record<string, unknown>): boolean {
+  const saved = proof.kind === 'saved_report';
+  const negative = proof.rule === historicalListingRule;
+  const documentId = saved ? proof.sourceDocumentId : value.documentId;
+  const candidateId = saved ? proof.sourceCandidateId : value.candidateId;
+  if (![historicalListingRule, listingIntervalRule].includes(String(proof.rule))
+    || value.sourceField !== (saved ? 'offered_for_sale_prior_12_months' : 'list_date')
+    || value.fieldId !== (negative ? 'CurrentPriorListingNoCheckBox' : 'CurrentPriorListingYesCheckBox')
+    || value.type !== 'CheckBoxField' || value.value !== 'true'
+    || (saved ? proof.sectionKey !== 'report.subject_identification' || proof.origin !== 'derived_reviewed_document'
+      : proof.kind !== 'derived_reviewed_document' || proof.documentType !== 'mls_sheet')
+    || !onlyKeys(proof, [...(saved ? [...savedKeys, 'sourceDocumentId', 'sourceCandidateId'] : documentKeys), ...listingKeys, 'sourceEvidence'])
+    || !positiveId(documentId) || !positiveId(candidateId) || !isoDate(proof.sourceValue)
+    || !validDateContext({ effectiveDate: proof.effectiveDate, source: proof.effectiveDateSource,
+      sourceDocumentId: proof.effectiveDateSourceDocumentId, windowStart: proof.windowStart, windowEnd: proof.windowEnd,
+      calendarMonths: 12, isPlaceholder: proof.effectiveDateSource === 'document_upload_date_placeholder' })
+    || !isoDate(proof.windowStart) || proof.sourceValue >= proof.windowStart
+    || !Array.isArray(proof.sourceEvidence) || proof.sourceEvidence.length < 3 || proof.sourceEvidence.length > 10_000) return false;
+  const groups = new Map<number, Map<string, string[]>>();
+  const candidates = new Set<string>();
+  let primary = false;
+  for (const entry of proof.sourceEvidence) {
+    if (!record(entry) || !onlyKeys(entry, ['documentId', 'candidateId', 'sourceField', 'value'])
+      || !positiveId(entry.documentId) || !positiveId(entry.candidateId)
+      || !['list_date', 'listing_status', 'listing_end_date'].includes(String(entry.sourceField))
+      || !boundedText(entry.value, 64)) return false;
+    const identity = `${entry.documentId}:${entry.candidateId}`;
+    if (candidates.has(identity)) return false;
+    candidates.add(identity);
+    const key = String(entry.sourceField);
+    const normalized = key === 'listing_status' ? entry.value.replace(/[\s_-]/g, '').toLowerCase() : listingEvidenceDate(entry.value);
+    if (!normalized) return false;
+    if (entry.documentId === documentId && entry.candidateId === candidateId && key === 'list_date'
+      && normalized === proof.sourceValue) primary = true;
+    const group = groups.get(entry.documentId) || new Map<string, string[]>();
+    group.set(key, [...(group.get(key) || []), normalized]);
+    groups.set(entry.documentId, group);
+  }
+  if (!primary || groups.size > 50 || (!negative && groups.size !== 1)) return false;
+  for (const group of groups.values()) {
+    if (group.size !== 3 || [...group.values()].some(entries => new Set(entries).size !== 1)) return false;
+    const start = group.get('list_date')![0], end = group.get('listing_end_date')![0], status = group.get('listing_status')![0];
+    if (!['offmarket', 'closed', 'sold', 'expired', 'cancelled', 'canceled', 'withdrawn', 'terminated'].includes(status)
+      || start >= proof.windowStart || end < start || end > String(proof.windowEnd)
+      || (negative ? end >= proof.windowStart : end < proof.windowStart)) return false;
+  }
+  return true;
 }
 function validFormatting(value: Record<string, unknown>, provenance: Record<string, unknown>): boolean {
   if (!Object.hasOwn(value, 'sourceValue') && !Object.hasOwn(value, 'formattingRule')) return true;
@@ -346,6 +402,7 @@ function validField(value: unknown): value is SfrepField {
       ? onlyKeys(provenance, [...savedKeys, 'sourceDocumentId', 'sourceCandidateId'])
       : onlyKeys(provenance, [...savedKeys, 'sourceDocumentId', 'sourceCandidateId', 'rule', 'sourceValue']) && validHoa(value, provenance);
     if (provenance.rule === historyRule) return validHistory(value, provenance);
+    if ([historicalListingRule, listingIntervalRule].includes(String(provenance.rule))) return validListingInterval(value, provenance);
     return value.sourceField === 'offered_for_sale_prior_12_months' && value.fieldId === 'CurrentPriorListingYesCheckBox'
       && onlyKeys(provenance, [...savedKeys, 'sourceDocumentId', 'sourceCandidateId', ...listingKeys])
       && value.type === 'CheckBoxField' && value.value === 'true' && provenance.rule === listingRule
@@ -362,6 +419,7 @@ function validField(value: unknown): value is SfrepField {
   if (provenance.kind === 'reviewed_document') return provenance.rule === undefined ? onlyKeys(provenance, documentKeys)
     : provenance.documentType === 'mls_sheet' && onlyKeys(provenance, [...documentKeys, 'rule', 'sourceValue']) && validHoa(value, provenance);
   if (provenance.kind === 'derived_reviewed_document' && provenance.rule === contractRule) return validContractNarrative(value, provenance);
+  if ([historicalListingRule, listingIntervalRule].includes(String(provenance.rule))) return validListingInterval(value, provenance);
   return provenance.kind === 'derived_reviewed_document' && provenance.documentType === 'mls_sheet'
     && onlyKeys(provenance, [...documentKeys, ...listingKeys])
     && value.sourceField === 'list_date' && value.fieldId === 'CurrentPriorListingYesCheckBox'
@@ -474,10 +532,10 @@ export function checkSfrepPreview(value: unknown, selectedDocumentIds?: readonly
         // projection suppresses them before those lists are built; its retained
         // advisory prompts review, not a negative PUD assertion or checkbox.
         || (!saved && ![...preview.omitted, ...preview.conflicts].some(entry => entry.sourceField === 'pud'))))
-    || preview.fields.some(({ provenance }) => [listingRule, historyRule].includes(provenance.rule || '')
+    || preview.fields.some(({ provenance }) => [listingRule, listingIntervalRule, historicalListingRule, historyRule].includes(provenance.rule || '')
       && (provenance.effectiveDate !== date.effectiveDate || provenance.effectiveDateSource !== date.source
         || provenance.effectiveDateSourceDocumentId !== date.sourceDocumentId
-        || (provenance.rule === listingRule && (provenance.windowStart !== date.windowStart || provenance.windowEnd !== date.windowEnd))))) {
+        || (provenance.rule !== historyRule && (provenance.windowStart !== date.windowStart || provenance.windowEnd !== date.windowEnd))))) {
     throw new Error('The SFREP preview provenance is invalid. No export was downloaded.');
   }
   // Reviewed source evidence belongs to this saved assignment even when its
@@ -488,6 +546,8 @@ export function checkSfrepPreview(value: unknown, selectedDocumentIds?: readonly
   const received = new Set(preview.documents.map(doc => doc.id));
   if (received.size !== preview.documents.length
     || preview.fields.some(field => field.documentId !== null && !received.has(field.documentId) && !workfileField(field))
+    || preview.fields.some(field => field.provenance.sourceEvidence?.some(source => 'documentId' in source
+      && !received.has(source.documentId) && !workfileSource(source.documentId)))
     || preview.omitted.some(field => !received.has(field.documentId) && !workfileSource(field.documentId))
     || preview.conflicts.some(conflict => conflict.documentIds.some(id => !received.has(id) && !workfileSource(id)))
     || (date.sourceDocumentId !== null && !received.has(date.sourceDocumentId) && !workfileSource(date.sourceDocumentId))) {
@@ -521,6 +581,8 @@ export function sfrepNoticeText(notice: SfrepNotice): string {
 
 export function sfrepProvenanceText(field: SfrepField): string {
   const source = field.provenance;
+  if (source.rule === historicalListingRule) return `Uploaded reviewed MLS listing ended before the preceding 12-month window (${source.windowStart} to ${source.windowEnd}); No is based on these sources, not a comprehensive MLS search.${source.effectiveDateSource === 'document_upload_date_placeholder' ? ' Placeholder effective date — review.' : ''}`;
+  if (source.rule === listingIntervalRule) return `Reviewed MLS marketing interval overlaps the preceding 12-month window (${source.windowStart} to ${source.windowEnd}).${source.effectiveDateSource === 'document_upload_date_placeholder' ? ' Placeholder effective date — review.' : ''}`;
   const formattingDescription = field.formattingRule === 'uad_whole_dollars_half_up' ? 'rounded to whole dollars, half up (50 cents rounds up)'
     : field.formattingRule === 'zip5_display' ? 'displayed as ZIP5'
       : field.formattingRule === 'title_case_subdivision_without_numeric_phase' ? 'title-cased with the terminal numeric subdivision phase removed'

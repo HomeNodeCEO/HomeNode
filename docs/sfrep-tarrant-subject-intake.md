@@ -52,3 +52,13 @@ stale receipts. No additional listing history or missing facts are invented.
 PDFs to exercise stream-order handling, identity isolation, mixed/oversized input,
 assignment continuations, Other pairing, saved receipts, and equal 1004/2055 XML.
 Original appraisal documents and private QA exports must not enter the repository.
+
+## Browser/export contract
+
+The browser accepts both reviewed and saved historical-listing receipts only
+under the explicit ended-interval rules. It verifies the calendar window,
+terminal status, coherent start/end dates, candidate/document bindings, every
+historical source group, and the Yes/No destination. A pre-window start date
+alone still cannot imply No. Fields-only exports retain this evidence without
+requiring the source PDFs as report addenda. The public preview producer is
+tested against the actual browser validator for both 1004 and 2055 forms.

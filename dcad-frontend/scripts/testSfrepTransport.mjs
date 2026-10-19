@@ -61,6 +61,76 @@ function serverPreview({ saved = true, hoa = 'true', county = false, lenderPrese
       sourceDocumentIds: documents.map(document => document.id) } } : {}) }));
 }
 
+function intervalPreview({ saved = true, formId = SFREP_FORM_ID, endDate = '2022-06-22', duplicateSource = false } = {}) {
+  const subject = { accountId: 'SYNTHETIC-INTERVAL', address: '100 Example Dr', city: 'Arlington', postalCode: '76010', effectiveDate: '2026-10-18' };
+  const documents = Array.from({ length: duplicateSource ? 2 : 1 }, (_, index) => ({
+    id: index + 1, account_id: subject.accountId, assignment_file_id: 4, document_type: 'mls_sheet',
+    processing_status: 'reviewed', property_role: 'subject', subject_context: subject,
+    title: 'Historical MLS', file_name: `synthetic-${index + 1}.pdf`, file_size_bytes: 100,
+    candidates: Object.entries({ subject_property_address: '100 Example Dr, Arlington, TX 76010',
+      list_date: '2022-03-07', listing_status: 'Closed', listing_end_date: endDate })
+      .map(([field_key, confirmed_value], offset) => ({ id: (index + 1) * 100 + offset, document_id: index + 1,
+        field_key, confirmed_value, review_status: 'confirmed' })),
+  }));
+  const input = { accountId: subject.accountId, assignmentFileId: 4 };
+  const applied = mergeCustomSubjectApplication({ projection: projectCustomSubjectDocuments(documents) });
+  const canonical = { ...input, assignmentRevision: 1, assignmentDetails: applied.assignmentDetails,
+    subject: { revision: 1, value: applied.subject }, evidence: { value: applied.evidence }, documents };
+  const { reportXml: _xml, pdfAddenda: _pdfs, ...result } = buildSfrepReportExport({ documents, formId, subjectOnly: true,
+    subjectContext: sfrepSubjectContext(documents), ...(saved ? { savedReportFields: savedSfrepSubjectFields(canonical, input).fields } : {}) });
+  return JSON.parse(JSON.stringify({ ok: true, ...result, preview_digest: 'a'.repeat(64), filename: 'Synthetic.rpti',
+    documents: saved ? [] : documents.map(({ id, title, file_name, file_size_bytes, processing_status }) => ({ id, title, file_name, file_size_bytes, processing_status })),
+    ...(saved ? { savedReport: { assignmentFileId: 4, assignmentRevision: 1, subjectRevision: 1, sourceDocumentIds: documents.map(doc => doc.id) } } : {}) }));
+}
+
+test('real saved and direct listing interval producers cross the strict browser boundary on both forms without PDF attachments', () => {
+  for (const formId of [SFREP_FORM_ID, SFREP_2055_FORM_ID]) for (const saved of [true, false]) {
+    for (const endDate of ['2022-06-22', '2025-10-18', '2026-01-15']) {
+      const result = intervalPreview({ saved, formId, endDate });
+      assert.equal(checkSfrepPreview(result, saved ? [] : [1], formId), result);
+      const id = endDate < '2025-10-18' ? 'CurrentPriorListingNoCheckBox' : 'CurrentPriorListingYesCheckBox';
+      const field = result.fields.find(item => item.fieldId === id);
+      assert.ok(field);
+      assert.match(sfrepProvenanceText(field), id.includes('No') ? /not a comprehensive MLS search/ : /interval overlaps/);
+    }
+  }
+  const multi = intervalPreview({ duplicateSource: true });
+  assert.equal(checkSfrepPreview(multi, []), multi);
+});
+
+test('interval evidence rejects wrong dates, active status, missing/conflicting proof, unknown rules and source bindings', () => {
+  for (const saved of [true, false]) for (const change of [
+    (field) => { field.fieldId = 'CurrentPriorListingYesCheckBox'; },
+    (field) => { field.provenance.rule = 'unknown'; },
+    (field) => { field.provenance.sourceValue = '2022-03-08'; },
+    (field) => { field.provenance.windowStart = '2025-10-17'; },
+    (field) => { field.provenance.effectiveDate = field.provenance.windowEnd = '2026-10-19'; field.provenance.windowStart = '2025-10-19'; },
+    (field) => { field.provenance.sourceEvidence[0].candidateId = 0; },
+    (field) => { field.provenance.sourceEvidence[0].extra = true; },
+    (field) => { field.provenance.sourceEvidence[0].sourceField = 'unreviewed_note'; },
+    (field) => { field.provenance.sourceEvidence[0].value = '2022-02-30'; },
+    (field) => { field.provenance.sourceEvidence[1].value = 'Active'; },
+    (field) => { field.provenance.sourceEvidence[2].value = '2022-01-01'; },
+    (field) => { field.provenance.sourceEvidence[2].value = '2026-01-01'; },
+    (field) => { field.provenance.sourceEvidence.pop(); },
+    (field) => { field.provenance.sourceEvidence.push(structuredClone(field.provenance.sourceEvidence[0])); },
+    (field) => { field.provenance[saved ? 'sourceCandidateId' : 'candidateId'] = 999; if (!saved) field.candidateId = 999; },
+    (field) => { field.provenance.sourceEvidence.forEach(entry => { entry.documentId = 99; });
+      if (saved) field.provenance.sourceDocumentId = 99; else field.documentId = field.provenance.documentId = 99; },
+  ]) {
+    const result = intervalPreview({ saved });
+    change(result.fields.find(field => field.fieldId === 'CurrentPriorListingNoCheckBox'));
+    assert.throws(() => checkSfrepPreview(result, saved ? [] : [1]), /invalid|does not match/, String(change));
+  }
+  const multi = intervalPreview({ duplicateSource: true });
+  const field = multi.fields.find(item => item.fieldId === 'CurrentPriorListingNoCheckBox');
+  field.provenance.sourceEvidence.find(entry => entry.documentId === 2 && entry.sourceField === 'listing_status').value = 'Active';
+  assert.throws(() => checkSfrepPreview(multi, []), /invalid/);
+  const overlaps = intervalPreview({ endDate: '2025-10-18' });
+  overlaps.fields.find(item => item.fieldId === 'CurrentPriorListingYesCheckBox').provenance.sourceEvidence[2].value = '2025-10-17';
+  assert.throws(() => checkSfrepPreview(overlaps, []), /invalid/);
+});
+
 test('canonical county identity and user lender preset cross the strict producer boundary with honest labels', () => {
   for (const fallbackIdentity of [false, true]) {
     const preview = serverPreview({ county: true, lenderPreset: true, fallbackIdentity });

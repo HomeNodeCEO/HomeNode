@@ -38,9 +38,15 @@ priorities remain in force. Optional RPTI PDF attachment selection is independen
 of field extraction and persistence.
 
 Realist remains the latest tax-year/total-tax source. The matched HomeNode Census
-lookup remains the tract source. A historical MLS listing does not prove that
-the property was not offered during a later twelve-month period. These omissions
-require current evidence or an appraiser decision, not fabricated defaults.
+lookup remains the tract source. Under the user's requested date-window rule,
+a reviewed terminal MLS status and an end date before the prior twelve-month
+window default the offering checkbox to No. An old listing whose reviewed end
+date overlaps the window defaults to Yes. An old start date alone, unknown end,
+active/ambiguous status, conflicting dates, or a future date cannot establish No.
+The No default retains all source/date receipts and a source-limited review flag:
+an uploaded historical listing is not a comprehensive search for other listings.
+Appraiser overrides remain authoritative and dated-source changes invalidate
+stale receipts. No additional listing history or missing facts are invented.
 
 `server/test/tarrantSubjectIntake.test.js` uses synthetic geometry and generated
 PDFs to exercise stream-order handling, identity isolation, mixed/oversized input,

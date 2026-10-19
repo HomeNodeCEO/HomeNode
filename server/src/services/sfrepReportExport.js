@@ -245,6 +245,27 @@ function isoDate(value) {
   return normalized ? `${normalized.slice(6)}-${normalized.slice(0, 2)}-${normalized.slice(3, 5)}` : null;
 }
 
+// An old start date alone cannot distinguish a closed listing from continuing
+// marketing. Use its reviewed terminal status AND end date on the same subject
+// MLS sheet for the user's requested date-window default. This is a source-
+// limited workflow conclusion, not a claim of a comprehensive MLS search.
+function endedListingEvidence(document, listedOn, fieldSelections) {
+  if (['listing_status', 'listing_end_date'].some(key => Object.hasOwn(fieldSelections, key)
+    && positiveId(fieldSelections[key]) !== positiveId(document?.id))) return null;
+  const entries = key => (document?.candidates || []).filter(candidate => candidate.review_status === 'confirmed'
+    && candidate.field_key === key && positiveId(candidate.id)
+    && (candidate.document_id == null || positiveId(candidate.document_id) === positiveId(document.id)))
+    .map(candidate => ({ documentId: positiveId(document.id), candidateId: positiveId(candidate.id), sourceField: key,
+      value: candidate.confirmed_value ?? candidate.normalized_value ?? candidate.raw_value }));
+  const statuses = entries('listing_status'), ends = entries('listing_end_date');
+  const normalized = statuses.map(entry => typeof entry.value === 'string' ? entry.value.replace(/[\s_-]/g, '').toLowerCase() : null);
+  const dates = ends.map(entry => typeof entry.value === 'string' ? isoDate(entry.value) : null);
+  if (!statuses.length || new Set(normalized).size !== 1
+    || !['offmarket', 'closed', 'sold', 'expired', 'cancelled', 'canceled', 'withdrawn', 'terminated'].includes(normalized[0])
+    || !dates.length || dates.some(value => !value) || new Set(dates).size !== 1 || dates[0] < listedOn) return null;
+  return { endedOn: dates[0], sourceEvidence: [...statuses, ...ends] };
+}
+
 /** A calendar-year lookback clamps February 29 to February 28, never March 1. */
 function previousCalendarYear(value) {
   const [year, month, day] = value.split("-").map(Number);
@@ -518,6 +539,10 @@ export function buildSfrepReportExport({
         assumptions.push({ fieldId: 'State', value: 'TX', rule: saved.provenance.rule,
           reason: 'TX is the Texas-only workflow default, not verified document evidence. Confirm the subject location in HomeNode and review any conflicting source.' });
       }
+      if (saved.sourceField === 'offered_for_sale_prior_12_months'
+        && saved.provenance.rule === 'user_requested_ended_mls_outside_12_months_v1') {
+        supplementalWarnings.push('Offered-for-sale No is based on the uploaded MLS showing an ended listing outside the prior 12 months; review any additional listing history.');
+      }
       if (saved.sourceField === 'pud' && saved.provenance.rule === 'user_requested_hoa_workflow_proxy_v1') {
         assumptions.push({ fieldId: 'PropertyTypePUDCheckBox', value,
           rule: saved.provenance.rule,
@@ -663,7 +688,24 @@ export function buildSfrepReportExport({
       if (!dateContext.effectiveDate) {
         omit(entry, "Effective date is unavailable; the preceding 12-calendar-month listing window cannot be determined.");
       } else if (entry.value < dateContext.windowStart || entry.value > dateContext.windowEnd) {
-        omit(entry, "Listing date is outside the preceding 12-calendar-month window; this does not establish offered-for-sale No.");
+        const ended = entry.value < dateContext.windowStart
+          ? endedListingEvidence(selected.get(entry.documentId), entry.value, fieldSelections) : null;
+        if (!ended || ended.endedOn > dateContext.windowEnd) {
+          omit(entry, 'Listing start date is outside the prior 12 months; a reviewed terminal status and end date are needed to determine its marketing interval.');
+          continue;
+        }
+        const offered = ended.endedOn >= dateContext.windowStart;
+        const rule = offered ? 'subject_mls_listing_interval_overlaps_preceding_12_months_v1'
+          : 'user_requested_ended_mls_outside_12_months_v1';
+        projected.push({ ...entry, fieldId: offered ? 'CurrentPriorListingYesCheckBox' : 'CurrentPriorListingNoCheckBox',
+          value: 'true', type: 'CheckBoxField', group: 'offered_for_sale',
+          provenance: { ...entry.provenance, kind: 'derived_reviewed_document', rule, sourceValue: entry.value,
+            effectiveDate: dateContext.effectiveDate, effectiveDateSource: dateContext.source,
+            effectiveDateSourceDocumentId: dateContext.sourceDocumentId,
+            windowStart: dateContext.windowStart, windowEnd: dateContext.windowEnd,
+            sourceEvidence: [{ documentId: entry.documentId, candidateId: entry.candidateId, sourceField: 'list_date', value: entry.value },
+              ...ended.sourceEvidence] } });
+        if (!offered) supplementalWarnings.push('Offered-for-sale No is based on the uploaded MLS showing an ended listing outside the prior 12 months; review any additional listing history.');
       } else {
         projected.push({
           ...entry, fieldId: "CurrentPriorListingYesCheckBox", value: "true", type: "CheckBoxField", group: "offered_for_sale",

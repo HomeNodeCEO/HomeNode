@@ -700,7 +700,7 @@ test("listing Yes uses inclusive preceding calendar-year boundaries and records 
   }
 });
 
-test("old, future, absent, invalid, and unreviewed MLS dates never imply offered-for-sale No", () => {
+test("old dates without a reviewed ended interval, future, absent, invalid, and unreviewed dates never imply No", () => {
   for (const listedOn of ["2025-10-01", "2026-10-03", "2026-02-30", "unknown", ""]) {
     const result = buildSfrepReportExport({ documents: [mls(1, listedOn)], subjectContext: dated("2026-10-02") });
     assert.equal(values(result).CurrentPriorListingYesCheckBox, undefined);
